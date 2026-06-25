@@ -564,8 +564,11 @@ serve(async (req) => {
       return newCount;
     }
 
-    // Process accounts in parallel (concurrency = 8) for massive speedup
-    const CONCURRENCY = 16;
+    // Process accounts in small parallel waves. Concurrency MUST stay low (≈4):
+    // processing many IMAP connections + heavy MIME parsing at once exceeds the
+    // edge function's compute budget and returns WORKER_RESOURCE_LIMIT (the sync
+    // error). 4 keeps each wave safely under the limit.
+    const CONCURRENCY = 4;
     for (let i = 0; i < accounts.length; i += CONCURRENCY) {
       const batch = accounts.slice(i, i + CONCURRENCY);
       const results = await Promise.all(batch.map(a => processAccount(a)));

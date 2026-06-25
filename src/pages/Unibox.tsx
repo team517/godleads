@@ -957,44 +957,87 @@ export default function Unibox() {
     }
   }, [user]);
 
-  const syncInbox = useCallback(async ({ silent = false, maxRounds = silent ? 10 : 12, fetchLimit = silent ? 200 : 1000 }: { silent?: boolean; maxRounds?: number; fetchLimit?: number } = {}) => {
+  const syncInbox = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!user || syncLockRef.current) return;
     syncLockRef.current = true;
     if (!silent) setSyncing(true);
 
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      let totalNewMessages = 0;
-      let offset = silent ? backgroundSyncOffsetRef.current : 0;
-      let hasMore = true;
-      let rounds = 0;
+    // Small batches keep each fetch-inbox call UNDER the edge function's compute
+    // limit. Big batches (≥16 accounts at once) return WORKER_RESOURCE_LIMIT and the
+    // whole sync used to fail. We loop with an offset and, if a batch fails, retry it
+    // with progressively smaller batches and finally skip the single heavy mailbox —
+    // so one bad account never aborts the sync.
+    const BATCH = silent ? 4 : 5;
+    const FETCH_LIMIT = silent ? 60 : 120;
+    const MAX_ROUNDS = silent ? 4 : 24;
+    const PROGRESS_ID = "unibox-sync";
 
-      while (hasMore && rounds < maxRounds) {
+    const callOnce = async (offset: number, batch: number) => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return { ok: false, status: 401, json: { error: "Sesión no válida" } };
         const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-inbox`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify({ offset, batch_size: silent ? 20 : 30, fetch_limit: fetchLimit }),
+          body: JSON.stringify({ offset, batch_size: batch, fetch_limit: FETCH_LIMIT }),
         });
+        let json: any = null;
+        try { json = await resp.json(); } catch { json = null; }
+        return { ok: resp.ok && json && !json.error, status: resp.status, json };
+      } catch (e: any) {
+        return { ok: false, status: 0, json: { error: e?.message || "network" } };
+      }
+    };
 
-        const result = await resp.json();
-        if (!resp.ok || result.error) {
-          if (!silent) toast.error(result.error || "Error al sincronizar");
-          return;
+    try {
+      let totalNew = 0;
+      let offset = silent ? backgroundSyncOffsetRef.current : 0;
+      let hasMore = true;
+      let rounds = 0;
+      let failures = 0;
+      let anySuccess = false;
+      let firstError: string | null = null;
+
+      if (!silent) toast.loading("Sincronizando…", { id: PROGRESS_ID });
+
+      while (hasMore && rounds < MAX_ROUNDS) {
+        let res = await callOnce(offset, BATCH);
+        // On resource-limit / failure, retry the SAME offset with smaller batches
+        if (!res.ok) res = await callOnce(offset, 2);
+        if (!res.ok) res = await callOnce(offset, 1);
+
+        if (res.ok) {
+          anySuccess = true;
+          totalNew += Number(res.json.new_messages || 0);
+          hasMore = Boolean(res.json.has_more);
+          offset = Number(res.json.next_offset ?? offset + BATCH);
+        } else {
+          // Single mailbox still failing → skip it and keep going
+          failures += 1;
+          if (!firstError) firstError = res.json?.message || res.json?.error || `HTTP ${res.status}`;
+          offset = offset + 1;
+          hasMore = true;
         }
-
-        totalNewMessages += Number(result.new_messages || 0);
-        hasMore = Boolean(result.has_more);
-        offset = Number(result.next_offset || 0);
         backgroundSyncOffsetRef.current = hasMore ? offset : 0;
         rounds += 1;
+        if (!silent && rounds % 3 === 0) {
+          toast.loading(`Sincronizando… ${offset} cuentas · ${totalNew} mensajes`, { id: PROGRESS_ID });
+        }
       }
 
       setLastSyncAt(new Date());
       await load();
-      if (!silent) toast.success(`${totalNewMessages} mensajes nuevos`);
+      if (!silent) {
+        if (!anySuccess) {
+          toast.error(firstError ? `No se pudo sincronizar: ${firstError}` : "No se pudo sincronizar", { id: PROGRESS_ID });
+        } else if (failures > 0) {
+          toast.success(`${totalNew} mensajes nuevos · ${failures} cuentas pesadas se reintentarán solas`, { id: PROGRESS_ID });
+        } else {
+          toast.success(`${totalNew} mensajes nuevos`, { id: PROGRESS_ID });
+        }
+      }
     } catch (e: any) {
-      if (!silent) toast.error(`Error: ${e.message}`);
+      if (!silent) toast.error(`Error: ${e.message}`, { id: PROGRESS_ID });
     } finally {
       syncLockRef.current = false;
       if (!silent) setSyncing(false);
@@ -1009,7 +1052,7 @@ export default function Unibox() {
     // (the interval below fires every 60s; this guards against overlap/bursts).
     if (now - lastAutoSyncAttemptRef.current < 75_000) return;
     lastAutoSyncAttemptRef.current = now;
-    await syncInbox({ silent: true, maxRounds: 3 });
+    await syncInbox({ silent: true });
   }, [syncInbox]);
 
   // Load AI prompts and account tags
