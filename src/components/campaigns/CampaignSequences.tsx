@@ -512,6 +512,20 @@ export default function CampaignSequences({ campaignId }: Props) {
                   {label}
                 </button>
               ))}
+              {variantLabels.length < 8 && (
+                <button
+                  onClick={async () => {
+                    const newIndex = variants.length + 1;
+                    await addVariant(selectedStep);
+                    setActiveVariantIndex(newIndex);
+                  }}
+                  title="Añadir variante"
+                  aria-label="Añadir variante"
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button
