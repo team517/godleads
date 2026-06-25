@@ -22,10 +22,10 @@ BEGIN
 
   -- Send email notification
   PERFORM extensions.http_post(
-    url := 'https://acruteihiwyrzovcdjty.supabase.co/functions/v1/notify-interested',
+    url := 'https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/notify-interested',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjcnV0ZWloaXd5cnpvdmNkanR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MzY0NDUsImV4cCI6MjA4NzQxMjQ0NX0.V0VdLgbc3Ivj3UNLSneX6CpwQNQmYVXqdumGpgM2Szc'
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxaGh5Ym1obGttdWx3aGl6cHppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzOTExODIsImV4cCI6MjA5Nzk2NzE4Mn0.sFEe4JK-ZVfK-0Lq0PMva18B1jS23yA7wt1T7V28r_8'
     ),
     body := jsonb_build_object(
       'user_id', NEW.user_id,
@@ -38,10 +38,10 @@ BEGIN
 
   -- Send push notification
   PERFORM extensions.http_post(
-    url := 'https://acruteihiwyrzovcdjty.supabase.co/functions/v1/send-push',
+    url := 'https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/send-push',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjcnV0ZWloaXd5cnpvdmNkanR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MzY0NDUsImV4cCI6MjA4NzQxMjQ0NX0.V0VdLgbc3Ivj3UNLSneX6CpwQNQmYVXqdumGpgM2Szc'
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxaGh5Ym1obGttdWx3aGl6cHppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzOTExODIsImV4cCI6MjA5Nzk2NzE4Mn0.sFEe4JK-ZVfK-0Lq0PMva18B1jS23yA7wt1T7V28r_8'
     ),
     body := jsonb_build_object(
       'user_id', NEW.user_id,
