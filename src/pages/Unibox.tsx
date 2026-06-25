@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -100,11 +100,42 @@ function decodeBase64Body(input: string): string {
   return changed ? out.join("\n") : input;
 }
 
+// Marks where attachment / raw-PDF binary begins — everything after is NOT message text.
+const ATTACHMENT_CUT_RE = /(?:^|\n)\s*(?:Content-Disposition:\s*attachment|Content-ID:|Content-Type:\s*application\/(?:pdf|octet-stream|zip|msword|vnd\.|x-)|(?:file)?name\*?=\s*"?=\?|%PDF-|\/FlateDecode\b|\/XObject\b|\/Producer\s*\(|\/Creator\s*\(|\bendobj\b|\bendstream\b|^\s*\d+\s+\d+\s+obj\b)/im;
+
+/** Cut the raw body at the first attachment/PDF marker and remove leftover MIME
+ *  attachment header lines, so the binary garbage never shows in the message. */
+function stripAttachmentJunk(text: string): string {
+  if (!text) return text;
+  const idx = text.search(ATTACHMENT_CUT_RE);
+  let t = idx >= 0 ? text.slice(0, idx) : text;
+  t = t.replace(/^.*\b(?:file)?name\*?=.*$/gim, "");
+  t = t.replace(/^Content-(?:Disposition|ID|Type|Transfer-Encoding|Description):.*$/gim, "");
+  return t;
+}
+
+/** Decode attachment file names found in the raw MIME body (e.g. name="...pdf"). */
+function extractAttachmentNames(raw: string | null): string[] {
+  if (!raw) return [];
+  const names = new Set<string>();
+  // value = quoted string, a full MIME encoded-word, or a bare token
+  const re = /(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|(=\?[^\r\n;]+?\?=)|([^\s";\r\n]+))/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    const rawVal = m[1] || m[2] || m[3] || "";
+    const decoded = decodeSubjectKeepCodes(rawVal).trim();
+    if (decoded && decoded.length < 200 && /\.[A-Za-z0-9]{2,5}$/.test(decoded)) names.add(decoded);
+  }
+  return Array.from(names);
+}
+
 function cleanBodyText(raw: string | null): string {
   if (!raw) return "";
   // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
   let text = decodeBase64Body(raw);
   text = repairMojibake(text);
+  // Remove attachment/PDF binary so only the real message text remains
+  text = stripAttachmentJunk(text);
 
   // Remove IMAP artifacts
   text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
@@ -226,6 +257,8 @@ function cleanBodyHtml(raw: string | null): string {
   if (!raw) return "";
   // Decode a base64-encoded HTML body if it arrived un-decoded
   let html = repairMojibake(decodeBase64Body(raw));
+  // Drop attachment/PDF binary that leaked into the HTML body
+  html = stripAttachmentJunk(html);
 
   // Remove MIME headers that leaked into the HTML
   html = html.replace(/^Content-Type:[^\n]+(\n\s+[^\n]+)*/gim, "");
@@ -783,6 +816,39 @@ function getMessageDeduplicationKey(message: any): string {
   const normalizedReceivedAt = typeof message?.received_at === "string" ? message.received_at.slice(0, 16) : "";
 
   return `fallback:${message?.account_id ?? ""}|${normalizedFrom}|${normalizedSubject}|${normalizedBody}|${normalizedReceivedAt}`;
+}
+
+/** Shows decoded attachment names (e.g. a PDF) as file chips under a message. */
+function AttachmentChips({ bodyText, bodyHtml }: { bodyText?: string | null; bodyHtml?: string | null }) {
+  const names = useMemo(() => {
+    const set = new Set<string>();
+    extractAttachmentNames(bodyText || "").forEach((n) => set.add(n));
+    extractAttachmentNames(bodyHtml || "").forEach((n) => set.add(n));
+    return Array.from(set);
+  }, [bodyText, bodyHtml]);
+
+  if (names.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {names.map((name) => (
+        <div
+          key={name}
+          title={name}
+          className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
+        >
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-primary/10">
+            <FileText className="h-4 w-4 text-primary" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-medium text-foreground">{name}</span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Paperclip className="h-2.5 w-2.5" /> Adjunto
+            </span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /* ── Component ─────────────────────────────────────────────────── */
@@ -2034,6 +2100,7 @@ export default function Unibox() {
                                   {cleanBodyText(tm.body_text)}
                                 </div>
                               )}
+                              {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} />}
                             </div>
                           </div>
                         );
@@ -2067,6 +2134,7 @@ export default function Unibox() {
                               {cleanBodyText(selected.body_text)}
                             </div>
                           )}
+                          <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} />
                         </div>
                       </div>
                     )}
