@@ -10,6 +10,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import CampaignDetail from "@/components/campaigns/CampaignDetail";
+import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
+import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   active: { label: "Active", variant: "default" },
@@ -187,6 +189,7 @@ export default function Campaigns() {
             {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pause</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Launch" : "Resume"}</>}
           </Button>
         </div>
+        <CampaignReportBar campaign={selectedCampaign} />
         <CampaignDetail campaignId={selectedCampaign.id} />
       </div>
     );
@@ -228,26 +231,32 @@ export default function Campaigns() {
             const status = statusConfig[campaign.status] || statusConfig.draft;
             return (
               <Card key={campaign.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setSelectedId(campaign.id)}>
-                <CardContent className="p-3 sm:p-5 flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-medium text-sm sm:text-base truncate">{campaign.name}</h3>
-                      <Badge variant={status.variant} className="text-[10px] sm:text-xs">{status.label}</Badge>
+                <CardContent className="p-3 sm:p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-medium text-sm sm:text-base truncate">{campaign.name}</h3>
+                        <Badge variant={status.variant} className="text-[10px] sm:text-xs">{status.label}</Badge>
+                      </div>
+                      <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+                        {new Date(campaign.created_at).toLocaleDateString()}
+                      </p>
                     </div>
-                    <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
-                      {new Date(campaign.created_at).toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleStatusToggle(campaign)}>
+                        {campaign.status === "active" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 hidden sm:flex" onClick={() => handleDuplicate(campaign)}>
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleDelete(campaign.id)}>
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleStatusToggle(campaign)}>
-                      {campaign.status === "active" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 hidden sm:flex" onClick={() => handleDuplicate(campaign)}>
-                      <Copy className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleDelete(campaign.id)}>
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
+                  {/* Inline metrics */}
+                  <div className="mt-3 border-t border-border/40 pt-3">
+                    <CampaignMetricsInline campaignId={campaign.id} />
                   </div>
                 </CardContent>
               </Card>

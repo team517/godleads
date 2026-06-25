@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+.git
+*.log
+npm-debug.log*
+.DS_Store
+android
+ios
+supabase/.temp
+onepulso_extracted

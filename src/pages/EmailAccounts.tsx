@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X } from "lucide-react";
+import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -65,6 +65,21 @@ const normalizeEmailAccount = <T extends Record<string, any>>(account: T): T => 
   smtp_host: sanitizeTextValue(account.smtp_host),
 });
 
+type AuthStatusValue = "pass" | "warn" | "fail" | undefined;
+function AuthChip({ label, status }: { label: string; status: AuthStatusValue }) {
+  const meta =
+    status === "pass" ? { cls: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30", Icon: ShieldCheck, text: "OK" }
+    : status === "warn" ? { cls: "bg-amber-500/10 text-amber-600 border-amber-500/30", Icon: ShieldQuestion, text: "Revisar" }
+    : status === "fail" ? { cls: "bg-red-500/10 text-red-600 border-red-500/30", Icon: ShieldAlert, text: "Falta" }
+    : { cls: "bg-muted text-muted-foreground border-border", Icon: ShieldQuestion, text: "—" };
+  const { Icon } = meta;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}>
+      <Icon className="h-3 w-3" /> {label} {meta.text}
+    </span>
+  );
+}
+
 export default function EmailAccounts() {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -104,6 +119,58 @@ export default function EmailAccounts() {
     send_end_hour: "",
   });
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
+
+  // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
+  type AuthStatus = "pass" | "warn" | "fail";
+  type DomainAuth = { loading: boolean; spf?: AuthStatus; dkim?: AuthStatus; dmarc?: AuthStatus; error?: boolean };
+  const [domainAuth, setDomainAuth] = useState<Record<string, DomainAuth>>({});
+  const requestedDomainsRef = useRef<Set<string>>(new Set());
+  // Broad DKIM selector list so we detect a key whatever the provider (Google,
+  // Microsoft, IONOS, Zoho…). If none resolve, DKIM is reported as missing.
+  const DKIM_SELECTORS = ["google", "selector1", "selector2", "default", "dkim", "dkim1", "k1", "k2", "mail", "smtp", "s1", "s2", "mxvault", "key1", "ionos1", "ionos2", "mta", "dk", "email", "zoho", "zmail", "amazonses"];
+
+  const checkDomainAuth = useCallback(async (domain: string) => {
+    const d = (domain || "").trim().toLowerCase();
+    if (!d) return;
+    setDomainAuth(prev => ({ ...prev, [d]: { ...(prev[d] || {}), loading: true, error: false } }));
+    try {
+      const { data, error } = await supabase.functions.invoke("check-email-domain-auth", {
+        body: { domain: d, selectors: DKIM_SELECTORS },
+      });
+      const r = data as any;
+      if (error || !r || r.error) {
+        setDomainAuth(prev => ({ ...prev, [d]: { loading: false, error: true } }));
+        return;
+      }
+      setDomainAuth(prev => ({ ...prev, [d]: { loading: false, spf: r.spf?.status, dkim: r.dkim?.status, dmarc: r.dmarc?.status } }));
+    } catch {
+      setDomainAuth(prev => ({ ...prev, [d]: { loading: false, error: true } }));
+    }
+  }, []);
+
+  const domainOf = (email: string) => (email || "").split("@")[1]?.trim().toLowerCase() || "";
+
+  // Auto-check each unique domain once (de-duplicated, sequential to avoid bursts).
+  useEffect(() => {
+    const domains = Array.from(new Set(accounts.map(a => domainOf(a.email)).filter(Boolean)));
+    const toCheck = domains.filter(d => !requestedDomainsRef.current.has(d));
+    if (toCheck.length === 0) return;
+    toCheck.forEach(d => requestedDomainsRef.current.add(d));
+    let cancelled = false;
+    (async () => {
+      for (const d of toCheck) {
+        if (cancelled) break;
+        await checkDomainAuth(d);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [accounts, checkDomainAuth]);
+
+  const recheckDomain = (domain: string) => {
+    const d = (domain || "").trim().toLowerCase();
+    requestedDomainsRef.current.add(d);
+    checkDomainAuth(d);
+  };
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -1094,6 +1161,49 @@ export default function EmailAccounts() {
                     </datalist>
                   </div>
                 </div>
+
+                {/* Domain authentication: SPF / DKIM / DMARC */}
+                {(() => {
+                  const dom = domainOf(account.email);
+                  const auth = domainAuth[dom];
+                  const dkimMissing = auth && !auth.loading && !auth.error && auth.dkim === "fail";
+                  return (
+                    <div className="mt-3 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-medium text-muted-foreground">Autenticación del dominio</span>
+                        <button
+                          onClick={() => recheckDomain(dom)}
+                          disabled={!dom || auth?.loading}
+                          className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-50"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${auth?.loading ? "animate-spin" : ""}`} /> Comprobar
+                        </button>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {!dom ? (
+                          <span className="text-[10px] text-muted-foreground">Sin dominio</span>
+                        ) : auth?.loading ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Comprobando DNS…</span>
+                        ) : auth?.error ? (
+                          <span className="text-[10px] text-muted-foreground">No verificado — pulsa Comprobar</span>
+                        ) : auth ? (
+                          <>
+                            <AuthChip label="SPF" status={auth.spf} />
+                            <AuthChip label="DKIM" status={auth.dkim} />
+                            <AuthChip label="DMARC" status={auth.dmarc} />
+                          </>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">En cola…</span>
+                        )}
+                      </div>
+                      {dkimMissing && (
+                        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-red-600">
+                          <ShieldAlert className="h-3 w-3" /> Falta el DKIM en @{dom} — añádelo en tu proveedor para mejorar la entregabilidad.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div className="mt-3 flex gap-6">
                   <div>

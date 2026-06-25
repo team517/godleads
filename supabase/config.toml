@@ -1,7 +1,4 @@
-project_id = "iqhhybmhlkmulwhizpzi"
-
-[functions.check-email-domain-auth]
-verify_jwt = false
+project_id = "acruteihiwyrzovcdjty"
 
 [functions.verify-email-connection]
 verify_jwt = false
@@ -43,6 +40,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.personalize-leads]
+verify_jwt = false
+
+[functions.create-restricted-user]
 verify_jwt = false
 
 [functions.translate-message]

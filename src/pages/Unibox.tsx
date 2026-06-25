@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,9 +20,91 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
+/**
+ * Remove warm-up / tracking codes that providers (Instantly, Mailreef…) inject
+ * into subjects and bodies — e.g. "GAJIE920CWH", "CHBV6J7", "2YSB82T",
+ * "t27109847387709683". They are alphanumeric tokens mixing letters AND digits,
+ * or long pure-digit runs. We STRIP them so the email stays readable, instead of
+ * hiding the whole message (which was throwing away real lead replies).
+ */
+const MIXED_CODE_RE = /\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5,20}\b/g;
+// 12+ pure digits = tracking id (real phone numbers are 9–11 digits → kept).
+const LONG_DIGIT_RE = /\b\d{12,}\b/g;
+// 14+ hex chars = message/tracking hash, e.g. "0000000000004f31700653fc0cdf".
+const LONG_HEX_RE = /\b[0-9a-f]{14,}\b/gi;
+// 21+ alphanumeric mix (letters+digits) = long tracking ref beyond MIXED_CODE_RE.
+const LONG_MIXED_RE = /\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{21,}\b/g;
+function stripWarmupTokens(input: string | null): string {
+  if (!input) return "";
+  let s = input;
+  // "| CODE", "- CODE", "· CODE" trailing separators that wrap a code
+  s = s.replace(/[\s]*[|·•·∙‧\-–—]+[\s]*(?=(?:[A-Za-z0-9]*[A-Za-z])(?:[A-Za-z0-9]*\d))[A-Za-z0-9]{5,20}\b/g, " ");
+  // Long hex hashes and long mixed tracking refs first (before the 5–20 rule)
+  s = s.replace(LONG_HEX_RE, "");
+  s = s.replace(LONG_MIXED_RE, "");
+  // The codes themselves (any case)
+  s = s.replace(MIXED_CODE_RE, "");
+  // Long pure-digit tracking ids (keeps short numbers, prices, years, phones)
+  s = s.replace(LONG_DIGIT_RE, "");
+  // Tidy up separators / whitespace the removals leave behind
+  s = s.replace(/[ \t]*[|·•∙‧]+[ \t]*(?=$|\n)/gm, "");
+  s = s.replace(/^[\s|·•\-–—]+|[\s|·•\-–—]+$/g, "");
+  s = s.replace(/[ \t]{2,}/g, " ");
+  s = s.replace(/[ \t]+([.,;:!?)])/g, "$1");
+  // Collapse blank lines the removals may have created
+  s = s.replace(/\n[ \t]*\n[ \t]*\n+/g, "\n\n");
+  return s.trim();
+}
+
+/** Try to decode a compact base64 string to readable UTF-8 text. Returns null if
+ *  it isn't valid base64 or decodes to something that looks binary (e.g. an image). */
+function tryDecodeBase64(compact: string): string | null {
+  if (compact.length < 8 || compact.length > 200000) return null;
+  if (compact.length % 4 !== 0) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
+  try {
+    const bin = atob(compact);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // STRICT decode: throws if the bytes aren't valid UTF-8 -> it wasn't text base64.
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (!decoded) return null;
+    // Reject binary control bytes (real bodies only use tab/newline/CR).
+    if (/[\x00-\x08\x0E-\x1F]/.test(decoded)) return null;
+    // Must look like real text: contain whitespace OR at least a couple of vowels.
+    const vowels = (decoded.match(/[aeiouà-ÿ]/gi) || []).length;
+    if (!/\s/.test(decoded) && vowels < 2) return null;
+    if (!/[a-zA-ZÀ-ɏ]/.test(decoded)) return null;
+    return decoded;
+  } catch { return null; }
+}
+
+/** Decode base64-encoded message bodies that arrived un-decoded:
+ *  the whole body, or individual lines/blocks that are pure base64. */
+function decodeBase64Body(input: string): string {
+  if (!input) return input;
+  const wholeCompact = input.replace(/\s+/g, "");
+  // Whole body is one base64 blob (the common broken case)
+  const whole = tryDecodeBase64(wholeCompact);
+  if (whole !== null) return whole;
+  // Otherwise decode any individual line that is entirely base64
+  let changed = false;
+  const out = input.split(/\r?\n/).map((line) => {
+    const t = line.trim();
+    if (t.length >= 16) {
+      const dec = tryDecodeBase64(t);
+      if (dec !== null) { changed = true; return dec; }
+    }
+    return line;
+  });
+  return changed ? out.join("\n") : input;
+}
+
 function cleanBodyText(raw: string | null): string {
   if (!raw) return "";
-  let text = repairMojibake(raw);
+  // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
+  let text = decodeBase64Body(raw);
+  text = repairMojibake(text);
 
   // Remove IMAP artifacts
   text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
@@ -88,16 +170,9 @@ function cleanBodyText(raw: string | null): string {
   // Strip remaining zero-width / invisible Unicode that render as boxes
   text = text.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
 
-  // Remove warmup tracking codes (e.g., CHBV6J7, 2YSB82T)
-  text = text.replace(/\b[A-Z0-9]{5,12}\b/g, (match) => {
-    const hasLetter = /[A-Za-z]/.test(match);
-    const hasDigit = /[0-9]/.test(match);
-    if (hasLetter && hasDigit && /[A-Za-z][0-9]|[0-9][A-Za-z]/.test(match)) return "";
-    return match;
-  });
-
-  // Clean pipe separators from warmup codes
-  text = text.replace(/\s*\|\s*$/gm, "");
+  // Remove warmup/tracking codes (e.g., GAJIE920CWH, CHBV6J7, 2YSB82T) and
+  // long digit ids — strip them everywhere so they never show in the body.
+  text = stripWarmupTokens(text);
 
   // Remove long tracking URLs
   text = text.replace(/https?:\/\/[^\s]{100,}/g, "");
@@ -149,7 +224,8 @@ function cleanBodyText(raw: string | null): string {
 /** Clean HTML email body for safe rendering — aggressively strips artifacts for a clean Gmail-style view */
 function cleanBodyHtml(raw: string | null): string {
   if (!raw) return "";
-  let html = repairMojibake(raw);
+  // Decode a base64-encoded HTML body if it arrived un-decoded
+  let html = repairMojibake(decodeBase64Body(raw));
 
   // Remove MIME headers that leaked into the HTML
   html = html.replace(/^Content-Type:[^\n]+(\n\s+[^\n]+)*/gim, "");
@@ -216,12 +292,18 @@ function cleanBodyHtml(raw: string | null): string {
   html = html.replace(/<([a-z]+)[^>]*style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, "");
   html = html.replace(/<[^>]*style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"']*["'][^>]*\/?>/gi, "");
 
-  // Remove warmup tracking codes (mixed letters+digits, 5-12 chars)
-  html = html.replace(/\b[A-Z0-9]{5,12}\b/g, (match) => {
-    const hasLetter = /[A-Za-z]/.test(match);
-    const hasDigit = /[0-9]/.test(match);
-    if (hasLetter && hasDigit && /[A-Za-z][0-9]|[0-9][A-Za-z]/.test(match)) return "";
-    return match;
+  // Remove warmup/tracking codes (GAJIE920CWH, CHBV6J7…) ONLY from visible text
+  // between tags — never touch tag names, attributes or href URLs, and preserve
+  // the surrounding whitespace so inline words don't glue together.
+  html = html.replace(/>([^<]+)</g, (_m, textNode: string) => {
+    const cleaned = textNode
+      .replace(/[|·•∙‧]\s*(?=(?:[A-Za-z0-9]*[A-Za-z])(?:[A-Za-z0-9]*\d))[A-Za-z0-9]{5,20}\b/g, " ")
+      .replace(LONG_HEX_RE, "")
+      .replace(LONG_MIXED_RE, "")
+      .replace(MIXED_CODE_RE, "")
+      .replace(LONG_DIGIT_RE, "")
+      .replace(/[ \t]{2,}/g, " ");
+    return `>${cleaned}<`;
   });
 
   // Clean pipe separators from warmup codes
@@ -395,8 +477,9 @@ function decodeHtmlEntities(input: string): string {
   return s;
 }
 
-function decodeSubject(raw: string | null): string {
-  if (!raw) return "(sin asunto)";
+/** Decode a subject but KEEP any warm-up codes intact (used by the warmup filter). */
+function decodeSubjectKeepCodes(raw: string | null): string {
+  if (!raw) return "";
   // Decode RFC 2047 encoded-words (=?charset?B/Q?text?=) — supports adjacent words
   const decoded = raw.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_, charset, encoding, text) => {
     const enc = encoding.toUpperCase();
@@ -425,7 +508,12 @@ function decodeSubject(raw: string | null): string {
     } catch { return text; }
   });
   // Strip whitespace between adjacent encoded-words artifacts and decode entities
-  return repairMojibake(decodeHtmlEntities(decoded.replace(/\?=\s+=\?/g, "?==?"))).trim() || "(sin asunto)";
+  return repairMojibake(decodeHtmlEntities(decoded.replace(/\?=\s+=\?/g, "?==?")));
+}
+
+/** Display subject — decoded AND with warm-up/tracking codes stripped out. */
+function decodeSubject(raw: string | null): string {
+  return stripWarmupTokens(decodeSubjectKeepCodes(raw)) || "(sin asunto)";
 }
 
 /** Strict warmup detector — drops messages with any mixed letter+digit code in the subject.
@@ -436,36 +524,101 @@ const WARMUP_LONG_DIGIT_RE = /\b\d{8,}\b/;
 const WARMUP_UUID_LIKE_RE = /\b[a-f0-9]{4,}-[a-f0-9-]{8,}\b/i;
 const WARMUP_DOTTED_LOWER_RE = /\b[a-z]+\.[a-z]+(?:\.[a-z]+)+\b/;
 const WARMUP_MARKER_RE = /#warmup|instantly-warmup|warmup-|x-warmup/i;
-export function hasWarmupCodes(subject: string | null, body: string | null): boolean {
-  const sRaw = decodeSubject(subject || "");
-  const s = (sRaw || "").trim();
-  const b = (body || "").slice(0, 800);
-  if (WARMUP_MARKER_RE.test(s + " " + b)) return true;
-  // ANY mixed alphanumeric code in subject = drop (warmup signature) — even on Re:/Fwd:/leads
-  if (WARMUP_MIXED_CODE_RE.test(s)) return true;
-  if (WARMUP_LONG_DIGIT_RE.test(s)) return true;
-  if (WARMUP_UUID_LIKE_RE.test(s) || WARMUP_UUID_LIKE_RE.test(b.slice(0, 300))) return true;
-  if (WARMUP_DOTTED_LOWER_RE.test(s)) return true;
-  if (WARMUP_LONG_DIGIT_RE.test(b.slice(0, 300))) return true;
-  // 2+ mixed codes in body start
-  const bodyMatches = b.slice(0, 800).match(new RegExp(WARMUP_MIXED_CODE_RE.source, "g")) || [];
-  if (bodyMatches.length >= 2) return true;
-  return false;
-}
-
-/** Spam detection – hide only clear warmup/automated messages from the cleaned views. */
+/** Spam detection – hide ONLY clear warmup-network / automated messages.
+ *  IMPORTANT: a message is no longer hidden just because it contains a code
+ *  (those are stripped from the display instead). We only drop emails that are
+ *  unmistakably warm-up traffic (explicit markers) or automated system senders,
+ *  so real lead replies are never thrown away. */
 function isSpam(subject: string | null, body: string | null, fromEmail: string | null): boolean {
-  const sub = decodeSubject(subject || "");
+  const sub = (decodeSubject(subject || "") || "");
   const email = fromEmail || "";
+  const rawSub = subject || "";
+  const bodyStart = (body || "").slice(0, 600);
 
-  // Hide messages whose subject contains warmup codes regardless of Re:/Fwd:
-  if (hasWarmupCodes(subject, body)) return true;
+  // Explicit warm-up markers only
+  if (WARMUP_MARKER_RE.test(rawSub + " " + bodyStart)) return true;
   if (/#warmup|instantly-warmup/i.test(sub)) return true;
 
-  // Known automated senders
+  // Known automated / system senders
   if (/noreply@|no-reply@|mailer-daemon@|postmaster@|bounce@/i.test(email)) return true;
 
   return false;
+}
+
+/* ── Unibox filters (spec) ─────────────────────────────────────────
+ * A) Warm-up code in subject   B) Language (ES/CA except tcx)
+ * C) Bounce / noise senders    D) toggles handled in the component
+ * ──────────────────────────────────────────────────────────────── */
+
+// A) Brands / acronyms that must NEVER be treated as a warm-up code.
+const WARMUP_WHITELIST = new Set([
+  "TCX", "AWS", "GCP", "API", "S3", "AI", "ML", "CRM", "ERP", "UX", "UI",
+  "SEO", "SEM", "B2B", "B2C", "SAAS", "VAT", "IVA", "IBAN", "CIF", "NIF", "DNI",
+  "VIP", "CEO", "CTO", "CFO", "COO", "RRHH", "HR", "IT", "PM", "QA", "SLA",
+  "KPI", "ROI", "MVP", "GDPR", "RGPD", "MICRO", "MACRO", "PRO", "PREMIUM",
+  "STANDARD", "BASIC", "PLUS", "ULTRA", "ALPHA", "BETA",
+]);
+
+/** A) True when the subject contains an UPPERCASE code that mixes letters+digits
+ *  (5–16 chars), e.g. "New HR Policy | 9XAT619 CHBV6J7". Whitelisted brands,
+ *  plain uppercase words and years (2024) are NOT treated as codes. */
+function subjectHasWarmupCode(subject: string | null): boolean {
+  const s = decodeSubjectKeepCodes(subject || "");
+  const tokens = s.match(/\b[A-Z0-9]{5,16}\b/g) || [];
+  for (const t of tokens) {
+    if (WARMUP_WHITELIST.has(t)) continue;
+    if (/[A-Z]/.test(t) && /[0-9]/.test(t)) return true; // mixed UPPERCASE letter+digit
+  }
+  return false;
+}
+
+/** C) Bounce / delivery-failure / known system senders — always hidden. */
+function isBounceOrNoise(fromEmail: string | null): boolean {
+  const e = (fromEmail || "").toLowerCase().trim();
+  if (!e) return false;
+  // Delivery failures & generic noise mailboxes
+  if (/^(mailer-daemon|postmaster|bounce|bounces|delivery|deliverability|abuse|failure-notice|mailer)@/.test(e)) return true;
+  // Calendly
+  if (/@calendly\.com$/.test(e)) return true;
+  // IONOS system mailboxes
+  if (/^(no-?reply|noreply|notification|info|servicio|service|sistema|system|billing|admin|soporte|support|atencion|contacto)@ionos\.(com|es|de|fr|co\.uk)$/.test(e)) return true;
+  // 1stcontact.ai — entire domain (warmup / outreach)
+  if (/@1stcontact\.ai$/.test(e)) return true;
+  // instantly.ai system mailboxes
+  if (/^(support|noreply|no-reply|notification|billing|info)@instantly\.ai$/.test(e)) return true;
+  return false;
+}
+
+// B) Language detection. Goal: ONLY Spanish/Catalan stays in the bandeja; English
+// (and other languages) are hidden. Returns "es" | "en" | "other" | "unknown".
+//
+// LANG_ES_CA: words that are distinctly Spanish/Catalan (deliberately avoids
+// 2-letter words that also exist in English, e.g. "me", "son", "no", "a", "i").
+const LANG_ES_CA = /\b(el|la|los|las|un[oa]?s?|del|al|que|qué|por|para|con|como|pero|porque|cuando|cuándo|donde|dónde|gracias|hola|saludos|buenos|buenas|cordial(?:es|mente)?|atentamente|estimad[oa]s?|señor(?:a|es)?|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|necesita|quiero|queremos|quería|querría|puede[ns]?|podemos|podríamos?|tengo|tenemos|tiene[ns]?|somos|estamos|está[ns]?|esto|esta|este|estos|estas|eso|esa|nuestr[oa]s?|vuestr[oa]s?|usted(?:es)?|también|según|sólo|solo|muy|más|sin|sobre|desde|hasta|mientras|aunque|entonces|vale|claro|perfecto|genial|encantad[oa]|quedamos|llamada|correo|adjunto|propuesta|presupuesto|consulta|pregunta|duda|cita|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|aquests|aquestes|també|molt|més|sense|fins|vostè|voldria|d'acord|tinc|tenim|podem|bon\s?dia)\b/gi;
+// LANG_EN: very common English words — almost every English email hits several.
+const LANG_EN = /\b(the|and|you|your|yours|for|with|this|that|these|those|have|has|had|are|was|were|will|would|could|should|been|being|is|of|to|in|on|at|as|be|by|or|if|from|but|not|can|just|get|got|know|let|let's|see|time|week|day|here|there|our|we|us|i'm|i'll|we're|we'll|don't|doesn't|thanks|thank|regards|best|hi|hello|hey|dear|please|company|meeting|information|interested|need|want|team|cheers|sincerely|looking|forward|kind|sounds|great|schedule|call|available|reach|reaching|out)\b/gi;
+const LANG_OTHER = /\b(merci|bonjour|cordialement|madame|monsieur|votre|nous|vous|danke|sehr|freundlichen|grüße|guten|ich|und|grazie|salve|cordiali|saluti|sono|obrigad[oa]|olá|você|atenciosamente|dziękuję|pozdrawiam|spasibo|zdravstvuyte)\b/gi;
+
+function detectLanguageBucket(text: string): "es" | "en" | "other" | "unknown" {
+  const t = (text || "").toLowerCase();
+  const wordCount = (t.match(/[a-záéíóúñçüàèòïä-ÿ]{2,}/gi) || []).length;
+  const es = (t.match(LANG_ES_CA) || []).length;
+  const en = (t.match(LANG_EN) || []).length;
+  const other = (t.match(LANG_OTHER) || []).length;
+  // Spanish/Catalan-specific characters are a strong ES signal (English has none).
+  const esChars = /[ñ¿¡]|·l|ç/.test(t) ? 1 : 0;
+  const esScore = es + esChars * 2;
+
+  // Spanish/Catalan wins as soon as there is real ES signal that isn't beaten by English.
+  if (esScore > 0 && esScore >= en) return "es";
+  // Otherwise, any clear English signal → English (hidden).
+  if (en > 0) return "en";
+  // Clear other foreign language → hidden.
+  if (other > 0) return "other";
+  // Some ES signal but English-heavy already returned "en" above; nothing matched here.
+  if (esScore > 0) return "es";
+  if (wordCount < 3) return "unknown"; // casi sin texto -> no decidir
+  return "unknown";
 }
 
 type MessageCategory = "interested" | "not_interested" | "question" | "out_of_office" | "neutral";
@@ -645,6 +798,10 @@ export default function Unibox() {
 
 
   const [search, setSearch] = useState("");
+  const [showWarmup, setShowWarmup] = useState(false);
+  const [langNonce, setLangNonce] = useState(0);
+  const [tcxAccounts, setTcxAccounts] = useState<Set<string>>(new Set());
+  const langCacheRef = useRef<Map<string, "es" | "en" | "other" | "unknown">>(new Map());
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<FilterType>("all");
@@ -677,6 +834,14 @@ export default function Unibox() {
   const [blocking, setBlocking] = useState(false);
   const [threadMessages, setThreadMessages] = useState<any[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
+  // Forward (reenviar)
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardTo, setForwardTo] = useState("");
+  const [forwardNote, setForwardNote] = useState("");
+  const [forwarding, setForwarding] = useState(false);
+  // Delete lead (cascade)
+  const [deleteLeadOpen, setDeleteLeadOpen] = useState(false);
+  const [deletingLead, setDeletingLead] = useState(false);
   const loadReminders = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
@@ -746,9 +911,8 @@ export default function Unibox() {
 
     const seenMessageKeys = new Set<string>();
     const msgs = raw.filter((message) => {
-      // Strict warmup filter — applies to ALL messages, no exceptions for lead_id/labels.
-      // Any mixed letter+number code in the subject (e.g. GH2RZD5, CHBV6J7) = warmup → hide.
-      if (hasWarmupCodes(message.subject, message.body_text)) return false;
+      // Download everything (deduped); the unibox filters (warmup A / language B /
+      // bounces C) and the "Mostrar warmup" toggle decide visibility in the view layer.
       const key = getMessageDeduplicationKey(message);
       if (seenMessageKeys.has(key)) return false;
       seenMessageKeys.add(key);
@@ -841,9 +1005,11 @@ export default function Unibox() {
   const autoSync = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     const now = Date.now();
-    if (now - lastAutoSyncAttemptRef.current < 180_000) return;
+    // Throttle to ~75s so the IMAP sync runs roughly every 1–2 minutes
+    // (the interval below fires every 60s; this guards against overlap/bursts).
+    if (now - lastAutoSyncAttemptRef.current < 75_000) return;
     lastAutoSyncAttemptRef.current = now;
-    await syncInbox({ silent: true, maxRounds: 2 });
+    await syncInbox({ silent: true, maxRounds: 3 });
   }, [syncInbox]);
 
   // Load AI prompts and account tags
@@ -852,14 +1018,24 @@ export default function Unibox() {
     const loadAI = async () => {
       const [{ data: prompts }, { data: accounts }, { data: campaignsData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
-        supabase.from("email_accounts").select("id, tags").eq("user_id", user.id),
+        supabase.from("email_accounts").select("id, email, tags").eq("user_id", user.id),
         supabase.from("campaigns").select("id, name").eq("user_id", user.id).order("name"),
       ]);
       setAiPrompts(prompts || []);
       setCampaigns(campaignsData || []);
       const map: Record<string, string[]> = {};
-      accounts?.forEach((a: any) => { map[a.id] = a.tags || []; });
+      // tcx = accounts EXPLICITLY tagged "tcx" (international → allow any language).
+      // Opt-in only: a tag exactly equal to "tcx". We deliberately do NOT infer it
+      // from the email address, so the Spanish/Catalan filter applies everywhere
+      // by default and English never leaks through.
+      const tcx = new Set<string>();
+      accounts?.forEach((a: any) => {
+        map[a.id] = a.tags || [];
+        const tagHit = (a.tags || []).some((t: string) => String(t).trim().toLowerCase() === "tcx");
+        if (tagHit) tcx.add(a.id);
+      });
       setAccountsMap(map);
+      setTcxAccounts(tcx);
     };
     loadAI();
   }, [user]);
@@ -924,8 +1100,9 @@ export default function Unibox() {
         const key = getMessageDeduplicationKey(m);
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
-        if (hasWarmupCodes(m.subject, m.body_text)) continue;
-        if (isSpam(m.subject, m.body_text, m.from_email)) continue;
+        // Keep every real reply in the thread (codes are stripped on display);
+        // only drop delivery-failure / system noise.
+        if (isBounceOrNoise(m.from_email)) continue;
         thread.push({ ...m, _type: "received", _date: m.received_at });
       }
 
@@ -982,15 +1159,55 @@ export default function Unibox() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [load]);
 
-  // Auto-sync IMAP every 60 seconds
+  // Auto-sync IMAP every 90 seconds (≈ 1–2 min as requested)
   useEffect(() => {
-    syncIntervalRef.current = setInterval(() => { autoSync(); }, 60_000);
+    syncIntervalRef.current = setInterval(() => { autoSync(); }, 90_000);
     return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
   }, [autoSync]);
 
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
   const selected = useMemo(() => messages.find(m => m.id === selectedId) || null, [messages, selectedId]);
+
+  // Language bucket per message, cached by id (text never changes). Cleared by "Re-filtrar idioma".
+  const messageLang = useCallback((m: any): "es" | "en" | "other" | "unknown" => {
+    const cache = langCacheRef.current;
+    const hit = cache.get(m.id);
+    if (hit) return hit;
+    let body = cleanBodyText(m.body_text || "");
+    // HTML-only emails have little/no plain text — fall back to the HTML body
+    // (cleanBodyText strips tags) so English HTML mails are still classified.
+    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
+      body = cleanBodyText(m.body_html);
+    }
+    const text = `${decodeSubjectKeepCodes(m.subject)} ${body.slice(0, 800)}`;
+    const bucket = detectLanguageBucket(text);
+    cache.set(m.id, bucket);
+    return bucket;
+  }, []);
+
+  // A+B warm-up classification — these are revealed by "Mostrar warmup".
+  const isWarmupHidden = useCallback((m: any): boolean => {
+    if (subjectHasWarmupCode(m.subject)) return true;          // A) code in subject
+    if (!tcxAccounts.has(m.account_id)) {                       // B) language (except tcx)
+      const lang = messageLang(m);
+      if (lang === "en" || lang === "other") return true;
+    }
+    return false;
+  }, [tcxAccounts, messageLang]);
+
+  // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
+  const hiddenFromClean = useCallback((m: any): boolean => {
+    if (isBounceOrNoise(m.from_email)) return true;            // C) bounces — always hidden
+    if (!showWarmup && isWarmupHidden(m)) return true;         // A+B unless toggle on
+    return false;
+  }, [showWarmup, isWarmupHidden]);
+
+  const handleRefilterLanguage = useCallback(() => {
+    langCacheRef.current.clear();
+    setLangNonce((n) => n + 1);
+    toast.success("Filtro de idioma reaplicado");
+  }, []);
 
   // No longer auto-detect on select — detect happens on translate click
 
@@ -1037,11 +1254,12 @@ export default function Unibox() {
     return new Date(r.remind_at) <= new Date();
   };
 
-  // Filter out spam only in the cleaned view, then apply category + search
+  // Apply the unibox filters (warmup A / language B / bounces C), then category + search.
+  // The "Todos" tab (mailboxMode === "all") shows the raw mailbox with no filters.
   const filtered = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const list = messages
-      .filter(m => mailboxMode === "all" || viewTab === "campaigns" || !isSpam(m.subject, m.body_text, m.from_email))
+      .filter(m => mailboxMode === "all" || !hiddenFromClean(m))
       .filter(m => {
         if (viewTab === "reminders") return !!reminders[m.id];
         if (viewTab === "campaigns") {
@@ -1066,23 +1284,23 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, viewTab, selectedCampaignId, reminders]);
+  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const base = (mailboxMode === "all" || viewTab === "campaigns") ? messages : messages.filter(m => !isSpam(m.subject, m.body_text, m.from_email));
-    const nonSpam = base.filter(m => !showTodayOnly || new Date(m.received_at) >= now24h);
-    const counts: Record<string, number> = { all: nonSpam.length };
-    for (const m of nonSpam) {
+    const base = mailboxMode === "all" ? messages : messages.filter(m => !hiddenFromClean(m));
+    const visible = base.filter(m => !showTodayOnly || new Date(m.received_at) >= now24h);
+    const counts: Record<string, number> = { all: visible.length };
+    for (const m of visible) {
       const cat = classifyMessage(m.subject, m.body_text);
       counts[cat] = (counts[cat] || 0) + 1;
     }
     return counts;
-  }, [messages, mailboxMode, viewTab, showTodayOnly]);
+  }, [messages, mailboxMode, showTodayOnly, hiddenFromClean, langNonce]);
 
   const unreadCount = useMemo(() =>
-    messages.filter(m => !m.is_read && (mailboxMode === "all" || viewTab === "campaigns" || !isSpam(m.subject, m.body_text, m.from_email))).length
-  , [messages, mailboxMode, viewTab]);
+    messages.filter(m => !m.is_read && (mailboxMode === "all" || !hiddenFromClean(m))).length
+  , [messages, mailboxMode, hiddenFromClean, langNonce]);
 
   const handleSync = async () => {
     await syncInbox();
@@ -1258,6 +1476,88 @@ export default function Unibox() {
     setSending(false);
   };
 
+  /** Forward (reenviar) the selected email to another address via the same account. */
+  const handleForward = async () => {
+    if (!selected || !forwardTo.trim() || !user) return;
+    const to = forwardTo.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { toast.error("Email de destino no válido"); return; }
+    setForwarding(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const origSubject = decodeSubject(selected.subject) || "";
+      const fwdSubject = /^fwd?:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
+      const origText = cleanBodyText(selected.body_text || "");
+      const when = new Date(selected.received_at).toLocaleString("es");
+      const quoted =
+        (forwardNote.trim() ? forwardNote.trim() + "\n\n" : "") +
+        "---------- Mensaje reenviado ----------\n" +
+        `De: ${selected.from_name ? selected.from_name + " " : ""}<${selected.from_email}>\n` +
+        `Fecha: ${when}\n` +
+        `Asunto: ${origSubject}\n\n` +
+        origText;
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          account_id: selected.account_id,
+          to_email: to,
+          subject: fwdSubject,
+          body: quoted,
+        }),
+      });
+      const result = await resp.json();
+      if (result.error) toast.error(result.error);
+      else {
+        toast.success(`Reenviado a ${to}`);
+        setForwardOpen(false);
+        setForwardTo("");
+        setForwardNote("");
+      }
+    } catch (e: any) { toast.error(`Error: ${e.message}`); }
+    setForwarding(false);
+  };
+
+  /** Delete the lead behind the selected message everywhere: from the leads table,
+   *  every campaign/list (campaign_leads), sent_emails, inbox_messages and reminders.
+   *  Uses the bulk_delete_leads SECURITY DEFINER RPC, then blocklists the address. */
+  const handleDeleteLead = async () => {
+    if (!selected || !user) return;
+    setDeletingLead(true);
+    try {
+      const email = (selected.from_email || "").toLowerCase();
+
+      // 1. Find every lead that matches this sender (across all lists & campaigns)
+      const { data: leads } = await supabase
+        .from("leads").select("id").eq("user_id", user.id).eq("email", email);
+      const leadIds = (leads || []).map((l: any) => l.id);
+
+      // 2. Cascade-delete the lead from the whole database
+      if (leadIds.length > 0) {
+        const { error } = await (supabase as any).rpc("bulk_delete_leads", { lead_ids: leadIds });
+        if (error) { toast.error(error.message); setDeletingLead(false); return; }
+      }
+
+      // 3. Remove any leftover inbox messages from this sender (not lead-linked)
+      await supabase.from("inbox_messages").delete()
+        .eq("user_id", user.id).eq("from_email", email);
+
+      // 4. Block the address so it can't re-enter any list
+      await supabase.from("blocklist").upsert(
+        { user_id: user.id, entry_type: "email", value: email },
+        { onConflict: "user_id,entry_type,value" }
+      );
+
+      // 5. Update local state — drop every message from this sender
+      setMessages((prev) => prev.filter((m) => (m.from_email || "").toLowerCase() !== email));
+      setSelectedId(null);
+      setDeleteLeadOpen(false);
+      loadReminders();
+      toast.success(`Lead ${email} eliminado de la base de datos y de todas las listas`);
+    } catch (e: any) { toast.error(`Error: ${e.message}`); }
+    setDeletingLead(false);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -1379,6 +1679,24 @@ export default function Unibox() {
         >
           <Clock className="h-3 w-3" />
           Hoy
+        </button>
+        <button
+          onClick={() => setShowWarmup(v => !v)}
+          title="Mostrar/ocultar los mensajes filtrados como warmup"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+            showWarmup
+              ? "bg-orange-500 text-white shadow-sm"
+              : "bg-muted text-muted-foreground hover:bg-muted/80"
+          }`}
+        >
+          🔥 {showWarmup ? "Ocultar warmup" : "Mostrar warmup"}
+        </button>
+        <button
+          onClick={handleRefilterLanguage}
+          title="Reaplicar el filtro de idioma a los mensajes descargados"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap bg-muted text-muted-foreground hover:bg-muted/80"
+        >
+          🌐 Re-filtrar idioma
         </button>
         <span className="w-px h-4 bg-border mx-0.5 flex-shrink-0" />
         {filterButtons.map(fb => (
@@ -1550,10 +1868,16 @@ export default function Unibox() {
                           )}
                         </PopoverContent>
                       </Popover>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => { setForwardTo(""); setForwardNote(""); setForwardOpen(true); }} title="Reenviar">
+                        <Forward className="h-4 w-4" />
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive hover:bg-destructive/10" onClick={() => { setBlockTarget({ email: selected.from_email, domain: selected.from_email.split("@")[1] || "" }); setBlockDialogOpen(true); }} title="Bloquear">
                         <Ban className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteMessage(selected.id)} title="Eliminar">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteLeadOpen(true)} title="Eliminar lead de la base de datos">
+                        <UserX className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive/70 hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteMessage(selected.id)} title="Eliminar email">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleArchive(selected.id)} title="Archivar">
@@ -1862,6 +2186,74 @@ export default function Unibox() {
               <Loader2 className="h-4 w-4 animate-spin" /> Procesando...
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Forward (reenviar) Dialog */}
+      <Dialog open={forwardOpen} onOpenChange={(o) => { if (!forwarding) setForwardOpen(o); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Forward className="h-5 w-5 text-primary" /> Reenviar email
+            </DialogTitle>
+            <DialogDescription>
+              {selected ? <>Reenviar “{decodeSubject(selected.subject)}” a otra dirección.</> : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Para</label>
+              <Input
+                type="email"
+                placeholder="destinatario@ejemplo.com"
+                value={forwardTo}
+                onChange={(e) => setForwardTo(e.target.value)}
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Nota (opcional)</label>
+              <Textarea
+                placeholder="Añade un mensaje antes del email reenviado…"
+                value={forwardNote}
+                onChange={(e) => setForwardNote(e.target.value)}
+                className="min-h-[72px] resize-none text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForwardOpen(false)} disabled={forwarding}>Cancelar</Button>
+            <Button className="gap-2" onClick={handleForward} disabled={forwarding || !forwardTo.trim()}>
+              {forwarding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Forward className="h-4 w-4" />}
+              {forwarding ? "Reenviando…" : "Reenviar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Lead Dialog */}
+      <Dialog open={deleteLeadOpen} onOpenChange={(o) => { if (!deletingLead) setDeleteLeadOpen(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserX className="h-5 w-5 text-destructive" /> Eliminar lead
+            </DialogTitle>
+            <DialogDescription>
+              {selected ? (
+                <>Se eliminará <strong>{selected.from_email}</strong> por completo: de la base de datos,
+                de <strong>todas las listas y campañas</strong>, sus emails enviados/recibidos y recordatorios.
+                Esta acción no se puede deshacer.</>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteLeadOpen(false)} disabled={deletingLead}>Cancelar</Button>
+            <Button variant="destructive" className="gap-2" onClick={handleDeleteLead} disabled={deletingLead}>
+              {deletingLead ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+              {deletingLead ? "Eliminando…" : "Eliminar lead"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

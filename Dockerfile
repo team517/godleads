@@ -1,32 +1,20 @@
-# Stage 1: Build
-FROM node:20-alpine AS builder
-
+# ── Etapa 1: build del frontend (Vite/React) ──
+FROM node:20-alpine AS build
 WORKDIR /app
 
+# Instala dependencias (capa cacheable)
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
+# Copia el resto del código y construye.
+# Las variables VITE_* se leen automáticamente del archivo .env del proyecto
+# y se "hornean" en el bundle durante el build.
 COPY . .
-
-# Variables de entorno de Supabase en build time
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_PUBLISHABLE_KEY
-ARG VITE_SUPABASE_PROJECT_ID
-
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
-ENV VITE_SUPABASE_PROJECT_ID=$VITE_SUPABASE_PROJECT_ID
-
 RUN npm run build
 
-# Stage 2: Serve with Nginx
+# ── Etapa 2: servir los estáticos con nginx ──
 FROM nginx:alpine
-
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Config para React Router (SPA)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-
+COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
-
 CMD ["nginx", "-g", "daemon off;"]
