@@ -1,0 +1,3 @@
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS birthday date DEFAULT NULL,
+ADD COLUMN IF NOT EXISTS coins integer NOT NULL DEFAULT 0;

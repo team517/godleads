@@ -1,0 +1,1 @@
+ALTER TABLE public.campaigns ADD COLUMN IF NOT EXISTS expert_rotation boolean NOT NULL DEFAULT false;

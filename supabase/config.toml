@@ -1,0 +1,61 @@
+project_id = "acruteihiwyrzovcdjty"
+
+[functions.verify-email-connection]
+verify_jwt = false
+
+[functions.send-email]
+verify_jwt = false
+
+[functions.fetch-inbox]
+verify_jwt = false
+
+[functions.process-campaign-queue]
+verify_jwt = false
+
+[functions.ai-reply]
+verify_jwt = false
+
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.create-checkout]
+verify_jwt = false
+
+[functions.customer-portal]
+verify_jwt = false
+
+[functions.cold-email-chat]
+verify_jwt = false
+
+[functions.notify-interested]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false
+
+[functions.moderate-community-message]
+verify_jwt = false
+
+[functions.process-auto-replies]
+verify_jwt = false
+
+[functions.personalize-leads]
+verify_jwt = false
+
+[functions.create-restricted-user]
+verify_jwt = false
+
+[functions.translate-message]
+verify_jwt = false
+
+[functions.ab-test-optimize]
+verify_jwt = false
+
+[functions.generate-sequence]
+verify_jwt = false
+
+[functions.generate-subject]
+verify_jwt = false
+
+[functions.test-smtp-inbox]
+verify_jwt = false

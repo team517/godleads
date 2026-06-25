@@ -1,0 +1,1 @@
+ALTER TABLE public.profiles ADD COLUMN trial_started_at timestamptz NOT NULL DEFAULT now();

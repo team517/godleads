@@ -1,0 +1,1 @@
+UPDATE email_accounts SET email = REPLACE(REPLACE(REPLACE(email, '"', ''), E'\r', ''), E'\n', ''), smtp_username = REPLACE(REPLACE(REPLACE(smtp_username, '"', ''), E'\r', ''), E'\n', ''), imap_username = REPLACE(REPLACE(REPLACE(imap_username, '"', ''), E'\r', ''), E'\n', '') WHERE email LIKE '%"%' OR email LIKE E'%\r%' OR email LIKE E'%\n%';

@@ -1,0 +1,1 @@
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS last_campaign_send_at timestamptz;

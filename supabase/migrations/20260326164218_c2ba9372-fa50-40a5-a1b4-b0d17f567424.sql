@@ -1,0 +1,1 @@
+ALTER TABLE public.campaigns ADD COLUMN signature_html text NOT NULL DEFAULT '';

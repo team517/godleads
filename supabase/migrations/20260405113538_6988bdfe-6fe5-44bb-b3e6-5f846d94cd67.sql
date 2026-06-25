@@ -1,0 +1,1 @@
+ALTER TABLE public.sent_emails ADD COLUMN IF NOT EXISTS smtp_message_id text;

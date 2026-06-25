@@ -1,0 +1,1 @@
+UPDATE public.profiles SET allowed_routes = ARRAY['/unibox', '/email-accounts', '/settings'] WHERE user_id = 'f6dcc143-7aea-4a04-a4e4-a24146bc0606';

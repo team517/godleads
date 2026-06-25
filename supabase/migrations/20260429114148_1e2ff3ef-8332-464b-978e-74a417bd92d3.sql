@@ -1,0 +1,1 @@
+GRANT EXECUTE ON FUNCTION public.get_inbox_nonwarmup(uuid, integer) TO service_role;
