@@ -877,11 +877,11 @@ serve(async (req) => {
       const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause inside the tick
       const accountSendsThisTick: Record<string, number> = {};
 
-      // Random per-account cooldown: 7–9 minutes, decided once per tick per account.
+      // Random per-account cooldown: 6–9 minutes, decided once per tick per account.
       const accountCooldownMs: Record<string, number> = {};
       const cooldownFor = (accId: string) => {
         if (!accountCooldownMs[accId]) {
-          accountCooldownMs[accId] = 7 * 60_000 + Math.floor(Math.random() * 2 * 60_000); // [7m, 9m)
+          accountCooldownMs[accId] = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
         }
         return accountCooldownMs[accId];
       };
