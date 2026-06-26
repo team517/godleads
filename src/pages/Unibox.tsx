@@ -655,14 +655,13 @@ function detectLanguageBucket(text: string): "es" | "en" | "other" | "unknown" {
 
   // Spanish/Catalan wins as soon as there is real ES signal that isn't beaten by English.
   if (esScore > 0 && esScore >= en) return "es";
-  // Otherwise, any clear English signal → English (hidden).
-  if (en > 0) return "en";
-  // Clear other foreign language → hidden.
-  if (other > 0) return "other";
-  // Some ES signal but English-heavy already returned "en" above; nothing matched here.
+  // Only hide on a CLEAR foreign signal (≥2 markers and no ES signal), so a stray
+  // English word in a Spanish mail never hides it. Ambiguous → "unknown" (shown).
+  if (esScore === 0 && en >= 2) return "en";
+  if (esScore === 0 && other >= 2) return "other";
   if (esScore > 0) return "es";
-  if (wordCount < 3) return "unknown"; // casi sin texto -> no decidir
-  return "unknown";
+  return "unknown"; // ambiguo / poco texto -> no ocultar
+
 }
 
 type MessageCategory = "interested" | "not_interested" | "question" | "out_of_office" | "neutral";
@@ -1294,8 +1293,9 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
-    if (isWarmupHidden(m)) return true;               // warmup codes + non-ES/CA language
-    if (!isRelevantInboxItem(m)) return true;         // only real replies, not cold inbound
+    if (isWarmupHidden(m)) return true;               // warmup codes + clearly-foreign language
+    // NOTE: the old "only relevant replies" gate hid normal inbound mail and made the
+    // bandeja look empty. We now show every non-bounce, non-warmup ES/CA message.
     return false;
   }, [isWarmupHidden]);
 
