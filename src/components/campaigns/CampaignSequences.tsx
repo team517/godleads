@@ -398,6 +398,13 @@ export default function CampaignSequences({ campaignId }: Props) {
     <div className="flex flex-col sm:flex-row gap-0 sm:h-[calc(100vh-280px)] sm:min-h-[500px]">
       {/* Left sidebar - Steps list */}
       <div className="w-full sm:w-72 shrink-0 border rounded-t-lg sm:rounded-t-none sm:rounded-l-lg bg-card overflow-y-auto max-h-48 sm:max-h-none">
+        <div className="border-b px-3 py-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">Secuencia</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{steps.length} {steps.length === 1 ? "paso" : "pasos"}</span>
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Flujo de emails automáticos · arrastra para reordenar</p>
+        </div>
         {steps.map((step, i) => {
           const isSelected = step.id === selectedStepId;
           const stepVariants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
@@ -449,21 +456,24 @@ export default function CampaignSequences({ campaignId }: Props) {
                 onClick={() => setSelectedStepId(step.id)}
                 className={`w-full text-left p-3 transition-colors border-b ${isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/50"}`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground/50 cursor-grab active:cursor-grabbing shrink-0" />
-                    <span className="text-xs font-semibold">Step {i + 1}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {stepVariants.length > 0 && (
-                      <Badge variant="outline" className="text-[10px] h-4 px-1">{stepVariants.length + 1} var</Badge>
-                    )}
-                    <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${isSelected ? "rotate-90" : ""}`} />
+                <div className="flex items-start gap-2.5">
+                  <GripVertical className="mt-1 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/40 active:cursor-grabbing" />
+                  <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${isSelected ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i === 0 ? "Email inicial" : `Follow-up ${i}`}</span>
+                      <div className="flex items-center gap-1">
+                        {stepVariants.length > 0 && (
+                          <Badge variant="outline" className="h-4 px-1 text-[10px]">{stepVariants.length + 1} var</Badge>
+                        )}
+                        <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${isSelected ? "rotate-90" : ""}`} />
+                      </div>
+                    </div>
+                    <p className="mt-0.5 truncate text-[13px] font-medium text-foreground">{step.subject || "Sin asunto"}</p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground truncate">
-                  {step.subject || "<Sin asunto>"}
-                </p>
               </button>
             </div>
           );
@@ -471,16 +481,17 @@ export default function CampaignSequences({ campaignId }: Props) {
 
         <button
           onClick={addStep}
-          className="w-full p-3 text-left text-sm text-muted-foreground hover:bg-muted/50 transition-colors flex items-center gap-2 border-b"
+          className="w-full p-3 text-left text-sm text-foreground hover:bg-muted/50 transition-colors flex items-center justify-between gap-2 border-b"
         >
-          <Plus className="h-3.5 w-3.5" /> Añadir step
+          <span className="flex items-center gap-2"><Plus className="h-3.5 w-3.5" /> Añadir paso</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">+ Email</span>
         </button>
 
         <button
           onClick={() => setShowAiGenerate(true)}
           className="w-full p-3 text-left text-sm text-muted-foreground hover:bg-muted/50 transition-colors flex items-center gap-2 border-b"
         >
-          <Sparkles className="h-3.5 w-3.5 text-primary" /> Crear con IA
+          <Sparkles className="h-3.5 w-3.5 text-primary" /> Generar secuencia con IA
         </button>
 
         {selectedStep && (
@@ -686,7 +697,7 @@ export default function CampaignSequences({ campaignId }: Props) {
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
-                  <Zap className="h-3 w-3" /> Variables
+                  <Zap className="h-3 w-3" /> Insertar variable
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-48 p-1" align="start">
