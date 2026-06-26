@@ -260,76 +260,93 @@ async function fetchImapMessages(
       return { ok: false, messages: [], error: `IMAP login failed` };
     }
 
-    const selectResp = await send("A002", "SELECT INBOX");
-    const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
-    const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
+    // Tag generator for the variable number of IMAP commands below.
+    let tagN = 1;
+    const nextTag = () => "A" + String(++tagN).padStart(3, "0");
 
-    if (totalMessages === 0) {
-      await send("A010", "LOGOUT");
-      conn.close();
-      return { ok: true, messages: [] };
-    }
+    // Discover folders so we also scan Spam/Junk — cold-email replies and warmup
+    // very often land there on fresh mailboxes, and INBOX-only sync misses them.
+    let spamFolder: string | null = null;
+    try {
+      const listResp = await send(nextTag(), `LIST "" "*"`);
+      const names: string[] = [];
+      for (const m of listResp.matchAll(/\* LIST \([^)]*\)\s+(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))\r?\n/gi)) {
+        names.push((m[1] || m[2] || "").trim());
+      }
+      spamFolder = names.find((f) => /(^|[./])spam$|junk|deseado|unwanted|bulk/i.test(f)) || null;
+    } catch { /* LIST unsupported — fall back to INBOX only */ }
 
-    // Fetch a deep recent window when the user syncs manually so Unibox misses fewer replies.
-    const limit = Math.max(50, Math.min(fetchLimit, 1000));
-    const start = Math.max(1, totalMessages - limit + 1);
-
-    // Use BODY.PEEK to avoid marking messages as read on server
-    const fetchResp = await send("A003", `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)] BODY.PEEK[TEXT])`);
-
+    const targets = ["INBOX", ...(spamFolder ? [spamFolder] : [])];
     const messages: ImapMessage[] = [];
+    const seenIds = new Set<string>();
+    const limit = Math.max(50, Math.min(fetchLimit, 1000));
 
-    const parts = fetchResp.split(/\* \d+ FETCH/);
-    for (const part of parts) {
-      if (!part.trim()) continue;
+    for (const folder of targets) {
+      const selTag = nextTag();
+      const selectResp = await send(selTag, `SELECT "${folder}"`);
+      if (!selectResp.includes(`${selTag} OK`)) continue; // folder missing / not selectable
+      const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
+      const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
+      if (totalMessages === 0) continue;
 
-      const fromMatch = part.match(/From:\s*(.+?)(?:\r?\n)/i);
-      const subjectMatch = part.match(/Subject:\s*(.+?)(?:\r?\n)/i);
-      const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
-      const msgIdMatch = part.match(/Message-ID:\s*<?(.+?)>?(?:\r?\n)/i);
+      const start = Math.max(1, totalMessages - limit + 1);
+      // BODY.PEEK keeps messages unread on the server.
+      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)] BODY.PEEK[TEXT])`);
 
-      let fromEmail = "";
-      let fromName = "";
-      if (fromMatch) {
-        const fromStr = fromMatch[1].trim();
-        const emailMatch = fromStr.match(/<(.+?)>/);
-        fromEmail = emailMatch ? emailMatch[1] : fromStr;
-        const nameMatch = fromStr.match(/^"?([^"<]+)"?\s*</);
-        fromName = nameMatch ? nameMatch[1].trim() : "";
-      }
+      const parts = fetchResp.split(/\* \d+ FETCH/);
+      for (const part of parts) {
+        if (!part.trim()) continue;
 
-      // Skip if from_email matches the account's own email or IMAP username (sent messages in INBOX)
-      const fromLower = fromEmail.toLowerCase().trim();
-      const accountLower = accountEmail.toLowerCase().trim();
-      const imapLower = imapUsername.toLowerCase().trim();
-      if (fromLower && (fromLower === accountLower || fromLower === imapLower)) continue;
+        const fromMatch = part.match(/From:\s*(.+?)(?:\r?\n)/i);
+        const subjectMatch = part.match(/Subject:\s*(.+?)(?:\r?\n)/i);
+        const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
+        const msgIdMatch = part.match(/Message-ID:\s*<?(.+?)>?(?:\r?\n)/i);
 
-      // Extract body text
-      const bodyParts = part.split(/\r?\n\r?\n/);
-      const rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n").replace(/\)[\s\S]*$/, "").trim() : "";
+        let fromEmail = "";
+        let fromName = "";
+        if (fromMatch) {
+          const fromStr = fromMatch[1].trim();
+          const emailMatch = fromStr.match(/<(.+?)>/);
+          fromEmail = emailMatch ? emailMatch[1] : fromStr;
+          const nameMatch = fromStr.match(/^"?([^"<]+)"?\s*</);
+          fromName = nameMatch ? nameMatch[1].trim() : "";
+        }
 
-      if (fromEmail) {
-        const decodedSubject = decodeMimeWords(subjectMatch ? subjectMatch[1].trim() : "");
+        // Skip messages sent by the account itself (sent copies in the folder)
+        const fromLower = fromEmail.toLowerCase().trim();
+        const accountLower = accountEmail.toLowerCase().trim();
+        const imapLower = imapUsername.toLowerCase().trim();
+        if (fromLower && (fromLower === accountLower || fromLower === imapLower)) continue;
 
-        // Only skip clearly automated senders
-        if (isAutomatedSender(fromEmail)) continue;
+        const bodyParts = part.split(/\r?\n\r?\n/);
+        const rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n").replace(/\)[\s\S]*$/, "").trim() : "";
 
-        const bodyText = sanitizeForPostgres(cleanBody(rawBody).slice(0, 5000));
-        const bodyHtml = sanitizeForPostgres(extractHtml(rawBody).slice(0, 50000));
+        if (fromEmail) {
+          const decodedSubject = decodeMimeWords(subjectMatch ? subjectMatch[1].trim() : "");
+          if (isAutomatedSender(fromEmail)) continue;
 
-        messages.push({
-          from_email: fromEmail.toLowerCase().trim(),
-          from_name: sanitizeForPostgres(decodeMimeWords(fromName)),
-          subject: sanitizeForPostgres(decodedSubject || "(sin asunto)"),
-          body_text: bodyText,
-          body_html: bodyHtml,
-          message_id: msgIdMatch ? msgIdMatch[1].trim() : "",
-          date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
-        });
+          // Dedupe across folders (same message can appear in INBOX + a copy)
+          const msgId = msgIdMatch ? msgIdMatch[1].trim() : "";
+          if (msgId && seenIds.has(msgId)) continue;
+          if (msgId) seenIds.add(msgId);
+
+          const bodyText = sanitizeForPostgres(cleanBody(rawBody).slice(0, 5000));
+          const bodyHtml = sanitizeForPostgres(extractHtml(rawBody).slice(0, 50000));
+
+          messages.push({
+            from_email: fromEmail.toLowerCase().trim(),
+            from_name: sanitizeForPostgres(decodeMimeWords(fromName)),
+            subject: sanitizeForPostgres(decodedSubject || "(sin asunto)"),
+            body_text: bodyText,
+            body_html: bodyHtml,
+            message_id: msgId,
+            date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
+          });
+        }
       }
     }
 
-    await send("A010", "LOGOUT");
+    await send(nextTag(), "LOGOUT");
     conn.close();
 
     return { ok: true, messages };
