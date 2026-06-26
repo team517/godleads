@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -119,6 +119,8 @@ export default function EmailAccounts() {
     send_end_hour: "",
   });
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
+  const [showSlowRamp, setShowSlowRamp] = useState(false);
+  const [slowRampForm, setSlowRampForm] = useState({ increment: "2", target: "30" });
 
   // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
   type AuthStatus = "pass" | "warn" | "fail";
@@ -620,6 +622,51 @@ export default function EmailAccounts() {
     });
   };
 
+  // Slow ramp = increase each account's daily sends gradually to warm mailboxes.
+  // Effective daily limit = min((day+1) * increment, target). Day computed from warmup_started_at.
+  const rampInfo = (acc: any) => {
+    if (!acc?.warmup_enabled || !acc?.warmup_started_at) return null;
+    const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
+    const inc = acc.warmup_increment || 2;
+    const target = acc.warmup_limit || acc.daily_limit || 30;
+    const eff = Math.min((days + 1) * inc, target);
+    return { day: days + 1, eff, target };
+  };
+
+  const handleApplySlowRamp = async () => {
+    if (!user) return;
+    const ids = selectedIds.size > 0 ? [...selectedIds] : accounts.map((a) => a.id);
+    if (ids.length === 0) { toast.error("No hay cuentas"); return; }
+    const increment = Math.max(1, parseInt(slowRampForm.increment) || 2);
+    const target = Math.max(increment, parseInt(slowRampForm.target) || 30);
+    const payload: any = {
+      warmup_enabled: true,
+      warmup_increment: increment,
+      warmup_limit: target,
+      warmup_started_at: new Date().toISOString(),
+    };
+    for (const id of ids) {
+      await supabase.from("email_accounts").update(payload).eq("id", id);
+    }
+    toast.success(`Slow ramp activado en ${ids.length} cuenta(s)`);
+    setShowSlowRamp(false);
+    setSelectedIds(new Set());
+    loadAccounts();
+  };
+
+  const handleDisableSlowRamp = async () => {
+    if (!user) return;
+    const ids = selectedIds.size > 0 ? [...selectedIds] : accounts.map((a) => a.id);
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      await supabase.from("email_accounts").update({ warmup_enabled: false } as any).eq("id", id);
+    }
+    toast.success(`Slow ramp desactivado en ${ids.length} cuenta(s)`);
+    setShowSlowRamp(false);
+    setSelectedIds(new Set());
+    loadAccounts();
+  };
+
   const handleBulkEdit = async () => {
     if (selectedIds.size === 0 || bulkEditFields.size === 0) return;
     const updates: Record<string, any> = {};
@@ -1002,6 +1049,9 @@ export default function EmailAccounts() {
           <span className="text-sm text-muted-foreground">
             {selectedIds.size > 0 ? `${selectedIds.size} seleccionadas` : "Seleccionar cuentas"}
           </span>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowSlowRamp(true)}>
+            🐢 Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : "(todas)"}
+          </Button>
           {selectedIds.size > 0 && (
             <>
               <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkDelete}>
@@ -1081,6 +1131,48 @@ export default function EmailAccounts() {
           <DialogHeader><DialogTitle className="font-display">Editar cuenta de email</DialogTitle></DialogHeader>
           {renderFormFields()}
           <Button onClick={handleUpdate} className="w-full">Guardar cambios</Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Slow Ramp Dialog */}
+      <Dialog open={showSlowRamp} onOpenChange={setShowSlowRamp}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display">🐢 Slow ramp (calentamiento)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              Sube poco a poco los envíos diarios de cada cuenta para calentar los buzones.
+              Se aplicará a <b>{selectedIds.size > 0 ? `${selectedIds.size} cuenta(s) seleccionadas` : `TODAS las cuentas (${accounts.length})`}</b>.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Incremento diario</Label>
+                <Input type="number" min={1} value={slowRampForm.increment} onChange={(e) => setSlowRampForm({ ...slowRampForm, increment: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label>Objetivo (máx/día)</Label>
+                <Input type="number" min={1} value={slowRampForm.target} onChange={(e) => setSlowRampForm({ ...slowRampForm, target: e.target.value })} />
+              </div>
+            </div>
+            {(() => {
+              const inc = Math.max(1, parseInt(slowRampForm.increment) || 2);
+              const target = Math.max(inc, parseInt(slowRampForm.target) || 30);
+              const days = [1, 2, 3, 4, 5].map((d) => Math.min(d * inc, target));
+              const reachDay = Math.ceil(target / inc);
+              return (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground mb-1">Previsualización por cuenta</p>
+                  <p>Día 1: {days[0]} · Día 2: {days[1]} · Día 3: {days[2]} · Día 4: {days[3]} · Día 5: {days[4]} …</p>
+                  <p className="mt-1">Alcanza el objetivo de {target}/día el día {reachDay}.</p>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={handleDisableSlowRamp}>Desactivar</Button>
+            <Button onClick={handleApplySlowRamp}>Activar slow ramp</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1280,18 +1372,31 @@ export default function EmailAccounts() {
                   );
                 })()}
 
-                <div className="mt-3 flex gap-6">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Enviados hoy</p>
-                    <p className="font-semibold text-sm">{account.sent_today}/{account.daily_limit}</p>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-xs text-muted-foreground mb-1">Uso</p>
-                    <div className="h-2 rounded-full bg-muted">
-                      <div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${Math.min((account.sent_today / account.daily_limit) * 100, 100)}%` }} />
+                {(() => {
+                  const ramp = rampInfo(account);
+                  const effLimit = ramp ? ramp.eff : account.daily_limit;
+                  return (
+                    <div className="mt-3 flex gap-6 items-end">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Enviados hoy</p>
+                        <p className="font-semibold text-sm">{account.sent_today}/{effLimit}</p>
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground mb-1 flex flex-wrap items-center gap-2">
+                          Uso
+                          {ramp && (
+                            <span className="text-[10px] rounded bg-primary/10 text-primary px-1.5 py-0.5">
+                              🐢 Slow ramp · Día {ramp.day} · hoy {ramp.eff} → objetivo {ramp.target}
+                            </span>
+                          )}
+                        </p>
+                        <div className="h-2 rounded-full bg-muted">
+                          <div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${Math.min((account.sent_today / Math.max(1, effLimit)) * 100, 100)}%` }} />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
                 <div className="mt-4 flex gap-2">
                   <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handleEdit(account)}>
                     <Pencil className="h-3.5 w-3.5" /> Editar

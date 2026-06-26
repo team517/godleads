@@ -960,18 +960,35 @@ serve(async (req) => {
         // of the account's daily_limit setting. Protects deliverability.
         const HARD_DAILY_CAP = 30;
 
-        // SlowRamp: calculate effective daily limit per account
+        // SlowRamp: effective daily limit per account = the smallest of:
+        //   account daily_limit (capped at HARD_DAILY_CAP),
+        //   account-level slow ramp (configured from the Email Accounts page),
+        //   campaign-level slow ramp.
         const getEffectiveLimit = (acc: any) => {
-          const accountLimit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+          let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+
+          // Account-level slow ramp: ramps from `warmup_started_at` by warmup_increment
+          // per day up to warmup_limit. Day 1 = increment, Day 2 = 2*increment, …
+          if (acc.warmup_enabled && acc.warmup_started_at) {
+            const startedAt = new Date(acc.warmup_started_at);
+            const days = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24)));
+            const inc = acc.warmup_increment || 2;
+            const target = acc.warmup_limit || limit;
+            const accRamp = Math.min((days + 1) * inc, target);
+            limit = Math.min(limit, accRamp);
+          }
+
+          // Campaign-level slow ramp.
           if ((campaign as any).slow_ramp_enabled) {
             const createdAt = new Date(campaign.created_at);
             const daysSinceCreation = Math.max(0, Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)));
             const rampMax = (campaign as any).slow_ramp_max || 2;
             const rampIncrement = (campaign as any).slow_ramp_increment || 2;
             const rampLimit = rampMax + daysSinceCreation * rampIncrement;
-            return Math.min(rampLimit, accountLimit);
+            limit = Math.min(limit, rampLimit);
           }
-          return accountLimit;
+
+          return limit;
         };
 
         // Expert rotation / account selection
