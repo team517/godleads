@@ -940,28 +940,18 @@ export default function Unibox() {
 
   const load = useCallback(async () => {
     if (!user) return;
-    // Load ALL non-archived messages for this user. Visibility (warmup codes /
-    // foreign language / bounces) is decided CLIENT-SIDE by the filters + the
-    // "Mostrar warmup" toggle — so a real message is never hidden just because it
-    // isn't a "Re:" or isn't linked to a lead yet. (Was an over-strict server filter
-    // that hid first-contact replies and made the bandeja look empty.)
-    const allRows: any[] = [];
-    const pageSize = 1000;
-
-    for (let from = 0; from < 10000; from += pageSize) {
-      const { data: page, error } = await supabase
-        .from("inbox_messages")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("is_archived", false)
-        .order("received_at", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (error) break;
-      allRows.push(...(page || []));
-      if (!page || page.length < pageSize) break;
-    }
-    const data = allRows;
-    const raw = data || [];
+    // Only the most recent messages are loaded (hard cap) so the Unibox never tries
+    // to render 10k+ warm-up emails — that was the lag. The client then keeps only
+    // Spanish/Catalan + relevant ones.
+    const MAX_LOAD = 800;
+    const { data: page } = await supabase
+      .from("inbox_messages")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("is_archived", false)
+      .order("received_at", { ascending: false })
+      .limit(MAX_LOAD);
+    const raw = page || [];
 
     const seenMessageKeys = new Set<string>();
     const msgs = raw.filter((message) => {
@@ -1052,7 +1042,7 @@ export default function Unibox() {
       let anySuccess = false;
       let firstError: string | null = null;
 
-      if (!silent) toast.loading("Sincronizando…", { id: PROGRESS_ID });
+      if (!silent) toast.loading("Conectando cuentas…", { id: PROGRESS_ID });
 
       while (hasMore && rounds < MAX_ROUNDS) {
         let res = await callOnce(offset, BATCH);
@@ -1075,7 +1065,7 @@ export default function Unibox() {
         backgroundSyncOffsetRef.current = hasMore ? offset : 0;
         rounds += 1;
         if (!silent && rounds % 3 === 0) {
-          toast.loading(`Sincronizando… ${offset} cuentas · ${totalNew} mensajes`, { id: PROGRESS_ID });
+          toast.loading(`Conectando… ${offset} cuentas revisadas · ${totalNew} mensajes`, { id: PROGRESS_ID });
         }
       }
 
@@ -1295,11 +1285,11 @@ export default function Unibox() {
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
-    if (isBounceOrNoise(m.from_email)) return true;            // C) bounces — always hidden
-    if (!showWarmup && isWarmupHidden(m)) return true;         // A+B (warmup code / foreign language)
-    if (!showWarmup && !isRelevantInboxItem(m)) return true;   // only real replies, not cold inbound
+    if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
+    if (isWarmupHidden(m)) return true;               // warmup codes + non-ES/CA language
+    if (!isRelevantInboxItem(m)) return true;         // only real replies, not cold inbound
     return false;
-  }, [showWarmup, isWarmupHidden]);
+  }, [isWarmupHidden]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
@@ -1352,12 +1342,12 @@ export default function Unibox() {
     return new Date(r.remind_at) <= new Date();
   };
 
-  // Apply the unibox filters (warmup A / language B / bounces C), then category + search.
-  // The "Todos" tab (mailboxMode === "all") shows the raw mailbox with no filters.
+  // Apply the unibox filters ALWAYS (Spanish/Catalan only, no warmup, no bounces,
+  // only real replies). English/other languages never appear anywhere.
   const filtered = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const list = messages
-      .filter(m => mailboxMode === "all" || !hiddenFromClean(m))
+      .filter(m => !hiddenFromClean(m))
       .filter(m => {
         if (viewTab === "reminders") return !!reminders[m.id];
         if (viewTab === "campaigns") {
@@ -1386,7 +1376,7 @@ export default function Unibox() {
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const base = mailboxMode === "all" ? messages : messages.filter(m => !hiddenFromClean(m));
+    const base = messages.filter(m => !hiddenFromClean(m));
     const visible = base.filter(m => !showTodayOnly || new Date(m.received_at) >= now24h);
     const counts: Record<string, number> = { all: visible.length };
     for (const m of visible) {
@@ -1397,8 +1387,8 @@ export default function Unibox() {
   }, [messages, mailboxMode, showTodayOnly, hiddenFromClean, langNonce]);
 
   const unreadCount = useMemo(() =>
-    messages.filter(m => !m.is_read && (mailboxMode === "all" || !hiddenFromClean(m))).length
-  , [messages, mailboxMode, hiddenFromClean, langNonce]);
+    messages.filter(m => !m.is_read && !hiddenFromClean(m)).length
+  , [messages, hiddenFromClean, langNonce]);
 
   const handleSync = async () => {
     await syncInbox();
@@ -1698,9 +1688,9 @@ export default function Unibox() {
             <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
               <InboxIcon className="mr-1.5 h-3.5 w-3.5" /> {messages.length} totales
             </Badge>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}>
+            <Button variant="default" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}>
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-              {isMobile ? "Sync" : syncing ? "Sincronizando…" : "Sincronizar"}
+              {syncing ? "Conectando…" : "Conectar cuentas"}
             </Button>
             {!isMobile && (
               <Button
@@ -1716,6 +1706,16 @@ export default function Unibox() {
             )}
           </div>
         </div>
+        {syncing && (
+          <div className="mt-2.5">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin text-primary" /> Conectando cada cuenta y trayendo mensajes en español…
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-primary/40 via-primary to-primary/40" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tabs: Global / Campaigns */}
@@ -1778,24 +1778,6 @@ export default function Unibox() {
           <Clock className="h-3 w-3" />
           Hoy
         </button>
-        <button
-          onClick={() => setShowWarmup(v => !v)}
-          title="Mostrar/ocultar los mensajes filtrados como warmup"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
-            showWarmup
-              ? "bg-orange-500 text-white shadow-sm"
-              : "bg-muted text-muted-foreground hover:bg-muted/80"
-          }`}
-        >
-          🔥 {showWarmup ? "Ocultar warmup" : "Mostrar warmup"}
-        </button>
-        <button
-          onClick={handleRefilterLanguage}
-          title="Reaplicar el filtro de idioma a los mensajes descargados"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap bg-muted text-muted-foreground hover:bg-muted/80"
-        >
-          🌐 Re-filtrar idioma
-        </button>
         <span className="w-px h-4 bg-border mx-0.5 flex-shrink-0" />
         {filterButtons.map(fb => (
           <button
@@ -1822,7 +1804,7 @@ export default function Unibox() {
           <h3 className="font-display font-semibold mb-2">Bandeja vacía</h3>
           <p className="text-sm text-muted-foreground mb-4">Sincroniza para traer mensajes de tus cuentas.</p>
           <Button onClick={handleSync} disabled={syncing} size="sm" className="gap-2">
-            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> Sincronizar
+            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Conectando…" : "Conectar cuentas"}
           </Button>
         </div>
       ) : (
