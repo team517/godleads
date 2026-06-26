@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -903,6 +903,12 @@ export default function Unibox() {
   const [aiPrompts, setAiPrompts] = useState<any[]>([]);
   const [accountsMap, setAccountsMap] = useState<Record<string, string[]>>({});
   const [reminders, setReminders] = useState<Record<string, any>>({});
+  const [reminderBody, setReminderBody] = useState("");
+  const [folders, setFolders] = useState<any[]>([]);
+  const [folderFilter, setFolderFilter] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState("#6366f1");
+  const [folderPopoverOpen, setFolderPopoverOpen] = useState(false);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
@@ -1103,13 +1109,15 @@ export default function Unibox() {
   useEffect(() => {
     if (!user) return;
     const loadAI = async () => {
-      const [{ data: prompts }, { data: accounts }, { data: campaignsData }] = await Promise.all([
+      const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
         supabase.from("email_accounts").select("id, email, tags").eq("user_id", user.id),
         supabase.from("campaigns").select("id, name").eq("user_id", user.id).order("name"),
+        (supabase as any).from("unibox_folders").select("*").eq("user_id", user.id).order("created_at"),
       ]);
       setAiPrompts(prompts || []);
       setCampaigns(campaignsData || []);
+      setFolders(foldersData || []);
       const map: Record<string, string[]> = {};
       // tcx = accounts EXPLICITLY tagged "tcx" (international → allow any language).
       // Opt-in only: a tag exactly equal to "tcx". We deliberately do NOT infer it
@@ -1357,6 +1365,7 @@ export default function Unibox() {
         return true;
       })
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
+      .filter(m => !folderFilter || m.folder_id === folderFilter)
       .filter(m => categoryFilter === "all" || classifyMessage(m.subject, m.body_text) === categoryFilter)
       .filter(m =>
         !search ||
@@ -1372,7 +1381,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce]);
+  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -1445,14 +1454,23 @@ export default function Unibox() {
 
   const handleSetReminder = async (messageId: string, remindAt: Date) => {
     if (!user) return;
+    const msg = messages.find((m) => m.id === messageId);
     // Upsert: remove existing reminder for this message first
     await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
     await supabase.from("message_reminders").insert({
       user_id: user.id,
       message_id: messageId,
       remind_at: remindAt.toISOString(),
-    });
+      scheduled_at: remindAt.toISOString(),
+      status: "pending",
+      recipient: msg?.from_email ? String(msg.from_email).toLowerCase() : null,
+      original_subject: msg ? decodeSubject(msg.subject) : null,
+      original_message_id: msg?.message_id || null,
+      original_references: msg?.ref_chain || msg?.message_id || null,
+      reminder_body: reminderBody.trim() || null,
+    } as any);
     toast.success(`Recordatorio: ${format(remindAt, "d MMM yyyy", { locale: es })}`);
+    setReminderBody("");
     loadReminders();
   };
 
@@ -1461,6 +1479,27 @@ export default function Unibox() {
     await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
     toast.success("Recordatorio eliminado");
     loadReminders();
+  };
+
+  const createFolder = async (name: string, color: string) => {
+    if (!user || !name.trim()) return;
+    const { data, error } = await (supabase as any)
+      .from("unibox_folders")
+      .insert({ user_id: user.id, name: name.trim(), color: color || "#6366f1" })
+      .select("*")
+      .single();
+    if (error) { toast.error(error.message); return; }
+    setFolders((prev) => [...prev, data]);
+    setNewFolderName("");
+    setFolderPopoverOpen(false);
+    toast.success(`Carpeta "${data.name}" creada`);
+  };
+
+  const moveToFolder = async (messageId: string, folderId: string | null) => {
+    const { error } = await (supabase as any).from("inbox_messages").update({ folder_id: folderId }).eq("id", messageId);
+    if (error) { toast.error(error.message); return; }
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, folder_id: folderId } : m)));
+    toast.success(folderId ? "Movido a la carpeta" : "Quitado de la carpeta");
   };
 
 
@@ -1798,6 +1837,59 @@ export default function Unibox() {
         ))}
       </div>
 
+      {/* Folder chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border/60 bg-card px-3 py-2 no-scrollbar">
+        <button
+          onClick={() => setFolderFilter(null)}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+            folderFilter === null ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted text-muted-foreground hover:bg-muted/80"
+          }`}
+        >
+          Todas
+        </button>
+        {folders.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setFolderFilter(folderFilter === f.id ? null : f.id)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap border"
+            style={folderFilter === f.id
+              ? { backgroundColor: f.color, color: "#fff", borderColor: f.color }
+              : { backgroundColor: `${f.color}22`, color: f.color, borderColor: `${f.color}55` }}
+          >
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: f.color }} />
+            {f.name}
+          </button>
+        ))}
+        <Popover open={folderPopoverOpen} onOpenChange={setFolderPopoverOpen}>
+          <PopoverTrigger asChild>
+            <button className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-muted/80 whitespace-nowrap">
+              + Carpeta
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-60 p-3" align="start">
+            <p className="text-xs font-medium mb-2">Nueva carpeta</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={newFolderColor}
+                onChange={(e) => setNewFolderColor(e.target.value)}
+                className="h-8 w-9 rounded border border-border bg-transparent p-0.5"
+              />
+              <Input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Nombre"
+                className="h-8 text-sm"
+                onKeyDown={(e) => { if (e.key === "Enter") createFolder(newFolderName, newFolderColor); }}
+              />
+            </div>
+            <Button size="sm" className="mt-2 h-8 w-full text-xs" disabled={!newFolderName.trim()} onClick={() => createFolder(newFolderName, newFolderColor)}>
+              Crear carpeta
+            </Button>
+          </PopoverContent>
+        </Popover>
+      </div>
+
       {messages.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-card py-20">
           <InboxIcon className="h-12 w-12 text-muted-foreground/40 mb-4" />
@@ -1831,6 +1923,7 @@ export default function Unibox() {
                 const catCfg = categoryConfig[category];
                 const due = isReminderDue(msg.id);
                 const hasReminder = !!reminders[msg.id];
+                const msgFolder = msg.folder_id ? folders.find((f) => f.id === msg.folder_id) : null;
                 return (
                   <button
                     key={msg.id}
@@ -1863,6 +1956,12 @@ export default function Unibox() {
                           <p className="line-clamp-2 flex-1 text-xs leading-5 text-muted-foreground/70">
                             {cleanBodyText(msg.body_text).slice(0, 96)}
                           </p>
+                          {msgFolder && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium whitespace-nowrap rounded px-1.5 py-0.5" style={{ backgroundColor: `${msgFolder.color}22`, color: msgFolder.color }}>
+                              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: msgFolder.color }} />
+                              {msgFolder.name}
+                            </span>
+                          )}
                           {catCfg.label && (
                             <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${catCfg.text} whitespace-nowrap`}>
                               <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} />
@@ -1921,12 +2020,48 @@ export default function Unibox() {
                     <div className="flex items-center gap-0.5 flex-shrink-0">
                       <Popover>
                         <PopoverTrigger asChild>
+                          <Button variant="ghost" size="icon" className={`h-8 w-8 ${selected.folder_id ? "text-primary" : "text-muted-foreground hover:text-foreground"}`} title="Mover a carpeta">
+                            <FolderInput className="h-4 w-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-52 p-2" align="end">
+                          <p className="text-xs font-medium mb-2 px-1">Mover a carpeta…</p>
+                          {folders.length === 0 && (
+                            <p className="px-2 py-1 text-xs text-muted-foreground">Crea una carpeta primero</p>
+                          )}
+                          {folders.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => moveToFolder(selected.id, f.id)}
+                              className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm hover:bg-muted transition-colors ${selected.folder_id === f.id ? "bg-muted" : ""}`}
+                            >
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: f.color }} /> {f.name}
+                            </button>
+                          ))}
+                          {selected.folder_id && (
+                            <>
+                              <div className="border-t my-1" />
+                              <button onClick={() => moveToFolder(selected.id, null)} className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm text-destructive hover:bg-destructive/10 transition-colors">
+                                <X className="h-3.5 w-3.5" /> Quitar de la carpeta
+                              </button>
+                            </>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                      <Popover>
+                        <PopoverTrigger asChild>
                           <Button variant="ghost" size="icon" className={`h-8 w-8 ${reminders[selected.id] ? "text-amber-500" : "text-muted-foreground hover:text-foreground"}`} title="Recordatorio">
                             <Bell className="h-4 w-4" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-52 p-2" align="end">
+                        <PopoverContent className="w-64 p-2" align="end">
                           <p className="text-xs font-medium mb-2 px-1">Recordar en…</p>
+                          <Textarea
+                            value={reminderBody}
+                            onChange={(e) => setReminderBody(e.target.value)}
+                            placeholder="Mensaje del recordatorio (opcional; se envía como Re:)"
+                            className="mb-2 h-16 text-xs"
+                          />
                           {[
                             { label: "Mañana", date: startOfTomorrow() },
                             { label: "2 días", date: addDays(new Date(), 2) },

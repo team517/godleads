@@ -408,8 +408,12 @@ serve(async (req) => {
       }
     }
 
-    const requestedOffset = Number.isFinite(Number(body.offset)) ? Math.max(0, Number(body.offset)) : 0;
-    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 100);
+    const offsetProvided = Number.isFinite(Number(body.offset));
+    const requestedOffset = offsetProvided ? Math.max(0, Number(body.offset)) : 0;
+    // Cron (anon, no user) runs as ONE invocation. With many connected accounts and
+    // Spam/Junk scanning, a large batch exceeds the edge worker's CPU/memory budget,
+    // so keep it small and rotate the window across minute-runs (see effectiveOffset).
+    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 12);
     const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(50, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 50);
 
     let accounts: any[] = [];
@@ -438,20 +442,23 @@ serve(async (req) => {
         totalAccounts = count || 0;
       }
     } else {
-      const [{ data }, { count }] = await Promise.all([
-        adminClient
-          .from("email_accounts")
-          .select("*")
-          .eq("status", "connected")
-          .order("id", { ascending: true })
-          .range(requestedOffset, requestedOffset + requestedBatchSize - 1),
-        adminClient
-          .from("email_accounts")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "connected"),
-      ]);
-      accounts = data || [];
+      // Cron path: count first, then rotate the window by the clock so every account
+      // gets synced over successive minute-runs without overloading a single call.
+      const { count } = await adminClient
+        .from("email_accounts")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "connected");
       totalAccounts = count || 0;
+      const effectiveOffset = offsetProvided
+        ? requestedOffset
+        : (totalAccounts > 0 ? (Math.floor(Date.now() / 60000) * requestedBatchSize) % totalAccounts : 0);
+      const { data } = await adminClient
+        .from("email_accounts")
+        .select("*")
+        .eq("status", "connected")
+        .order("id", { ascending: true })
+        .range(effectiveOffset, effectiveOffset + requestedBatchSize - 1);
+      accounts = data || [];
     }
 
     let totalNew = 0;
