@@ -197,7 +197,7 @@ export default function CampaignOptions({ campaignId }: Props) {
     const load = async () => {
       if (!user) return;
       const [accRes, caRes, campRes, stepsRes, tagsRes] = await Promise.all([
-        supabase.from("email_accounts").select("id, email, status, tags").eq("user_id", user.id).eq("status", "connected"),
+        supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id).eq("status", "connected"),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
@@ -345,6 +345,31 @@ export default function CampaignOptions({ campaignId }: Props) {
     return { days, eff: slowRampMax + days * slowRampIncrement };
   })();
 
+  // Accounts actually used by this campaign (selected directly or via tag).
+  const usedAccounts = useMemo(
+    () => accounts.filter((a: any) => selectedAccounts.includes(a.id) || tagAccountIds.has(a.id)),
+    [accounts, selectedAccounts, tagAccountIds],
+  );
+
+  // Effective daily limit per account = smallest of account daily_limit, account slow
+  // ramp, and campaign slow ramp. Mirrors process-campaign-queue.getEffectiveLimit.
+  const HARD_DAILY_CAP = 30;
+  const effLimitFor = (acc: any) => {
+    let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+    let accRampDay: number | null = null;
+    if (acc.warmup_enabled && acc.warmup_started_at) {
+      const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
+      const inc = acc.warmup_increment || 2;
+      const target = acc.warmup_limit || limit;
+      accRampDay = days + 1;
+      limit = Math.min(limit, Math.min((days + 1) * inc, target));
+    }
+    if (rampInfo) limit = Math.min(limit, rampInfo.eff);
+    return { limit, accRampDay };
+  };
+  const sentTodayTotal = usedAccounts.reduce((s: number, a: any) => s + (a.sent_today || 0), 0);
+  const capacityToday = usedAccounts.reduce((s: number, a: any) => s + effLimitFor(a).limit, 0);
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24">
 
@@ -391,6 +416,48 @@ export default function CampaignOptions({ campaignId }: Props) {
             </div>
           )}
         </Row>
+      </Section>
+
+      {/* ── PROGRESO DE ENVÍO ── */}
+      <Section label="Progreso de envío (hoy)">
+        <div className="space-y-3 px-1 py-1">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Enviado hoy</span>
+            <span className="font-semibold">{sentTodayTotal} <span className="text-xs font-normal text-muted-foreground">/ {capacityToday} capacidad hoy</span></span>
+          </div>
+          {usedAccounts.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Selecciona cuentas abajo para ver el reparto y el slow ramp por cuenta.</p>
+          ) : (
+            <div className="max-h-72 space-y-2.5 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
+              {usedAccounts.map((acc: any) => {
+                const { limit, accRampDay } = effLimitFor(acc);
+                const pct = Math.min(((acc.sent_today || 0) / Math.max(1, limit)) * 100, 100);
+                return (
+                  <div key={acc.id} className="text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{acc.email}</span>
+                      <span className="flex flex-shrink-0 items-center gap-1.5">
+                        {acc.warmup_enabled && accRampDay && (
+                          <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-600">🐢 Día {accRampDay}</span>
+                        )}
+                        <span className="font-medium">{acc.sent_today || 0}/{limit}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-muted">
+                      <div className="h-1.5 rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {rampInfo && (
+            <p className="text-[11px] text-muted-foreground">
+              <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600" />
+              Slow ramp de campaña: día {rampInfo.days + 1} → {rampInfo.eff} emails/cuenta.
+            </p>
+          )}
+        </div>
       </Section>
 
       {/* ── CUENTAS DE ENVÍO ── */}
