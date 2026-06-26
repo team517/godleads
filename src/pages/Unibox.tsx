@@ -129,6 +129,33 @@ function extractAttachmentNames(raw: string | null): string[] {
   return Array.from(names);
 }
 
+// Markers where the QUOTED previous message begins. We cut here so only the new
+// reply shows (like Gmail/Outlook collapse the quote). Catalan/Spanish/English/etc.
+const QUOTE_MARKERS: RegExp[] = [
+  /(^|\n)\s*Missatge de\b[\s\S]{0,180}?a les\s+\d{1,2}[:.]\d{2}\s*:/i,        // CA "Missatge de … a les 22:18:"
+  /(^|\n)\s*(El|On|Le|Em|Il|Am)\b[\s\S]{0,160}?(escri(b|v)i[óo]|wrote|a écrit|escreveu|ha scritto|va escriure|schrieb)[^\n]{0,40}:/i, // "El … escribió:" / "On … wrote:"
+  /(^|\n)\s*-{2,}\s*(Original Message|Mensaje original|Missatge original|Forwarded message)\s*-{2,}/i,
+  /(^|\n)\s*(De|From|Von|Da)\s*:\s*.+\n\s*(Enviado|Sent|Date|Fecha|Data|Datum)\s*:/i,
+  /<blockquote/i,
+  /class=["']?gmail_quote/i,
+  /(^|\n)\s*>{1,}\s?\S/,                                                       // "> quoted line"
+];
+/** Trim quoted reply chains so only the new message shows. */
+function stripQuotedReply(text: string): string {
+  if (!text) return text;
+  let cut = text.length;
+  for (const re of QUOTE_MARKERS) {
+    const m = re.exec(text);
+    if (m) {
+      // m.index points at the (^|\n) — advance past a leading newline so we keep it tidy
+      const idx = m.index + (m[0].startsWith("\n") ? 1 : 0);
+      if (idx < cut) cut = idx;
+    }
+  }
+  const trimmed = text.slice(0, cut).trim();
+  return trimmed.length >= 2 ? trimmed : text;
+}
+
 function cleanBodyText(raw: string | null): string {
   if (!raw) return "";
   // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
@@ -136,6 +163,8 @@ function cleanBodyText(raw: string | null): string {
   text = repairMojibake(text);
   // Remove attachment/PDF binary so only the real message text remains
   text = stripAttachmentJunk(text);
+  // Trim the quoted previous message so only the new reply remains
+  text = stripQuotedReply(text);
 
   // Remove IMAP artifacts
   text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
@@ -259,6 +288,11 @@ function cleanBodyHtml(raw: string | null): string {
   let html = repairMojibake(decodeBase64Body(raw));
   // Drop attachment/PDF binary that leaked into the HTML body
   html = stripAttachmentJunk(html);
+
+  // Cut the quoted reply chain (everything from the gmail/outlook quote block on)
+  // so only the new message is shown — like Gmail collapses the quote.
+  const qIdx = html.search(/<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/i);
+  if (qIdx > 30) html = html.slice(0, qIdx);
 
   // Remove MIME headers that leaked into the HTML
   html = html.replace(/^Content-Type:[^\n]+(\n\s+[^\n]+)*/gim, "");
