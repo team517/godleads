@@ -727,6 +727,25 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // ─── Global lock: only ONE queue run at a time ───
+    // Stops overlapping cron ticks from double-sending follow-ups or overshooting
+    // limits when a run takes longer than the cron interval (heavy multi-campaign load).
+    // Fail-open: if the lock RPC errors, we still run (never halt sending on infra hiccups).
+    const LOCK_NAME = "process-campaign-queue";
+    const { data: gotLock, error: lockErr } = await adminClient.rpc("acquire_job_lock", {
+      p_name: LOCK_NAME,
+      p_ttl_seconds: 600,
+    });
+    if (!lockErr && gotLock === false) {
+      return new Response(JSON.stringify({ success: true, skipped: "already_running" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const releaseLock = async () => {
+      try { await adminClient.rpc("release_job_lock", { p_name: LOCK_NAME }); } catch (_) { /* TTL will free it */ }
+    };
+
+    try {
     const { data: campaigns, error: campError } = await adminClient
       .from("campaigns")
       .select("*")
@@ -1358,6 +1377,9 @@ serve(async (req) => {
       success: true, sent: totalSent, skipped: totalSkipped,
       campaigns_processed: campaigns.length,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    } finally {
+      await releaseLock();
+    }
   } catch (e) {
     console.error("process-campaign-queue error:", e);
     return new Response(JSON.stringify({ error: e.message }), {
