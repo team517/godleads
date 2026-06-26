@@ -622,6 +622,17 @@ function isBounceOrNoise(fromEmail: string | null): boolean {
   return false;
 }
 
+// Relevance: in the clean bandeja we only want REAL replies to our outreach, not
+// random cold inbound. A message is relevant if it's linked to a lead/campaign,
+// already labelled, or its subject is a reply/forward/auto-reply.
+const REPLY_SUBJECT_RE = /^\s*(re|res|rv|aw|tr|fw|fwd)\s*[:\]]|^\s*(respuesta autom|automatic reply|out of office|fuera de (la )?oficina|ausente|absent)/i;
+function isRelevantInboxItem(m: any): boolean {
+  if (m?.lead_id || m?.campaign_id) return true;
+  const labels: string[] = Array.isArray(m?.labels) ? m.labels : [];
+  if (labels.some((l) => ["Interesado", "No interesado", "Pregunta", "Fuera / Auto"].includes(l))) return true;
+  return REPLY_SUBJECT_RE.test(decodeSubjectKeepCodes(m?.subject || ""));
+}
+
 // B) Language detection. Goal: ONLY Spanish/Catalan stays in the bandeja; English
 // (and other languages) are hidden. Returns "es" | "en" | "other" | "unknown".
 //
@@ -1285,7 +1296,8 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;            // C) bounces — always hidden
-    if (!showWarmup && isWarmupHidden(m)) return true;         // A+B unless toggle on
+    if (!showWarmup && isWarmupHidden(m)) return true;         // A+B (warmup code / foreign language)
+    if (!showWarmup && !isRelevantInboxItem(m)) return true;   // only real replies, not cold inbound
     return false;
   }, [showWarmup, isWarmupHidden]);
 
