@@ -410,14 +410,14 @@ serve(async (req) => {
 
     const offsetProvided = Number.isFinite(Number(body.offset));
     const requestedOffset = offsetProvided ? Math.max(0, Number(body.offset)) : 0;
-    // Cron (anon, no user) runs as ONE invocation. With many connected accounts and
-    // Spam/Junk scanning, a large batch exceeds the edge worker's CPU/memory budget,
-    // so keep it small and rotate the window across minute-runs (see effectiveOffset).
-    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 12);
+    // Cron (anon, no user) self-chains through all accounts in small windows (each
+    // window stays under the edge worker's CPU/memory budget). Keep the default small.
+    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 10);
     const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(50, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 50);
 
     let accounts: any[] = [];
     let totalAccounts = 0;
+    let usedOffset = requestedOffset;
     if (targetUserId) {
       if (specificAccountId) {
         const { data } = await adminClient.from("email_accounts").select("*").eq("id", specificAccountId).eq("user_id", targetUserId);
@@ -442,22 +442,22 @@ serve(async (req) => {
         totalAccounts = count || 0;
       }
     } else {
-      // Cron path: count first, then rotate the window by the clock so every account
-      // gets synced over successive minute-runs without overloading a single call.
+      // Cron path: count first, then process a small window starting at the given
+      // offset (0 for the cron tick). After finishing, this invocation chains to the
+      // NEXT window (see "self-chaining" below) so ALL accounts get synced every tick
+      // without any single call exceeding the edge worker's compute budget.
       const { count } = await adminClient
         .from("email_accounts")
         .select("id", { count: "exact", head: true })
         .eq("status", "connected");
       totalAccounts = count || 0;
-      const effectiveOffset = offsetProvided
-        ? requestedOffset
-        : (totalAccounts > 0 ? (Math.floor(Date.now() / 60000) * requestedBatchSize) % totalAccounts : 0);
+      usedOffset = offsetProvided ? requestedOffset : 0;
       const { data } = await adminClient
         .from("email_accounts")
         .select("*")
         .eq("status", "connected")
         .order("id", { ascending: true })
-        .range(effectiveOffset, effectiveOffset + requestedBatchSize - 1);
+        .range(usedOffset, usedOffset + requestedBatchSize - 1);
       accounts = data || [];
     }
 
@@ -624,10 +624,28 @@ serve(async (req) => {
       totalNew += results.reduce((a, b) => a + b, 0);
     }
 
-    const nextOffset = specificAccountId ? null : requestedOffset + accounts.length;
-    const hasMore = specificAccountId ? false : nextOffset < totalAccounts;
+    const nextOffset = specificAccountId ? null : usedOffset + accounts.length;
+    const hasMore = specificAccountId ? false : (nextOffset as number) < totalAccounts;
 
-    console.log(`fetch-inbox complete: ${accounts.length}/${totalAccounts} accounts, ${totalNew} new messages, next=${nextOffset}`);
+    console.log(`fetch-inbox complete: ${accounts.length}/${totalAccounts} accounts (offset ${usedOffset}), ${totalNew} new messages, next=${nextOffset}`);
+
+    // Self-chaining (cron only): when invoked by the cron with the anon key, keep
+    // triggering the NEXT window so EVERY connected account is synced each tick,
+    // automatically, without the client ever clicking "Sincronizar". Each link is a
+    // small batch that stays under the edge worker limit. Natural stop at the end.
+    if (!targetUserId && hasMore && (nextOffset as number) < 5000) {
+      try {
+        const selfUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/fetch-inbox`;
+        const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+        const next = fetch(selfUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${anon}` },
+          body: JSON.stringify({ offset: nextOffset, batch_size: requestedBatchSize, fetch_limit: requestedFetchLimit }),
+        }).catch(() => {});
+        const er = (globalThis as any).EdgeRuntime;
+        if (er?.waitUntil) er.waitUntil(next);
+      } catch (_) { /* best-effort chaining */ }
+    }
 
     return new Response(JSON.stringify({
       success: true,

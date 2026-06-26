@@ -1018,7 +1018,9 @@ export default function Unibox() {
     // so one bad account never aborts the sync.
     const BATCH = silent ? 4 : 5;
     const FETCH_LIMIT = silent ? 60 : 120;
-    const MAX_ROUNDS = silent ? 4 : 24;
+    // Background sync must cover ALL of the user's accounts each cycle so every
+    // Spanish/Catalan message arrives automatically (no manual "Sincronizar").
+    const MAX_ROUNDS = silent ? 40 : 40;
     const PROGRESS_ID = "unibox-sync";
 
     const callOnce = async (offset: number, batch: number) => {
@@ -1097,9 +1099,8 @@ export default function Unibox() {
   const autoSync = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     const now = Date.now();
-    // Throttle to ~75s so the IMAP sync runs roughly every 1–2 minutes
-    // (the interval below fires every 60s; this guards against overlap/bursts).
-    if (now - lastAutoSyncAttemptRef.current < 75_000) return;
+    // Throttle to ~50s so the background IMAP sync runs about once a minute.
+    if (now - lastAutoSyncAttemptRef.current < 50_000) return;
     lastAutoSyncAttemptRef.current = now;
     await syncInbox({ silent: true });
   }, [syncInbox]);
@@ -1253,9 +1254,9 @@ export default function Unibox() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [load]);
 
-  // Auto-sync IMAP every 90 seconds (≈ 1–2 min as requested)
+  // Auto-sync IMAP every 60 seconds (no manual "Sincronizar" needed)
   useEffect(() => {
-    syncIntervalRef.current = setInterval(() => { autoSync(); }, 90_000);
+    syncIntervalRef.current = setInterval(() => { autoSync(); }, 60_000);
     return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
   }, [autoSync]);
 
