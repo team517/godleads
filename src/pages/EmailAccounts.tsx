@@ -172,6 +172,54 @@ export default function EmailAccounts() {
     checkDomainAuth(d);
   };
 
+  // ── Live IMAP connection check (real login test via verify-email-connection) ──
+  type ImapCheck = { loading: boolean; ok?: boolean; error?: string };
+  const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>({});
+  const requestedImapRef = useRef<Set<string>>(new Set());
+
+  const checkImap = useCallback(async (accountId: string) => {
+    setImapChecks(prev => ({ ...prev, [accountId]: { ...(prev[accountId] || {}), loading: true } }));
+    try {
+      const { data, error } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
+      const r = data as any;
+      if (error || !r || r.error) {
+        setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: false, error: (r?.error || "no verificado") } }));
+        return;
+      }
+      setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: !!r.imap?.ok, error: r.imap?.error } }));
+    } catch (e: any) {
+      setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: false, error: e?.message } }));
+    }
+  }, []);
+
+  // Trust accounts verified in the last 30 min (show green from stored result);
+  // only run a fresh live IMAP login for stale/unverified ones (max 2 at a time).
+  useEffect(() => {
+    const now = Date.now();
+    const RECENT = 30 * 60 * 1000;
+    const toVerify: string[] = [];
+    const seed: Record<string, ImapCheck> = {};
+    for (const a of accounts) {
+      if (requestedImapRef.current.has(a.id)) continue;
+      requestedImapRef.current.add(a.id);
+      const lhc = a.last_health_check ? new Date(a.last_health_check).getTime() : 0;
+      if (a.status === "connected" && lhc && now - lhc < RECENT) seed[a.id] = { loading: false, ok: true };
+      else toVerify.push(a.id);
+    }
+    if (Object.keys(seed).length) setImapChecks(prev => ({ ...prev, ...seed }));
+    if (toVerify.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const CONC = 2;
+      for (let i = 0; i < toVerify.length && !cancelled; i += CONC) {
+        await Promise.all(toVerify.slice(i, i + CONC).map((id: string) => checkImap(id)));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [accounts, checkImap]);
+
+  const recheckImap = (accountId: string) => { requestedImapRef.current.add(accountId); checkImap(accountId); };
+
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
     savedTags.forEach(t => tagSet.add(t.name));
@@ -1137,12 +1185,24 @@ export default function EmailAccounts() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {account.status === "connected" ? (
-                      <span className="flex items-center gap-1 text-xs font-medium text-success"><CheckCircle className="h-3.5 w-3.5" /> Conectada</span>
-                    ) : account.status === "error" ? (
+                    {/* Real IMAP connection status (live login test) */}
+                    {(() => {
+                      const ic = imapChecks[account.id];
+                      if (!ic || ic.loading) {
+                        return <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> IMAP…</span>;
+                      }
+                      if (ic.ok) {
+                        return <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600"><CheckCircle className="h-3 w-3" /> IMAP conectado</span>;
+                      }
+                      return (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600" title={ic.error || "Fallo de conexión IMAP"}>
+                          <XCircle className="h-3 w-3" /> IMAP sin conexión
+                          <button onClick={() => recheckImap(account.id)} className="ml-1 underline decoration-dotted">reintentar</button>
+                        </span>
+                      );
+                    })()}
+                    {account.status === "error" && (
                       <span className="flex items-center gap-1 text-xs font-medium text-destructive"><XCircle className="h-3.5 w-3.5" /> Error</span>
-                    ) : (
-                      <span className="text-xs font-medium text-warning">Pendiente</span>
                     )}
                   </div>
                 </div>
