@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check } from "lucide-react";
+import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
@@ -22,6 +22,31 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   const [shareEmail, setShareEmail] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const analyticsRef = useRef<HTMLDivElement>(null);
+
+  // ── Report branding (logo + color + company) — saved in the browser ──
+  const BRAND_KEY = "onepulso_report_branding";
+  type Branding = { logo: string | null; color: string; company: string };
+  const [branding, setBranding] = useState<Branding>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BRAND_KEY) || "null");
+      if (saved && typeof saved === "object") return { logo: saved.logo ?? null, color: saved.color || "#4F46E5", company: saved.company || "" };
+    } catch { /* ignore */ }
+    return { logo: null, color: "#4F46E5", company: "" };
+  });
+  const [brandOpen, setBrandOpen] = useState(false);
+  const saveBranding = (b: Branding) => { setBranding(b); try { localStorage.setItem(BRAND_KEY, JSON.stringify(b)); } catch { /* quota */ } };
+  const onLogoFile = (file: File) => {
+    if (file.size > 2_000_000) { toast.error("El logo es muy grande (máx 2 MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => saveBranding({ ...branding, logo: String(reader.result) });
+    reader.readAsDataURL(file);
+  };
+  const hexToRgb = (hex: string): [number, number, number] => {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+    if (!m) return [79, 70, 229];
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -73,19 +98,43 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       const pdf = new jsPDF("landscape", "mm", "a4");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
+      const [br, bg, bb] = hexToRgb(branding.color);
 
-      // Title
+      // Branded top accent bar
+      pdf.setFillColor(br, bg, bb);
+      pdf.rect(0, 0, pageWidth, 5, "F");
+
+      // Logo (keeps aspect ratio, max 14mm tall)
+      let headerY = 18;
+      if (branding.logo) {
+        try {
+          const img = new Image();
+          img.src = branding.logo;
+          await new Promise((res) => { img.onload = res; img.onerror = res; });
+          const ratio = img.width && img.height ? img.width / img.height : 3;
+          const h = 14;
+          const w = Math.min(h * ratio, 60);
+          const fmt = branding.logo.includes("image/png") ? "PNG" : branding.logo.includes("image/jpeg") || branding.logo.includes("image/jpg") ? "JPEG" : "PNG";
+          pdf.addImage(branding.logo, fmt, 14, 9, w, h);
+          headerY = 9 + h + 7;
+        } catch { /* skip logo on error */ }
+      }
+
+      // Title in brand color + company / date
       pdf.setFontSize(18);
-      pdf.text(`Analytics — ${campaignName}`, 14, 20);
+      pdf.setTextColor(br, bg, bb);
+      pdf.text(`Analytics — ${campaignName}`, 14, headerY);
       pdf.setFontSize(10);
       pdf.setTextColor(120);
-      pdf.text(`Generado el ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`, 14, 28);
+      const meta = `${branding.company ? branding.company + " · " : ""}Generado el ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+      pdf.text(meta, 14, headerY + 7);
 
       // Image
+      const topOffset = headerY + 13;
       const imgWidth = pageWidth - 28;
       const imgHeight = (imgWidth * analyticsRef.current!.offsetHeight) / analyticsRef.current!.offsetWidth;
-      const finalHeight = Math.min(imgHeight, pageHeight - 40);
-      pdf.addImage(imgData, "PNG", 14, 35, imgWidth, finalHeight);
+      const finalHeight = Math.min(imgHeight, pageHeight - topOffset - 8);
+      pdf.addImage(imgData, "PNG", 14, topOffset, imgWidth, finalHeight);
 
       pdf.save(`analytics-${campaignName.replace(/\s+/g, "-").toLowerCase()}.pdf`);
       toast.success("PDF descargado");
@@ -212,6 +261,51 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           </h3>
         </div>
         <div className="flex items-center gap-2">
+          <Popover open={brandOpen} onOpenChange={setBrandOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+                <Palette className="h-3.5 w-3.5" style={{ color: branding.color }} />
+                Branding
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 space-y-3 p-3" align="end">
+              <p className="text-xs font-medium">Marca del informe</p>
+              {/* Logo */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-muted-foreground">Logo</label>
+                <div className="flex items-center gap-2">
+                  {branding.logo && (
+                    <div className="flex items-center gap-1">
+                      <img src={branding.logo} alt="logo" className="h-9 max-w-[90px] rounded border border-border/60 object-contain" />
+                      <button onClick={() => saveBranding({ ...branding, logo: null })} className="text-muted-foreground hover:text-destructive" title="Quitar logo">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) onLogoFile(f); }}
+                    className="text-[11px] file:mr-2 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-[11px]"
+                  />
+                </div>
+              </div>
+              {/* Color */}
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-muted-foreground">Color de marca</label>
+                <div className="flex items-center gap-2">
+                  <input type="color" value={branding.color} onChange={(e) => saveBranding({ ...branding, color: e.target.value })} className="h-7 w-9 cursor-pointer rounded border border-border/60 bg-transparent p-0" />
+                  <span className="text-[11px] text-muted-foreground">{branding.color}</span>
+                </div>
+              </div>
+              {/* Company name */}
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground">Nombre de empresa</label>
+                <Input value={branding.company} onChange={(e) => saveBranding({ ...branding, company: e.target.value })} placeholder="Tu empresa" className="h-8 text-sm" />
+              </div>
+              <p className="text-[10px] text-muted-foreground">Se guarda automáticamente y se aplica al PDF descargado.</p>
+            </PopoverContent>
+          </Popover>
           <Button
             variant="outline"
             size="sm"
