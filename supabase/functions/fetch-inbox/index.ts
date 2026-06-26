@@ -215,6 +215,23 @@ function isAutomatedSender(email: string): boolean {
   return patterns.some(p => p.test(email));
 }
 
+// Only store Spanish/Catalan messages — drop English/other warm-up at import time
+// so the inbox doesn't fill with 10k+ foreign warm-up emails.
+const LANG_ES_CA = /\b(el|la|los|las|del|que|qué|por|para|con|como|pero|porque|cuando|donde|gracias|hola|saludos|cordial|atentamente|estimad[oa]s?|señor|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|quiero|queremos|podemos|tenemos|estamos|somos|también|según|sólo|solo|vale|claro|perfecto|encantad[oa]|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|també|molt|més|sense|fins|bon\s?dia|d'acord)\b/gi;
+const LANG_EN = /\b(the|and|you|your|for|with|this|that|have|has|are|was|will|would|could|should|is|of|to|in|on|at|as|be|by|from|but|not|can|just|get|know|thanks|thank|regards|best|hi|hello|hey|dear|please|we|our|company|meeting|interested|need|want|team|cheers|sincerely|looking|forward|kind)\b/gi;
+function isForeignMessage(subject: string, body: string): boolean {
+  const t = `${subject} ${body}`.toLowerCase();
+  const wordCount = (t.match(/[a-záéíóúñçüàèòï]{2,}/gi) || []).length;
+  if (wordCount < 5) return false;                   // too short to judge → keep
+  const es = (t.match(LANG_ES_CA) || []).length;
+  const en = (t.match(LANG_EN) || []).length;
+  const esChars = /[ñ¿¡]|·l|ç/.test(t) || /[áéíóú]/.test(t) ? 1 : 0;
+  const esScore = es + esChars * 2;
+  if (esScore > 0 && esScore >= en) return false;    // Spanish/Catalan → keep
+  if (en > 0) return true;                            // clearly English → drop
+  return false;                                      // ambiguous → keep
+}
+
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50
 ): Promise<{ ok: boolean; messages: ImapMessage[]; error?: string }> {
@@ -459,6 +476,14 @@ serve(async (req) => {
         }
 
         console.log(`Fetched ${result.messages.length} messages from ${account.email}`);
+
+        // Keep only Spanish/Catalan — drop English/other warm-up before storing.
+        const beforeLang = result.messages.length;
+        result.messages = result.messages.filter(m => !isForeignMessage(m.subject || "", m.body_text || ""));
+        if (beforeLang !== result.messages.length) {
+          console.log(`Language filter ${account.email}: kept ${result.messages.length}/${beforeLang} (ES/CA only)`);
+        }
+        if (result.messages.length === 0) return 0;
 
         // Batch lead lookup: get all unique from_emails at once
         const fromEmails = [...new Set(result.messages.map(m => m.from_email.toLowerCase()))];
