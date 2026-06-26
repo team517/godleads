@@ -456,6 +456,19 @@ export default function EmailAccounts() {
     reader.readAsText(file);
   };
 
+  /** Pull a single mailbox into the Unibox right away (IMAP fetch for one account). */
+  const syncAccountInbox = async (accountId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-inbox`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ account_id: accountId }),
+      });
+    } catch { /* background — ignore errors */ }
+  };
+
   const handleVerify = async (accountId: string) => {
     setVerifying(accountId);
     try {
@@ -464,7 +477,9 @@ export default function EmailAccounts() {
       });
       if (fnError) throw fnError;
       if (result.status === "connected") {
-        toast.success("✅ Conexión SMTP e IMAP verificada correctamente");
+        toast.success("✅ Conexión verificada — sincronizando bandeja…");
+        // As soon as the mailbox connects, pull its inbox into the Unibox.
+        syncAccountInbox(accountId);
       } else {
         toast.error(`Error de conexión: ${result.smtp?.error || result.imap?.error || "Error desconocido"}`);
       }

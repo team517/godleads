@@ -929,42 +929,13 @@ export default function Unibox() {
 
   const load = useCallback(async () => {
     if (!user) return;
-    // ⚡ Instantly-style filter: only "real" inbox items.
-    // We pull only messages that are:
-    //   - linked to a known lead OR campaign (replies to our outreach), OR
-    //   - already classified by the AI (Interesado / No interesado / Pregunta / Fuera-Auto), OR
-    //   - obvious replies/forwards (Re:/RE:/Fw:/Fwd:/Rv:/Aw:/Tr:/Res:)
-    // This skips the 60k+ warm-up garbage and "first contact" cold mails to our address.
+    // Load ALL non-archived messages for this user. Visibility (warmup codes /
+    // foreign language / bounces) is decided CLIENT-SIDE by the filters + the
+    // "Mostrar warmup" toggle — so a real message is never hidden just because it
+    // isn't a "Re:" or isn't linked to a lead yet. (Was an over-strict server filter
+    // that hid first-contact replies and made the bandeja look empty.)
     const allRows: any[] = [];
     const pageSize = 1000;
-    const filterOr = [
-      "campaign_id.not.is.null",
-      "lead_id.not.is.null",
-      "labels.cs.{Interesado}",
-      "labels.cs.{\"No interesado\"}",
-      "labels.cs.{Pregunta}",
-      "labels.cs.{\"Fuera / Auto\"}",
-      "subject.ilike.Re:%",
-      "subject.ilike.RE:%",
-      "subject.ilike.Re %",
-      "subject.ilike.Fw:%",
-      "subject.ilike.FW:%",
-      "subject.ilike.Fwd:%",
-      "subject.ilike.FWD:%",
-      "subject.ilike.Rv:%",
-      "subject.ilike.RV:%",
-      "subject.ilike.Aw:%",
-      "subject.ilike.AW:%",
-      "subject.ilike.Tr:%",
-      "subject.ilike.TR:%",
-      "subject.ilike.Res:%",
-      "subject.ilike.RES:%",
-      "subject.ilike.Respuesta automática%",
-      "subject.ilike.Automatic reply%",
-      "subject.ilike.Out of office%",
-      "subject.ilike.ABSENT%",
-      "subject.ilike.AUSENTE%",
-    ].join(",");
 
     for (let from = 0; from < 10000; from += pageSize) {
       const { data: page, error } = await supabase
@@ -972,7 +943,6 @@ export default function Unibox() {
         .select("*")
         .eq("user_id", user.id)
         .eq("is_archived", false)
-        .or(filterOr)
         .order("received_at", { ascending: false })
         .range(from, from + pageSize - 1);
       if (error) break;
