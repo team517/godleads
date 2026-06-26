@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split } from "lucide-react";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -129,6 +129,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [signatureHtml, setSignatureHtml] = useState("");
   const [showSignaturePreview, setShowSignaturePreview] = useState(false);
   const [breakThreadAfter, setBreakThreadAfter] = useState(0);
+  const [accountsExpanded, setAccountsExpanded] = useState(false);
   const handleCrossCampaignDedup = async () => {
     if (!user) return;
     setDeduping(true);
@@ -409,9 +410,15 @@ export default function CampaignOptions({ campaignId }: Props) {
         )}
         <Row icon={<Mail className="h-4 w-4" />} tint="primary" title="Cuentas individuales"
           desc={accounts.length === 0 ? "No hay cuentas conectadas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña."}
-          badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{totalAccountsUsed} en uso</Badge> : undefined}>
-          {accounts.length > 0 && (
-            <div className="space-y-2">
+          badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{totalAccountsUsed} en uso</Badge> : undefined}
+          control={accounts.length > 0 ? (
+            <button type="button" onClick={() => setAccountsExpanded(v => !v)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
+              {accountsExpanded ? "Ocultar" : `Ver ${accounts.length}`}
+              <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${accountsExpanded ? "rotate-180" : ""}`} />
+            </button>
+          ) : undefined}>
+          {accounts.length > 0 && accountsExpanded && (
+            <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
               {accounts.map(acc => {
                 const fromTag = tagAccountIds.has(acc.id);
                 const isChecked = selectedAccounts.includes(acc.id) || fromTag;
@@ -420,7 +427,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                     <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
                     <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
                     {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">vía tag</Badge>}
-                    {(acc.tags || []).length > 0 && <span className="ml-auto text-[10px] text-muted-foreground">{(acc.tags || []).join(", ")}</span>}
+                    {(acc.tags || []).length > 0 && <span className="ml-auto truncate text-[10px] text-muted-foreground">{(acc.tags || []).join(", ")}</span>}
                   </label>
                 );
               })}
