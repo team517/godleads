@@ -103,6 +103,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [stopOnReply, setStopOnReply] = useState(true);
   const [dailyLimit, setDailyLimit] = useState(50);
   const [saved, setSaved] = useState(true);
+  const [savedTags, setSavedTags] = useState<string[]>([]);
   const [slowRampEnabled, setSlowRampEnabled] = useState(false);
   const [slowRampMax, setSlowRampMax] = useState(2);
   const [slowRampIncrement, setSlowRampIncrement] = useState(2);
@@ -174,9 +175,10 @@ export default function CampaignOptions({ campaignId }: Props) {
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
+    savedTags.forEach((t) => tags.add(t));               // tags creados en Cuentas de email
     accounts.forEach(a => (a.tags || []).forEach((t: string) => tags.add(t)));
     return Array.from(tags).sort();
-  }, [accounts]);
+  }, [accounts, savedTags]);
 
   const tagAccountIds = useMemo(() => {
     const ids = new Set<string>();
@@ -194,12 +196,14 @@ export default function CampaignOptions({ campaignId }: Props) {
   useEffect(() => {
     const load = async () => {
       if (!user) return;
-      const [accRes, caRes, campRes, stepsRes] = await Promise.all([
+      const [accRes, caRes, campRes, stepsRes, tagsRes] = await Promise.all([
         supabase.from("email_accounts").select("id, email, status, tags").eq("user_id", user.id).eq("status", "connected"),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
+        supabase.from("email_tags").select("name").eq("user_id", user.id).order("name"),
       ]);
+      setSavedTags((tagsRes.data || []).map((t: any) => t.name));
       setAccounts(accRes.data || []);
       setSelectedAccounts((caRes.data || []).map((r: any) => r.account_id));
       const steps = stepsRes.data || [];
@@ -391,23 +395,33 @@ export default function CampaignOptions({ campaignId }: Props) {
 
       {/* ── CUENTAS DE ENVÍO ── */}
       <Section label="Cuentas de envío">
-        {allTags.length > 0 && (
-          <Row icon={<Tag className="h-4 w-4" />} tint="blue" title="Tags de cuentas"
-            desc="Incluye automáticamente todas las cuentas que tengan ese tag.">
-            <div className="flex flex-wrap gap-2">
-              {allTags.map(tag => {
-                const count = accounts.filter(a => (a.tags || []).includes(tag)).length;
-                const isSelected = selectedTags.includes(tag);
-                return (
-                  <button key={tag} onClick={() => toggleTag(tag)}
-                    className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${isSelected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-muted"}`}>
-                    {tag} ({count})
-                  </button>
-                );
-              })}
-            </div>
-          </Row>
-        )}
+        <Row icon={<Tag className="h-4 w-4" />} tint="blue" title="Seleccionar por tag"
+          desc="Selecciona un tag e incluye automáticamente todas las cuentas que lo tengan.">
+          <div className="space-y-2">
+            {allTags.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Aún no tienes tags. Créalos y asígnalos a tus cuentas en <span className="font-medium text-foreground">Cuentas de email</span>.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {allTags.map(tag => {
+                  const count = accounts.filter(a => (a.tags || []).includes(tag)).length;
+                  const isSelected = selectedTags.includes(tag);
+                  return (
+                    <button key={tag} onClick={() => toggleTag(tag)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${isSelected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                      {tag} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {selectedTags.some(t => accounts.filter(a => (a.tags || []).includes(t)).length === 0) && (
+              <p className="text-[11px] text-amber-600">
+                ⚠ Ese tag no está asignado a ninguna cuenta todavía. Asígnalo a tus cuentas en <span className="font-medium">Cuentas de email</span> (puedes hacerlo en bloque) para que se incluyan aquí.
+              </p>
+            )}
+          </div>
+        </Row>
+
         <Row icon={<Mail className="h-4 w-4" />} tint="primary" title="Cuentas individuales"
           desc={accounts.length === 0 ? "No hay cuentas conectadas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña."}
           badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{totalAccountsUsed} en uso</Badge> : undefined}
