@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature } from "lucide-react";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -25,6 +25,75 @@ import {
 } from "@/components/ui/tooltip";
 
 interface Props { campaignId: string; }
+
+/* ── Smartlead-style design primitives ─────────────────────────── */
+
+/** Uppercase section label + a card that divides its rows cleanly. */
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A single option row: icon badge + title/description on the left, control on the right. */
+function Row({
+  icon, tint = "primary", title, desc, badge, control, children, className = "",
+}: {
+  icon?: React.ReactNode; tint?: "primary" | "emerald" | "amber" | "violet" | "blue" | "rose";
+  title: string; desc?: React.ReactNode; badge?: React.ReactNode; control?: React.ReactNode;
+  children?: React.ReactNode; className?: string;
+}) {
+  const tints: Record<string, string> = {
+    primary: "bg-primary/10 text-primary",
+    emerald: "bg-emerald-500/10 text-emerald-600",
+    amber: "bg-amber-500/10 text-amber-600",
+    violet: "bg-violet-500/10 text-violet-600",
+    blue: "bg-blue-500/10 text-blue-600",
+    rose: "bg-rose-500/10 text-rose-600",
+  };
+  return (
+    <div className={`px-4 py-3.5 ${className}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          {icon && <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tints[tint]}`}>{icon}</span>}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-medium text-foreground">{title}</p>
+              {badge}
+            </div>
+            {desc && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>}
+          </div>
+        </div>
+        {control && <div className="shrink-0">{control}</div>}
+      </div>
+      {children && <div className="mt-3 pl-11">{children}</div>}
+    </div>
+  );
+}
+
+/** Number stepper (− value +) like the design reference. */
+function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number }) {
+  const dec = () => onChange(Math.max(min, value - step));
+  const inc = () => onChange(max != null ? Math.min(max, value + step) : value + step);
+  return (
+    <div className="inline-flex items-center overflow-hidden rounded-lg border border-border bg-background">
+      <button type="button" onClick={dec} className="flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Minus className="h-3.5 w-3.5" /></button>
+      <input
+        type="number" value={value}
+        onChange={(e) => onChange(parseInt(e.target.value) || min)}
+        className="h-9 w-12 border-x border-border bg-transparent text-center text-sm font-semibold tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+      />
+      <button type="button" onClick={inc} className="flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Plus className="h-3.5 w-3.5" /></button>
+    </div>
+  );
+}
+
+const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600">Pro</Badge>;
 
 export default function CampaignOptions({ campaignId }: Props) {
   const { user } = useAuth();
@@ -265,363 +334,195 @@ export default function CampaignOptions({ campaignId }: Props) {
     if (abSelectedStep && abTestEnabled) loadAbStats(abSelectedStep);
   }, [abSelectedStep, abTestEnabled]);
 
+  const rampInfo = (() => {
+    if (!slowRampEnabled || !campaignCreatedAt) return null;
+    const days = Math.max(0, Math.floor((Date.now() - new Date(campaignCreatedAt).getTime()) / (1000 * 60 * 60 * 24)));
+    return { days, eff: slowRampMax + days * slowRampIncrement };
+  })();
+
   return (
-    <div className="space-y-6 max-w-lg">
+    <div className="mx-auto max-w-2xl space-y-6 pb-24">
 
-      {/* ═══════════ THREADING ═══════════ */}
-      <div className="rounded-lg border-2 border-primary/30 bg-primary/5 p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <Mail className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Romper hilo</h3>
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Visible</Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Decide desde qué follow-up dejará de salir como reply y empezará a enviarse como email nuevo.
-        </p>
-        <div className="rounded-md border bg-background p-3 space-y-3">
-          <Label className="text-xs font-medium">Botón de romper hilo</Label>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant={breakThreadAfter === 0 ? "default" : "outline"}
-              className="h-9"
-              onClick={() => { setBreakThreadAfter(0); markDirty(); }}
-            >
-              Mantener hilo siempre
-            </Button>
-            {abSteps.slice(1).map((step: any, idx: number) => {
-              const followUpNumber = idx + 1;
-              const isActive = breakThreadAfter === followUpNumber;
-
-              return (
-                <Button
-                  key={step.id}
-                  type="button"
-                  variant={isActive ? "default" : "outline"}
-                  className="h-9"
-                  onClick={() => { setBreakThreadAfter(followUpNumber); markDirty(); }}
-                >
-                  Romper en follow-up {followUpNumber}
-                </Button>
-              );
-            })}
-          </div>
-
-          {abSteps.length <= 1 && (
-            <p className="text-[11px] text-muted-foreground">
-              Añade al menos un follow-up en Sequences para poder romper el hilo.
-            </p>
-          )}
-
-          <p className="text-[11px] text-muted-foreground">
-            {breakThreadAfter === 0
-              ? "Ahora mismo todos los follow-ups seguirán dentro del mismo hilo."
-              : `Ahora mismo el follow-up ${breakThreadAfter} y los siguientes saldrán como mensaje nuevo.`}
-          </p>
-        </div>
-      </div>
-
-      {/* ═══════════ DELIVERY OPTIMIZATION ═══════════ */}
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center gap-2 mb-1">
-          <Zap className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Delivery Optimization</h3>
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-500/40 bg-green-500/10">
-            Recomendado
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">Desactiva el tracking de apertura para mejorar la entregabilidad.</p>
-
-        <label className="flex items-center gap-3 cursor-pointer">
-          <Checkbox checked={textOnlyEmails} onCheckedChange={(v) => { setTextOnlyEmails(!!v); markDirty(); }} />
-          <span className="text-sm">Enviar emails como solo texto (sin HTML)</span>
-        </label>
-        <label className="flex items-center gap-3 cursor-pointer">
-          <Checkbox checked={firstEmailTextOnly} onCheckedChange={(v) => { setFirstEmailTextOnly(!!v); markDirty(); }} />
-          <span className="text-sm">Enviar primer email como solo texto</span>
-          <Badge className="text-[10px] px-1.5 py-0 bg-warning text-warning-foreground">Pro</Badge>
-        </label>
-      </div>
-
-      {/* ═══════════ PRIORITIZE NEW LEADS ═══════════ */}
-      <div className="rounded-lg border p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-semibold">Priorizar Nuevos Leads</h3>
-          </div>
-          <Checkbox
-            checked={prioritizeNewLeads}
-            onCheckedChange={(v) => { setPrioritizeNewLeads(!!v); markDirty(); }}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground mt-1.5">
-          Prioriza el contacto con nuevos leads sobre los follow-ups programados.
-        </p>
-      </div>
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center gap-2 mb-1">
-          <Shield className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Advanced Deliverability</h3>
-        </div>
-
-        {/* Domain limit */}
-        <div className="rounded-md bg-muted/40 p-3 space-y-3">
-          <div>
-            <p className="text-sm font-medium">Limitar emails por empresa</p>
-            <p className="text-xs text-muted-foreground">
-              Limita cuántos emails se envían al mismo dominio por día para evitar spam flags.
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Switch checked={domainLimitEnabled} onCheckedChange={(v) => { setDomainLimitEnabled(v); markDirty(); }} />
-              <span className="text-xs font-medium">Activar para esta campaña</span>
-            </div>
-          </div>
-
-          {domainLimitEnabled && (
-            <div className="flex items-center gap-4 pt-1">
-              <div className="space-y-1">
-                <Label className="text-xs">Límite diario por dominio</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={domainDailyLimit}
-                  onChange={(e) => { setDomainDailyLimit(parseInt(e.target.value) || 1); markDirty(); }}
-                  className="w-24"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Provider Matching */}
-        <div className="rounded-md bg-muted/40 p-3">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Provider Matching</p>
-              <p className="text-xs text-muted-foreground">
-                Empareja el proveedor de email del lead con tu buzón (Outlook → Outlook, Google → Google, etc.)
-              </p>
-            </div>
-            <Checkbox
-              checked={providerMatching}
-              onCheckedChange={(v) => { setProviderMatching(!!v); markDirty(); }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* ═══════════ AI LEAD FILTERING ═══════════ */}
-      <div className="rounded-lg border p-4 space-y-4">
-        <div className="flex items-center gap-2 mb-1">
-          <Brain className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">AI Lead Filtering</h3>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm">Unlikely to reply</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-              </TooltipTrigger>
-              <TooltipContent className="max-w-[200px] text-xs">
-                Leads con baja probabilidad de respuesta según análisis de IA.
-              </TooltipContent>
-            </Tooltip>
-            <Badge className="text-[10px] px-1.5 py-0 bg-warning text-warning-foreground">Pro</Badge>
-          </div>
-          <Select value={aiFilterUnlikely} onValueChange={(v) => { setAiFilterUnlikely(v); markDirty(); }}>
-            <SelectTrigger className="w-[130px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="send_last">Enviar último</SelectItem>
-              <SelectItem value="skip">Omitir</SelectItem>
-              <SelectItem value="normal">Normal</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm">Hostile prospects</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-              </TooltipTrigger>
-              <TooltipContent className="max-w-[200px] text-xs">
-                Leads que podrían marcar tus emails como spam o reportarte.
-              </TooltipContent>
-            </Tooltip>
-            <Badge className="text-[10px] px-1.5 py-0 bg-warning text-warning-foreground">Pro</Badge>
-          </div>
-          <Select value={aiFilterHostile} onValueChange={(v) => { setAiFilterHostile(v); markDirty(); }}>
-            <SelectTrigger className="w-[130px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="skip">Omitir</SelectItem>
-              <SelectItem value="send_last">Enviar último</SelectItem>
-              <SelectItem value="normal">Normal</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* ═══════════ EXPERT ROTATION ═══════════ */}
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <RefreshCw className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-semibold">Rotación Experta</h3>
-            <Badge className="text-[10px] px-1.5 py-0 bg-warning text-warning-foreground">Pro</Badge>
-          </div>
-          <Switch checked={expertRotation} onCheckedChange={(v) => { setExpertRotation(v); markDirty(); }} />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Rota los dominios estratégicamente para mantener alta la reputación de todos tus buzones. 
-          El algoritmo calcula automáticamente la distribución óptima considerando:
-        </p>
-        <ul className="text-xs text-muted-foreground space-y-1 ml-1">
-          <li className="flex items-center gap-1.5"><span className="text-primary">✓</span> Calentamiento progresivo por dominio</li>
-          <li className="flex items-center gap-1.5"><span className="text-primary">✓</span> Distribución equilibrada entre dominios</li>
-          <li className="flex items-center gap-1.5"><span className="text-primary">✓</span> Pausas inteligentes para recuperar reputación</li>
-          <li className="flex items-center gap-1.5"><span className="text-primary">✓</span> Priorización de cuentas con mejor salud</li>
-        </ul>
-        {expertRotation && (
-          <div className="rounded-md bg-muted/40 p-3">
-            <p className="text-xs text-foreground font-medium">🧠 Modo activo</p>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              La IA distribuirá los envíos inteligentemente entre tus {totalAccountsUsed || 0} cuentas, 
-              alternando dominios y respetando los límites de warmup de cada una.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {allTags.length > 0 && (
-        <div className="space-y-3">
-          <Label className="flex items-center gap-2"><Tag className="h-4 w-4" /> Tags de cuentas</Label>
-          <p className="text-xs text-muted-foreground">Selecciona tags para incluir automáticamente todas las cuentas con ese tag.</p>
-          <div className="flex flex-wrap gap-2">
-            {allTags.map(tag => {
-              const count = accounts.filter(a => (a.tags || []).includes(tag)).length;
-              const isSelected = selectedTags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => toggleTag(tag)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${isSelected ? "bg-primary text-primary-foreground border-primary" : "bg-background text-foreground border-border hover:bg-muted"}`}
-                >
-                  {tag} ({count})
-                </button>
-              );
-            })}
-          </div>
-          {selectedTags.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {tagAccountIds.size} cuenta{tagAccountIds.size !== 1 ? "s" : ""} incluida{tagAccountIds.size !== 1 ? "s" : ""} por tags
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Individual account selection */}
-      <div className="space-y-3">
-        <Label className="flex items-center gap-2"><Mail className="h-4 w-4" /> Cuentas individuales</Label>
-        {accounts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay cuentas conectadas. Ve a Cuentas de Email primero.</p>
-        ) : (
-          <div className="space-y-2">
-            {accounts.map(acc => {
-              const fromTag = tagAccountIds.has(acc.id);
-              const isChecked = selectedAccounts.includes(acc.id) || fromTag;
-              return (
-                <label key={acc.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
-                  <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
-                  {fromTag && <Badge variant="outline" className="text-[10px] px-1.5 py-0">vía tag</Badge>}
-                  {(acc.tags || []).length > 0 && (
-                    <span className="text-[10px] text-muted-foreground ml-auto">
-                      {(acc.tags || []).join(", ")}
-                    </span>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-        )}
-        {totalAccountsUsed > 0 && (
-          <p className="text-xs font-medium text-primary">{totalAccountsUsed} cuenta{totalAccountsUsed !== 1 ? "s" : ""} total{totalAccountsUsed !== 1 ? "es" : ""} para esta campaña</p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <Label className="flex items-center gap-2"><Settings className="h-4 w-4" /> Ajustes de campaña</Label>
-        <div className="space-y-1">
-          <Label className="text-xs">Límite diario</Label>
-          <Input type="number" value={dailyLimit} onChange={e => { setDailyLimit(parseInt(e.target.value) || 0); markDirty(); }} className="w-32" />
-        </div>
-        <div className="flex items-center justify-between rounded-lg border p-3">
-          <div>
-            <p className="text-sm font-medium">Parar al recibir respuesta</p>
-            <p className="text-xs text-muted-foreground">Al responder un lead, se detienen los follow-ups</p>
-          </div>
-          <Switch checked={stopOnReply} onCheckedChange={v => { setStopOnReply(v); markDirty(); }} />
-        </div>
-
-        {/* SlowRamp */}
-        <div className="rounded-lg border p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">SlowRamp</p>
-              <p className="text-xs text-muted-foreground">Incrementa gradualmente los envíos por cuenta cada día</p>
-            </div>
-            <Switch checked={slowRampEnabled} onCheckedChange={v => { setSlowRampEnabled(v); markDirty(); }} />
-          </div>
+      {/* ── ENVÍO Y RITMO ── */}
+      <Section label="Envío y ritmo">
+        <Row icon={<Gauge className="h-4 w-4" />} tint="primary"
+          title="Límite diario de envíos"
+          desc="Número máximo de correos que la campaña manda al día en total."
+          control={<Stepper value={dailyLimit} min={0} step={10} onChange={(v) => { setDailyLimit(v); markDirty(); }} />}
+        />
+        <Row icon={<Mail className="h-4 w-4" />} tint="emerald"
+          title="Parar al recibir respuesta"
+          desc="Si un lead contesta, se cancelan automáticamente sus follow-ups."
+          control={<Switch checked={stopOnReply} onCheckedChange={v => { setStopOnReply(v); markDirty(); }} />}
+        />
+        <Row icon={<Users className="h-4 w-4" />} tint="blue"
+          title="Priorizar nuevos leads"
+          desc="Contacta antes a los leads nuevos que a los follow-ups en cola."
+          control={<Switch checked={prioritizeNewLeads} onCheckedChange={v => { setPrioritizeNewLeads(!!v); markDirty(); }} />}
+        />
+        <Row icon={<TrendingUp className="h-4 w-4" />} tint="violet"
+          title="Aumento gradual" badge={<Badge variant="secondary" className="h-4 px-1.5 text-[10px]">SlowRamp</Badge>}
+          desc="Sube poco a poco el volumen diario por cuenta para calentar los buzones."
+          control={<Switch checked={slowRampEnabled} onCheckedChange={v => { setSlowRampEnabled(v); markDirty(); }} />}
+        >
           {slowRampEnabled && (
-            <div className="space-y-3 pt-1">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Inicio (emails/cuenta/día)</Label>
-                  <Input type="number" min={1} value={slowRampMax} onChange={e => { setSlowRampMax(parseInt(e.target.value) || 1); markDirty(); }} className="w-full" />
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-5">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Inicio (emails/cuenta/día)</Label>
+                  <Stepper value={slowRampMax} min={1} onChange={(v) => { setSlowRampMax(v); markDirty(); }} />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Incremento diario</Label>
-                  <Input type="number" min={1} value={slowRampIncrement} onChange={e => { setSlowRampIncrement(parseInt(e.target.value) || 1); markDirty(); }} className="w-full" />
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Incremento diario</Label>
+                  <Stepper value={slowRampIncrement} min={1} onChange={(v) => { setSlowRampIncrement(v); markDirty(); }} />
                 </div>
               </div>
-              {campaignCreatedAt && (() => {
-                const days = Math.max(0, Math.floor((Date.now() - new Date(campaignCreatedAt).getTime()) / (1000 * 60 * 60 * 24)));
-                const effectiveLimit = slowRampMax + days * slowRampIncrement;
-                return (
-                  <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                    📈 Día {days + 1} de campaña → Límite efectivo hoy: <span className="font-semibold text-foreground">{effectiveLimit} emails/cuenta</span>
-                    {dailyLimit > 0 && <span> (máx. global: {dailyLimit})</span>}
-                  </p>
-                );
-              })()}
+              {rampInfo && (
+                <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                  <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600" /> Día {rampInfo.days + 1} de campaña → límite efectivo hoy: <span className="font-semibold text-foreground">{rampInfo.eff} emails/cuenta</span>
+                  {dailyLimit > 0 && <span> (máx. global: {dailyLimit})</span>}
+                </p>
+              )}
             </div>
           )}
-        </div>
-      </div>
+        </Row>
+      </Section>
 
-      {/* A/B Testing IA */}
-      <div className="rounded-lg border p-3 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium flex items-center gap-2">
-              <FlaskConical className="h-4 w-4 text-primary" /> A/B Testing con IA
-            </p>
-            <p className="text-xs text-muted-foreground">La IA analiza tus variantes y crea mejoras automáticamente (máx. 5 variantes)</p>
+      {/* ── CUENTAS DE ENVÍO ── */}
+      <Section label="Cuentas de envío">
+        {allTags.length > 0 && (
+          <Row icon={<Tag className="h-4 w-4" />} tint="blue" title="Tags de cuentas"
+            desc="Incluye automáticamente todas las cuentas que tengan ese tag.">
+            <div className="flex flex-wrap gap-2">
+              {allTags.map(tag => {
+                const count = accounts.filter(a => (a.tags || []).includes(tag)).length;
+                const isSelected = selectedTags.includes(tag);
+                return (
+                  <button key={tag} onClick={() => toggleTag(tag)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${isSelected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                    {tag} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          </Row>
+        )}
+        <Row icon={<Mail className="h-4 w-4" />} tint="primary" title="Cuentas individuales"
+          desc={accounts.length === 0 ? "No hay cuentas conectadas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña."}
+          badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{totalAccountsUsed} en uso</Badge> : undefined}>
+          {accounts.length > 0 && (
+            <div className="space-y-2">
+              {accounts.map(acc => {
+                const fromTag = tagAccountIds.has(acc.id);
+                const isChecked = selectedAccounts.includes(acc.id) || fromTag;
+                return (
+                  <label key={acc.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
+                    <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
+                    {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">vía tag</Badge>}
+                    {(acc.tags || []).length > 0 && <span className="ml-auto text-[10px] text-muted-foreground">{(acc.tags || []).join(", ")}</span>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </Row>
+      </Section>
+
+      {/* ── ENTREGABILIDAD ── */}
+      <Section label="Entregabilidad">
+        <Row icon={<Zap className="h-4 w-4" />} tint="emerald" title="Optimización de entrega"
+          badge={<Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600">Recomendado</Badge>}
+          desc="Desactiva el tracking de apertura para mejorar la entregabilidad.">
+          <div className="space-y-2.5">
+            <label className="flex cursor-pointer items-center gap-3">
+              <Checkbox checked={textOnlyEmails} onCheckedChange={(v) => { setTextOnlyEmails(!!v); markDirty(); }} />
+              <span className="text-sm">Enviar emails como solo texto (sin HTML)</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-3">
+              <Checkbox checked={firstEmailTextOnly} onCheckedChange={(v) => { setFirstEmailTextOnly(!!v); markDirty(); }} />
+              <span className="text-sm">Enviar primer email como solo texto</span>
+              {proBadge}
+            </label>
           </div>
-          <Switch checked={abTestEnabled} onCheckedChange={v => { setAbTestEnabled(v); markDirty(); }} />
-        </div>
+        </Row>
 
+        <Row icon={<Shield className="h-4 w-4" />} tint="blue" title="Limitar emails por empresa"
+          desc="Limita cuántos correos se envían al mismo dominio por día para evitar marcas de spam."
+          control={<Switch checked={domainLimitEnabled} onCheckedChange={(v) => { setDomainLimitEnabled(v); markDirty(); }} />}>
+          {domainLimitEnabled && (
+            <div className="flex items-center gap-3">
+              <Label className="text-xs text-muted-foreground">Límite diario por dominio</Label>
+              <Stepper value={domainDailyLimit} min={1} onChange={(v) => { setDomainDailyLimit(v); markDirty(); }} />
+            </div>
+          )}
+        </Row>
+
+        <Row icon={<Split className="h-4 w-4" />} tint="violet" title="Provider Matching"
+          desc="Empareja el proveedor del lead con tu buzón (Outlook → Outlook, Google → Google)."
+          control={<Switch checked={providerMatching} onCheckedChange={(v) => { setProviderMatching(!!v); markDirty(); }} />}
+        />
+
+        <Row icon={<GitBranch className="h-4 w-4" />} tint="primary" title="Romper hilo"
+          desc="Desde qué follow-up dejará de salir como respuesta y se enviará como email nuevo.">
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant={breakThreadAfter === 0 ? "default" : "outline"} className="h-8" onClick={() => { setBreakThreadAfter(0); markDirty(); }}>Mantener hilo siempre</Button>
+              {abSteps.slice(1).map((step: any, idx: number) => {
+                const n = idx + 1;
+                return <Button key={step.id} type="button" size="sm" variant={breakThreadAfter === n ? "default" : "outline"} className="h-8" onClick={() => { setBreakThreadAfter(n); markDirty(); }}>Romper en follow-up {n}</Button>;
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {abSteps.length <= 1 ? "Añade al menos un follow-up en Sequences para poder romper el hilo." : breakThreadAfter === 0 ? "Todos los follow-ups seguirán en el mismo hilo." : `El follow-up ${breakThreadAfter} y los siguientes saldrán como mensaje nuevo.`}
+            </p>
+          </div>
+        </Row>
+
+        <Row icon={<RefreshCw className="h-4 w-4" />} tint="amber" title="Rotación experta" badge={proBadge}
+          desc="Rota los dominios estratégicamente para mantener alta la reputación de todos tus buzones."
+          control={<Switch checked={expertRotation} onCheckedChange={(v) => { setExpertRotation(v); markDirty(); }} />}>
+          {expertRotation && (
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {["Calentamiento progresivo por dominio", "Distribución equilibrada entre dominios", "Pausas inteligentes para recuperar reputación", "Priorización de cuentas con mejor salud"].map(t => (
+                <li key={t} className="flex items-center gap-1.5"><Check className="h-3 w-3 text-emerald-600" /> {t}</li>
+              ))}
+            </ul>
+          )}
+        </Row>
+      </Section>
+
+      {/* ── INTELIGENCIA ARTIFICIAL ── */}
+      <Section label="Inteligencia artificial">
+        <Row icon={<Brain className="h-4 w-4" />} tint="violet" title="Filtrado de leads con IA"
+          desc="Decide qué hacer con leads poco probables u hostiles.">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-sm">Poco probable que responda
+                <Tooltip><TooltipTrigger asChild><Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" /></TooltipTrigger><TooltipContent className="max-w-[200px] text-xs">Leads con baja probabilidad de respuesta según la IA.</TooltipContent></Tooltip>
+                {proBadge}
+              </span>
+              <Select value={aiFilterUnlikely} onValueChange={(v) => { setAiFilterUnlikely(v); markDirty(); }}>
+                <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="send_last">Enviar último</SelectItem><SelectItem value="skip">Omitir</SelectItem><SelectItem value="normal">Normal</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-sm">Prospectos hostiles
+                <Tooltip><TooltipTrigger asChild><Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" /></TooltipTrigger><TooltipContent className="max-w-[200px] text-xs">Leads que podrían marcarte como spam o reportarte.</TooltipContent></Tooltip>
+                {proBadge}
+              </span>
+              <Select value={aiFilterHostile} onValueChange={(v) => { setAiFilterHostile(v); markDirty(); }}>
+                <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="skip">Omitir</SelectItem><SelectItem value="send_last">Enviar último</SelectItem><SelectItem value="normal">Normal</SelectItem></SelectContent>
+              </Select>
+            </div>
+          </div>
+        </Row>
+
+        <Row icon={<FlaskConical className="h-4 w-4" />} tint="rose" title="A/B Testing con IA"
+          desc="La IA analiza tus variantes y crea mejoras automáticamente (máx. 5)."
+          control={<Switch checked={abTestEnabled} onCheckedChange={v => { setAbTestEnabled(v); markDirty(); }} />}>
         {abTestEnabled && (
           <div className="space-y-4 pt-2">
             {abSteps.length > 0 && (
@@ -702,70 +603,54 @@ export default function CampaignOptions({ campaignId }: Props) {
             )}
           </div>
         )}
-      </div>
+        </Row>
+      </Section>
 
-      {/* ═══════════ EMAIL SIGNATURE ═══════════ */}
-      <div className="rounded-lg border p-4 space-y-3">
-        <div className="flex items-center gap-2 mb-1">
-          <FileSignature className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Firma de Email</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Pega tu firma en HTML. Se añadirá automáticamente al final de cada email enviado en esta campaña.
-        </p>
-        <Textarea
-          value={signatureHtml}
-          onChange={(e) => { setSignatureHtml(e.target.value); markDirty(); }}
-          placeholder='<p style="color:#555">— <br/>Tu Nombre<br/>tu@empresa.com</p>'
-          className="font-mono text-xs min-h-[120px]"
-        />
-        {signatureHtml.trim() && (
+      {/* ── CONTENIDO ── */}
+      <Section label="Contenido">
+        <Row icon={<FileSignature className="h-4 w-4" />} tint="primary" title="Firma de email"
+          desc="Pega tu firma en HTML. Se añade al final de cada email de esta campaña.">
           <div className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-xs"
-              onClick={() => setShowSignaturePreview(!showSignaturePreview)}
-            >
-              {showSignaturePreview ? "Ocultar vista previa" : "Ver vista previa"}
-            </Button>
-            {showSignaturePreview && (
-              <div className="rounded-md border bg-background p-3">
-                <p className="text-[10px] text-muted-foreground mb-2">Vista previa:</p>
-                <div
-                  className="text-sm prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: signatureHtml }}
-                />
+            <Textarea
+              value={signatureHtml}
+              onChange={(e) => { setSignatureHtml(e.target.value); markDirty(); }}
+              placeholder='<p style="color:#555">— <br/>Tu Nombre<br/>tu@empresa.com</p>'
+              className="min-h-[110px] font-mono text-xs"
+            />
+            {signatureHtml.trim() && (
+              <div className="space-y-2">
+                <Button variant="outline" size="sm" className="text-xs" onClick={() => setShowSignaturePreview(!showSignaturePreview)}>
+                  {showSignaturePreview ? "Ocultar vista previa" : "Ver vista previa"}
+                </Button>
+                {showSignaturePreview && (
+                  <div className="rounded-lg border bg-background p-3">
+                    <p className="mb-2 text-[10px] text-muted-foreground">Vista previa:</p>
+                    <div className="prose prose-sm max-w-none text-sm" dangerouslySetInnerHTML={{ __html: signatureHtml }} />
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
-      </div>
+        </Row>
+      </Section>
 
-      {/* Cross-campaign dedup */}
-      <div className="border rounded-lg p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-primary" />
-          <h3 className="font-semibold text-sm">Leads duplicados entre campañas</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Verifica si hay leads en esta campaña que también están en otras campañas. Si los hay, puedes eliminarlos de aquí.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full gap-2"
-          disabled={deduping}
-          onClick={handleCrossCampaignDedup}
-        >
-          {deduping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          {deduping ? "Verificando..." : "Buscar y eliminar duplicados entre campañas"}
+      {/* ── MANTENIMIENTO ── */}
+      <Section label="Mantenimiento">
+        <Row icon={<Users className="h-4 w-4" />} tint="rose" title="Leads duplicados entre campañas"
+          desc="Busca y elimina de aquí los leads que también están en otras campañas.">
+          <Button variant="outline" size="sm" className="gap-2" disabled={deduping} onClick={handleCrossCampaignDedup}>
+            {deduping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {deduping ? "Verificando…" : "Buscar y eliminar duplicados"}
+          </Button>
+        </Row>
+      </Section>
+
+      {/* Sticky save bar */}
+      <div className="sticky bottom-0 -mx-1 border-t border-border/60 bg-background/85 px-1 pb-1 pt-3 backdrop-blur">
+        <Button onClick={save} disabled={saved} className="w-full gap-2">
+          {saved ? <><Check className="h-4 w-4" /> Guardado</> : "Guardar opciones"}
         </Button>
       </div>
-
-      <Button onClick={save} disabled={saved} className="w-full">
-        {saved ? "✓ Guardado" : "Guardar opciones"}
-      </Button>
     </div>
   );
 }
