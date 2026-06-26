@@ -146,8 +146,8 @@ serve(async (req) => {
         `Variante ${v.label}: Subject="${v.subject}" | Body="${v.body.slice(0, 200)}" | Enviados=${v.sent} | Replies=${v.replied} | Reply Rate=${v.replyRate}%`
       ).join("\n");
 
-      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-      if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+      const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
+      if (!DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY not configured");
 
       const systemPrompt = `Eres un experto en cold email outreach y A/B testing. Tu trabajo es analizar el rendimiento de las variantes actuales de una campaña de email y crear nuevas variantes mejoradas que aumenten la tasa de respuesta.
 
@@ -169,14 +169,14 @@ VARIABLES DISPONIBLES: ${availableVars.join(", ")}
 
 Genera ${variantsToGenerate} nueva(s) variante(s) mejorada(s) basándote en el análisis de rendimiento. Responde SOLO con un JSON array con objetos {subject, body}. Sin explicaciones adicionales.`;
 
-      const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+          model: "deepseek-chat",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },

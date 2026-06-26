@@ -709,6 +709,13 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
     /deja\s+de\s+(enviar|escribir|contactar)/i,
     /no\s+(me\s*)?(contacte|escriba|env[íi]e)/i,
     /pas intéressé/i, /kein interesse/i,
+    // Spanish removal / "stop emailing me" requests
+    /\bqu[íi]ta\S*\b[\s\S]{0,30}\blista\b/i,        // quítame de la lista
+    /\bb[óo]rra\S*\b[\s\S]{0,30}\b(lista|correo)\b/i, // bórrame de la lista
+    /\belim[íi]na\S*\b[\s\S]{0,30}\blista\b/i,       // elimíname de la lista
+    /\bs[áa]ca\S*\b[\s\S]{0,30}\blista\b/i,          // sácame de la lista
+    /no\s+(me|nos)\s+(mand\S*|env\S*|escrib\S*)\s+(m[áa]s|nada|nunca)/i, // no me mandéis más
+    /no\s+insist/i,                                  // no insistas
   ];
   // Only classify as not_interested if there's NO engagement signal
   if (!hasEngagement && notInterestedPatterns.some(p => p.test(text))) return "not_interested";

@@ -10,8 +10,8 @@ serve(async (req) => {
 
   try {
     const { context, variables, numSteps } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
+    if (!DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not configured");
 
     const variableList = (variables || []).map((v: string) => `{{${v}}}`).join(", ");
 
@@ -33,14 +33,14 @@ Responde EXCLUSIVAMENTE con un JSON array con este formato exacto (sin markdown,
 
 El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "deepseek-chat",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Genera una secuencia de ${numSteps || 3} emails de cold outreach con este contexto:\n\n${context}\n\nVariables disponibles para personalizar: ${variableList || "ninguna"}` },
