@@ -759,6 +759,8 @@ serve(async (req) => {
 
     let totalSent = 0;
     let totalSkipped = 0;
+    let newSentTotal = 0;
+    let followupsSentTotal = 0;
 
     for (const campaign of campaigns) {
       const now = new Date();
@@ -836,6 +838,23 @@ serve(async (req) => {
         .in("status", ["pending", "in_progress"]);
 
       if (!campaignLeads?.length) continue;
+
+      // PRIORIDAD DE ENVÍO: por defecto los follow-ups (current_step > 0) van ANTES que
+      // los leads nuevos (current_step 0), para que los seguimientos nunca se retrasen.
+      // El cupo que sobre tras los follow-ups se usa igualmente para leads nuevos.
+      // Si la campaña tiene prioritize_new_leads = true, se invierte.
+      const prioritizeNew = (campaign as any).prioritize_new_leads === true;
+      campaignLeads.sort((a: any, b: any) => {
+        const aNew = (a.current_step || 0) === 0;
+        const bNew = (b.current_step || 0) === 0;
+        if (aNew === bNew) return 0;
+        if (prioritizeNew) return aNew ? -1 : 1;   // nuevos primero
+        return aNew ? 1 : -1;                       // follow-ups primero (por defecto)
+      });
+      // Tope opcional de leads nuevos por día (si la campaña lo define).
+      const maxNewLeads = Number.isFinite(Number((campaign as any).max_new_leads))
+        ? Number((campaign as any).max_new_leads) : null;
+      let newLeadsSentThisRun = 0;
 
       // Campaign daily limit check
       let todayStart: string;
@@ -1115,7 +1134,12 @@ serve(async (req) => {
             continue;
           }
         } else {
-          // First touch — pick via rotation and persist on the very first send
+          // First touch (lead nuevo) — respeta el tope diario de leads nuevos si existe
+          if (maxNewLeads != null && newLeadsSentThisRun >= maxNewLeads) {
+            totalSkipped++;
+            continue;
+          }
+          // pick via rotation and persist on the very first send
           account = selectAccount();
           if (account) {
             const { data: claimedLead } = await adminClient
@@ -1309,6 +1333,8 @@ serve(async (req) => {
 
         if (result.ok) {
           totalSent++;
+          if (currentStepIndex === 0) { newSentTotal++; newLeadsSentThisRun++; }
+          else { followupsSentTotal++; }
 
           // Update LIVE counter on the account row so EmailAccounts UI shows
           // sent_today/30 in real time.
@@ -1374,7 +1400,8 @@ serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      success: true, sent: totalSent, skipped: totalSkipped,
+      success: true, sent: totalSent, followups_sent: followupsSentTotal,
+      new_sent: newSentTotal, skipped: totalSkipped,
       campaigns_processed: campaigns.length,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     } finally {
