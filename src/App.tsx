@@ -25,6 +25,7 @@ const AIPrompts = lazy(() => import("./pages/AIPrompts"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Install = lazy(() => import("./pages/Install"));
+const Unsubscribe = lazy(() => import("./pages/Unsubscribe"));
 const Community = lazy(() => import("./pages/Community"));
 const Workflows = lazy(() => import("./pages/Workflows"));
 const GodTube = lazy(() => import("./pages/GodTube"));
@@ -54,6 +55,7 @@ const App = () => (
               <Route path="/" element={<Landing />} />
               <Route path="/install" element={<Install />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/email-accounts" element={<EmailAccounts />} />
