@@ -73,7 +73,9 @@ Deno.serve(async (req) => {
     const leadIds = (leadRows || []).map((l: any) => l.id);
     if (leadIds.length > 0) {
       await admin.from("leads").update({ status: "unsubscribed" }).in("id", leadIds);
-      await admin.from("campaign_leads").update({ status: "unsubscribed" }).in("lead_id", leadIds);
+      await admin.from("campaign_leads")
+        .update({ status: "unsubscribed", unsubscribed_at: new Date().toISOString() })
+        .in("lead_id", leadIds);
     }
 
     // RFC 8058 one-click sends POST — return 200 (no page needed).

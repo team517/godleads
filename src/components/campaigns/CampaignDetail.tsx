@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BarChart3, Users, ListChecks, Clock, Settings, Mail, Heart } from "lucide-react";
+import { BarChart3, Users, ListChecks, Clock, Settings, Mail, Heart, Ban } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import CampaignSchedule from "./CampaignSchedule";
 import CampaignOptions from "./CampaignOptions";
 import CampaignSentLog from "./CampaignSentLog";
 import CampaignCRM from "./CampaignCRM";
+import CampaignUnsubscribes from "./CampaignUnsubscribes";
 
 interface Props { campaignId: string; }
 
@@ -51,6 +52,7 @@ export default function CampaignDetail({ campaignId }: Props) {
         <TabsTrigger value="sent" className="gap-1 text-xs"><Mail className="h-3.5 w-3.5" /> Enviados</TabsTrigger>
         <TabsTrigger value="schedule" className="gap-1 text-xs"><Clock className="h-3.5 w-3.5" /> Schedule</TabsTrigger>
         <TabsTrigger value="options" className="gap-1 text-xs"><Settings className="h-3.5 w-3.5" /> Options</TabsTrigger>
+        <TabsTrigger value="unsubscribes" className="gap-1 text-xs"><Ban className="h-3.5 w-3.5" /> Bajas</TabsTrigger>
         {crmEnabled && (
           <TabsTrigger value="crm" className="gap-1 text-xs"><Heart className="h-3.5 w-3.5" /> CRM</TabsTrigger>
         )}
@@ -71,6 +73,7 @@ export default function CampaignDetail({ campaignId }: Props) {
           <CampaignOptions campaignId={campaignId} />
         </div>
       </TabsContent>
+      <TabsContent value="unsubscribes" className="mt-4"><CampaignUnsubscribes campaignId={campaignId} /></TabsContent>
       {crmEnabled && (
         <TabsContent value="crm" className="mt-4"><CampaignCRM campaignId={campaignId} /></TabsContent>
       )}
