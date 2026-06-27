@@ -855,6 +855,10 @@ serve(async (req) => {
       const maxNewLeads = Number.isFinite(Number((campaign as any).max_new_leads))
         ? Number((campaign as any).max_new_leads) : null;
       let newLeadsSentThisRun = 0;
+      // Per-campaign send counter for THIS run. The daily-limit gate must use this,
+      // NOT the global totalSent (which sums other campaigns' sends in the same tick
+      // and would cut this campaign off early).
+      let sentThisCampaign = 0;
 
       // Campaign daily limit check
       let todayStart: string;
@@ -934,7 +938,7 @@ serve(async (req) => {
       // burst protection when many leads are pending).
 
       for (const cl of campaignLeads) {
-        if (campaignSentToday + totalSent >= campaignDailyLimit) break;
+        if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
 
         const lead = cl.leads;
         if (!lead) continue;
@@ -1333,6 +1337,7 @@ serve(async (req) => {
 
         if (result.ok) {
           totalSent++;
+          sentThisCampaign++;
           if (currentStepIndex === 0) { newSentTotal++; newLeadsSentThisRun++; }
           else { followupsSentTotal++; }
 
