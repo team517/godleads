@@ -554,6 +554,21 @@ export default function CampaignLeads({ campaignId }: Props) {
 
     setSendingLeadId(cl.id);
     try {
+      // Respect the campaign's unsubscribe setting + account scope on manual sends too.
+      let includeUnsub = false;
+      try {
+        const { data: camp } = await (supabase as any).from("campaigns")
+          .select("include_unsubscribe, unsubscribe_all, unsubscribe_account_ids, unsubscribe_account_tags")
+          .eq("id", campaignId).single();
+        if (camp?.include_unsubscribe) {
+          if (camp.unsubscribe_all ?? true) includeUnsub = true;
+          else if ((camp.unsubscribe_account_ids || []).includes(account.id)) includeUnsub = true;
+          else if ((camp.unsubscribe_account_tags || []).length) {
+            includeUnsub = (((account as any).tags as string[]) || []).some((t) => (camp.unsubscribe_account_tags || []).includes(t));
+          }
+        }
+      } catch { /* default false */ }
+
       const { data: { session } } = await supabase.auth.getSession();
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
@@ -562,6 +577,7 @@ export default function CampaignLeads({ campaignId }: Props) {
           campaign_id: campaignId, account_id: account.id, to_email: lead.email,
           subject: picked.subject, body: picked.body, lead_id: cl.lead_id,
           custom_fields: { ...customFields, email: lead.email }, campaign_step_id: step.id,
+          include_unsubscribe: includeUnsub,
         }),
       });
       const result = await resp.json();

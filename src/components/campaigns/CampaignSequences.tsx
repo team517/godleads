@@ -112,6 +112,24 @@ export default function CampaignSequences({ campaignId }: Props) {
         });
       }
 
+      // Mirror the campaign's unsubscribe setting so the test shows the baja link too.
+      let includeUnsub = false;
+      try {
+        const { data: camp } = await (supabase as any).from("campaigns")
+          .select("include_unsubscribe, unsubscribe_all, unsubscribe_account_ids, unsubscribe_account_tags")
+          .eq("id", campaignId).single();
+        if (camp?.include_unsubscribe) {
+          if (camp.unsubscribe_all ?? true) {
+            includeUnsub = true;
+          } else if ((camp.unsubscribe_account_ids || []).includes(testAccountId)) {
+            includeUnsub = true;
+          } else if ((camp.unsubscribe_account_tags || []).length) {
+            const { data: acc } = await supabase.from("email_accounts").select("tags").eq("id", testAccountId).single();
+            includeUnsub = ((acc?.tags as string[]) || []).some((t) => (camp.unsubscribe_account_tags || []).includes(t));
+          }
+        }
+      } catch { /* default false */ }
+
       const { data, error } = await supabase.functions.invoke("send-email", {
         body: {
           account_id: testAccountId,
@@ -120,6 +138,7 @@ export default function CampaignSequences({ campaignId }: Props) {
           body: getCurrentBody(),
           custom_fields: sampleFields,
           is_test: true,
+          include_unsubscribe: includeUnsub,
         },
       });
 

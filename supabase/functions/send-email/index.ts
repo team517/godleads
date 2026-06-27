@@ -26,6 +26,23 @@ function randomString(length: number): string {
   return output;
 }
 
+// Unsubscribe token (HMAC-signed, same scheme as process-campaign-queue / unsubscribe fn).
+function b64url(s: string): string {
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function hmacHex(message: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function makeUnsubToken(userId: string, email: string, secret: string): Promise<string> {
+  const payload = b64url(`${userId}:${email.toLowerCase()}`);
+  const sig = await hmacHex(payload, secret);
+  return `${payload}.${sig}`;
+}
+
 // Quoted-Printable encoder (RFC 2045) — used by Gmail/Outlook/Apple Mail.
 // Universal compatibility, less spam-flagging than 8bit.
 function quotedPrintableEncode(input: string): string {
@@ -252,9 +269,13 @@ async function sendSmtpEmail(
         headers.push(`References: ${refs}`);
       }
 
-      // RFC 8058 one-click unsubscribe — Gmail/Yahoo bulk-sender requirement.
-      // Skip on replies (in-thread messages don't need it).
-      if (!isReply) {
+      // Unsubscribe: when the campaign enabled opt-out, use the REAL one-click URL
+      // (handled by the /unsubscribe function). Otherwise keep the mailto fallback.
+      const unsubUrl = opts?.unsubscribeUrl;
+      if (unsubUrl) {
+        headers.push(`List-Unsubscribe: <${unsubUrl}>`);
+        headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
+      } else if (!isReply) {
         const unsubAddr = `unsubscribe+${randomString(20)}@${fromDomain}`;
         headers.push(`List-Unsubscribe: <mailto:${from}?subject=unsubscribe>, <mailto:${unsubAddr}>`);
         headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
@@ -263,8 +284,16 @@ async function sendSmtpEmail(
 
       headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
 
-      const qpText = quotedPrintableEncode(normalizeMimeText(plainText));
-      const qpHtml = quotedPrintableEncode(normalizeMimeText(normalizedHtml));
+      // Visible opt-out link at the bottom (added after URL stripping so it survives).
+      const plainTextFinal = unsubUrl
+        ? `${plainText}\n\n—\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
+        : plainText;
+      const htmlFinal = unsubUrl
+        ? `${normalizedHtml}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`
+        : normalizedHtml;
+
+      const qpText = quotedPrintableEncode(normalizeMimeText(plainTextFinal));
+      const qpHtml = quotedPrintableEncode(normalizeMimeText(htmlFinal));
 
       const msgLines = [
         headers.join("\r\n"),
@@ -405,6 +434,7 @@ serve(async (req) => {
       is_test,
       in_reply_to,
       references,
+      include_unsubscribe,
     } = await req.json();
 
     let resolvedAccountId = account_id as string;
@@ -485,6 +515,14 @@ serve(async (req) => {
       resolvedMessageId = generateMessageId(fromDomain);
     }
 
+    // When the caller (campaign send / test) explicitly enables opt-out, always add it
+    // (even on threaded follow-ups). Unibox replies simply don't pass the flag.
+    let unsubscribeUrl: string | undefined;
+    if (include_unsubscribe) {
+      const token = await makeUnsubToken(userId, to_email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+    }
+
     const result = await sendSmtpEmail(
       account.smtp_host,
       account.smtp_port,
@@ -499,6 +537,7 @@ serve(async (req) => {
         references: resolvedReferences,
         fromName: senderName,
         messageId: resolvedMessageId,
+        unsubscribeUrl,
       }
     );
 
