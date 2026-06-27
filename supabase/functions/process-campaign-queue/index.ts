@@ -1322,11 +1322,21 @@ serve(async (req) => {
         let result: { ok: boolean; error?: string; messageId?: string; errorClass?: string };
         const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
-        // Opt-out link, only if the campaign enabled it.
+        // Opt-out link — only if the campaign enabled it AND this sending account is
+        // in the chosen scope (all accounts, or by tag / individual selection).
         let unsubscribeUrl: string | undefined;
         if ((campaign as any).include_unsubscribe) {
-          const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-          unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+          const unsubAll = (campaign as any).unsubscribe_all ?? true;
+          const unsubIds: string[] = (campaign as any).unsubscribe_account_ids || [];
+          const unsubTags: string[] = (campaign as any).unsubscribe_account_tags || [];
+          const accTags: string[] = account.tags || [];
+          const accountInScope = unsubAll
+            || unsubIds.includes(account.id)
+            || accTags.some((t: string) => unsubTags.includes(t));
+          if (accountInScope) {
+            const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+            unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+          }
         }
 
         {

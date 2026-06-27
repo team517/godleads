@@ -102,6 +102,9 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [stopOnReply, setStopOnReply] = useState(true);
   const [includeUnsubscribe, setIncludeUnsubscribe] = useState(false);
+  const [unsubAll, setUnsubAll] = useState(true);
+  const [unsubAccountIds, setUnsubAccountIds] = useState<string[]>([]);
+  const [unsubTags, setUnsubTags] = useState<string[]>([]);
   const [dailyLimit, setDailyLimit] = useState(50);
   const [saved, setSaved] = useState(true);
   const [savedTags, setSavedTags] = useState<string[]>([]);
@@ -215,6 +218,9 @@ export default function CampaignOptions({ campaignId }: Props) {
         setDailyLimit(d.daily_limit || 50);
         setStopOnReply(d.stop_on_reply ?? true);
         setIncludeUnsubscribe(d.include_unsubscribe ?? false);
+        setUnsubAll(d.unsubscribe_all ?? true);
+        setUnsubAccountIds(d.unsubscribe_account_ids || []);
+        setUnsubTags(d.unsubscribe_account_tags || []);
         setSelectedTags(d.account_tags || []);
         setSlowRampEnabled(d.slow_ramp_enabled ?? false);
         setSlowRampMax(d.slow_ramp_max ?? 2);
@@ -260,6 +266,9 @@ export default function CampaignOptions({ campaignId }: Props) {
       daily_limit: dailyLimit,
       stop_on_reply: stopOnReply,
       include_unsubscribe: includeUnsubscribe,
+      unsubscribe_all: unsubAll,
+      unsubscribe_account_ids: unsubAccountIds,
+      unsubscribe_account_tags: unsubTags,
       account_tags: selectedTags,
       slow_ramp_enabled: slowRampEnabled,
       slow_ramp_max: slowRampMax,
@@ -392,7 +401,51 @@ export default function CampaignOptions({ campaignId }: Props) {
           title="Incluir enlace de baja"
           desc="Añade abajo un pequeño enlace de baja. Si lo pulsan, salen de la lista y no se les vuelve a contactar en ninguna campaña."
           control={<Switch checked={includeUnsubscribe} onCheckedChange={v => { setIncludeUnsubscribe(v); markDirty(); }} />}
-        />
+        >
+          {includeUnsubscribe && (
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={unsubAll} onCheckedChange={v => { setUnsubAll(v); markDirty(); }} />
+                <span>Todas las cuentas</span>
+              </label>
+              {!unsubAll && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Elige por tag o cuentas individuales que llevarán el enlace de baja.</p>
+                  {allTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {allTags.map(tag => {
+                        const sel = unsubTags.includes(tag);
+                        return (
+                          <button key={tag} type="button"
+                            onClick={() => { setUnsubTags(p => sel ? p.filter(t => t !== tag) : [...p, tag]); markDirty(); }}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${sel ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
+                    {accounts.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No hay cuentas conectadas.</p>
+                    ) : accounts.map(acc => {
+                      const viaTag = (acc.tags || []).some((t: string) => unsubTags.includes(t));
+                      const checked = unsubAccountIds.includes(acc.id) || viaTag;
+                      return (
+                        <label key={acc.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                          <Checkbox checked={checked} disabled={viaTag}
+                            onCheckedChange={() => { setUnsubAccountIds(p => p.includes(acc.id) ? p.filter(i => i !== acc.id) : [...p, acc.id]); markDirty(); }} />
+                          <span className={viaTag ? "text-muted-foreground" : ""}>{acc.email}</span>
+                          {viaTag && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">vía tag</Badge>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Row>
         <Row icon={<Users className="h-4 w-4" />} tint="blue"
           title="Priorizar nuevos leads"
           desc="Contacta antes a los leads nuevos que a los follow-ups en cola."
