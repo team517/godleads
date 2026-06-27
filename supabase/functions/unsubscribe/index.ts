@@ -22,11 +22,18 @@ async function hmacHex(message: string, secret: string): Promise<string> {
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-async function verifyToken(token: string, secret: string): Promise<{ userId: string; email: string } | null> {
+// Verify against ANY of the candidate secrets. We accept both our dedicated
+// UNSUB_SECRET (stable, never rotates) and the service-role key (for tokens that
+// were signed with it / in case Lovable reverts the signer). Either match = valid.
+async function verifyToken(token: string, secrets: string[]): Promise<{ userId: string; email: string } | null> {
   const [payload, sig] = (token || "").split(".");
   if (!payload || !sig) return null;
-  const expected = await hmacHex(payload, secret);
-  if (expected !== sig) return null;
+  let matched = false;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    if ((await hmacHex(payload, secret)) === sig) { matched = true; break; }
+  }
+  if (!matched) return null;
   let decoded = "";
   try { decoded = b64urlDecode(payload); } catch { return null; }
   const idx = decoded.indexOf(":");
@@ -59,11 +66,12 @@ Deno.serve(async (req) => {
     token = (body as any)?.token || token;
     action = (body as any)?.action || action;
 
-    const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-    const parsed = await verifyToken(token, secret);
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const unsubSecret = Deno.env.get("UNSUB_SECRET") || "";
+    const parsed = await verifyToken(token, [unsubSecret, serviceKey]);
     if (!parsed) return json({ ok: false, error: "invalid_token" }, 400);
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, secret);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
     const { userId, email } = parsed;
 
     // ── UNDO: re-subscribe. Removes the suppression and restores the leads. Nothing was deleted. ──

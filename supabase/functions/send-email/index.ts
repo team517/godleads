@@ -519,7 +519,7 @@ serve(async (req) => {
     // (even on threaded follow-ups). Unibox replies simply don't pass the flag.
     let unsubscribeUrl: string | undefined;
     if (include_unsubscribe) {
-      const token = await makeUnsubToken(userId, to_email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const token = await makeUnsubToken(userId, to_email, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
     }
 

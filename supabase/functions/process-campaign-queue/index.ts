@@ -1334,7 +1334,7 @@ serve(async (req) => {
             || unsubIds.includes(account.id)
             || accTags.some((t: string) => unsubTags.includes(t));
           if (accountInScope) {
-            const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+            const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
             unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
           }
         }
