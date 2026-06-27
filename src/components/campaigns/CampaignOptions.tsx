@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown } from "lucide-react";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -101,6 +101,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [stopOnReply, setStopOnReply] = useState(true);
+  const [includeUnsubscribe, setIncludeUnsubscribe] = useState(false);
   const [dailyLimit, setDailyLimit] = useState(50);
   const [saved, setSaved] = useState(true);
   const [savedTags, setSavedTags] = useState<string[]>([]);
@@ -213,6 +214,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         const d = campRes.data as any;
         setDailyLimit(d.daily_limit || 50);
         setStopOnReply(d.stop_on_reply ?? true);
+        setIncludeUnsubscribe(d.include_unsubscribe ?? false);
         setSelectedTags(d.account_tags || []);
         setSlowRampEnabled(d.slow_ramp_enabled ?? false);
         setSlowRampMax(d.slow_ramp_max ?? 2);
@@ -257,6 +259,7 @@ export default function CampaignOptions({ campaignId }: Props) {
     await supabase.from("campaigns").update({
       daily_limit: dailyLimit,
       stop_on_reply: stopOnReply,
+      include_unsubscribe: includeUnsubscribe,
       account_tags: selectedTags,
       slow_ramp_enabled: slowRampEnabled,
       slow_ramp_max: slowRampMax,
@@ -384,6 +387,11 @@ export default function CampaignOptions({ campaignId }: Props) {
           title="Parar al recibir respuesta"
           desc="Si un lead contesta, se cancelan automáticamente sus follow-ups."
           control={<Switch checked={stopOnReply} onCheckedChange={v => { setStopOnReply(v); markDirty(); }} />}
+        />
+        <Row icon={<Ban className="h-4 w-4" />} tint="rose"
+          title="Incluir enlace de baja"
+          desc="Añade abajo un pequeño enlace de baja. Si lo pulsan, salen de la lista y no se les vuelve a contactar en ninguna campaña."
+          control={<Switch checked={includeUnsubscribe} onCheckedChange={v => { setIncludeUnsubscribe(v); markDirty(); }} />}
         />
         <Row icon={<Users className="h-4 w-4" />} tint="blue"
           title="Priorizar nuevos leads"

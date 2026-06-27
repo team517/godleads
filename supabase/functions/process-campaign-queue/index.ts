@@ -37,6 +37,25 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// ─── Unsubscribe token (HMAC-signed, no DB lookup needed) ───
+// Identifies (user, email) so the public /unsubscribe function can suppress them.
+// Signed with the service-role key (never exposed; only the HMAC output travels).
+function b64url(s: string): string {
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function hmacHex(message: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function makeUnsubToken(userId: string, email: string, secret: string): Promise<string> {
+  const payload = b64url(`${userId}:${email.toLowerCase()}`);
+  const sig = await hmacHex(payload, secret);
+  return `${payload}.${sig}`;
+}
+
 function getDayAbbr(date: Date, tz: string): string {
   try {
     return date.toLocaleString("en-US", { timeZone: tz, weekday: "short" }).toLowerCase().slice(0, 3);
@@ -472,6 +491,7 @@ async function sendSmtpEmail(
     textOnly?: boolean;
     userId?: string;
     campaignId?: string | null;
+    unsubscribeUrl?: string;
   } = {}
 ): Promise<{ ok: boolean; error?: string; messageId?: string; errorClass?: string }> {
   try {
@@ -499,8 +519,16 @@ async function sendSmtpEmail(
     const displayName = displayParts.length > 0 ? displayParts.join(" ") : undefined;
     const fromHeader = formatMailbox(displayName, from);
     const encodedSubject = encodeMimeHeader(subject);
-    const plainTextPart = normalizeMimeText(plainText);
-    const htmlPart = normalizeMimeText(fullHtml);
+    // Opt-out link (only when the campaign enabled it). Added AFTER URL stripping so
+    // it survives the text-only sanitizer.
+    const unsubText = opts.unsubscribeUrl
+      ? `\n\n—\nSi no deseas recibir más correos, date de baja aquí: ${opts.unsubscribeUrl}`
+      : "";
+    const unsubHtml = opts.unsubscribeUrl
+      ? `<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${opts.unsubscribeUrl}">date de baja aquí</a>.</p>`
+      : "";
+    const plainTextPart = normalizeMimeText(plainText + unsubText);
+    const htmlPart = normalizeMimeText(fullHtml + unsubHtml);
 
     // Human-looking boundary (Outlook/Apple Mail style) — avoids bot fingerprints
     const boundary = `--==_mimepart_${randomString(16)}_${randomString(12)}`;
@@ -522,6 +550,11 @@ async function sendSmtpEmail(
 
     if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
     if (opts.references) headers.push(`References: ${opts.references}`);
+    // One-click unsubscribe (RFC 8058) — only when the campaign enabled opt-out.
+    if (opts.unsubscribeUrl) {
+      headers.push(`List-Unsubscribe: <${opts.unsubscribeUrl}>`);
+      headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
+    }
 
 
     let body: string;
@@ -1289,6 +1322,13 @@ serve(async (req) => {
         let result: { ok: boolean; error?: string; messageId?: string; errorClass?: string };
         const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
+        // Opt-out link, only if the campaign enabled it.
+        let unsubscribeUrl: string | undefined;
+        if ((campaign as any).include_unsubscribe) {
+          const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+        }
+
         {
           result = await sendSmtpEmail(
             account.smtp_host, account.smtp_port,
@@ -1304,6 +1344,7 @@ serve(async (req) => {
               references,
               userId: campaign.user_id,
               campaignId: campaign.id,
+              unsubscribeUrl,
             }
           );
         }

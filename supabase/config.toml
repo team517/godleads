@@ -3,6 +3,9 @@ project_id = "iqhhybmhlkmulwhizpzi"
 [functions.check-email-domain-auth]
 verify_jwt = false
 
+[functions.unsubscribe]
+verify_jwt = false
+
 [functions.send-reminders]
 verify_jwt = false
 
