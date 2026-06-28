@@ -128,7 +128,7 @@ export function AppSidebar({ isMobile, isOpen, onClose }: AppSidebarProps) {
     <aside className={sidebarClasses}>
       {/* Logo */}
       <div className="flex h-14 items-center justify-between px-5 border-b border-sidebar-border/50">
-        <Wordmark className="h-7" colorClassName="text-sidebar-primary-foreground" />
+        <Wordmark className="h-7" colorClassName="text-foreground" />
         {isMobile && (
           <button onClick={onClose} className="text-sidebar-foreground/50 hover:text-sidebar-foreground p-1">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
