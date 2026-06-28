@@ -1037,6 +1037,25 @@ serve(async (req) => {
         // of the account's daily_limit setting. Protects deliverability.
         const HARD_DAILY_CAP = 30;
 
+        // Campaign slow-ramp anchor: count days from the FIRST real send for this
+        // campaign, NOT from created_at. This way the ramp limit does NOT grow while
+        // the campaign is paused / not sending — it only advances once emails actually
+        // start going out (and only for the selected sending accounts).
+        let rampDaysActive = 0;
+        if ((campaign as any).slow_ramp_enabled) {
+          const { data: firstSent } = await adminClient
+            .from("sent_emails")
+            .select("sent_at")
+            .eq("campaign_id", campaign.id)
+            .eq("status", "sent")
+            .order("sent_at", { ascending: true })
+            .limit(1);
+          if (firstSent && firstSent.length && firstSent[0].sent_at) {
+            const startAt = new Date(firstSent[0].sent_at);
+            rampDaysActive = Math.max(0, Math.floor((now.getTime() - startAt.getTime()) / (1000 * 60 * 60 * 24)));
+          }
+        }
+
         // SlowRamp: effective daily limit per account = the smallest of:
         //   account daily_limit (capped at HARD_DAILY_CAP),
         //   account-level slow ramp (configured from the Email Accounts page),
@@ -1055,13 +1074,12 @@ serve(async (req) => {
             limit = Math.min(limit, accRamp);
           }
 
-          // Campaign-level slow ramp.
+          // Campaign-level slow ramp — anchored to days of ACTUAL sending (rampDaysActive),
+          // so a paused/never-sent campaign stays at the starting cap (rampMax).
           if ((campaign as any).slow_ramp_enabled) {
-            const createdAt = new Date(campaign.created_at);
-            const daysSinceCreation = Math.max(0, Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)));
             const rampMax = (campaign as any).slow_ramp_max || 2;
             const rampIncrement = (campaign as any).slow_ramp_increment || 2;
-            const rampLimit = rampMax + daysSinceCreation * rampIncrement;
+            const rampLimit = rampMax + rampDaysActive * rampIncrement;
             limit = Math.min(limit, rampLimit);
           }
 
