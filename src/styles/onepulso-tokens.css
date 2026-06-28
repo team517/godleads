@@ -1,0 +1,229 @@
+/* =========================================================
+   OnePulso — Colors & Type tokens
+   Minimalist monochrome: black, white, a gentle grey scale,
+   and a single subtle grey gradient as the only "color effect".
+   ========================================================= */
+
+/* ---------- Google Fonts substitutes (see README "Font substitution") ----------
+   Brand calls for Alphazet (display), Neutral Sans (UI), and Intrigora (accent).
+   Source files were not uploaded — we substitute with the closest free equivalents:
+     Alphazet       → Space Grotesque-style rounded geometric → Bricolage Grotesque
+                      (backup: "Onest" for tightly-kerned UI display)
+     Neutral Sans   → Inter (neutral, huge weight range, the industry default)
+     Intrigora      → Instrument Serif (contrast display serif, same voice)
+--------------------------------------------------------------------------------- */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---------- COLOR ----------
+     One palette. Black, white, a 10-step warm-neutral grey.
+     No hue — the brand lives in contrast, weight and space. */
+  --op-black:     #0A0A0A;  /* true brand black — slightly softer than #000 */
+  --op-ink:       #111111;  /* text on white */
+  --op-white:     #FFFFFF;
+  --op-paper:     #FAFAF7;  /* off-white "paper" — warms large surfaces */
+
+  /* Grey scale — linear-ish in perceived luminance */
+  --op-grey-950:  #141414;
+  --op-grey-900:  #1C1C1C;
+  --op-grey-800:  #2A2A2A;
+  --op-grey-700:  #3D3D3D;
+  --op-grey-600:  #5C5C5C;
+  --op-grey-500:  #7A7A7A;
+  --op-grey-400:  #9C9C9C;
+  --op-grey-300:  #BFBFBF;
+  --op-grey-200:  #DADAD6;
+  --op-grey-100:  #EEEEEB;
+  --op-grey-50:   #F5F5F2;
+
+  /* Semantic foreground / background */
+  --op-fg-1:      var(--op-ink);       /* primary text */
+  --op-fg-2:      var(--op-grey-600);  /* secondary text */
+  --op-fg-3:      var(--op-grey-400);  /* tertiary / caption */
+  --op-fg-inv:    var(--op-white);     /* text on black surfaces */
+  --op-bg-1:      var(--op-white);     /* primary surface */
+  --op-bg-2:      var(--op-paper);     /* page background */
+  --op-bg-3:      var(--op-grey-100);  /* subtle fill / cards */
+  --op-bg-inv:    var(--op-black);     /* inverted surface */
+
+  /* Lines and rules */
+  --op-line-1:    var(--op-grey-200);  /* hairlines */
+  --op-line-2:    var(--op-grey-300);  /* stronger dividers */
+  --op-line-inv:  rgba(255,255,255,.18);
+
+  /* The one permitted gradient — very subtle grey wash.
+     Use sparingly (hero backgrounds, section dividers, button hover). */
+  --op-gradient-soft:
+    linear-gradient(180deg, #FFFFFF 0%, #F5F5F2 60%, #EEEEEB 100%); /* @kind color */
+  --op-gradient-ink:
+    linear-gradient(180deg, #1C1C1C 0%, #0A0A0A 100%); /* @kind color */
+  --op-gradient-fade:
+    linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,.92) 100%); /* @kind color */
+  --op-gradient-edge:
+    radial-gradient(120% 80% at 50% 0%, #FFFFFF 0%, #F5F5F2 60%, #EEEEEB 100%); /* @kind color */
+
+  /* Shadows — restrained. Flat before shadow. */
+  --op-shadow-1:  0 1px 2px rgba(10,10,10,.04), 0 1px 1px rgba(10,10,10,.03);
+  --op-shadow-2:  0 4px 14px rgba(10,10,10,.06), 0 1px 2px rgba(10,10,10,.04);
+  --op-shadow-3:  0 18px 40px rgba(10,10,10,.10), 0 2px 6px rgba(10,10,10,.05);
+  --op-shadow-inset: inset 0 0 0 1px rgba(10,10,10,.06);
+
+  /* Radii — small and deliberate */
+  --op-radius-xs: 4px;
+  --op-radius-sm: 8px;
+  --op-radius-md: 12px;
+  --op-radius-lg: 18px;
+  --op-radius-xl: 28px;
+  --op-radius-pill: 999px;
+
+  /* Spacing — 4px base, linear through 8/12/16/24/32/48/64/96 */
+  --op-space-1:  4px;
+  --op-space-2:  8px;
+  --op-space-3:  12px;
+  --op-space-4:  16px;
+  --op-space-5:  24px;
+  --op-space-6:  32px;
+  --op-space-7:  48px;
+  --op-space-8:  64px;
+  --op-space-9:  96px;
+  --op-space-10: 128px;
+
+  /* ---------- TYPE ----------
+     Three families, each with one job:
+       display  — big marketing moments, logotype-adjacent
+       sans     — UI, body, everything functional
+       serif    — editorial accents, pull-quotes, italic inflections */
+  --op-font-display: 'Bricolage Grotesque', 'Onest', 'Helvetica Neue', Arial, sans-serif;
+  --op-font-sans:    'Inter', 'Helvetica Neue', Arial, system-ui, sans-serif;
+  --op-font-serif:   'Instrument Serif', 'Times New Roman', Georgia, serif;
+  --op-font-mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale — tuned for marketing + app UI */
+  --op-text-xs:   12px;
+  --op-text-sm:   14px;
+  --op-text-base: 16px;
+  --op-text-md:   18px;
+  --op-text-lg:   22px;
+  --op-text-xl:   28px;
+  --op-text-2xl:  36px;
+  --op-text-3xl:  48px;
+  --op-text-4xl:  64px;
+  --op-text-5xl:  88px;
+  --op-text-6xl:  128px;
+
+  /* Line heights */
+  --op-leading-tight:  1.04;
+  --op-leading-snug:   1.18;
+  --op-leading-normal: 1.5;
+  --op-leading-loose:  1.7;
+
+  /* Tracking — tight display, open for small caps */
+  --op-tracking-tight:  -0.02em;
+  --op-tracking-normal: 0;
+  --op-tracking-wide:   0.08em;
+  --op-tracking-caps:   0.14em;
+
+  /* Motion */
+  --op-ease:       cubic-bezier(.2,.7,.2,1); /* @kind other */
+  --op-ease-out:   cubic-bezier(.16,1,.3,1); /* @kind other */
+  --op-dur-1:      120ms; /* @kind other */
+  --op-dur-2:      200ms; /* @kind other */
+  --op-dur-3:      320ms; /* @kind other */
+  --op-dur-4:      520ms; /* @kind other */
+}
+
+/* =========================================================
+   Semantic element defaults — drop the stylesheet into a
+   page and everything already looks like OnePulso.
+   ========================================================= */
+html, body {
+  background: var(--op-bg-1);
+  color: var(--op-fg-1);
+  font-family: var(--op-font-sans);
+  font-size: var(--op-text-base);
+  line-height: var(--op-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .op-h1 {
+  font-family: var(--op-font-display);
+  font-weight: 700;
+  font-size: clamp(40px, 7vw, var(--op-text-5xl));
+  line-height: var(--op-leading-tight);
+  letter-spacing: var(--op-tracking-tight);
+  text-wrap: balance;
+  margin: 0;
+}
+h2, .op-h2 {
+  font-family: var(--op-font-display);
+  font-weight: 600;
+  font-size: clamp(32px, 4.5vw, var(--op-text-3xl));
+  line-height: var(--op-leading-snug);
+  letter-spacing: var(--op-tracking-tight);
+  text-wrap: balance;
+  margin: 0;
+}
+h3, .op-h3 {
+  font-family: var(--op-font-display);
+  font-weight: 600;
+  font-size: var(--op-text-xl);
+  line-height: var(--op-leading-snug);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+h4, .op-h4 {
+  font-family: var(--op-font-sans);
+  font-weight: 600;
+  font-size: var(--op-text-lg);
+  line-height: var(--op-leading-snug);
+  margin: 0;
+}
+
+p, .op-body {
+  font-size: var(--op-text-base);
+  line-height: var(--op-leading-normal);
+  color: var(--op-fg-1);
+  margin: 0;
+  text-wrap: pretty;
+}
+.op-lead {
+  font-size: var(--op-text-md);
+  color: var(--op-fg-2);
+  line-height: 1.55;
+}
+.op-caption {
+  font-size: var(--op-text-sm);
+  color: var(--op-fg-3);
+}
+.op-eyebrow {
+  font-family: var(--op-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--op-tracking-caps);
+  color: var(--op-fg-2);
+}
+.op-editorial {
+  font-family: var(--op-font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+code, .op-code {
+  font-family: var(--op-font-mono);
+  font-size: .9em;
+  background: var(--op-bg-3);
+  padding: 2px 6px;
+  border-radius: var(--op-radius-xs);
+}
+
+hr { border: 0; border-top: 1px solid var(--op-line-1); margin: var(--op-space-6) 0; }
+
+/* Focus ring — thin, high-contrast, always on black */
+:focus-visible {
+  outline: 2px solid var(--op-black);
+  outline-offset: 2px;
+  border-radius: var(--op-radius-xs);
+}
