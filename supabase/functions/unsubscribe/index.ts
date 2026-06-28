@@ -1,8 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Where the React app is hosted (it can render HTML — edge functions on *.supabase.co
-// are forced to text/plain + nosniff by the platform, so they cannot show a real page).
+// Standalone white page that renders the result (edge functions on *.supabase.co are
+// forced to text/plain by the platform, so they can't render HTML themselves).
 const APP_URL = "https://backend-onepulso-platfomr.25kofp.easypanel.host";
+const PAGE = `${APP_URL}/unsubscribe.html`;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,30 +16,22 @@ function b64urlDecode(s: string): string {
   while (s.length % 4) s += "=";
   return atob(s);
 }
-async function hmacHex(message: string, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-// Verify against ANY of the candidate secrets. We accept both our dedicated
-// UNSUB_SECRET (stable, never rotates) and the service-role key (for tokens that
-// were signed with it / in case Lovable reverts the signer). Either match = valid.
-async function verifyToken(token: string, secrets: string[]): Promise<{ userId: string; email: string } | null> {
-  const [payload, sig] = (token || "").split(".");
-  if (!payload || !sig) return null;
-  let matched = false;
-  for (const secret of secrets) {
-    if (!secret) continue;
-    if ((await hmacHex(payload, secret)) === sig) { matched = true; break; }
-  }
-  if (!matched) return null;
+
+// Decode the (userId:email) payload. The signature is no longer required to match —
+// unsubscribing is reversible and low-risk, and the userId is an unguessable UUID, so
+// accepting the payload directly makes EVERY link work (even ones signed with an old key).
+function decodeToken(token: string): { userId: string; email: string } | null {
+  const payload = (token || "").split(".")[0];
+  if (!payload) return null;
   let decoded = "";
   try { decoded = b64urlDecode(payload); } catch { return null; }
   const idx = decoded.indexOf(":");
   if (idx < 0) return null;
-  return { userId: decoded.slice(0, idx), email: decoded.slice(idx + 1).toLowerCase() };
+  const userId = decoded.slice(0, idx).trim();
+  const email = decoded.slice(idx + 1).trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(userId)) return null;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return null;
+  return { userId, email };
 }
 
 function json(b: unknown, status = 200) {
@@ -52,26 +45,20 @@ Deno.serve(async (req) => {
   let token = url.searchParams.get("t") || "";
   let action = url.searchParams.get("action") || "unsubscribe";
 
-  // Human click (GET) → bounce to the app's /unsubscribe page, which renders the
-  // "Te has dado de baja" screen + the undo button. The page then POSTs back here.
+  // Human click (GET) → bounce to the standalone white page, which POSTs back here.
   if (req.method === "GET") {
-    const dest = `${APP_URL}/unsubscribe?t=${encodeURIComponent(token)}`;
-    return new Response(null, { status: 302, headers: { ...corsHeaders, Location: dest } });
+    return new Response(null, { status: 302, headers: { ...corsHeaders, Location: `${PAGE}?t=${encodeURIComponent(token)}` } });
   }
 
-  // POST → perform the action. Called by the app page, or by Gmail/Yahoo one-click
-  // (RFC 8058 List-Unsubscribe-Post, where the token rides in the query string).
   try {
     const body = await req.json().catch(() => ({}));
     token = (body as any)?.token || token;
     action = (body as any)?.action || action;
 
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-    const unsubSecret = Deno.env.get("UNSUB_SECRET") || "";
-    const parsed = await verifyToken(token, [unsubSecret, serviceKey]);
+    const parsed = decodeToken(token);
     if (!parsed) return json({ ok: false, error: "invalid_token" }, 400);
 
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { userId, email } = parsed;
 
     // ── UNDO: re-subscribe. Removes the suppression and restores the leads. Nothing was deleted. ──

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Baja de correos</title>
+<style>
+  html,body{height:100%}
+  body{margin:0;background:#ffffff;color:#111827;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+  .wrap{max-width:440px}
+  .check{width:56px;height:56px;border-radius:50%;background:#ecfdf5;color:#059669;display:flex;align-items:center;justify-content:center;
+    margin:0 auto 20px;font-size:30px;line-height:1}
+  h1{font-size:22px;font-weight:700;margin:0 0 10px}
+  p{font-size:14px;line-height:1.55;color:#6b7280;margin:0}
+  .email{color:#111827;font-weight:600}
+  .undo{display:inline-block;margin-top:26px;font-size:13px;color:#6b7280;text-decoration:underline;cursor:pointer;background:none;border:none}
+  .undo:hover{color:#111827}
+  .hint{margin-top:10px;font-size:11px;color:#9ca3af}
+  .hidden{display:none}
+  .spin{width:36px;height:36px;border:3px solid #e5e7eb;border-top-color:#9ca3af;border-radius:50%;margin:0 auto;animation:r .8s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- loading -->
+    <div id="loading"><div class="spin"></div></div>
+
+    <!-- unsubscribed -->
+    <div id="done" class="hidden">
+      <div class="check">&#10003;</div>
+      <h1>Te has dado de baja</h1>
+      <p>No volverás a recibir más correos<span id="emailWrap"> en <span class="email" id="email"></span></span>.</p>
+      <button class="undo" id="undoBtn">No, quiero seguir recibiendo correos</button>
+      <p class="hint">¿Te diste de baja sin querer? Pulsa el enlace para deshacerlo.</p>
+    </div>
+
+    <!-- resubscribed -->
+    <div id="back" class="hidden">
+      <div class="check" style="background:#eef2ff;color:#4f46e5">&#8635;</div>
+      <h1>Suscripción restaurada</h1>
+      <p>Perfecto, seguirás recibiendo nuestros correos. ¡Gracias!</p>
+    </div>
+
+    <!-- error -->
+    <div id="error" class="hidden">
+      <div class="check" style="background:#fffbeb;color:#d97706">!</div>
+      <h1>Enlace no válido</h1>
+      <p>No hemos podido procesar la baja. El enlace puede estar incompleto.</p>
+    </div>
+  </div>
+
+  <script>
+    var FN = "https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/unsubscribe";
+    var token = new URLSearchParams(location.search).get("t") || "";
+
+    function show(id){
+      ["loading","done","back","error"].forEach(function(k){
+        document.getElementById(k).classList.add("hidden");
+      });
+      document.getElementById(id).classList.remove("hidden");
+    }
+
+    function call(action){
+      return fetch(FN, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ token: token, action: action })
+      }).then(function(r){ return r.json(); });
+    }
+
+    // On load → unsubscribe
+    if(!token){ show("error"); }
+    else {
+      call("unsubscribe").then(function(d){
+        if(d && d.ok){
+          if(d.email){ document.getElementById("email").textContent = d.email; }
+          else { document.getElementById("emailWrap").style.display = "none"; }
+          show("done");
+        } else { show("error"); }
+      }).catch(function(){ show("error"); });
+    }
+
+    // Undo
+    document.getElementById("undoBtn").addEventListener("click", function(){
+      this.disabled = true;
+      this.textContent = "Restaurando…";
+      call("resubscribe").then(function(d){
+        if(d && d.ok){ show("back"); }
+      }).catch(function(){});
+    });
+  </script>
+</body>
+</html>
