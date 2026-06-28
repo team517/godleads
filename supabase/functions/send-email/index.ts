@@ -286,7 +286,7 @@ async function sendSmtpEmail(
 
       // Visible opt-out link at the bottom (added after URL stripping so it survives).
       const plainTextFinal = unsubUrl
-        ? `${plainText}\n\n—\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
+        ? `${plainText}\n\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
         : plainText;
       const htmlFinal = unsubUrl
         ? `${normalizedHtml}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`

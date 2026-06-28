@@ -511,7 +511,9 @@ async function sendSmtpEmail(
       : "";
     const plainText = [
       opts.textOnly ? wrapPlainTextNaturally(removeUrlsAndTracking(htmlToPlainText(normalizedBody))) : wrapPlainTextNaturally(stripHtml(fullHtml)),
-      plainSignature ? `--\n${plainSignature}` : "",
+      // No "--" signature delimiter: Gmail treats it as a sig boundary and collapses
+      // everything after it into the "•••" (show trimmed content) pill.
+      plainSignature || "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -522,7 +524,7 @@ async function sendSmtpEmail(
     // Opt-out link (only when the campaign enabled it). Added AFTER URL stripping so
     // it survives the text-only sanitizer.
     const unsubText = opts.unsubscribeUrl
-      ? `\n\n—\nSi no deseas recibir más correos, date de baja aquí: ${opts.unsubscribeUrl}`
+      ? `\n\nSi no deseas recibir más correos, date de baja aquí: ${opts.unsubscribeUrl}`
       : "";
     const unsubHtml = opts.unsubscribeUrl
       ? `<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${opts.unsubscribeUrl}">date de baja aquí</a>.</p>`
@@ -1322,10 +1324,11 @@ serve(async (req) => {
         let result: { ok: boolean; error?: string; messageId?: string; errorClass?: string };
         const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
-        // Opt-out link — only if the campaign enabled it AND this sending account is
-        // in the chosen scope (all accounts, or by tag / individual selection).
+        // Opt-out link — only on the FIRST email (step 0), and only if the campaign
+        // enabled it AND this sending account is in the chosen scope. Follow-ups stay
+        // in the same thread without repeating the unsubscribe footer.
         let unsubscribeUrl: string | undefined;
-        if ((campaign as any).include_unsubscribe) {
+        if ((campaign as any).include_unsubscribe && currentStepIndex === 0) {
           const unsubAll = (campaign as any).unsubscribe_all ?? true;
           const unsubIds: string[] = (campaign as any).unsubscribe_account_ids || [];
           const unsubTags: string[] = (campaign as any).unsubscribe_account_tags || [];
