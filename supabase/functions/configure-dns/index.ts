@@ -17,7 +17,6 @@ const DKIM = [
   { sub: "s1-ionos._domainkey", target: "s1.dkim.ionos.com" },
   { sub: "s2-ionos._domainkey", target: "s2.dkim.ionos.com" },
 ];
-const DMARC_TARGET = "dmarc.ionos.es";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -51,7 +50,7 @@ serve(async (req) => {
     // 2) Read current records.
     const zResp = await fetch(`${BASE}/zones/${zone.id}`, { headers: h });
     if (!zResp.ok) return json({ ok: false, error: `IONOS zone ${zResp.status}` }, 502);
-    const recs: Array<{ type: string; name: string; content?: string }> = (await zResp.json()).records || [];
+    const recs: Array<{ id?: string; type: string; name: string; content?: string }> = (await zResp.json()).records || [];
     const nameEq = (r: { name: string }, n: string) => r.name.toLowerCase() === n.toLowerCase();
 
     const toCreate: Array<{ name: string; type: string; content: string; ttl: number; disabled: boolean }> = [];
@@ -72,11 +71,23 @@ serve(async (req) => {
     }
     const dkim = dkimCreated === 0 ? "present" : (dkimPresent > 0 ? "partial-created" : "created");
 
-    // DMARC — CNAME to IONOS (accept an existing TXT or CNAME).
-    const dmarcRec = recs.find((r) => nameEq(r, `_dmarc.${domain}`) && (r.type === "CNAME" || r.type === "TXT"));
+    // DMARC — enforce a REAL policy. IONOS only points _dmarc via CNAME to its shared
+    // p=none record (monitoring only, no protection). We replace it with a proper TXT
+    // policy of our own so DMARC actually enforces.
+    const STRONG_DMARC = "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r; fo=1; pct=100";
+    const dmarcName = `_dmarc.${domain}`;
+    const dmarcRec = recs.find((r) => nameEq(r, dmarcName));
     let dmarc: string;
-    if (!dmarcRec) { toCreate.push({ name: `_dmarc.${domain}`, type: "CNAME", content: DMARC_TARGET, ttl: 3600, disabled: false }); dmarc = "created"; }
-    else dmarc = "present";
+    if (dmarcRec && dmarcRec.type === "TXT" && /p=(quarantine|reject)/i.test(dmarcRec.content || "")) {
+      dmarc = "present"; // already a strong policy — leave it
+    } else {
+      // Remove the weak/CNAME _dmarc record first (a name can't hold a CNAME and a TXT).
+      if (dmarcRec?.id) {
+        await fetch(`${BASE}/zones/${zone.id}/records/${dmarcRec.id}`, { method: "DELETE", headers: h }).catch(() => {});
+      }
+      toCreate.push({ name: dmarcName, type: "TXT", content: STRONG_DMARC, ttl: 3600, disabled: false });
+      dmarc = dmarcRec ? "upgraded" : "created";
+    }
 
     // 3) Create the missing records in one call.
     let created: string[] = [];
