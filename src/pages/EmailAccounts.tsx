@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from "lucide-react";
+import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -172,6 +172,32 @@ export default function EmailAccounts() {
     const d = (domain || "").trim().toLowerCase();
     requestedDomainsRef.current.add(d);
     checkDomainAuth(d);
+  };
+
+  // ── Auto-configure SPF/DKIM/DMARC via the IONOS DNS API ──
+  const [dnsConfiguring, setDnsConfiguring] = useState<Record<string, boolean>>({});
+  const configureDns = async (domain: string) => {
+    const d = (domain || "").trim().toLowerCase();
+    if (!d) return;
+    setDnsConfiguring(p => ({ ...p, [d]: true }));
+    try {
+      const { data, error } = await supabase.functions.invoke("configure-dns", { body: { domain: d } });
+      if (error) throw error;
+      if (!data?.ok) { toast.error(data?.error || "No se pudo configurar el DNS"); return; }
+      if (data.configured) {
+        toast.success(`DNS de ${d} configurado — ${data.created.length} registro(s) creados. Puede tardar unos minutos en propagarse.`);
+      } else {
+        toast.success(`${d} ya tenía SPF, DKIM y DMARC correctos.`);
+      }
+      if (data.warnings?.length) toast.warning(data.warnings[0]);
+      // Refresh the SPF/DKIM/DMARC chips once DNS has had a moment to propagate.
+      setTimeout(() => recheckDomain(d), 4000);
+      setTimeout(() => recheckDomain(d), 15000);
+    } catch (e: any) {
+      toast.error(`Error al configurar DNS: ${e.message || e}`);
+    } finally {
+      setDnsConfiguring(p => ({ ...p, [d]: false }));
+    }
   };
 
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
@@ -1338,13 +1364,23 @@ export default function EmailAccounts() {
                     <div className="mt-3 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[11px] font-medium text-muted-foreground">Autenticación del dominio</span>
-                        <button
-                          onClick={() => recheckDomain(dom)}
-                          disabled={!dom || auth?.loading}
-                          className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-50"
-                        >
-                          <RefreshCw className={`h-3 w-3 ${auth?.loading ? "animate-spin" : ""}`} /> Comprobar
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => configureDns(dom)}
+                            disabled={!dom || dnsConfiguring[dom]}
+                            title="Configura SPF, DKIM y DMARC automáticamente vía la API de IONOS"
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline disabled:opacity-50"
+                          >
+                            {dnsConfiguring[dom] ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Configurar DNS
+                          </button>
+                          <button
+                            onClick={() => recheckDomain(dom)}
+                            disabled={!dom || auth?.loading}
+                            className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+                          >
+                            <RefreshCw className={`h-3 w-3 ${auth?.loading ? "animate-spin" : ""}`} /> Comprobar
+                          </button>
+                        </div>
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {!dom ? (

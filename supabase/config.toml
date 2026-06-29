@@ -18,6 +18,9 @@ verify_jwt = false
 [functions.fetch-inbox]
 verify_jwt = false
 
+[functions.configure-dns]
+verify_jwt = false
+
 [functions.process-campaign-queue]
 verify_jwt = false
 
