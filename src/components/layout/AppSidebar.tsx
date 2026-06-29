@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, UsersRound, Workflow, Tv, Handshake, ChevronLeft,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, Workflow, Tv, ChevronLeft,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -23,9 +23,7 @@ const toolsNav = [
   { icon: BarChart3, label: "Estadísticas", path: "/stats" },
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Workflow, label: "Nodos", path: "/workflows" },
-  { icon: Tv, label: "GodTube", path: "/godtube" },
-  { icon: UsersRound, label: "Comunidad", path: "/community" },
-  { icon: Handshake, label: "Partners", path: "/partners" },
+  { icon: Tv, label: "Tutorial", path: "/godtube" },
 ];
 
 interface AppSidebarProps {
