@@ -155,16 +155,20 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
 
       <nav className="flex-1 px-3 py-4 overflow-y-auto overflow-x-hidden">
         {/* Main section */}
-        <div className="space-y-0.5">
-          {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Principal</p>}
-          {mainNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+        <div>
+          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Principal</p>}
+          <div className="divide-y divide-sidebar-border/50">
+            {mainNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+          </div>
         </div>
 
         {/* Tools section */}
         {(!allowedRoutes || toolsNav.some(item => allowedRoutes.includes(item.path))) && (
-        <div className="space-y-0.5 mt-4 pt-4 border-t border-sidebar-border/60">
-          {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Herramientas</p>}
-          {toolsNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+        <div className="mt-4 pt-4 border-t border-sidebar-border/70">
+          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Herramientas</p>}
+          <div className="divide-y divide-sidebar-border/50">
+            {toolsNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+          </div>
         </div>
         )}
 
@@ -209,6 +213,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           )}
         </div>
 
+        <div className="divide-y divide-sidebar-border/50 border-t border-sidebar-border/50">
         <Link
           to="/settings"
           onClick={handleNavClick}
@@ -240,6 +245,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           <LogOut className="h-[18px] w-[18px] shrink-0" />
           {!collapsed && "Cerrar sesión"}
         </button>
+        </div>
       </div>
     </aside>
   );
