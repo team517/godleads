@@ -405,7 +405,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
 
         <Link to="/settings">
           <Avatar className="h-9 w-9 ring-2 ring-primary/20 cursor-pointer hover:ring-primary/40 transition-all">
-            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/fun-emoji/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
+            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
             <AvatarFallback className="bg-primary/10 text-primary text-sm font-bold">
               {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
             </AvatarFallback>

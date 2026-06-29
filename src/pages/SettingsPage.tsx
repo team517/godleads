@@ -26,6 +26,7 @@ import {
 } from "@/components/KeepSessionBanner";
 import { useSearchParams } from "react-router-dom";
 import { EmailDomainHealthCard } from "@/components/settings/EmailDomainHealthCard";
+import { BlocklistCard } from "@/components/settings/BlocklistCard";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
   { tier: "starter", features: ["1,000 leads", "3 cuentas de email", "Campañas ilimitadas", "Follow-ups automáticos", "Soporte por email"] },
@@ -248,7 +249,7 @@ export default function SettingsPage() {
               <div className="flex items-center gap-5">
                 <div className="relative group">
                   <Avatar className="h-20 w-20 ring-2 ring-primary/20">
-                    <AvatarImage src={profile.avatar_url || `https://api.dicebear.com/9.x/fun-emoji/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
+                    <AvatarImage src={profile.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
                     <AvatarFallback className="bg-primary/10 text-primary text-xl font-bold">
                       {(profile.full_name || user?.email || "U").charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -291,7 +292,7 @@ export default function SettingsPage() {
                     { seed: "Sunny", bg: "ffdfbf" },
                     { seed: "Star", bg: "c0aede" },
                   ].map(({ seed, bg }) => {
-                    const url = `https://api.dicebear.com/9.x/fun-emoji/svg?seed=${seed}&backgroundColor=${bg}`;
+                    const url = `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}&backgroundColor=${bg}`;
                     const isSelected = profile.avatar_url === url;
                     return (
                       <button
@@ -419,6 +420,8 @@ export default function SettingsPage() {
 
         <TabsContent value="sending" className="space-y-4 mt-4">
           <EmailDomainHealthCard initialDomain={profile.contact_email.split("@")[1] || ""} />
+
+          <BlocklistCard />
 
           <Card>
             <CardHeader>

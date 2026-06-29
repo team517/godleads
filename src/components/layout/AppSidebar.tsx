@@ -200,7 +200,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         {/* User profile */}
         <div className={cn("flex items-center gap-2.5 py-2", collapsed ? "justify-center px-0" : "px-3")} title={collapsed ? (profileData.full_name || user?.email || "") : undefined}>
           <Avatar className="h-8 w-8 shrink-0 ring-2 ring-primary/20">
-            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/fun-emoji/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4,c0aede,d1f4a5,ffd5dc,ffdfbf`} />
+            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4,c0aede,d1f4a5,ffd5dc,ffdfbf`} />
             <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
               {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
             </AvatarFallback>
