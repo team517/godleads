@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2 } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload } from "lucide-react";
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -51,6 +51,45 @@ function SectionPicker({ selected, onToggle }: { selected: string[]; onToggle: (
           </label>
         );
       })}
+    </div>
+  );
+}
+
+function LogoField({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const upload = async (file: File) => {
+    if (file.size > 3 * 1024 * 1024) { toast.error("El logo debe pesar menos de 3 MB"); return; }
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "png").toLowerCase();
+      const rand = Math.random().toString(36).slice(2, 10);
+      const path = `client-logos/${Date.now()}-${rand}.${ext}`;
+      const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
+      onChange(data.publicUrl);
+      toast.success("Logo subido");
+    } catch (e: any) {
+      toast.error(e.message || "Error al subir el logo");
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Logo</Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()} disabled={uploading}>
+          {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir archivo
+        </Button>
+        {value && <img src={value} alt="logo" className="h-8 max-w-[120px] rounded object-contain" />}
+        {value && <button type="button" className="text-xs text-muted-foreground hover:text-destructive" onClick={() => onChange("")}>Quitar</button>}
+      </div>
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="o pega una URL: https://…/logo.png" className="text-xs" />
     </div>
   );
 }
@@ -151,8 +190,8 @@ export default function ClientPortal() {
 
           <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
             <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Branding</Label>
-            <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-              <div className="space-y-1.5"><Label className="text-xs">Logo (URL)</Label><Input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" /></div>
+            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+              <LogoField value={logoUrl} onChange={setLogoUrl} />
               <div className="space-y-1.5"><Label className="text-xs">Color de marca</Label>
                 <div className="flex items-center gap-2">
                   <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-9 w-12 cursor-pointer rounded border border-border bg-background" />
@@ -160,7 +199,6 @@ export default function ClientPortal() {
                 </div>
               </div>
             </div>
-            {logoUrl && <div className="flex items-center gap-2 pt-1"><span className="text-xs text-muted-foreground">Vista previa:</span><img src={logoUrl} alt="logo" className="h-7 max-w-[150px] object-contain" /></div>}
           </div>
 
           <div className="space-y-2">
@@ -242,7 +280,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} /></div>
             <div className="space-y-1.5"><Label className="text-xs">Nueva contraseña</Label><Input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="(dejar vacío = sin cambio)" /></div>
-            <div className="space-y-1.5"><Label className="text-xs">Logo (URL)</Label><Input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} /></div>
+            <div className="sm:col-span-2"><LogoField value={logoUrl} onChange={setLogoUrl} /></div>
             <div className="space-y-1.5"><Label className="text-xs">Color de marca</Label>
               <div className="flex items-center gap-2">
                 <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-9 w-12 cursor-pointer rounded border border-border bg-background" />
