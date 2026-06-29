@@ -144,7 +144,9 @@ function buildDmarc(records: string[]): CheckItem {
   const policy = dmarcRecord.match(/\bp=(none|quarantine|reject)\b/i)?.[1]?.toLowerCase();
 
   return {
-    status: hasPolicy ? (policy === "none" ? "warn" : "pass") : "fail",
+    // A valid DMARC record (any policy, incl. p=none) counts as configured → green.
+    // p=none is the standard IONOS-managed policy; we still note it can be strengthened.
+    status: hasPolicy ? "pass" : "fail",
     summary: !hasPolicy
       ? "El registro DMARC existe pero no define una política p=."
       : policy === "none"

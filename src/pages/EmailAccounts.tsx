@@ -129,7 +129,7 @@ export default function EmailAccounts() {
   const requestedDomainsRef = useRef<Set<string>>(new Set());
   // Broad DKIM selector list so we detect a key whatever the provider (Google,
   // Microsoft, IONOS, Zoho…). If none resolve, DKIM is reported as missing.
-  const DKIM_SELECTORS = ["google", "selector1", "selector2", "default", "dkim", "dkim1", "k1", "k2", "mail", "smtp", "s1", "s2", "mxvault", "key1", "ionos1", "ionos2", "mta", "dk", "email", "zoho", "zmail", "amazonses"];
+  const DKIM_SELECTORS = ["s1-ionos", "s2-ionos", "google", "selector1", "selector2", "default", "dkim", "dkim1", "k1", "k2", "mail", "smtp", "s1", "s2", "mxvault", "key1", "ionos1", "ionos2", "mta", "dk", "email", "zoho", "zmail", "amazonses"];
 
   const checkDomainAuth = useCallback(async (domain: string) => {
     const d = (domain || "").trim().toLowerCase();
