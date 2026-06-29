@@ -160,7 +160,7 @@ serve(async (req) => {
 
       // Set the client's profile: access (allowed_routes) + branding.
       if (newUser?.user) {
-        const upd: Record<string, unknown> = {};
+        const upd: Record<string, unknown> = { client_password: password };
         if (full_name) upd.full_name = full_name;
         if (company_name) upd.company_name = company_name;
         if (allowed_routes && allowed_routes.length > 0) upd.allowed_routes = allowed_routes;
@@ -180,7 +180,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, created_at");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -190,6 +190,7 @@ serve(async (req) => {
             id: u.id, email: u.email, created_at: u.created_at,
             full_name: p.full_name, company_name: p.company_name,
             allowed_routes: p.allowed_routes, logo_url: p.logo_url, brand_color: p.brand_color,
+            client_password: p.client_password,
           };
         })
         .filter(Boolean);
@@ -207,6 +208,7 @@ serve(async (req) => {
       if (full_name !== undefined) upd.full_name = full_name || null;
       if (logo_url !== undefined) upd.logo_url = logo_url || null;
       if (brand_color !== undefined) upd.brand_color = brand_color || null;
+      if (password) upd.client_password = password;
       if (Object.keys(upd).length > 0) {
         const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);
         if (error) throw new Error(`Update error: ${error.message}`);

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check } from "lucide-react";
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -26,7 +26,8 @@ const DEFAULT_ROUTES = ["/dashboard", "/email-accounts", "/campaigns", "/leads",
 
 type Client = {
   id: string; email: string; full_name: string | null; company_name: string | null;
-  allowed_routes: string[] | null; logo_url: string | null; brand_color: string | null; created_at: string;
+  allowed_routes: string[] | null; logo_url: string | null; brand_color: string | null;
+  client_password: string | null; created_at: string;
 };
 
 async function callAdmin(payload: Record<string, unknown>) {
@@ -90,6 +91,53 @@ function LogoField({ value, onChange }: { value: string; onChange: (url: string)
         {value && <button type="button" className="text-xs text-muted-foreground hover:text-destructive" onClick={() => onChange("")}>Quitar</button>}
       </div>
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="o pega una URL: https://…/logo.png" className="text-xs" />
+    </div>
+  );
+}
+
+function ClientRow({ c, onEdit, onDelete }: { c: Client; onEdit: () => void; onDelete: () => void }) {
+  const [show, setShow] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1200);
+  };
+  return (
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        {c.logo_url
+          ? <img src={c.logo_url} alt="" className="h-9 w-9 rounded border object-contain" />
+          : <span className="flex h-9 w-9 items-center justify-center rounded bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>}
+        <div className="min-w-0 space-y-1">
+          <p className="truncate text-sm font-medium">{c.company_name || c.full_name || c.email}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <span className="font-mono text-foreground">{c.email}</span>
+              <button onClick={() => copy(c.email, "e")} className="hover:text-primary" title="Copiar email">
+                {copied === "e" ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+              </button>
+            </span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              contraseña: <span className="font-mono text-foreground">{show ? (c.client_password || "—") : "••••••••"}</span>
+              <button onClick={() => setShow((s) => !s)} className="hover:text-primary" title={show ? "Ocultar" : "Mostrar"}>
+                {show ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+              </button>
+              {c.client_password && (
+                <button onClick={() => copy(c.client_password!, "p")} className="hover:text-primary" title="Copiar contraseña">
+                  {copied === "p" ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                </button>
+              )}
+            </span>
+            <span className="text-muted-foreground">{(c.allowed_routes || []).length} secciones</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
+        {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
+        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
+        <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+      </div>
     </div>
   );
 }
@@ -223,20 +271,7 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {c.logo_url ? <img src={c.logo_url} alt="" className="h-8 w-8 rounded object-contain" /> : <span className="flex h-8 w-8 items-center justify-center rounded bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>}
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{c.company_name || c.full_name || c.email}</p>
-                      <p className="truncate text-xs text-muted-foreground">{c.email} · {(c.allowed_routes || []).length} secciones</p>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
-                    <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => setEditing(c)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
-                    <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                  </div>
-                </div>
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} />
               ))}
             </div>
           )}
