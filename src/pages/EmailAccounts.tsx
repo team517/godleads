@@ -200,6 +200,36 @@ export default function EmailAccounts() {
     }
   };
 
+  // One-click: configure SPF/DKIM/DMARC for ALL account domains at once.
+  const [dnsAllRunning, setDnsAllRunning] = useState(false);
+  const [dnsAllProgress, setDnsAllProgress] = useState({ current: 0, total: 0 });
+  const configureAllDns = async () => {
+    const domains = Array.from(new Set(accounts.map(a => domainOf(a.email)).filter(Boolean)));
+    if (domains.length === 0) { toast.info("No hay dominios que configurar"); return; }
+    setDnsAllRunning(true);
+    setDnsAllProgress({ current: 0, total: domains.length });
+    let configured = 0, alreadyOk = 0, failed = 0;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < domains.length) {
+        const d = domains[idx++];
+        try {
+          const { data, error } = await supabase.functions.invoke("configure-dns", { body: { domain: d } });
+          if (error || !data?.ok) failed++;
+          else if (data.configured) configured++;
+          else alreadyOk++;
+        } catch { failed++; }
+        setDnsAllProgress(p => ({ ...p, current: p.current + 1 }));
+      }
+    };
+    // Limit concurrency to 3 to stay friendly with the IONOS API.
+    await Promise.all(Array.from({ length: Math.min(3, domains.length) }, worker));
+    setDnsAllRunning(false);
+    toast.success(`DNS · ${configured} configurados, ${alreadyOk} ya correctos${failed ? `, ${failed} con aviso/fuera de IONOS` : ""}`);
+    // Refresh the chips for every domain after a short propagation delay.
+    domains.forEach((d, i) => setTimeout(() => recheckDomain(d), 4000 + i * 150));
+  };
+
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
   type ImapCheck = { loading: boolean; ok?: boolean; error?: string };
   const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>({});
@@ -814,6 +844,15 @@ export default function EmailAccounts() {
           {accounts.length > 0 && (
             <Button variant="outline" size="sm" className="gap-2" onClick={handleVerifyAll}>
               <Wifi className="h-4 w-4" /> <span className="hidden sm:inline">Verificar todas</span><span className="sm:hidden">Verificar</span>
+            </Button>
+          )}
+          {accounts.length > 0 && (
+            <Button variant="outline" size="sm" className="gap-2" onClick={configureAllDns} disabled={dnsAllRunning}>
+              {dnsAllRunning ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> {dnsAllProgress.current}/{dnsAllProgress.total}</>
+              ) : (
+                <><Wand2 className="h-4 w-4" /> <span className="hidden sm:inline">Configurar DNS</span><span className="sm:hidden">DNS</span></>
+              )}
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulkIonos(true)}>
