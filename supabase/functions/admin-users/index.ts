@@ -147,7 +147,7 @@ serve(async (req) => {
     }
 
     if (action === "create_user") {
-      const { email, password, full_name, allowed_routes } = body;
+      const { email, password, full_name, company_name, allowed_routes, logo_url, brand_color } = body;
       if (!email || !password) throw new Error("email and password required");
 
       const { data: newUser, error: createErr } = await supabase.auth.admin.createUser({
@@ -158,15 +158,64 @@ serve(async (req) => {
       });
       if (createErr) throw new Error(`Create user error: ${createErr.message}`);
 
-      // Set allowed_routes if provided
-      if (allowed_routes && allowed_routes.length > 0 && newUser?.user) {
-        await supabase
-          .from("profiles")
-          .update({ allowed_routes })
-          .eq("user_id", newUser.user.id);
+      // Set the client's profile: access (allowed_routes) + branding.
+      if (newUser?.user) {
+        const upd: Record<string, unknown> = {};
+        if (full_name) upd.full_name = full_name;
+        if (company_name) upd.company_name = company_name;
+        if (allowed_routes && allowed_routes.length > 0) upd.allowed_routes = allowed_routes;
+        if (logo_url !== undefined) upd.logo_url = logo_url || null;
+        if (brand_color !== undefined) upd.brand_color = brand_color || null;
+        if (Object.keys(upd).length > 0) {
+          await supabase.from("profiles").update(upd).eq("user_id", newUser.user.id);
+        }
       }
 
       return new Response(JSON.stringify({ success: true, user_id: newUser?.user?.id }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "list_clients") {
+      const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, created_at");
+      const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
+      const clients = (authUsers?.users || [])
+        .map((u: any) => {
+          const p: any = pMap.get(u.id);
+          if (!p || !p.allowed_routes || p.allowed_routes.length === 0) return null;
+          return {
+            id: u.id, email: u.email, created_at: u.created_at,
+            full_name: p.full_name, company_name: p.company_name,
+            allowed_routes: p.allowed_routes, logo_url: p.logo_url, brand_color: p.brand_color,
+          };
+        })
+        .filter(Boolean);
+      return new Response(JSON.stringify({ clients }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "update_client") {
+      const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password } = body;
+      if (!user_id) throw new Error("user_id required");
+      const upd: Record<string, unknown> = {};
+      if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
+      if (company_name !== undefined) upd.company_name = company_name || null;
+      if (full_name !== undefined) upd.full_name = full_name || null;
+      if (logo_url !== undefined) upd.logo_url = logo_url || null;
+      if (brand_color !== undefined) upd.brand_color = brand_color || null;
+      if (Object.keys(upd).length > 0) {
+        const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);
+        if (error) throw new Error(`Update error: ${error.message}`);
+      }
+      if (password) {
+        const { error } = await supabase.auth.admin.updateUserById(user_id, { password });
+        if (error) throw new Error(`Password error: ${error.message}`);
+      }
+      return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

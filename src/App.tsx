@@ -23,6 +23,7 @@ const Stats = lazy(() => import("./pages/Stats"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AIPrompts = lazy(() => import("./pages/AIPrompts"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
+const ClientPortal = lazy(() => import("./pages/ClientPortal"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Install = lazy(() => import("./pages/Install"));
 const Community = lazy(() => import("./pages/Community"));
@@ -68,6 +69,7 @@ const App = () => (
                 <Route path="/godtube" element={<GodTube />} />
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />
+                <Route path="/admin/clients" element={<ClientPortal />} />
                 <Route path="/metrics" element={<Metrics />} />
               </Route>
               <Route path="*" element={<NotFound />} />

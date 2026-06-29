@@ -135,7 +135,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
     <aside className={sidebarClasses}>
       {/* Logo + collapse toggle */}
       <div className={cn("flex h-14 items-center border-b border-sidebar-border/50", collapsed ? "justify-center px-2" : "justify-between px-5")}>
-        {!collapsed && <Wordmark className="h-7" colorClassName="text-foreground" />}
+        {!collapsed && (
+          profileData.logo_url
+            ? <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-7 max-w-[150px] object-contain" />
+            : <Wordmark className="h-7" colorClassName="text-foreground" />
+        )}
         {isMobile ? (
           <button onClick={onClose} className="text-sidebar-foreground/50 hover:text-sidebar-foreground p-1">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -181,13 +185,28 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
               className={cn(
                 "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150",
                 collapsed ? "justify-center px-0" : "px-3",
-                location.pathname.startsWith("/admin")
+                location.pathname === "/admin"
                   ? "bg-sidebar-accent text-sidebar-primary"
                   : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
               )}
             >
-              <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin") ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
+              <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
               {!collapsed && "Panel Admin"}
+            </Link>
+            <Link
+              to="/admin/clients"
+              onClick={handleNavClick}
+              title={collapsed ? "Portal de Clientes" : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150",
+                collapsed ? "justify-center px-0" : "px-3",
+                location.pathname.startsWith("/admin/clients")
+                  ? "bg-sidebar-accent text-sidebar-primary"
+                  : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+              )}
+            >
+              <Users className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin/clients") ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
+              {!collapsed && "Portal de Clientes"}
             </Link>
           </div>
         )}
