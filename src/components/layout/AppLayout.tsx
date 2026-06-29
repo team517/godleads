@@ -9,6 +9,16 @@ import { KeepSessionBanner } from "@/components/KeepSessionBanner";
 export function AppLayout() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "1");
+
+  const toggleCollapsed = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      localStorage.setItem("sidebarCollapsed", next ? "1" : "0");
+      return next;
+    });
+
+  const isCollapsed = !isMobile && collapsed;
 
   return (
     <div className="flex min-h-screen">
@@ -24,9 +34,11 @@ export function AppLayout() {
         isMobile={isMobile}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        collapsed={isCollapsed}
+        onToggleCollapse={toggleCollapsed}
       />
 
-      <div className={`flex flex-1 flex-col ${isMobile ? "ml-0" : "ml-60"}`}>
+      <div className={`flex flex-1 flex-col transition-[margin] duration-200 ${isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"}`}>
         <Topbar onMenuToggle={() => setSidebarOpen(true)} isMobile={isMobile} />
         <main className={`flex-1 ${isMobile ? "p-2.5 pb-16" : "p-6"}`}>
           <Outlet />
