@@ -1297,12 +1297,15 @@ serve(async (req) => {
 
         const finalSubject = replaceVariables(finalSubjectTemplate, fields).replace(/\s+/g, " ").trim();
 
-        // Determine text-only mode
+        // Determine text-only mode — honors the campaign's own Options toggles
+        // ("Enviar emails como solo texto" / "Enviar primer email como solo texto").
+        // Plain text without links is the highest-deliverability mode and reduces
+        // spam classification, so it stays the recommended default in the UI —
+        // but the user's explicit choice here is respected, not silently overridden.
         const isFirstStep = currentStepIndex === 0;
-        // Force text-only on EVERY step — plain text without links is the
-        // highest-deliverability mode and dramatically reduces spam classification.
-        // (HTML opens tracking, images, fancy markup all hurt cold-email inbox rate.)
-        const forceTextOnly = true;
+        const textOnlyEmails = (campaign as any).text_only_emails === true;
+        const firstEmailTextOnly = (campaign as any).first_email_text_only === true;
+        const forceTextOnly = textOnlyEmails || (isFirstStep && firstEmailTextOnly);
         const campaignSignature = ((campaign as any).signature_html || "").trim();
         const shouldIncludeSignature = !isFirstStep && !!campaignSignature;
         const signatureHtml = shouldIncludeSignature ? campaignSignature : undefined;

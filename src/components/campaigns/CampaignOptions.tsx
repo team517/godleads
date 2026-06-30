@@ -9,20 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Brain, Users, Info, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban } from "lucide-react";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 interface Props { campaignId: string; }
 
@@ -127,8 +115,6 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [domainLimitEnabled, setDomainLimitEnabled] = useState(false);
   const [domainDailyLimit, setDomainDailyLimit] = useState(3);
   const [providerMatching, setProviderMatching] = useState(false);
-  const [aiFilterUnlikely, setAiFilterUnlikely] = useState("send_last");
-  const [aiFilterHostile, setAiFilterHostile] = useState("skip");
   const [expertRotation, setExpertRotation] = useState(false);
   const [deduping, setDeduping] = useState(false);
   const [signatureHtml, setSignatureHtml] = useState("");
@@ -234,8 +220,6 @@ export default function CampaignOptions({ campaignId }: Props) {
         setDomainLimitEnabled(d.domain_limit_enabled ?? false);
         setDomainDailyLimit(d.domain_daily_limit ?? 3);
         setProviderMatching(d.provider_matching ?? false);
-        setAiFilterUnlikely(d.ai_filter_unlikely ?? "send_last");
-        setAiFilterHostile(d.ai_filter_hostile ?? "skip");
         setExpertRotation(d.expert_rotation ?? false);
         setSignatureHtml(d.signature_html ?? "");
         setBreakThreadAfter(d.break_thread_after ?? 0);
@@ -280,8 +264,6 @@ export default function CampaignOptions({ campaignId }: Props) {
       domain_limit_enabled: domainLimitEnabled,
       domain_daily_limit: domainDailyLimit,
       provider_matching: providerMatching,
-      ai_filter_unlikely: aiFilterUnlikely,
-      ai_filter_hostile: aiFilterHostile,
       expert_rotation: expertRotation,
       signature_html: signatureHtml,
       break_thread_after: breakThreadAfter,
@@ -643,31 +625,6 @@ export default function CampaignOptions({ campaignId }: Props) {
 
       {/* ── INTELIGENCIA ARTIFICIAL ── */}
       <Section label="Inteligencia artificial">
-        <Row icon={<Brain className="h-4 w-4" />} tint="violet" title="Filtrado de leads con IA"
-          desc="Decide qué hacer con leads poco probables u hostiles.">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5 text-sm">Poco probable que responda
-                <Tooltip><TooltipTrigger asChild><Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" /></TooltipTrigger><TooltipContent className="max-w-[200px] text-xs">Leads con baja probabilidad de respuesta según la IA.</TooltipContent></Tooltip>
-                {proBadge}
-              </span>
-              <Select value={aiFilterUnlikely} onValueChange={(v) => { setAiFilterUnlikely(v); markDirty(); }}>
-                <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="send_last">Enviar último</SelectItem><SelectItem value="skip">Omitir</SelectItem><SelectItem value="normal">Normal</SelectItem></SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5 text-sm">Prospectos hostiles
-                <Tooltip><TooltipTrigger asChild><Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" /></TooltipTrigger><TooltipContent className="max-w-[200px] text-xs">Leads que podrían marcarte como spam o reportarte.</TooltipContent></Tooltip>
-                {proBadge}
-              </span>
-              <Select value={aiFilterHostile} onValueChange={(v) => { setAiFilterHostile(v); markDirty(); }}>
-                <SelectTrigger className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="skip">Omitir</SelectItem><SelectItem value="send_last">Enviar último</SelectItem><SelectItem value="normal">Normal</SelectItem></SelectContent>
-              </Select>
-            </div>
-          </div>
-        </Row>
 
         <Row icon={<FlaskConical className="h-4 w-4" />} tint="rose" title="A/B Testing con IA"
           desc="La IA analiza tus variantes y crea mejoras automáticamente (máx. 5)."
