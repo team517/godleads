@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useProfile } from "@/contexts/ProfileContext";
 import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
@@ -12,8 +13,31 @@ import jsPDF from "jspdf";
 
 interface Props { campaignId: string; }
 
+// Loads any image (data: URL or remote https URL) and re-encodes it as a PNG
+// data URL via canvas, so jsPDF can embed it reliably regardless of source
+// format (png/jpeg/webp) or origin. Returns null if it can't be loaded.
+async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; h: number } | null> {
+  if (!src) return null;
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = src;
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("load")); });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    return { data: canvas.toDataURL("image/png"), w: canvas.width, h: canvas.height };
+  } catch {
+    return null;
+  }
+}
+
 export default function CampaignAnalytics({ campaignId }: Props) {
   const { user } = useAuth();
+  const { profile } = useProfile();
   const [stats, setStats] = useState({ started: 0, sent: 0, replied: 0, failed: 0 });
   const [stepStats, setStepStats] = useState<any[]>([]);
   const [campaignName, setCampaignName] = useState("");
@@ -34,7 +58,26 @@ export default function CampaignAnalytics({ campaignId }: Props) {
     return { logo: null, color: "#4F46E5", company: "" };
   });
   const [brandOpen, setBrandOpen] = useState(false);
-  const saveBranding = (b: Branding) => { setBranding(b); try { localStorage.setItem(BRAND_KEY, JSON.stringify(b)); } catch { /* quota */ } };
+  // Once the user edits branding by hand, stop auto-overwriting it from the profile.
+  const brandManualRef = useRef(false);
+  const saveBranding = (b: Branding) => { brandManualRef.current = true; setBranding(b); try { localStorage.setItem(BRAND_KEY, JSON.stringify(b)); } catch { /* quota */ } };
+
+  // Auto-apply the logged-in account's branding (logo / color / company) — set by
+  // the admin in the Client Portal — so each client's report is pre-branded with
+  // their own identity, without touching anything manually.
+  useEffect(() => {
+    if (brandManualRef.current) return;
+    const pLogo = profile.logo_url;
+    const pColor = profile.brand_color;
+    const pCompany = profile.company_name;
+    if (pLogo || pColor || pCompany) {
+      setBranding(prev => ({
+        logo: pLogo || prev.logo,
+        color: pColor || prev.color,
+        company: pCompany || prev.company,
+      }));
+    }
+  }, [profile.logo_url, profile.brand_color, profile.company_name]);
   const onLogoFile = (file: File) => {
     if (file.size > 2_000_000) { toast.error("El logo es muy grande (máx 2 MB)"); return; }
     const reader = new FileReader();
@@ -104,20 +147,18 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       pdf.setFillColor(br, bg, bb);
       pdf.rect(0, 0, pageWidth, 5, "F");
 
-      // Logo (keeps aspect ratio, max 14mm tall)
+      // Logo (keeps aspect ratio, max 14mm tall). Works for both uploaded data
+      // URLs and the client's profile logo URL (re-encoded to PNG for jsPDF).
       let headerY = 18;
       if (branding.logo) {
-        try {
-          const img = new Image();
-          img.src = branding.logo;
-          await new Promise((res) => { img.onload = res; img.onerror = res; });
-          const ratio = img.width && img.height ? img.width / img.height : 3;
+        const logo = await imgToPngDataUrl(branding.logo);
+        if (logo) {
+          const ratio = logo.w && logo.h ? logo.w / logo.h : 3;
           const h = 14;
           const w = Math.min(h * ratio, 60);
-          const fmt = branding.logo.includes("image/png") ? "PNG" : branding.logo.includes("image/jpeg") || branding.logo.includes("image/jpg") ? "JPEG" : "PNG";
-          pdf.addImage(branding.logo, fmt, 14, 9, w, h);
+          pdf.addImage(logo.data, "PNG", 14, 9, w, h);
           headerY = 9 + h + 7;
-        } catch { /* skip logo on error */ }
+        }
       }
 
       // Title in brand color + company / date
