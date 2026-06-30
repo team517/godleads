@@ -808,15 +808,23 @@ serve(async (req) => {
 
       // Check sending window
       let currentHour: number;
+      let currentMinute: number;
       try {
-        currentHour = parseInt(now.toLocaleString("en-US", { timeZone: tz, hour: "numeric", hour12: false }));
+        const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(now);
+        currentHour = parseInt(parts.find(p => p.type === "hour")?.value || "0");
+        currentMinute = parseInt(parts.find(p => p.type === "minute")?.value || "0");
       } catch {
         currentHour = now.getUTCHours();
+        currentMinute = now.getUTCMinutes();
       }
 
       const startHour = campaign.send_start_hour ?? 9;
       const endHour = campaign.send_end_hour ?? 18;
       if (currentHour < startHour || currentHour >= endHour) continue;
+
+      // Minutes left until the window closes today — used to pace sends evenly
+      // across the whole window instead of bursting near the start.
+      const remainingWindowMinutes = Math.max(1, endHour * 60 - (currentHour * 60 + currentMinute));
 
       const stopOnReply = (campaign as any).stop_on_reply ?? true;
 
@@ -851,6 +859,59 @@ serve(async (req) => {
         .order("sent_today", { ascending: true });
 
       if (!accounts?.length) continue;
+
+      // ═══ Per-account effective daily limit (slow ramp aware) — computed ONCE
+      // per campaign per tick, not per lead. This also drives the campaign's
+      // OWN daily limit below, so it grows automatically as ramp progresses day
+      // by day, or as more accounts get connected/selected — no manual number
+      // to keep updating by hand. ═══
+      const HARD_DAILY_CAP = 30;
+      let rampDaysActive = 0;
+      if ((campaign as any).slow_ramp_enabled) {
+        const { data: firstSent } = await adminClient
+          .from("sent_emails")
+          .select("sent_at")
+          .eq("campaign_id", campaign.id)
+          .eq("status", "sent")
+          .order("sent_at", { ascending: true })
+          .limit(1);
+        if (firstSent && firstSent.length && firstSent[0].sent_at) {
+          const startAt = new Date(firstSent[0].sent_at);
+          rampDaysActive = Math.max(0, Math.floor((now.getTime() - startAt.getTime()) / (1000 * 60 * 60 * 24)));
+        }
+      }
+
+      const getEffectiveLimit = (acc: any) => {
+        let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+
+        // Account-level slow ramp: ramps from `warmup_started_at` by warmup_increment
+        // per day up to warmup_limit. Day 1 = increment, Day 2 = 2*increment, …
+        if (acc.warmup_enabled && acc.warmup_started_at) {
+          const startedAt = new Date(acc.warmup_started_at);
+          const days = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24)));
+          const inc = acc.warmup_increment || 2;
+          const target = acc.warmup_limit || limit;
+          const accRamp = Math.min((days + 1) * inc, target);
+          limit = Math.min(limit, accRamp);
+        }
+
+        // Campaign-level slow ramp — anchored to days of ACTUAL sending (rampDaysActive),
+        // so a paused/never-sent campaign stays at the starting cap (rampMax).
+        if ((campaign as any).slow_ramp_enabled) {
+          const rampMax = (campaign as any).slow_ramp_max || 2;
+          const rampIncrement = (campaign as any).slow_ramp_increment || 2;
+          const rampLimit = rampMax + rampDaysActive * rampIncrement;
+          limit = Math.min(limit, rampLimit);
+        }
+
+        return limit;
+      };
+
+      // Total capacity for THIS campaign today = sum of every selected/connected
+      // account's effective limit. With slow ramp this rises day by day on its
+      // own; without it, this is simply (per-account daily limit) × (number of
+      // accounts) — exactly the auto-calculated total the campaign should use.
+      const autoAccountCapTotal = accounts.reduce((s: number, acc: any) => s + getEffectiveLimit(acc), 0);
 
       // NOTE: We no longer apply a global per-campaign delay. Cadence is now
       // controlled per-account (each account waits a minimum of ~60s between
@@ -910,7 +971,10 @@ serve(async (req) => {
         .gte("sent_at", todayStart);
 
       const campaignSentToday = sentToday?.length || 0;
-      const campaignDailyLimit = campaign.daily_limit || 999;
+      // Auto daily limit: never let a stale/low manual number throttle the
+      // campaign below what its own connected accounts can support today —
+      // the real ceiling is always autoAccountCapTotal (slow-ramp aware).
+      const campaignDailyLimit = Math.max(campaign.daily_limit || 0, autoAccountCapTotal);
       if (campaignSentToday >= campaignDailyLimit) continue;
 
       // ═══ Blocklist check (load once per campaign) ═══
@@ -954,18 +1018,25 @@ serve(async (req) => {
       const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause inside the tick
       const accountSendsThisTick: Record<string, number> = {};
 
-      // Random per-account cooldown: 6–9 minutes, decided once per tick per account.
+      // Per-account cooldown: a random 6–9 min floor (deliverability pacing),
+      // stretched further when the account has little quota left for a lot of
+      // window time remaining — so e.g. a slow-ramp quota of 2/day gets spread
+      // across the whole 9–18h window instead of firing both in the first
+      // few minutes. Decided once per tick per account.
       const accountCooldownMs: Record<string, number> = {};
-      const cooldownFor = (accId: string) => {
-        if (!accountCooldownMs[accId]) {
-          accountCooldownMs[accId] = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
+      const cooldownFor = (acc: any) => {
+        if (!accountCooldownMs[acc.id]) {
+          const base = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
+          const remainingQuota = Math.max(0, getEffectiveLimit(acc) - (acc.sent_today || 0));
+          const pacedMs = remainingQuota > 0 ? (remainingWindowMinutes / remainingQuota) * 60_000 : base;
+          accountCooldownMs[acc.id] = Math.max(base, pacedMs);
         }
-        return accountCooldownMs[accId];
+        return accountCooldownMs[acc.id];
       };
       const isAccountOnCooldown = (acc: any) => {
         if (!acc?.last_send_at) return false;
         const last = new Date(acc.last_send_at).getTime();
-        return (now.getTime() - last) < cooldownFor(acc.id);
+        return (now.getTime() - last) < cooldownFor(acc);
       };
 
       // Track the last send timestamp per account already in DB (sent_today
@@ -1033,58 +1104,9 @@ serve(async (req) => {
           }
         }
 
-        // Hard global cap: never exceed 30 sends per account per day, regardless
-        // of the account's daily_limit setting. Protects deliverability.
-        const HARD_DAILY_CAP = 30;
-
-        // Campaign slow-ramp anchor: count days from the FIRST real send for this
-        // campaign, NOT from created_at. This way the ramp limit does NOT grow while
-        // the campaign is paused / not sending — it only advances once emails actually
-        // start going out (and only for the selected sending accounts).
-        let rampDaysActive = 0;
-        if ((campaign as any).slow_ramp_enabled) {
-          const { data: firstSent } = await adminClient
-            .from("sent_emails")
-            .select("sent_at")
-            .eq("campaign_id", campaign.id)
-            .eq("status", "sent")
-            .order("sent_at", { ascending: true })
-            .limit(1);
-          if (firstSent && firstSent.length && firstSent[0].sent_at) {
-            const startAt = new Date(firstSent[0].sent_at);
-            rampDaysActive = Math.max(0, Math.floor((now.getTime() - startAt.getTime()) / (1000 * 60 * 60 * 24)));
-          }
-        }
-
-        // SlowRamp: effective daily limit per account = the smallest of:
-        //   account daily_limit (capped at HARD_DAILY_CAP),
-        //   account-level slow ramp (configured from the Email Accounts page),
-        //   campaign-level slow ramp.
-        const getEffectiveLimit = (acc: any) => {
-          let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
-
-          // Account-level slow ramp: ramps from `warmup_started_at` by warmup_increment
-          // per day up to warmup_limit. Day 1 = increment, Day 2 = 2*increment, …
-          if (acc.warmup_enabled && acc.warmup_started_at) {
-            const startedAt = new Date(acc.warmup_started_at);
-            const days = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24)));
-            const inc = acc.warmup_increment || 2;
-            const target = acc.warmup_limit || limit;
-            const accRamp = Math.min((days + 1) * inc, target);
-            limit = Math.min(limit, accRamp);
-          }
-
-          // Campaign-level slow ramp — anchored to days of ACTUAL sending (rampDaysActive),
-          // so a paused/never-sent campaign stays at the starting cap (rampMax).
-          if ((campaign as any).slow_ramp_enabled) {
-            const rampMax = (campaign as any).slow_ramp_max || 2;
-            const rampIncrement = (campaign as any).slow_ramp_increment || 2;
-            const rampLimit = rampMax + rampDaysActive * rampIncrement;
-            limit = Math.min(limit, rampLimit);
-          }
-
-          return limit;
-        };
+        // getEffectiveLimit / rampDaysActive are computed once per campaign per
+        // tick (above, right after `accounts` is fetched) — not re-queried here
+        // for every lead.
 
         // Expert rotation / account selection
         const selectAccount = () => {
