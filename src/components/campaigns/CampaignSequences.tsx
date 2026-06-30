@@ -16,11 +16,52 @@ import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; }
 
+/* ── Variable auto-correction ───────────────────────────────────────
+   Maps mistyped {{variables}} to the real lead fields by normalizing
+   (lowercase, strip separators) + containment + edit distance. */
+const normVar = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+function levDist(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[m][n];
+}
+type ValidVar = { key: string; norm: string };
+function bestVarMatch(typed: string, valid: ValidVar[]): ValidVar | null {
+  const nt = normVar(typed);
+  if (!nt) return null;
+  const exact = valid.find((v) => v.norm === nt);
+  if (exact) return exact;
+  const cont = valid.filter((v) => v.norm.length >= 3 && nt.length >= 3 && (v.norm.includes(nt) || nt.includes(v.norm)));
+  if (cont.length) { cont.sort((a, b) => Math.abs(a.norm.length - nt.length) - Math.abs(b.norm.length - nt.length)); return cont[0]; }
+  let best: ValidVar | null = null, bestD = Infinity;
+  for (const v of valid) { const d = levDist(nt, v.norm); if (d < bestD) { bestD = d; best = v; } }
+  const thr = Math.max(2, Math.floor(nt.length * 0.45));
+  return best && bestD <= thr ? best : null;
+}
+function correctVarsInText(text: string, valid: ValidVar[]): { text: string; changes: { from: string; to: string }[] } {
+  const changes: { from: string; to: string }[] = [];
+  const out = (text || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (full, inner) => {
+    const key = String(inner).trim();
+    if (valid.some((v) => v.key === key)) return full; // already a real field
+    const m = bestVarMatch(key, valid);
+    if (m && m.key !== key) { changes.push({ from: key, to: m.key }); return `{{${m.key}}}`; }
+    return full; // no confident match — leave it
+  });
+  return { text: out, changes };
+}
+
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
   const [steps, setSteps] = useState<any[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
   const [dynamicVars, setDynamicVars] = useState<{ label: string; tag: string }[]>([]);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
   // Test email state
@@ -324,6 +365,49 @@ export default function CampaignSequences({ campaignId }: Props) {
     await supabase.from("campaign_steps").update({ [field]: value }).eq("id", id);
   };
 
+  // Review every step + variant and fix mistyped variables to match real lead fields.
+  const correctAllVariables = async () => {
+    const valid: ValidVar[] = dynamicVars.map((v) => ({ key: v.label, norm: normVar(v.label) }));
+    if (!valid.length) { toast.error("No hay variables de leads para comparar"); return; }
+    setCorrecting(true);
+    try {
+      const allChanges: { from: string; to: string }[] = [];
+      const updates: { id: string; subject: string; body: string; variants: Variant[] }[] = [];
+      for (const step of steps) {
+        const subj = correctVarsInText(step.subject || "", valid);
+        const body = correctVarsInText(step.body || "", valid);
+        const variants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
+        const newVariants = variants.map((vr) => {
+          const s = correctVarsInText(vr.subject || "", valid);
+          const b = correctVarsInText(vr.body || "", valid);
+          allChanges.push(...s.changes, ...b.changes);
+          return { ...vr, subject: s.text, body: b.text };
+        });
+        allChanges.push(...subj.changes, ...body.changes);
+        const changed = subj.text !== (step.subject || "") || body.text !== (step.body || "") || JSON.stringify(newVariants) !== JSON.stringify(variants);
+        if (changed) updates.push({ id: step.id, subject: subj.text, body: body.text, variants: newVariants });
+      }
+      for (const u of updates) {
+        await supabase.from("campaign_steps").update({ subject: u.subject, body: u.body, variants: u.variants as any }).eq("id", u.id);
+      }
+      if (updates.length) {
+        setSteps((prev) => prev.map((s) => {
+          const u = updates.find((x) => x.id === s.id);
+          return u ? { ...s, subject: u.subject, body: u.body, variants: u.variants } : s;
+        }));
+      }
+      if (!allChanges.length) {
+        toast.success("Todas las variables ya estaban correctas ✓");
+      } else {
+        const uniq = [...new Map(allChanges.map((c) => [c.from + ">" + c.to, c])).values()];
+        toast.success(`${allChanges.length} variable(s) corregidas: ${uniq.slice(0, 3).map((c) => `{{${c.from}}}→{{${c.to}}}`).join(", ")}${uniq.length > 3 ? "…" : ""}`);
+      }
+    } catch (e: any) {
+      toast.error(`Error al corregir: ${e.message || e}`);
+    }
+    setCorrecting(false);
+  };
+
   const insertVariable = (tag: string, target: "body" | "subject" = "body") => {
     if (!selectedStep) return;
     const elId = target === "subject" ? "seq-subject-editor" : "seq-body-editor";
@@ -558,6 +642,16 @@ export default function CampaignSequences({ campaignId }: Props) {
               )}
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 h-7 text-xs"
+                onClick={correctAllVariables}
+                disabled={correcting}
+                title="Revisa y corrige las variables mal escritas para que coincidan con los campos de tus leads"
+              >
+                {correcting ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />} Corregir variables
+              </Button>
               <Button
                 variant={showPreview ? "default" : "outline"}
                 size="sm"
