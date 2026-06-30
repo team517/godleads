@@ -1253,10 +1253,18 @@ export default function Unibox() {
     setAiSuggestion("");
     setAiPromptName("");
     setTranslatedBody("");
-    setDetectedLang(null);
     const msg = messages.find(m => m.id === selectedId);
-    if (msg) loadThread(msg);
-    else setThreadMessages([]);
+    if (msg) {
+      // Proactively flag the language (cheap local detector) so the reply box can
+      // offer auto-translate without the user first pressing "Traducir". Only the
+      // clear English case is set; es/other/unknown stay null as before.
+      const probe = detectLanguageBucket(`${decodeSubjectKeepCodes(msg.subject || "")} ${(msg.body_text || "").slice(0, 800)}`);
+      setDetectedLang(probe === "en" ? "en" : null);
+      loadThread(msg);
+    } else {
+      setDetectedLang(null);
+      setThreadMessages([]);
+    }
   }, [selectedId, messages, loadThread]);
 
 
