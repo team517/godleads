@@ -630,11 +630,45 @@ const WARMUP_WHITELIST = new Set([
  *  (5–16 chars), e.g. "New HR Policy | 9XAT619 CHBV6J7". Whitelisted brands,
  *  plain uppercase words and years (2024) are NOT treated as codes. */
 function subjectHasWarmupCode(subject: string | null): boolean {
-  const s = decodeSubjectKeepCodes(subject || "");
-  const tokens = s.match(/\b[A-Z0-9]{5,16}\b/g) || [];
+  return textHasWarmupCode(decodeSubjectKeepCodes(subject || ""));
+}
+
+/** INTELLIGENT warm-up code detector for a SINGLE token. A warm-up/tracking code
+ *  (e.g. "FJRI829FJSC", "GH2RZD5", "9XAT619", "CHBV6J7") mixes letters AND digits
+ *  and is high-entropy. Real references ("Order ABC12345", "iPhone13", "COVID19",
+ *  "Q4-2024") are NOT flagged, so genuine replies survive. Signals used:
+ *   - must mix letters+digits, 6–20 chars, not a whitelisted brand nor a year;
+ *   - ≥2 letter↔digit transitions (interleaved) → random code; OR
+ *   - the letters are ALL-UPPERCASE with no vowels (e.g. "CHBVJ7") → random code. */
+function looksLikeWarmupCode(t: string): boolean {
+  if (t.length < 6 || t.length > 20) return false;
+  if (!/[A-Za-z]/.test(t) || !/[0-9]/.test(t)) return false;   // needs BOTH
+  if (WARMUP_WHITELIST.has(t.toUpperCase())) return false;
+  if (/^(19|20)\d{2}$/.test(t)) return false;                  // a year
+  let transitions = 0;
+  for (let i = 1; i < t.length; i++) {
+    if (/[0-9]/.test(t[i - 1]) !== /[0-9]/.test(t[i])) transitions++;
+  }
+  if (transitions >= 2) return true;                           // interleaved = code
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length >= 4 && letters === letters.toUpperCase() && !/[AEIOU]/.test(letters)) return true;
+  return false;
+}
+
+/** True if the text (subject OR body) contains a warm-up code. URLs, emails and
+ *  HTML tags are stripped first so link slugs / tracking params never trip it —
+ *  that is what keeps real messages (which often carry links) from being hidden. */
+function textHasWarmupCode(text: string | null): boolean {
+  if (!text) return false;
+  const cleaned = String(text)
+    .replace(/<[^>]+>/g, " ")                 // HTML tags
+    .replace(/https?:\/\/\S+/gi, " ")         // URLs
+    .replace(/\bwww\.\S+/gi, " ")
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/gi, " ") // emails
+    .slice(0, 4000);
+  const tokens = cleaned.match(/[A-Za-z0-9]{6,20}/g) || [];
   for (const t of tokens) {
-    if (WARMUP_WHITELIST.has(t)) continue;
-    if (/[A-Z]/.test(t) && /[0-9]/.test(t)) return true; // mixed UPPERCASE letter+digit
+    if (looksLikeWarmupCode(t)) return true;
   }
   return false;
 }
@@ -1331,15 +1365,19 @@ export default function Unibox() {
     return bucket;
   }, []);
 
-  // A+B warm-up classification — these are revealed by "Mostrar warmup".
+  // Warm-up classification — revealed by "Mostrar warmup". We now accept EVERY
+  // language (English included). A message is only hidden as warm-up when it
+  // carries a random letters+digits code (e.g. "FJRI829FJSC") in the subject OR
+  // the body — detected intelligently so real replies are never hidden.
   const isWarmupHidden = useCallback((m: any): boolean => {
-    if (subjectHasWarmupCode(m.subject)) return true;          // A) code in subject
-    if (!tcxAccounts.has(m.account_id)) {                       // B) language (except tcx)
-      const lang = messageLang(m);
-      if (lang === "en" || lang === "other") return true;
+    if (subjectHasWarmupCode(m.subject)) return true;          // code in subject
+    let body = cleanBodyText(m.body_text || "");
+    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
+      body = cleanBodyText(m.body_html);
     }
+    if (textHasWarmupCode(body)) return true;                  // code in body
     return false;
-  }, [tcxAccounts, messageLang]);
+  }, []);
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
