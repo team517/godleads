@@ -587,8 +587,13 @@ async function sendSmtpEmail(
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
-    // Read a complete SMTP response, handling multi-line responses
-    const readResponse = async (): Promise<string> => {
+    // Read a complete SMTP response, handling multi-line responses. Wrapped in a
+    // hard timeout — Deno's conn.read() blocks forever if the server accepts the
+    // connection but then goes silent (rate-limited, mid-negotiation stall, etc.).
+    // Without this, ONE unresponsive account hangs the whole cron invocation until
+    // the platform kills it — and since that's an external kill (not a JS throw),
+    // the job lock is never released, stalling ALL sending for up to its 10-min TTL.
+    const readResponseRaw = async (): Promise<string> => {
       let result = '';
       while (true) {
         const buf = new Uint8Array(4096);
@@ -602,6 +607,7 @@ async function sendSmtpEmail(
       }
       return result;
     };
+    const readResponse = (): Promise<string> => withTimeout(readResponseRaw(), 12000, `SMTP read ${endpoint.host}:${endpoint.port}`);
 
     const send = async (cmd: string): Promise<string> => {
       await conn.write(encoder.encode(cmd + "\r\n"));
@@ -643,7 +649,7 @@ async function sendSmtpEmail(
 
         conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: endpoint.host });
 
-        const readTls = async (): Promise<string> => {
+        const readTlsRaw = async (): Promise<string> => {
           let result = '';
           while (true) {
             const buf = new Uint8Array(4096);
@@ -657,6 +663,7 @@ async function sendSmtpEmail(
           }
           return result;
         };
+        const readTls = (): Promise<string> => withTimeout(readTlsRaw(), 12000, `SMTP read (TLS) ${endpoint.host}:${endpoint.port}`);
 
         const sendTls = async (cmd: string): Promise<string> => {
           await conn.write(encoder.encode(cmd + "\r\n"));
@@ -797,7 +804,26 @@ serve(async (req) => {
     let newSentTotal = 0;
     let followupsSentTotal = 0;
 
+    // Hard cap on real SMTP sends attempted in a SINGLE invocation, across every
+    // campaign. Each send is a full synchronous network round-trip (connect + TLS +
+    // AUTH + MAIL FROM + RCPT TO + DATA), realistically 1-5s even when everything
+    // goes right. With many eligible accounts (e.g. right after activating a brand
+    // new campaign, when every account has no last_send_at yet and all are eligible
+    // at once), trying them all in one run reliably blows past the edge runtime's
+    // execution budget (WORKER_RESOURCE_LIMIT) — killing the invocation mid-flight,
+    // wasting the in-flight send, and leaving the job lock stuck until its TTL
+    // expires. Capping keeps every run comfortably fast; the cron fires every 1-2
+    // min, so throughput is unaffected — the same volume just spreads over more,
+    // safer ticks instead of a single risky one.
+    const MAX_SENDS_PER_INVOCATION = 6;
+    // Counts every real SMTP attempt (success AND failure/timeout). Capping on
+    // this — not just successful sends — is what actually bounds worst-case
+    // wall-clock: a string of failing/hung accounts would never trip a
+    // successes-only counter, but each attempt still costs up to ~15s.
+    let sendAttemptsThisRun = 0;
+
     for (const campaign of campaigns) {
+      if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
       const now = new Date();
       const tz = campaign.timezone || "UTC";
 
@@ -1043,8 +1069,17 @@ serve(async (req) => {
       // counter is enough for daily cap; this tick-level limit is just for
       // burst protection when many leads are pending).
 
+      let leadsScannedThisCampaign = 0;
+      // Generous but bounded: protects against a future steady-state where
+      // thousands of leads at the front of the list are already in_progress/on
+      // cooldown and would otherwise cost a DB round-trip each to skip past,
+      // before ever reaching a fresh one worth attempting.
+      const MAX_LEADS_SCANNED_PER_CAMPAIGN = 300;
+
       for (const cl of campaignLeads) {
         if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
+        if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
+        if (++leadsScannedThisCampaign > MAX_LEADS_SCANNED_PER_CAMPAIGN) break;
 
         const lead = cl.leads;
         if (!lead) continue;
@@ -1221,7 +1256,7 @@ serve(async (req) => {
           // pick via rotation and persist on the very first send
           account = selectAccount();
           if (account) {
-            const { data: claimedLead } = await adminClient
+            const { data: claimedLead, error: claimErr } = await adminClient
               .from("campaign_leads")
               .update({ assigned_account_id: account.id })
               .eq("id", cl.id)
@@ -1229,6 +1264,13 @@ serve(async (req) => {
               .select("assigned_account_id")
               .maybeSingle();
 
+            // Surface real query errors (bad column, permissions, etc.) instead of
+            // silently treating them the same as "another tick already claimed this
+            // lead" — that silent conflation is exactly what let a missing column
+            // cause every single lead to be skipped with zero visible error.
+            if (claimErr) {
+              console.error(`assigned_account_id claim failed for lead ${lead.id}: ${claimErr.message}`);
+            }
             if (!claimedLead) {
               totalSkipped++;
               continue;
@@ -1386,6 +1428,7 @@ serve(async (req) => {
         }
 
         {
+          sendAttemptsThisRun++;
           result = await sendSmtpEmail(
             account.smtp_host, account.smtp_port,
             account.smtp_username, account.smtp_password,
