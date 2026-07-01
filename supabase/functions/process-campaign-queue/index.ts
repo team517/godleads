@@ -1005,6 +1005,23 @@ serve(async (req) => {
       const campaignDailyLimit = Math.max(campaign.daily_limit || 0, autoAccountCapTotal);
       if (campaignSentToday >= campaignDailyLimit) continue;
 
+      // ═══ Hour-based pacing (self-regulating "token bucket") ═══
+      // Spread the day's quota EVENLY across the sending window instead of firing
+      // it all in the first few minutes. We compute how many emails "should" have
+      // gone out by now if the daily quota were spread linearly across the window,
+      // and only allow the campaign to catch up to that number this run. Result:
+      //   • a smooth trickle all day long (no bursts, no multi-hour silences),
+      //   • fully automatic — as the hour advances the allowance grows on its own,
+      //   • self-healing — if it was paused/behind, it catches back up to pace,
+      //   • window-aware — nothing before send_start_hour or after send_end_hour.
+      // A small floor keeps things moving right after the window opens.
+      const totalWindowMinutes = Math.max(1, (endHour - startHour) * 60);
+      const elapsedWindowMinutes = Math.max(0, totalWindowMinutes - remainingWindowMinutes);
+      const paceFraction = Math.min(1, elapsedWindowMinutes / totalWindowMinutes);
+      const expectedByNow = Math.max(4, Math.ceil(campaignDailyLimit * paceFraction));
+      const paceBudgetThisRun = Math.max(0, expectedByNow - campaignSentToday);
+      if (paceBudgetThisRun <= 0) continue; // on pace for this hour — nothing due yet
+
       // ═══ Blocklist check (load once per campaign) ═══
       const { data: blocklist } = await adminClient
         .from("blocklist")
@@ -1046,21 +1063,15 @@ serve(async (req) => {
       const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause inside the tick
       const accountSendsThisTick: Record<string, number> = {};
 
-      // Per-account cooldown between consecutive sends. Floor is a random 6–9 min
-      // (the cadence the user expects). We may stretch it slightly toward the send
-      // window so a small daily quota isn't all fired in the first few minutes —
-      // BUT it's HARD-CAPPED at MAX_COOLDOWN_MS so it can never balloon into
-      // multi-hour idle gaps. Without this cap, a low warm-up quota (e.g. 4/day)
-      // over a 9-hour window paced to ~2 hours apart, which looked like the
-      // campaign had stalled. Decided once per tick per account.
-      const MAX_COOLDOWN_MS = 12 * 60_000; // never wait more than 12 min between sends
+      // Per-account cooldown between consecutive sends: a flat random 6–9 min.
+      // This is purely a deliverability floor so no single mailbox bursts — the
+      // OVERALL spread across the day is handled by the hour-based pace budget
+      // above (not by stretching this per-account gap, which previously caused
+      // multi-hour stalls). Decided once per tick per account.
       const accountCooldownMs: Record<string, number> = {};
       const cooldownFor = (acc: any) => {
         if (!accountCooldownMs[acc.id]) {
-          const base = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
-          const remainingQuota = Math.max(0, getEffectiveLimit(acc) - (acc.sent_today || 0));
-          const pacedMs = remainingQuota > 0 ? (remainingWindowMinutes / remainingQuota) * 60_000 : base;
-          accountCooldownMs[acc.id] = Math.min(MAX_COOLDOWN_MS, Math.max(base, pacedMs));
+          accountCooldownMs[acc.id] = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
         }
         return accountCooldownMs[acc.id];
       };
@@ -1083,6 +1094,7 @@ serve(async (req) => {
 
       for (const cl of campaignLeads) {
         if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
+        if (sentThisCampaign >= paceBudgetThisRun) break; // stay on the hourly pace
         if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
         if (++leadsScannedThisCampaign > MAX_LEADS_SCANNED_PER_CAMPAIGN) break;
 
