@@ -1046,18 +1046,21 @@ serve(async (req) => {
       const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause inside the tick
       const accountSendsThisTick: Record<string, number> = {};
 
-      // Per-account cooldown: a random 6–9 min floor (deliverability pacing),
-      // stretched further when the account has little quota left for a lot of
-      // window time remaining — so e.g. a slow-ramp quota of 2/day gets spread
-      // across the whole 9–18h window instead of firing both in the first
-      // few minutes. Decided once per tick per account.
+      // Per-account cooldown between consecutive sends. Floor is a random 6–9 min
+      // (the cadence the user expects). We may stretch it slightly toward the send
+      // window so a small daily quota isn't all fired in the first few minutes —
+      // BUT it's HARD-CAPPED at MAX_COOLDOWN_MS so it can never balloon into
+      // multi-hour idle gaps. Without this cap, a low warm-up quota (e.g. 4/day)
+      // over a 9-hour window paced to ~2 hours apart, which looked like the
+      // campaign had stalled. Decided once per tick per account.
+      const MAX_COOLDOWN_MS = 12 * 60_000; // never wait more than 12 min between sends
       const accountCooldownMs: Record<string, number> = {};
       const cooldownFor = (acc: any) => {
         if (!accountCooldownMs[acc.id]) {
           const base = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
           const remainingQuota = Math.max(0, getEffectiveLimit(acc) - (acc.sent_today || 0));
           const pacedMs = remainingQuota > 0 ? (remainingWindowMinutes / remainingQuota) * 60_000 : base;
-          accountCooldownMs[acc.id] = Math.max(base, pacedMs);
+          accountCooldownMs[acc.id] = Math.min(MAX_COOLDOWN_MS, Math.max(base, pacedMs));
         }
         return accountCooldownMs[acc.id];
       };
