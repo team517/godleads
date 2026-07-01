@@ -451,7 +451,19 @@ serve(async (req) => {
         .select("id", { count: "exact", head: true })
         .eq("status", "connected");
       totalAccounts = count || 0;
-      usedOffset = offsetProvided ? requestedOffset : 0;
+      // ROTATING WINDOW: the old design always started at offset 0 and relied on a
+      // fragile self-chain to reach the rest — when any link died (resource limit,
+      // timeout) accounts beyond it NEVER synced (bug: only 10/124 got checked).
+      // Now each cron tick deterministically processes a DIFFERENT window based on
+      // the current minute, so every account is covered every ~⌈total/batch⌉ minutes
+      // with no state and no chain to break.
+      if (offsetProvided) {
+        usedOffset = requestedOffset;
+      } else {
+        const windows = Math.max(1, Math.ceil(totalAccounts / requestedBatchSize));
+        const minuteIndex = Math.floor(Date.now() / 60000);
+        usedOffset = (minuteIndex % windows) * requestedBatchSize;
+      }
       const { data } = await adminClient
         .from("email_accounts")
         .select("*")
@@ -484,12 +496,17 @@ serve(async (req) => {
 
         console.log(`Fetched ${result.messages.length} messages from ${account.email}`);
 
-        // Keep only Spanish/Catalan — drop English/other warm-up before storing.
-        const beforeLang = result.messages.length;
-        result.messages = result.messages.filter(m => !isForeignMessage(m.subject || "", m.body_text || ""));
-        if (beforeLang !== result.messages.length) {
-          console.log(`Language filter ${account.email}: kept ${result.messages.length}/${beforeLang} (ES/CA only)`);
-        }
+        // Record that this mailbox was checked — makes sync health visible
+        // (last_sync was previously never written, so coverage bugs were invisible).
+        await adminClient.from("email_accounts")
+          .update({ last_sync: new Date().toISOString() })
+          .eq("id", account.id);
+
+        // STORE EVERY LANGUAGE. The old server-side ES/CA filter dropped real
+        // replies before they ever reached the DB (e.g. a Spanish "buenas que tal"
+        // quoting the English/Italian original counted as foreign → discarded).
+        // Language/warm-up hiding is now done in the frontend (code detector),
+        // where it is reversible — never destructive here.
         if (result.messages.length === 0) return 0;
 
         // Batch lead lookup: get all unique from_emails at once
@@ -629,23 +646,11 @@ serve(async (req) => {
 
     console.log(`fetch-inbox complete: ${accounts.length}/${totalAccounts} accounts (offset ${usedOffset}), ${totalNew} new messages, next=${nextOffset}`);
 
-    // Self-chaining (cron only): when invoked by the cron with the anon key, keep
-    // triggering the NEXT window so EVERY connected account is synced each tick,
-    // automatically, without the client ever clicking "Sincronizar". Each link is a
-    // small batch that stays under the edge worker limit. Natural stop at the end.
-    if (!targetUserId && hasMore && (nextOffset as number) < 5000) {
-      try {
-        const selfUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/fetch-inbox`;
-        const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
-        const next = fetch(selfUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${anon}` },
-          body: JSON.stringify({ offset: nextOffset, batch_size: requestedBatchSize, fetch_limit: requestedFetchLimit }),
-        }).catch(() => {});
-        const er = (globalThis as any).EdgeRuntime;
-        if (er?.waitUntil) er.waitUntil(next);
-      } catch (_) { /* best-effort chaining */ }
-    }
+    // NOTE: the old cron self-chaining was removed. It silently died on the first
+    // failed link and, because the cron always restarted at offset 0, accounts past
+    // the break NEVER synced. Coverage is now guaranteed by the minute-based
+    // rotating window above — every connected account is checked every
+    // ~⌈total/batch⌉ minutes without any chain that can break.
 
     return new Response(JSON.stringify({
       success: true,

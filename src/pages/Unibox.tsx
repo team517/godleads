@@ -1816,9 +1816,10 @@ export default function Unibox() {
             <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
               <InboxIcon className="mr-1.5 h-3.5 w-3.5" /> {messages.length} totales
             </Badge>
-            <Button variant="default" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}>
+            <Button variant="default" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}
+              title="Reconecta todas las cuentas IMAP y trae los mensajes nuevos">
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Conectando…" : "Conectar cuentas"}
+              {syncing ? "Actualizando…" : "Actualizar"}
             </Button>
             {!isMobile && (
               <Button
@@ -1985,7 +1986,7 @@ export default function Unibox() {
           <h3 className="font-display font-semibold mb-2">Bandeja vacía</h3>
           <p className="text-sm text-muted-foreground mb-4">Sincroniza para traer mensajes de tus cuentas.</p>
           <Button onClick={handleSync} disabled={syncing} size="sm" className="gap-2">
-            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Conectando…" : "Conectar cuentas"}
+            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Actualizando…" : "Actualizar"}
           </Button>
         </div>
       ) : (
