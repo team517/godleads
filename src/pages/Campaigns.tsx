@@ -4,8 +4,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, Pencil, Check, X } from "lucide-react";
+import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, Pencil, Check, X, Shuffle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -66,6 +67,10 @@ export default function Campaigns() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "" });
+  // Remix: fusionar otra campaña dentro de `remixDest`.
+  const [remixDest, setRemixDest] = useState<any | null>(null);
+  const [remixRunning, setRemixRunning] = useState(false);
+  const [remixProgress, setRemixProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
 
   const load = async () => {
     if (!user) return;
@@ -162,6 +167,100 @@ export default function Campaigns() {
     load();
   };
 
+  // REMIX: fusiona la campaña `src` DENTRO de `dest`. Los mensajes de `src`
+  // (base + variantes) se añaden como NUEVAS variantes a los steps de `dest`
+  // (creando los steps que falten), todos sus leads se mueven a `dest`, y al
+  // terminar al 100% se elimina `src`. Muestra progreso en cada fase.
+  const runRemix = async (dest: any, src: any) => {
+    if (!user || !dest || !src || dest.id === src.id) return;
+    setRemixRunning(true);
+    try {
+      // 1) Verificando — cargamos steps de ambas
+      setRemixProgress({ phase: "Verificando campañas…", current: 0, total: 0 });
+      const [{ data: srcSteps }, { data: destSteps }] = await Promise.all([
+        supabase.from("campaign_steps").select("*").eq("campaign_id", src.id).order("step_order"),
+        supabase.from("campaign_steps").select("*").eq("campaign_id", dest.id).order("step_order"),
+      ]);
+
+      // 2) Mensajes → nuevas variantes en los steps de dest (crea steps faltantes)
+      const steps = srcSteps || [];
+      setRemixProgress({ phase: "Creando variantes con los mensajes…", current: 0, total: steps.length });
+      const destByOrder = new Map<number, any>((destSteps || []).map((s: any) => [s.step_order, s]));
+      let sdone = 0;
+      for (const s of steps) {
+        const msgs = [{ subject: s.subject || "", body: s.body || "" }, ...(Array.isArray(s.variants) ? s.variants : [])];
+        const existing = destByOrder.get(s.step_order);
+        if (existing) {
+          const merged = [...(Array.isArray(existing.variants) ? existing.variants : []), ...msgs];
+          await supabase.from("campaign_steps").update({ variants: merged as any }).eq("id", existing.id);
+        } else {
+          await supabase.from("campaign_steps").insert({
+            campaign_id: dest.id, step_order: s.step_order, subject: s.subject, body: s.body,
+            delay_days: s.delay_days, variants: (Array.isArray(s.variants) ? s.variants : []) as any,
+          });
+        }
+        sdone++;
+        setRemixProgress({ phase: "Creando variantes con los mensajes…", current: sdone, total: steps.length });
+      }
+
+      // 3) Cargar todos los leads de src (paginado)
+      setRemixProgress({ phase: "Cargando leads…", current: 0, total: 0 });
+      const leadIds: string[] = [];
+      let offset = 0;
+      while (true) {
+        const { data } = await supabase.from("campaign_leads").select("lead_id").eq("campaign_id", src.id).range(offset, offset + 999);
+        if (!data?.length) break;
+        leadIds.push(...data.map((r: any) => r.lead_id));
+        if (data.length < 1000) break;
+        offset += 1000;
+      }
+
+      // 3b) Exportar leads a dest (upsert por lotes, ignora duplicados)
+      setRemixProgress({ phase: "Exportando leads…", current: 0, total: leadIds.length });
+      for (let i = 0; i < leadIds.length; i += 500) {
+        const batch = leadIds.slice(i, i + 500);
+        await supabase.from("campaign_leads").upsert(
+          batch.map((id) => ({ campaign_id: dest.id, lead_id: id })),
+          { onConflict: "campaign_id,lead_id", ignoreDuplicates: true }
+        );
+        setRemixProgress({ phase: "Exportando leads…", current: Math.min(i + 500, leadIds.length), total: leadIds.length });
+      }
+
+      // 3c) Unir cuentas/tags (moverlo todo)
+      const destTags: string[] = dest.account_tags || [];
+      const mergedTags = Array.from(new Set([...destTags, ...((src.account_tags as string[]) || [])]));
+      if (mergedTags.length !== destTags.length) {
+        await supabase.from("campaigns").update({ account_tags: mergedTags }).eq("id", dest.id);
+      }
+      const [{ data: srcAccs }, { data: destAccs }] = await Promise.all([
+        supabase.from("campaign_accounts").select("account_id").eq("campaign_id", src.id),
+        supabase.from("campaign_accounts").select("account_id").eq("campaign_id", dest.id),
+      ]);
+      const haveAcc = new Set((destAccs || []).map((a: any) => a.account_id));
+      const newAccs = (srcAccs || []).filter((a: any) => !haveAcc.has(a.account_id));
+      if (newAccs.length) {
+        await supabase.from("campaign_accounts").insert(newAccs.map((a: any) => ({ campaign_id: dest.id, account_id: a.account_id })));
+      }
+
+      // 4) Eliminar la campaña fusionada (solo cuando todo lo anterior terminó)
+      setRemixProgress({ phase: "Eliminando la campaña fusionada…", current: 0, total: 0 });
+      await supabase.from("campaign_steps").delete().eq("campaign_id", src.id);
+      await supabase.from("campaign_accounts").delete().eq("campaign_id", src.id);
+      await supabase.from("campaign_leads").delete().eq("campaign_id", src.id);
+      await supabase.from("campaigns").delete().eq("id", src.id);
+
+      toast.success(`«${src.name}» fusionada en «${dest.name}» · ${leadIds.length} leads · ${steps.length} pasos`);
+      setRemixDest(null);
+      setRemixProgress(null);
+      if (selectedId === src.id) setSelectedId(null);
+      await load();
+    } catch (e: any) {
+      toast.error(`Error en remix: ${e?.message || e}`);
+    } finally {
+      setRemixRunning(false);
+    }
+  };
+
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
   const selectedCampaign = campaigns.find(c => c.id === selectedId);
@@ -249,6 +348,9 @@ export default function Campaigns() {
                       <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 hidden sm:flex" onClick={() => handleDuplicate(campaign)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" title="Remix — fusionar otra campaña aquí" onClick={() => setRemixDest(campaign)}>
+                        <Shuffle className="h-3.5 w-3.5 text-primary" />
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleDelete(campaign.id)}>
                         <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
@@ -264,6 +366,60 @@ export default function Campaigns() {
           })}
         </div>
       )}
+
+      {/* Remix dialog */}
+      <Dialog open={!!remixDest} onOpenChange={(o) => { if (!remixRunning && !o) { setRemixDest(null); setRemixProgress(null); } }}>
+        <DialogContent className="max-w-md" onInteractOutside={(e) => { if (remixRunning) e.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <Shuffle className="h-4 w-4 text-primary" /> Remix — fusionar en «{remixDest?.name}»
+            </DialogTitle>
+          </DialogHeader>
+          {!remixRunning ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Elige una campaña. Sus mensajes se añadirán como <strong>nuevas variantes</strong> a los pasos de esta,
+                todos sus <strong>leads</strong> se moverán aquí y, al terminar, <strong>esa campaña se eliminará</strong>.
+              </p>
+              <div className="space-y-1.5 max-h-72 overflow-auto">
+                {campaigns.filter((c) => c.id !== remixDest?.id).map((c) => {
+                  const st = statusConfig[c.status] || statusConfig.draft;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => runRemix(remixDest, c)}
+                      className="w-full text-left rounded-lg border border-border/60 p-3 hover:bg-muted/50 hover:border-primary/40 transition-colors flex items-center justify-between gap-2"
+                    >
+                      <span className="font-medium text-sm truncate">{c.name}</span>
+                      <Badge variant={st.variant} className="text-[10px] shrink-0">{st.label}</Badge>
+                    </button>
+                  );
+                })}
+                {campaigns.filter((c) => c.id !== remixDest?.id).length === 0 && (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No hay otras campañas para fusionar.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 py-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" /> {remixProgress?.phase || "Procesando…"}
+              </div>
+              {remixProgress && remixProgress.total > 0 ? (
+                <>
+                  <Progress value={(remixProgress.current / Math.max(remixProgress.total, 1)) * 100} />
+                  <p className="text-xs text-muted-foreground text-right font-mono">{remixProgress.current} / {remixProgress.total}</p>
+                </>
+              ) : (
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">No cierres esta ventana — la campaña se eliminará solo cuando todo esté al 100%.</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
