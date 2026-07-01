@@ -100,6 +100,8 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [slowRampMax, setSlowRampMax] = useState(2);
   const [slowRampIncrement, setSlowRampIncrement] = useState(2);
   const [campaignCreatedAt, setCampaignCreatedAt] = useState<string | null>(null);
+  const [sendStartHour, setSendStartHour] = useState(9);
+  const [sendEndHour, setSendEndHour] = useState(18);
   // AB Testing
   const [abTestEnabled, setAbTestEnabled] = useState(false);
   const [abSteps, setAbSteps] = useState<any[]>([]);
@@ -212,6 +214,8 @@ export default function CampaignOptions({ campaignId }: Props) {
         setSlowRampMax(d.slow_ramp_max ?? 2);
         setSlowRampIncrement(d.slow_ramp_increment ?? 2);
         setCampaignCreatedAt(d.created_at || null);
+        setSendStartHour(d.send_start_hour ?? 9);
+        setSendEndHour(d.send_end_hour ?? 18);
         setAbTestEnabled(d.ab_test_enabled ?? false);
         // New fields
         setTextOnlyEmails(d.text_only_emails ?? false);
@@ -364,6 +368,15 @@ export default function CampaignOptions({ campaignId }: Props) {
   const sentTodayTotal = usedAccounts.reduce((s: number, a: any) => s + (a.sent_today || 0), 0);
   const capacityToday = usedAccounts.reduce((s: number, a: any) => s + effLimitFor(a).limit, 0);
 
+  // Sending rhythm — same formula the backend uses to pace this campaign:
+  //   quota per account = total effective daily capacity / number of accounts
+  //   interval per account = sending window (minutes) / quota per account
+  // i.e. "1 email per account roughly every N minutes", auto-updates with slow ramp.
+  const windowMinutes = Math.max(60, (sendEndHour - sendStartHour) * 60);
+  const quotaPerAccount = usedAccounts.length > 0 ? capacityToday / usedAccounts.length : 0;
+  const intervalPerAccountMin = quotaPerAccount > 0 ? Math.round(windowMinutes / quotaPerAccount) : 0;
+  const fmtInterval = (m: number) => (m <= 0 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60 ? (m % 60) + "min" : ""}`.trim());
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24">
 
@@ -468,6 +481,38 @@ export default function CampaignOptions({ campaignId }: Props) {
             <span className="text-muted-foreground">Enviado hoy</span>
             <span className="font-semibold">{sentTodayTotal} <span className="text-xs font-normal text-muted-foreground">/ {capacityToday} capacidad hoy</span></span>
           </div>
+
+          {/* Ritmo de envío (auto) — así reparte esta campaña, de forma independiente */}
+          <div className="rounded-lg border border-violet-200/70 bg-violet-50/60 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/20">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-violet-600" />
+              <span className="text-sm font-semibold text-foreground">Ritmo automático</span>
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                {slowRampEnabled ? "Slow Ramp activo" : "Ritmo pleno"}
+              </Badge>
+            </div>
+            {usedAccounts.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">Selecciona cuentas para calcular el ritmo de esta campaña.</p>
+            ) : (
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <p>
+                  📨 Aprox. <span className="font-semibold text-foreground">1 correo por cuenta cada {fmtInterval(intervalPerAccountMin)}</span>
+                  <span> (~{Math.round(quotaPerAccount)}/cuenta/día · {usedAccounts.length} cuentas)</span>
+                </p>
+                <p>
+                  🕒 Ventana de envío: <span className="font-medium text-foreground">{sendStartHour}:00–{sendEndHour}:00</span> ({Math.round(windowMinutes / 60)}h) · se auto-regula por horas
+                </p>
+                {slowRampEnabled && rampInfo ? (
+                  <p>
+                    📈 Slow ramp: día <span className="font-medium text-foreground">{rampInfo.days + 1}</span> → hoy <span className="font-medium text-foreground">{rampInfo.eff} emails/cuenta</span>; el ritmo se acelera solo cada día.
+                  </p>
+                ) : (
+                  <p>📈 Slow ramp desactivado — envía al límite diario configurado desde el primer día.</p>
+                )}
+              </div>
+            )}
+          </div>
+
           {usedAccounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">Selecciona cuentas abajo para ver el reparto y el slow ramp por cuenta.</p>
           ) : (
