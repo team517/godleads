@@ -89,6 +89,19 @@ serve(async (req) => {
       dmarc = dmarcRec ? "upgraded" : "created";
     }
 
+    // MX — WITHOUT these the domain cannot RECEIVE mail: every reply bounces
+    // back to the sender and the Unibox never sees it (this is exactly what
+    // happened with the chipsfinder domains). Standard IONOS exchangers.
+    const mxRecs = recs.filter((r) => r.type === "MX" && nameEq(r, domain));
+    let mx: string;
+    if (mxRecs.length > 0) {
+      mx = "present";
+    } else {
+      toCreate.push({ name: domain, type: "MX", content: "mx00.ionos.es", prio: 10, ttl: 3600, disabled: false });
+      toCreate.push({ name: domain, type: "MX", content: "mx01.ionos.es", prio: 10, ttl: 3600, disabled: false });
+      mx = "created";
+    }
+
     // 3) Create the missing records in one call.
     let created: string[] = [];
     if (toCreate.length > 0) {
@@ -104,13 +117,13 @@ serve(async (req) => {
       ok: true,
       domain,
       zone: zone.name,
-      spf, dkim, dmarc,
+      spf, dkim, dmarc, mx,
       created,
       configured: created.length > 0,
       message:
         created.length > 0
           ? `Configurado: ${created.length} registro(s) creado(s). Los cambios de DNS pueden tardar unos minutos en propagarse.`
-          : "El dominio ya tenía SPF, DKIM y DMARC correctos.",
+          : "El dominio ya tenía SPF, DKIM, DMARC y MX correctos.",
       warnings: spf === "custom" ? ["El dominio tiene un SPF propio que NO incluye IONOS — revísalo manualmente para no romper el envío."] : [],
     });
   } catch (e) {
