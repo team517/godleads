@@ -100,6 +100,9 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [slowRampMax, setSlowRampMax] = useState(2);
   const [slowRampIncrement, setSlowRampIncrement] = useState(2);
   const [campaignCreatedAt, setCampaignCreatedAt] = useState<string | null>(null);
+  // Anchor for the campaign-level slow ramp = first ACTUAL send (mirrors backend),
+  // not the creation date. A never-sent campaign stays at the starting cap.
+  const [campaignFirstSentAt, setCampaignFirstSentAt] = useState<string | null>(null);
   const [sendStartHour, setSendStartHour] = useState(9);
   const [sendEndHour, setSendEndHour] = useState(18);
   // AB Testing
@@ -214,6 +217,10 @@ export default function CampaignOptions({ campaignId }: Props) {
         setSlowRampMax(d.slow_ramp_max ?? 2);
         setSlowRampIncrement(d.slow_ramp_increment ?? 2);
         setCampaignCreatedAt(d.created_at || null);
+        // First actual send anchors the campaign slow ramp (same as the backend).
+        supabase.from("sent_emails").select("sent_at").eq("campaign_id", campaignId).eq("status", "sent")
+          .order("sent_at", { ascending: true }).limit(1)
+          .then(({ data }) => setCampaignFirstSentAt(data?.[0]?.sent_at || null));
         setSendStartHour(d.send_start_hour ?? 9);
         setSendEndHour(d.send_end_hour ?? 18);
         setAbTestEnabled(d.ab_test_enabled ?? false);
@@ -251,7 +258,7 @@ export default function CampaignOptions({ campaignId }: Props) {
 
   const save = async () => {
     await supabase.from("campaigns").update({
-      daily_limit: dailyLimit,
+      daily_limit: usedAccounts.length ? capacityToday : dailyLimit,
       stop_on_reply: stopOnReply,
       include_unsubscribe: includeUnsubscribe,
       unsubscribe_all: unsubAll,
@@ -338,8 +345,10 @@ export default function CampaignOptions({ campaignId }: Props) {
   }, [abSelectedStep, abTestEnabled]);
 
   const rampInfo = (() => {
-    if (!slowRampEnabled || !campaignCreatedAt) return null;
-    const days = Math.max(0, Math.floor((Date.now() - new Date(campaignCreatedAt).getTime()) / (1000 * 60 * 60 * 24)));
+    if (!slowRampEnabled) return null;
+    // Anchor to first ACTUAL send (matches backend rampDaysActive). Never sent → day 0.
+    const anchor = campaignFirstSentAt ? new Date(campaignFirstSentAt).getTime() : null;
+    const days = anchor ? Math.max(0, Math.floor((Date.now() - anchor) / (1000 * 60 * 60 * 24))) : 0;
     return { days, eff: slowRampMax + days * slowRampIncrement };
   })();
 
@@ -377,6 +386,17 @@ export default function CampaignOptions({ campaignId }: Props) {
   const intervalPerAccountMin = quotaPerAccount > 0 ? Math.round(windowMinutes / quotaPerAccount) : 0;
   const fmtInterval = (m: number) => (m <= 0 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60 ? (m % 60) + "min" : ""}`.trim());
 
+  // Límite diario AUTOMÁTICO: es siempre la suma del límite efectivo de cada
+  // cuenta seleccionada (slow-ramp aware, así que sube solo cada día). Mantiene
+  // la columna daily_limit sincronizada para que backend + UI coincidan.
+  useEffect(() => {
+    if (!usedAccounts.length) return;
+    if (dailyLimit !== capacityToday) {
+      setDailyLimit(capacityToday);
+      supabase.from("campaigns").update({ daily_limit: capacityToday } as any).eq("id", campaignId);
+    }
+  }, [capacityToday, usedAccounts.length]);
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24">
 
@@ -384,8 +404,15 @@ export default function CampaignOptions({ campaignId }: Props) {
       <Section label="Envío y ritmo">
         <Row icon={<Gauge className="h-4 w-4" />} tint="primary"
           title="Límite diario de envíos"
-          desc="Número máximo de correos que la campaña manda al día en total."
-          control={<Stepper value={dailyLimit} min={0} step={10} onChange={(v) => { setDailyLimit(v); markDirty(); }} />}
+          desc={slowRampEnabled
+            ? "Automático: suma del límite de cada cuenta seleccionada. Con slow ramp sube solo cada día."
+            : "Automático: límite por cuenta × nº de cuentas seleccionadas. Se recalcula solo."}
+          control={
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-bold tabular-nums text-foreground">{capacityToday}</span>
+              <Badge variant="secondary" className="text-[10px]">auto</Badge>
+            </div>
+          }
         />
         <Row icon={<Mail className="h-4 w-4" />} tint="emerald"
           title="Parar al recibir respuesta"
