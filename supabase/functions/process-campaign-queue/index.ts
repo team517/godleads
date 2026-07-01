@@ -211,28 +211,30 @@ function removeUrlsAndTracking(text: string): string {
 }
 
 function wrapPlainTextNaturally(text: string, targetWidth = 68 + Math.floor(Math.random() * 11)): string {
+  // Preserve EVERY line break the copy already has (greeting, each sentence/
+  // paragraph, sign-off, signature). We only soft-wrap lines that are genuinely
+  // too long for a mail client. The old version split on \n\n only and flattened
+  // single \n into spaces — which turned a nicely structured email into one giant
+  // run-on blob. Single \n is an intentional line break and must be kept.
+  const wrapLong = (line: string): string => {
+    const t = line.replace(/[ \t]+/g, " ").trim();
+    if (t.length <= targetWidth) return t;
+    const words = t.split(" ").filter(Boolean);
+    const out: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      const cand = cur ? `${cur} ${w}` : w;
+      if (cand.length > targetWidth && cur) { out.push(cur); cur = w; }
+      else cur = cand;
+    }
+    if (cur) out.push(cur);
+    return out.join("\n");
+  };
   return text
-    .split(/\n{2,}/)
-    .map((paragraph) => {
-      const words = paragraph.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-      if (!words.length) return "";
-
-      const lines: string[] = [];
-      let current = "";
-      for (const word of words) {
-        const candidate = current ? `${current} ${word}` : word;
-        if (candidate.length > targetWidth && current) {
-          lines.push(current);
-          current = word;
-        } else {
-          current = candidate;
-        }
-      }
-      if (current) lines.push(current);
-      return lines.join("\n");
-    })
-    .filter(Boolean)
-    .join("\n\n")
+    .split("\n")
+    .map(wrapLong)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n") // collapse runs of blank lines to at most one
     .trim();
 }
 
