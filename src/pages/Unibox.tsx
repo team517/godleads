@@ -675,27 +675,35 @@ function isRelevantInboxItem(m: any): boolean {
 const LANG_ES_CA = /\b(el|la|los|las|un[oa]?s?|del|al|que|qué|por|para|con|como|pero|porque|cuando|cuándo|donde|dónde|gracias|hola|saludos|buenos|buenas|cordial(?:es|mente)?|atentamente|estimad[oa]s?|señor(?:a|es)?|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|necesita|quiero|queremos|quería|querría|puede[ns]?|podemos|podríamos?|tengo|tenemos|tiene[ns]?|somos|estamos|está[ns]?|esto|esta|este|estos|estas|eso|esa|nuestr[oa]s?|vuestr[oa]s?|usted(?:es)?|también|según|sólo|solo|muy|más|sin|sobre|desde|hasta|mientras|aunque|entonces|vale|claro|perfecto|genial|encantad[oa]|quedamos|llamada|correo|adjunto|propuesta|presupuesto|consulta|pregunta|duda|cita|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|aquests|aquestes|també|molt|més|sense|fins|vostè|voldria|d'acord|tinc|tenim|podem|bon\s?dia)\b/gi;
 // LANG_EN: very common English words — almost every English email hits several.
 const LANG_EN = /\b(the|and|you|your|yours|for|with|this|that|these|those|have|has|had|are|was|were|will|would|could|should|been|being|is|of|to|in|on|at|as|be|by|or|if|from|but|not|can|just|get|got|know|let|let's|see|time|week|day|here|there|our|we|us|i'm|i'll|we're|we'll|don't|doesn't|thanks|thank|regards|best|hi|hello|hey|dear|please|company|meeting|information|interested|need|want|team|cheers|sincerely|looking|forward|kind|sounds|great|schedule|call|available|reach|reaching|out)\b/gi;
-const LANG_OTHER = /\b(merci|bonjour|cordialement|madame|monsieur|votre|nous|vous|danke|sehr|freundlichen|grüße|guten|ich|und|grazie|salve|cordiali|saluti|sono|obrigad[oa]|olá|você|atenciosamente|dziękuję|pozdrawiam|spasibo|zdravstvuyte)\b/gi;
+// French markers — real business replies from FR leads should be SHOWN, not hidden.
+const LANG_FR = /\b(merci|bonjour|cordialement|salutations|madame|monsieur|votre|notre|nous|vous|êtes|suis|absent[e]?|bureau|jusqu'au|jusqu|veuillez|prie|s'il\s?vous\s?plaît|disponible|répondre|réponse|entreprise|réunion|rendez-vous|actuellement|serai|retour|contacter|contactez|message|société|joindre|dès|meilleures)\b/gi;
+// Italian markers — real business replies from IT leads should be SHOWN, not hidden.
+const LANG_IT = /\b(grazie|salve|buongiorno|cordiali|saluti|distinti|sono|assente|ufficio|fino|contattare|contatti|prego|gentile|egregio|signor[ae]?|vostr[oa]|nostr[oa]|siamo|essere|disponibile|rispondere|risposta|azienda|riunione|messaggio|ritorno|tornerò|cortesia|attualmente|potete|grazie\s?mille)\b/gi;
+// Remaining clearly-foreign languages (German / Portuguese / Polish / Russian) — hidden as noise.
+const LANG_OTHER = /\b(danke|sehr|freundlichen|grüße|guten|ich|und|mit|obrigad[oa]|olá|você|atenciosamente|dziękuję|pozdrawiam|spasibo|zdravstvuyte)\b/gi;
 
-function detectLanguageBucket(text: string): "es" | "en" | "other" | "unknown" {
+function detectLanguageBucket(text: string): "es" | "en" | "fr" | "it" | "other" | "unknown" {
   const t = (text || "").toLowerCase();
-  const wordCount = (t.match(/[a-záéíóúñçüàèòïä-ÿ]{2,}/gi) || []).length;
   const es = (t.match(LANG_ES_CA) || []).length;
   const en = (t.match(LANG_EN) || []).length;
+  const fr = (t.match(LANG_FR) || []).length;
+  const it = (t.match(LANG_IT) || []).length;
   const other = (t.match(LANG_OTHER) || []).length;
   // Spanish/Catalan-specific characters are a strong ES signal (English has none).
   const esChars = /[ñ¿¡]|·l|ç/.test(t) ? 1 : 0;
   const esScore = es + esChars * 2;
 
-  // Spanish/Catalan wins as soon as there is real ES signal that isn't beaten by English.
-  if (esScore > 0 && esScore >= en) return "es";
+  // Spanish/Catalan wins as soon as there is real ES signal not beaten by another language.
+  if (esScore > 0 && esScore >= en && esScore >= fr && esScore >= it) return "es";
+  // French / Italian REAL replies (user's markets) — show them when they clearly dominate.
+  if (fr >= 2 && fr >= it && fr >= en) return "fr";
+  if (it >= 2 && it >= fr && it >= en) return "it";
   // Only hide on a CLEAR foreign signal (≥2 markers and no ES signal), so a stray
   // English word in a Spanish mail never hides it. Ambiguous → "unknown" (shown).
   if (esScore === 0 && en >= 2) return "en";
   if (esScore === 0 && other >= 2) return "other";
   if (esScore > 0) return "es";
   return "unknown"; // ambiguo / poco texto -> no ocultar
-
 }
 
 type MessageCategory = "interested" | "not_interested" | "question" | "out_of_office" | "neutral";
@@ -918,7 +926,7 @@ export default function Unibox() {
   const [showWarmup, setShowWarmup] = useState(false);
   const [langNonce, setLangNonce] = useState(0);
   const [tcxAccounts, setTcxAccounts] = useState<Set<string>>(new Set());
-  const langCacheRef = useRef<Map<string, "es" | "en" | "other" | "unknown">>(new Map());
+  const langCacheRef = useRef<Map<string, "es" | "en" | "fr" | "it" | "other" | "unknown">>(new Map());
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<FilterType>("all");
@@ -1307,7 +1315,7 @@ export default function Unibox() {
   const selected = useMemo(() => messages.find(m => m.id === selectedId) || null, [messages, selectedId]);
 
   // Language bucket per message, cached by id (text never changes). Cleared by "Re-filtrar idioma".
-  const messageLang = useCallback((m: any): "es" | "en" | "other" | "unknown" => {
+  const messageLang = useCallback((m: any): "es" | "en" | "fr" | "it" | "other" | "unknown" => {
     const cache = langCacheRef.current;
     const hit = cache.get(m.id);
     if (hit) return hit;
