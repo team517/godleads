@@ -950,6 +950,10 @@ export default function Unibox() {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const [messages, setMessages] = useState<any[]>([]);
+  // English gate: domains that belong to leads in the user's lists. English (or
+  // other-foreign) messages from senders OUTSIDE these domains are hidden.
+  const [leadDomains, setLeadDomains] = useState<Set<string>>(new Set());
+  const checkedDomainsRef = useRef<Set<string>>(new Set());
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1365,10 +1369,51 @@ export default function Unibox() {
     return bucket;
   }, []);
 
-  // Warm-up classification — revealed by "Mostrar warmup". We now accept EVERY
-  // language (English included). A message is only hidden as warm-up when it
-  // carries a random letters+digits code (e.g. "FJRI829FJSC") in the subject OR
-  // the body — detected intelligently so real replies are never hidden.
+  // Resolve which sender domains belong to LEADS. Only queried for English/other
+  // foreign messages that aren't already linked to a lead/campaign; results (hits
+  // AND misses) are cached so each domain is checked against the DB exactly once.
+  useEffect(() => {
+    if (!user || messages.length === 0) return;
+    const pending = new Set<string>();
+    for (const m of messages) {
+      if (m.lead_id || m.campaign_id) continue;
+      const lang = messageLang(m);
+      if (lang !== "en" && lang !== "other") continue;
+      const dom = (m.from_email || "").split("@")[1]?.toLowerCase();
+      if (dom && !checkedDomainsRef.current.has(dom)) pending.add(dom);
+    }
+    if (pending.size === 0) return;
+    const domains = [...pending];
+    domains.forEach((d) => checkedDomainsRef.current.add(d));
+    (async () => {
+      const found = new Set<string>();
+      const CHUNK = 15;
+      for (let i = 0; i < domains.length; i += CHUNK) {
+        const chunk = domains.slice(i, i + CHUNK);
+        const { data } = await supabase
+          .from("leads")
+          .select("email")
+          .eq("user_id", user.id)
+          .or(chunk.map((d) => `email.ilike.%@${d}`).join(","))
+          .limit(1000);
+        for (const l of data || []) {
+          const dom = (l.email || "").split("@")[1]?.toLowerCase();
+          if (dom) found.add(dom);
+        }
+      }
+      if (found.size > 0) {
+        setLeadDomains((prev) => new Set([...prev, ...found]));
+      }
+    })();
+  }, [messages, user, messageLang]);
+
+  // Warm-up classification — revealed by "Mostrar warmup". Rules:
+  //  1) Any message carrying a random letters+digits code (e.g. "FJRI829FJSC")
+  //     in the subject OR body is hidden — intelligent detector, no false positives.
+  //  2) ENGLISH GATE: English (or other-foreign) messages only show when they come
+  //     from a KNOWN lead — linked lead_id/campaign_id, or a sender whose domain
+  //     matches a lead in the lists. Unknown English senders = warm-up network noise.
+  //     ES/CA, FR, IT and ambiguous messages always show.
   const isWarmupHidden = useCallback((m: any): boolean => {
     if (subjectHasWarmupCode(m.subject)) return true;          // code in subject
     let body = cleanBodyText(m.body_text || "");
@@ -1376,8 +1421,14 @@ export default function Unibox() {
       body = cleanBodyText(m.body_html);
     }
     if (textHasWarmupCode(body)) return true;                  // code in body
+    const lang = messageLang(m);
+    if (lang === "en" || lang === "other") {
+      if (m.lead_id || m.campaign_id) return false;            // reply from a lead → show
+      const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
+      if (!leadDomains.has(dom)) return true;                  // unknown EN sender → hide
+    }
     return false;
-  }, []);
+  }, [messageLang, leadDomains]);
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
