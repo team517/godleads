@@ -48,8 +48,9 @@ export default function CampaignLeads({ campaignId }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const templateFileRef = useRef<HTMLInputElement>(null);
 
-  // Template columns
-  const TEMPLATE_COLUMNS = ["first_name", "industry", "city", "company_short_description", "company_name", "website"];
+  // Template columns — include personalized message columns so a ready-made
+  // {{personalized_message}} (often full HTML) is imported entirely, not dropped.
+  const TEMPLATE_COLUMNS = ["first_name", "industry", "city", "company_short_description", "company_name", "website", "personalized_message", "personalized_intro", "icebreaker"];
 
   // CSV review state
   const parsedRowsRef = useRef<Record<string, string>[]>([]);
@@ -449,7 +450,7 @@ export default function CampaignLeads({ campaignId }: Props) {
 
         parsedRowsRef.current = orderedRows;
         setCsvDeselected(new Set());
-        await confirmCsvImport();
+        await confirmCsvImport(true); // template path: import all template columns as-is
       } catch (err: any) {
         toast.error(`Error procesando plantilla: ${err.message}`);
       }
@@ -459,7 +460,7 @@ export default function CampaignLeads({ campaignId }: Props) {
     if (templateFileRef.current) templateFileRef.current.value = "";
   };
 
-  const confirmCsvImport = async () => {
+  const confirmCsvImport = async (importAllColumns = false) => {
     if (!user) return;
     setImporting(true);
     setShowCsvReview(false);
@@ -476,9 +477,9 @@ export default function CampaignLeads({ campaignId }: Props) {
 
       for (let i = 0; i < selectedRows.length; i += INSERT_BATCH) {
         const batchRows = selectedRows.slice(i, i + INSERT_BATCH);
-        // Only import the columns the user selected (email is always kept). When no
-        // selection exists (e.g. the fixed-template import path), keep every column.
-        const useColFilter = csvSelectedCols.size > 0;
+        // Only import the columns the user selected (email is always kept). The
+        // template path passes importAllColumns=true to keep every column.
+        const useColFilter = !importAllColumns && csvSelectedCols.size > 0;
         const batch = batchRows.map(r => {
           const custom_fields: Record<string, string> = {};
           Object.entries(r).forEach(([key, value]) => {
