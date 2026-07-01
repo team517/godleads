@@ -824,6 +824,17 @@ serve(async (req) => {
     // successes-only counter, but each attempt still costs up to ~15s.
     let sendAttemptsThisRun = 0;
 
+    // ═══ Cross-campaign account coordination (shared across ALL campaigns in
+    // this invocation) ═══
+    // These maps are declared ONCE here, not per campaign, so the SAME mailbox
+    // used by two different campaigns is coordinated: it can't send twice in the
+    // same tick, and its 6–9 min cooldown / daily cap are honoured no matter which
+    // campaign it belongs to. (The account row's last_send_at + sent_today are the
+    // cross-TICK source of truth; these maps cover the same-tick case.)
+    const accountSendsThisTick: Record<string, number> = {};
+    const accountCooldownMs: Record<string, number> = {};
+    const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause between sends inside a tick
+
     for (const campaign of campaigns) {
       if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
       const now = new Date();
@@ -1056,19 +1067,24 @@ serve(async (req) => {
       }
 
       // ═══ Per-account cadence control ═══
-      // Each account waits a minimum gap between consecutive sends to avoid
-      // bursts. We cap how many emails a single account can send PER TICK
-      // (defaults to 4) so traffic stays smooth even if the cron is slow.
+      // At most ONE email per account per tick (burst protection). accountSendsThisTick
+      // is invocation-global (declared above the campaign loop) so this cap also spans
+      // campaigns that share the same mailbox.
       const MAX_PER_ACCOUNT_PER_TICK = 1;
-      const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause inside the tick
-      const accountSendsThisTick: Record<string, number> = {};
+
+      // This campaign's OWN target spacing, computed independently from ITS accounts
+      // and ITS slow-ramp-aware daily quota — so every campaign paces itself and none
+      // affects another. "1 email per account roughly every N minutes":
+      //   quota_per_account = (sum of effective daily limits) / (number of accounts)
+      //   interval_per_account = window_minutes / quota_per_account
+      const quotaPerAccount = accounts.length > 0 ? autoAccountCapTotal / accounts.length : 0;
+      const intervalPerAccountMin = quotaPerAccount > 0 ? Math.round(totalWindowMinutes / quotaPerAccount) : 0;
+      console.log(`Campaign "${campaign.name}": ${accounts.length} accounts · ~${Math.round(quotaPerAccount)}/account/day · pace ≈ 1 email per account every ${intervalPerAccountMin} min · budget this run: ${paceBudgetThisRun}`);
 
       // Per-account cooldown between consecutive sends: a flat random 6–9 min.
-      // This is purely a deliverability floor so no single mailbox bursts — the
-      // OVERALL spread across the day is handled by the hour-based pace budget
-      // above (not by stretching this per-account gap, which previously caused
-      // multi-hour stalls). Decided once per tick per account.
-      const accountCooldownMs: Record<string, number> = {};
+      // Pure deliverability floor so no single mailbox bursts — the OVERALL spread
+      // across the day is handled by the hour-based pace budget above. accountCooldownMs
+      // is invocation-global, so a shared mailbox keeps one consistent gap across campaigns.
       const cooldownFor = (acc: any) => {
         if (!accountCooldownMs[acc.id]) {
           accountCooldownMs[acc.id] = 6 * 60_000 + Math.floor(Math.random() * 3 * 60_000); // [6m, 9m)
