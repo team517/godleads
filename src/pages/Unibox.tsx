@@ -1025,18 +1025,34 @@ export default function Unibox() {
 
   const load = useCallback(async () => {
     if (!user) return;
-    // Only the most recent messages are loaded (hard cap) so the Unibox never tries
-    // to render 10k+ warm-up emails — that was the lag. The client then keeps only
-    // Spanish/Catalan + relevant ones.
-    const MAX_LOAD = 800;
-    const { data: page } = await supabase
-      .from("inbox_messages")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("is_archived", false)
-      .order("received_at", { ascending: false })
-      .limit(MAX_LOAD);
-    const raw = page || [];
+    // TWO-LANE LOAD. A single "latest 800" window let warm-up floods crowd real
+    // replies out of view (live check: 800 latest = only 5 lead-linked, ~700
+    // warmup). Lane 1 always brings the latest LEAD-LINKED messages (real
+    // replies); lane 2 brings the latest unlinked ones. Real replies can never
+    // be displaced by warm-up volume.
+    const [linkedRes, unlinkedRes] = await Promise.all([
+      supabase
+        .from("inbox_messages")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("is_archived", false)
+        .or("lead_id.not.is.null,campaign_id.not.is.null")
+        .order("received_at", { ascending: false })
+        .limit(500),
+      supabase
+        .from("inbox_messages")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("is_archived", false)
+        .is("lead_id", null)
+        .is("campaign_id", null)
+        .order("received_at", { ascending: false })
+        .limit(500),
+    ]);
+    const seenIds = new Set<string>();
+    const raw = [...(linkedRes.data || []), ...(unlinkedRes.data || [])]
+      .filter((m) => (seenIds.has(m.id) ? false : (seenIds.add(m.id), true)))
+      .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
 
     const seenMessageKeys = new Set<string>();
     const msgs = raw.filter((message) => {
