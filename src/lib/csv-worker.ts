@@ -1,23 +1,7 @@
 // Web Worker for streaming CSV parsing — receives ArrayBuffer, decodes in chunks, processes incrementally
-import { parseCSV } from "./csv-parser";
+import { parseCSV, cleanCsvField } from "./csv-parser";
 
 const STRICT_EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
-
-function isValidForColumn(header: string, value: string): boolean {
-  const v = value.trim();
-  if (!v) return true;
-  switch (header) {
-    case "email": return STRICT_EMAIL_REGEX.test(v.replace(/,/g, ""));
-    case "first_name": case "last_name": return v.length <= 80 && !v.includes("@") && !/https?:\/\//.test(v) && !/\d{5,}/.test(v);
-    case "company_name": case "company": return v.length <= 150 && !STRICT_EMAIL_REGEX.test(v) && v.split(" ").length <= 15;
-    case "city": case "location": return v.length <= 100 && !v.includes("@") && !/https?:\/\//.test(v) && v.split(" ").length <= 8;
-    case "website": case "url": return v.length <= 300 && (/^https?:\/\//.test(v) || /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(v));
-    case "industry": return v.length <= 120 && v.split(" ").length <= 10;
-    case "company_short_description": case "description": return v.length <= 500;
-    case "phone": case "telephone": return v.length <= 25 && /^[0-9+\-() ]+$/.test(v);
-    default: return v.length <= 500;
-  }
-}
 
 // Decode ArrayBuffer in 8MB slices to avoid a single massive string allocation
 function decodeInChunks(buffer: ArrayBuffer): string {
@@ -80,11 +64,10 @@ self.onmessage = (e: MessageEvent<ArrayBuffer | string>) => {
       if (!STRICT_EMAIL_REGEX.test(email)) continue;
 
       const obj: Record<string, string> = {};
+      // cleanCsvField preserves rich/HTML columns (personalized_message etc.)
+      // verbatim and applies the generic cleaner to everything else.
       headers.forEach((h, j) => {
-        let val = (values[j] || "").trim();
-        val = val.replace(/[\u0022\u0027\u2018\u2019\u201C\u201D`\u00AB\u00BB]/g, "").trim();
-        if (h === "email") val = val.replace(/[,\s]/g, "");
-        obj[h] = isValidForColumn(h, val) ? val : "";
+        obj[h] = cleanCsvField(h, values[j] || "");
       });
       rows.push(obj);
     }

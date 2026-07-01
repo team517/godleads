@@ -243,7 +243,9 @@ function sanitizeHtmlForDelivery(html: string): string {
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<(script|style|iframe|object|embed|svg|video|audio|canvas)[\s\S]*?<\/\1>/gi, "")
     .replace(/<(img|picture|source)[^>]*>/gi, "")
-    .replace(/\s(?:class|id|style|data-[\w-]+|width|height|role|dir)=("[^"]*"|'[^']*')/gi, "")
+    // Keep inline `style` (margin/line-height/etc.) so personalized HTML renders with
+    // its intended paragraph spacing. Only strip fingerprint-y attributes.
+    .replace(/\s(?:class|id|data-[\w-]+|width|height|role|dir)=("[^"]*"|'[^']*')/gi, "")
     .replace(/<a[^>]*href=("[^"]*"|'[^']*')[^>]*>([\s\S]*?)<\/a>/gi, "<a href=$1>$2</a>")
     .replace(/<(\/?)div\b/gi, "<$1p")
     .replace(/\n{3,}/g, "\n\n")
@@ -1380,12 +1382,17 @@ serve(async (req) => {
         const isFirstStep = currentStepIndex === 0;
         const textOnlyEmails = (campaign as any).text_only_emails === true;
         const firstEmailTextOnly = (campaign as any).first_email_text_only === true;
-        const forceTextOnly = textOnlyEmails || (isFirstStep && firstEmailTextOnly);
+
+        const personalizedBody = replaceVariables(finalBodyTemplate, fields).trim();
+        // If the personalized body carries explicit HTML (e.g. a {{personalized_message}}
+        // with <p>…</p> markup from the CSV), force HTML delivery so it renders with real
+        // paragraph spacing. Sending HTML through the text-only path would leak raw tags.
+        const bodyHasHtml = hasExplicitHtml(personalizedBody);
+        const forceTextOnly = !bodyHasHtml && (textOnlyEmails || (isFirstStep && firstEmailTextOnly));
         const campaignSignature = ((campaign as any).signature_html || "").trim();
         const shouldIncludeSignature = !isFirstStep && !!campaignSignature;
         const signatureHtml = shouldIncludeSignature ? campaignSignature : undefined;
 
-        const personalizedBody = replaceVariables(finalBodyTemplate, fields).trim();
         const finalBody = forceTextOnly
           ? removeUrlsAndTracking(personalizedBody)
           : textToHtml(personalizedBody);

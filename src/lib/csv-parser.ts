@@ -93,6 +93,23 @@ export function parseCSV(text: string): string[][] {
  */
 const STRICT_EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
 
+// ─── Rich-content columns (personalized messages, HTML bodies) ───────────────
+// These must survive import VERBATIM. The generic cleaner strips quotes (which
+// breaks HTML style="…" attributes) and caps length at 500 chars (which would
+// EMPTY a real personalized message). We keep known message columns and any
+// value that looks like HTML untouched, up to a generous size cap.
+export const RICH_CONTENT_COLUMNS = new Set([
+  "personalized_message", "personalized_intro", "personalized_body", "personalization",
+  "message", "mensaje", "body", "cuerpo", "html", "email_body", "custom_message", "icebreaker",
+]);
+const MAX_RICH_LEN = 20000;
+export function looksLikeHtml(v: string): boolean {
+  return /<(p|div|br|span|a|table|tr|td|strong|em|b|i|u|ul|ol|li|h[1-6]|blockquote|img)\b[^>]*>/i.test(v);
+}
+export function isRichContentColumn(header: string, value: string): boolean {
+  return RICH_CONTENT_COLUMNS.has(header) || looksLikeHtml(value);
+}
+
 /**
  * Per-column content validators.
  * Returns true if the value looks appropriate for that column type.
@@ -146,6 +163,19 @@ function isValidForColumn(header: string, value: string): boolean {
   }
 }
 
+/** Clean a single CSV field, preserving rich/HTML content (personalized_message
+ *  etc.) verbatim so its quotes and full length survive the import. */
+export function cleanCsvField(header: string, rawValue: string): string {
+  let val = (rawValue || "").trim();
+  if (isRichContentColumn(header, val)) {
+    return val.slice(0, MAX_RICH_LEN);
+  }
+  // Strip ALL quote characters (straight, curly/smart, backticks) from plain fields
+  val = val.replace(/["'‘’“”`«»]/g, "").trim();
+  if (header === "email") val = val.replace(/[,\s]/g, "");
+  return isValidForColumn(header, val) ? val : "";
+}
+
 /**
  * Parse CSV text into header + row objects.
  * Validates email column + per-column content validation.
@@ -181,12 +211,7 @@ export function parseCSVToObjects(text: string): { headers: string[]; rows: Reco
     .map(values => {
       const obj: Record<string, string> = {};
       headers.forEach((h, i) => {
-        let val = (values[i] || "").trim();
-        // Strip ALL quote characters (straight, curly/smart, backticks) from every field
-        val = val.replace(/[\u0022\u0027\u2018\u2019\u201C\u201D`\u00AB\u00BB]/g, "").trim();
-        // Email: also strip commas and whitespace
-        if (h === "email") val = val.replace(/[,\s]/g, "");
-        obj[h] = isValidForColumn(h, val) ? val : "";
+        obj[h] = cleanCsvField(h, values[i] || "");
       });
       return obj;
     });

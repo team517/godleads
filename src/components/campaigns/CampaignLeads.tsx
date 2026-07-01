@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck } from "lucide-react";
+import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 
 const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
@@ -55,6 +55,8 @@ export default function CampaignLeads({ campaignId }: Props) {
   const parsedRowsRef = useRef<Record<string, string>[]>([]);
   const [csvRows, setCsvRows] = useState<Record<string, string>[]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  // Columns the user chose to import (all non-email columns by default).
+  const [csvSelectedCols, setCsvSelectedCols] = useState<Set<string>>(new Set());
   const [csvDuplicates, setCsvDuplicates] = useState<Set<string>>(new Set());
   const [csvDeselected, setCsvDeselected] = useState<Set<number>>(new Set());
   const [showCsvReview, setShowCsvReview] = useState(false);
@@ -376,6 +378,8 @@ export default function CampaignLeads({ campaignId }: Props) {
 
           parsedRowsRef.current = allRows;
           setCsvHeaders(headers);
+          // Default: import every column except email (which is always imported).
+          setCsvSelectedCols(new Set(headers.filter(h => h !== "email")));
           setCsvRows(allRows.slice(0, 500));
           setCsvDuplicates(internalDups);
 
@@ -472,10 +476,15 @@ export default function CampaignLeads({ campaignId }: Props) {
 
       for (let i = 0; i < selectedRows.length; i += INSERT_BATCH) {
         const batchRows = selectedRows.slice(i, i + INSERT_BATCH);
+        // Only import the columns the user selected (email is always kept). When no
+        // selection exists (e.g. the fixed-template import path), keep every column.
+        const useColFilter = csvSelectedCols.size > 0;
         const batch = batchRows.map(r => {
           const custom_fields: Record<string, string> = {};
           Object.entries(r).forEach(([key, value]) => {
-            if (key !== "email" && value?.trim()) custom_fields[key] = value.trim();
+            if (key === "email" || !value?.trim()) return;
+            if (useColFilter && !csvSelectedCols.has(key)) return;
+            custom_fields[key] = value.trim();
           });
           return { user_id: user.id, email: r.email.toLowerCase(), custom_fields, is_campaign_only: true };
         });
@@ -945,12 +954,48 @@ export default function CampaignLeads({ campaignId }: Props) {
               {(parsedRowsRef.current.length - csvDeselected.size).toLocaleString()} / {parsedRowsRef.current.length.toLocaleString()} seleccionados
             </span>
           </div>
+
+          {/* Column selection — choose which CSV columns to import as variables */}
+          {csvHeaders.length > 0 && (
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <Columns3 className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium">Seleccionar columnas a importar</span>
+                <span className="text-xs text-muted-foreground ml-auto">{csvSelectedCols.size + 1} de {csvHeaders.length}</span>
+                <Button variant="outline" size="sm" className="h-6 text-[11px] px-2"
+                  onClick={() => setCsvSelectedCols(new Set(csvHeaders.filter(h => h !== "email")))}>Todas</Button>
+                <Button variant="outline" size="sm" className="h-6 text-[11px] px-2"
+                  onClick={() => setCsvSelectedCols(new Set())}>Ninguna</Button>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Checkbox checked disabled />
+                  <span className="font-medium">email</span>
+                  <Badge variant="outline" className="h-4 px-1 text-[9px]">obligatoria</Badge>
+                </label>
+                {csvHeaders.filter(h => h !== "email").map(col => (
+                  <label key={col} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <Checkbox
+                      checked={csvSelectedCols.has(col)}
+                      onCheckedChange={(v) => setCsvSelectedCols(prev => {
+                        const next = new Set(prev);
+                        v ? next.add(col) : next.delete(col);
+                        return next;
+                      })}
+                    />
+                    <span className="capitalize">{col.replace(/_/g, " ")}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <ScrollArea className="max-h-[40vh] rounded-lg border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 sticky top-0">
                 <tr>
                   <th className="p-2 w-10"></th>
-                  {csvRows.length > 0 && Object.keys(csvRows[0]).map(col => (
+                  {csvRows.length > 0 && Object.keys(csvRows[0]).filter(col => col === "email" || csvSelectedCols.has(col)).map(col => (
                     <th key={col} className="text-left p-2 font-medium capitalize">{col}</th>
                   ))}
                   <th className="text-left p-2 font-medium">Estado</th>
@@ -973,8 +1018,8 @@ export default function CampaignLeads({ campaignId }: Props) {
                           }}
                         />
                       </td>
-                      {Object.values(row).map((val, j) => (
-                        <td key={j} className="p-2 text-muted-foreground truncate max-w-[150px]">{val || "—"}</td>
+                      {Object.keys(row).filter(col => col === "email" || csvSelectedCols.has(col)).map((col, j) => (
+                        <td key={j} className="p-2 text-muted-foreground truncate max-w-[150px]">{row[col] || "—"}</td>
                       ))}
                       <td className="p-2">
                         {isDup ? (
