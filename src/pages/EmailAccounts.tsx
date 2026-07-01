@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2 } from "lucide-react";
+import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -100,6 +100,8 @@ export default function EmailAccounts() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTagInput, setBulkTagInput] = useState("");
   const [savedTags, setSavedTags] = useState<{ id: string; name: string }[]>([]);
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [editingTagValue, setEditingTagValue] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
   const [showTagManager, setShowTagManager] = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
@@ -339,6 +341,44 @@ export default function EmailAccounts() {
     await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", tagName);
     if (filterTag === tagName) setFilterTag(null);
     toast.success(`Tag "${tagName}" eliminado`);
+    loadSavedTags();
+    loadAccounts();
+  };
+
+  // Renombra un tag EN CASCADA: cuentas (email_accounts.tags), campañas
+  // (campaigns.account_tags) y el tag guardado (email_tags). Merge-safe: si el
+  // nombre nuevo ya existe, se fusiona (dedup) en vez de duplicar.
+  const handleRenameSavedTag = async (oldName: string, rawNew: string) => {
+    if (!user) return;
+    const newName = rawNew.trim();
+    if (!newName || newName === oldName) { setEditingTag(null); return; }
+
+    // 1) Cuentas con el tag viejo → sustituir por el nuevo (dedup)
+    const accountsWithOld = accounts.filter(a => (a.tags || []).includes(oldName));
+    for (const account of accountsWithOld) {
+      const cur: string[] = account.tags || [];
+      const next = Array.from(new Set(cur.map(t => (t === oldName ? newName : t))));
+      await supabase.from("email_accounts").update({ tags: next } as any).eq("id", account.id);
+    }
+
+    // 2) Campañas que apuntan al tag viejo → re-apuntar al nuevo (dedup)
+    const { data: camps } = await supabase.from("campaigns").select("id, account_tags").eq("user_id", user.id);
+    for (const c of (camps || [])) {
+      const tags: string[] = (c as any).account_tags || [];
+      if (tags.includes(oldName)) {
+        const next = Array.from(new Set(tags.map(t => (t === oldName ? newName : t))));
+        await supabase.from("campaigns").update({ account_tags: next } as any).eq("id", c.id);
+      }
+    }
+
+    // 3) Tag guardado: crear el nuevo (idempotente) + borrar el viejo
+    await supabase.from("email_tags").upsert({ user_id: user.id, name: newName }, { onConflict: "user_id,name" } as any);
+    await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", oldName);
+
+    if (filterTag === oldName) setFilterTag(newName);
+    setEditingTag(null);
+    setEditingTagValue("");
+    toast.success(`Tag renombrado: "${oldName}" → "${newName}"`);
     loadSavedTags();
     loadAccounts();
   };
@@ -951,7 +991,20 @@ export default function EmailAccounts() {
                   <div key={tag} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="text-xs">{tag}</Badge>
+                        {editingTag === tag ? (
+                          <Input
+                            value={editingTagValue}
+                            onChange={e => setEditingTagValue(e.target.value)}
+                            autoFocus
+                            className="h-7 w-40 text-xs"
+                            onKeyDown={e => {
+                              if (e.key === "Enter") handleRenameSavedTag(tag, editingTagValue);
+                              if (e.key === "Escape") { setEditingTag(null); setEditingTagValue(""); }
+                            }}
+                          />
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">{tag}</Badge>
+                        )}
                         <span className="text-xs text-muted-foreground">{tagAccounts.length} cuenta{tagAccounts.length !== 1 ? "s" : ""}</span>
                       </div>
                       {tagAccounts.length > 0 && (
@@ -968,22 +1021,44 @@ export default function EmailAccounts() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 ml-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs"
-                        onClick={() => { setFilterTag(tag); setShowTagManager(false); }}
-                      >
-                        Filtrar
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() => handleDeleteSavedTag(tag)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
+                      {editingTag === tag ? (
+                        <>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" title="Guardar" onClick={() => handleRenameSavedTag(tag, editingTagValue)}>
+                            <Check className="h-3.5 w-3.5 text-primary" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" title="Cancelar" onClick={() => { setEditingTag(null); setEditingTagValue(""); }}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            onClick={() => { setFilterTag(tag); setShowTagManager(false); }}
+                          >
+                            Filtrar
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="Renombrar tag"
+                            onClick={() => { setEditingTag(tag); setEditingTagValue(tag); }}
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => handleDeleteSavedTag(tag)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
