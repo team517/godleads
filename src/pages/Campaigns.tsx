@@ -174,88 +174,117 @@ export default function Campaigns() {
   const runRemix = async (dest: any, src: any) => {
     if (!user || !dest || !src || dest.id === src.id) return;
     setRemixRunning(true);
+    // supabase-js never throws on a failed query — it returns { error }. Every call
+    // is checked here so a silent failure ABORTS before we delete the source (the
+    // old code ignored all errors and deleted src regardless → permanent data loss).
+    const must = <T,>(res: { data: T; error: any }, what: string): T => {
+      if (res.error) throw new Error(`${what}: ${res.error.message || res.error}`);
+      return res.data;
+    };
     try {
       // 1) Verificando — cargamos steps de ambas
       setRemixProgress({ phase: "Verificando campañas…", current: 0, total: 0 });
-      const [{ data: srcSteps }, { data: destSteps }] = await Promise.all([
-        supabase.from("campaign_steps").select("*").eq("campaign_id", src.id).order("step_order"),
-        supabase.from("campaign_steps").select("*").eq("campaign_id", dest.id).order("step_order"),
-      ]);
+      const srcSteps = must(await supabase.from("campaign_steps").select("*").eq("campaign_id", src.id).order("step_order"), "leer pasos origen") || [];
+      const destSteps = must(await supabase.from("campaign_steps").select("*").eq("campaign_id", dest.id).order("step_order"), "leer pasos destino") || [];
 
-      // 2) Mensajes → nuevas variantes en los steps de dest (crea steps faltantes)
-      const steps = srcSteps || [];
+      // 2) Mensajes → nuevas variantes en los steps de dest (crea steps faltantes).
+      //    IDEMPOTENTE: no se añade un (subject,body) que ya exista en el step destino,
+      //    así que reintentar el remix tras un fallo no duplica variantes.
+      const steps = srcSteps;
       setRemixProgress({ phase: "Creando variantes con los mensajes…", current: 0, total: steps.length });
       const destByOrder = new Map<number, any>((destSteps || []).map((s: any) => [s.step_order, s]));
+      const vkey = (v: any) => `${(v.subject || "").trim()} ${(v.body || "").trim()}`;
       let sdone = 0;
       for (const s of steps) {
         const msgs = [{ subject: s.subject || "", body: s.body || "" }, ...(Array.isArray(s.variants) ? s.variants : [])];
         const existing = destByOrder.get(s.step_order);
         if (existing) {
-          const merged = [...(Array.isArray(existing.variants) ? existing.variants : []), ...msgs];
-          await supabase.from("campaign_steps").update({ variants: merged as any }).eq("id", existing.id);
+          const have = new Set<string>([vkey(existing), ...((Array.isArray(existing.variants) ? existing.variants : []).map(vkey))]);
+          const fresh = msgs.filter((m) => !have.has(vkey(m)));
+          if (fresh.length) {
+            const merged = [...(Array.isArray(existing.variants) ? existing.variants : []), ...fresh];
+            must(await supabase.from("campaign_steps").update({ variants: merged as any }).eq("id", existing.id).select("id"), "actualizar variantes");
+          }
         } else {
-          await supabase.from("campaign_steps").insert({
+          must(await supabase.from("campaign_steps").insert({
             campaign_id: dest.id, step_order: s.step_order, subject: s.subject, body: s.body,
             delay_days: s.delay_days, variants: (Array.isArray(s.variants) ? s.variants : []) as any,
-          });
+          }).select("id"), "crear paso");
         }
         sdone++;
         setRemixProgress({ phase: "Creando variantes con los mensajes…", current: sdone, total: steps.length });
       }
 
-      // 3) Cargar todos los leads de src (paginado)
+      // 3) Cargar todos los leads de src CON su progreso (paginado, distinguiendo error de fin)
       setRemixProgress({ phase: "Cargando leads…", current: 0, total: 0 });
-      const leadIds: string[] = [];
+      const srcLeads: any[] = [];
       let offset = 0;
       while (true) {
-        const { data } = await supabase.from("campaign_leads").select("lead_id").eq("campaign_id", src.id).range(offset, offset + 999);
-        if (!data?.length) break;
-        leadIds.push(...data.map((r: any) => r.lead_id));
-        if (data.length < 1000) break;
+        const rows = must(
+          await supabase.from("campaign_leads")
+            .select("lead_id, current_step, status, last_sent_at, assigned_account_id")
+            .eq("campaign_id", src.id).order("id").range(offset, offset + 999),
+          "leer leads origen",
+        ) || [];
+        srcLeads.push(...rows);
+        if (rows.length < 1000) break;   // < page size ⇒ fin (un error habría lanzado arriba)
         offset += 1000;
       }
 
-      // 3b) Exportar leads a dest (upsert por lotes, ignora duplicados)
-      setRemixProgress({ phase: "Exportando leads…", current: 0, total: leadIds.length });
-      for (let i = 0; i < leadIds.length; i += 500) {
-        const batch = leadIds.slice(i, i + 500);
-        await supabase.from("campaign_leads").upsert(
-          batch.map((id) => ({ campaign_id: dest.id, lead_id: id })),
+      // 3b) Exportar leads a dest CONSERVANDO su progreso (current_step/status/last_sent_at),
+      //     para que un lead ya contactado o que respondió NO reciba el step 1 de nuevo.
+      //     ignoreDuplicates: si el lead ya está en dest, se respeta su progreso allí.
+      setRemixProgress({ phase: "Exportando leads…", current: 0, total: srcLeads.length });
+      for (let i = 0; i < srcLeads.length; i += 500) {
+        const batch = srcLeads.slice(i, i + 500);
+        must(await supabase.from("campaign_leads").upsert(
+          batch.map((r: any) => ({
+            campaign_id: dest.id, lead_id: r.lead_id,
+            current_step: r.current_step ?? 0,
+            status: r.status ?? "pending",
+            last_sent_at: r.last_sent_at ?? null,
+            assigned_account_id: r.assigned_account_id ?? null,
+          })),
           { onConflict: "campaign_id,lead_id", ignoreDuplicates: true }
-        );
-        setRemixProgress({ phase: "Exportando leads…", current: Math.min(i + 500, leadIds.length), total: leadIds.length });
+        ).select("id"), "exportar leads");
+        setRemixProgress({ phase: "Exportando leads…", current: Math.min(i + 500, srcLeads.length), total: srcLeads.length });
       }
 
       // 3c) Unir cuentas/tags (moverlo todo)
       const destTags: string[] = dest.account_tags || [];
       const mergedTags = Array.from(new Set([...destTags, ...((src.account_tags as string[]) || [])]));
       if (mergedTags.length !== destTags.length) {
-        await supabase.from("campaigns").update({ account_tags: mergedTags }).eq("id", dest.id);
+        must(await supabase.from("campaigns").update({ account_tags: mergedTags }).eq("id", dest.id).select("id"), "unir tags");
       }
-      const [{ data: srcAccs }, { data: destAccs }] = await Promise.all([
-        supabase.from("campaign_accounts").select("account_id").eq("campaign_id", src.id),
-        supabase.from("campaign_accounts").select("account_id").eq("campaign_id", dest.id),
-      ]);
+      const srcAccs = must(await supabase.from("campaign_accounts").select("account_id").eq("campaign_id", src.id), "leer cuentas origen") || [];
+      const destAccs = must(await supabase.from("campaign_accounts").select("account_id").eq("campaign_id", dest.id), "leer cuentas destino") || [];
       const haveAcc = new Set((destAccs || []).map((a: any) => a.account_id));
       const newAccs = (srcAccs || []).filter((a: any) => !haveAcc.has(a.account_id));
       if (newAccs.length) {
-        await supabase.from("campaign_accounts").insert(newAccs.map((a: any) => ({ campaign_id: dest.id, account_id: a.account_id })));
+        must(await supabase.from("campaign_accounts").insert(newAccs.map((a: any) => ({ campaign_id: dest.id, account_id: a.account_id }))).select("campaign_id"), "unir cuentas");
       }
 
-      // 4) Eliminar la campaña fusionada (solo cuando todo lo anterior terminó)
-      setRemixProgress({ phase: "Eliminando la campaña fusionada…", current: 0, total: 0 });
-      await supabase.from("campaign_steps").delete().eq("campaign_id", src.id);
-      await supabase.from("campaign_accounts").delete().eq("campaign_id", src.id);
-      await supabase.from("campaign_leads").delete().eq("campaign_id", src.id);
-      await supabase.from("campaigns").delete().eq("id", src.id);
+      // 3d) SANITY antes de borrar: dest debe tener al menos tantos leads como movimos.
+      const destLeadCount = (await supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", dest.id)).count || 0;
+      if (destLeadCount < srcLeads.length) {
+        throw new Error(`verificación fallida (destino tiene ${destLeadCount} leads, se esperaban ≥ ${srcLeads.length}) — no se elimina el origen`);
+      }
 
-      toast.success(`«${src.name}» fusionada en «${dest.name}» · ${leadIds.length} leads · ${steps.length} pasos`);
+      // 4) Eliminar la campaña fusionada — SOLO si todo lo anterior terminó sin error.
+      setRemixProgress({ phase: "Eliminando la campaña fusionada…", current: 0, total: 0 });
+      must(await supabase.from("campaign_steps").delete().eq("campaign_id", src.id).select("id"), "borrar pasos origen");
+      must(await supabase.from("campaign_accounts").delete().eq("campaign_id", src.id).select("campaign_id"), "borrar cuentas origen");
+      must(await supabase.from("campaign_leads").delete().eq("campaign_id", src.id).select("id"), "borrar leads origen");
+      must(await supabase.from("campaigns").delete().eq("id", src.id).select("id"), "borrar campaña origen");
+
+      toast.success(`«${src.name}» fusionada en «${dest.name}» · ${srcLeads.length} leads · ${steps.length} pasos`);
       setRemixDest(null);
       setRemixProgress(null);
       if (selectedId === src.id) setSelectedId(null);
       await load();
     } catch (e: any) {
-      toast.error(`Error en remix: ${e?.message || e}`);
+      toast.error(`Remix cancelado (no se borró nada): ${e?.message || e}`);
+      setRemixProgress(null);
     } finally {
       setRemixRunning(false);
     }
