@@ -1,9 +1,8 @@
 import { Link, useLocation } from "react-router-dom";
 import { Send, Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
 import { useState, useEffect } from "react";
+import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 
 const navItems = [
   { icon: Send, label: "Campañas", path: "/campaigns" },
@@ -12,26 +11,13 @@ const navItems = [
 
 export function MobileBottomNav() {
   const location = useLocation();
-  const { user } = useAuth();
-  const [unreadCount, setUnreadCount] = useState(0);
+  // Real relevant-unread count published by the Unibox (mirrors what it shows).
+  const [unreadCount, setUnreadCount] = useState(readCachedUniboxUnread());
 
   useEffect(() => {
-    if (!user) return;
-    const fetchUnread = async () => {
-      const { count } = await supabase
-        .from("inbox_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("is_read", false);
-      setUnreadCount(count || 0);
-    };
-    fetchUnread();
-    const ch = supabase
-      .channel("mobile-unread")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` }, fetchUnread)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [user]);
+    setUnreadCount(readCachedUniboxUnread());
+    return subscribeUniboxUnread(setUnreadCount);
+  }, []);
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-14 items-center justify-around border-t bg-background/95 backdrop-blur-md safe-area-bottom md:hidden">

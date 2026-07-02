@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
+import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 import { isSessionKept, clearKeepSession } from "@/components/KeepSessionBanner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -40,22 +41,19 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const { signOut, user } = useAuth();
   const { profile: profileData } = useProfile();
   const navigate = useNavigate();
-  const [unreadCount, setUnreadCount] = useState(0);
+  // Real relevant-unread count, published by the Unibox (matches what it shows).
+  // Counting raw unread rows here showed a fake "99+" of warm-up noise.
+  const [unreadCount, setUnreadCount] = useState(readCachedUniboxUnread());
   const [isAdmin, setIsAdmin] = useState(false);
   const allowedRoutes = profileData.allowed_routes;
 
   useEffect(() => {
+    setUnreadCount(readCachedUniboxUnread());
+    return subscribeUniboxUnread(setUnreadCount);
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
-
-    const fetchUnread = async () => {
-      const { count } = await supabase
-        .from("inbox_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("is_read", false);
-      setUnreadCount(count || 0);
-    };
-
     const checkAdmin = async () => {
       const { data } = await supabase
         .from("user_roles")
@@ -64,20 +62,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         .single();
       setIsAdmin(data?.role === "admin");
     };
-
-    fetchUnread();
     checkAdmin();
-
-    const channel = supabase
-      .channel("unread-badge")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` },
-        () => { fetchUnread(); }
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
   const handleSoftExit = () => {

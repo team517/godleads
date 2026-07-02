@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { containsProfanity } from "@/lib/profanity-filter";
+import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1585,6 +1586,15 @@ export default function Unibox() {
   const unreadCount = useMemo(() =>
     messages.filter(m => !m.is_read && !hiddenFromClean(m)).length
   , [messages, hiddenFromClean, langNonce]);
+
+  // Publish the REAL relevant-unread count so the sidebar/mobile-nav badge shows
+  // the same number the Unibox shows (not the raw thousands of warm-up rows).
+  // Only once the message list + lead-domains are loaded, so we don't broadcast a
+  // transient 0 before filtering is ready.
+  useEffect(() => {
+    if (!leadDomainsReady) return;
+    publishUniboxUnread(unreadCount);
+  }, [unreadCount, leadDomainsReady]);
 
   const handleSync = async () => {
     await syncInbox();
