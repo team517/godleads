@@ -6,6 +6,8 @@ import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { KeepSessionBanner } from "@/components/KeepSessionBanner";
 import { useProfile } from "@/contexts/ProfileContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
 
 // Convert a #hex brand color to the "H S% L%" triple our CSS custom properties use.
 function hexToHsl(hex: string): string | null {
@@ -30,6 +32,10 @@ export function AppLayout() {
   const isMobile = useIsMobile();
   const location = useLocation();
   const { profile } = useProfile();
+  const { user } = useAuth();
+
+  // Single owner of the realtime badge bump (see hook). Runs app-wide, once.
+  useUniboxUnreadWatcher(user?.id);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "1");
 
