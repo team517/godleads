@@ -1329,11 +1329,14 @@ export default function Unibox() {
     setThreadLoading(false);
   }, [user]);
 
-  // Clear AI suggestion and translation when selecting different message
+  // Clear the translation ONLY when the selected message changes — not on every
+  // 30s messages reload (that used to make a just-made translation disappear).
+  useEffect(() => { setTranslatedBody(""); }, [selectedId]);
+
+  // Clear AI suggestion + probe language + load thread on select / refresh
   useEffect(() => {
     setAiSuggestion("");
     setAiPromptName("");
-    setTranslatedBody("");
     const msg = messages.find(m => m.id === selectedId);
     if (msg) {
       // Proactively flag the language (cheap local detector) so the reply box can
@@ -1484,7 +1487,13 @@ export default function Unibox() {
     setTranslating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const body = cleanBodyText(selected.body_text);
+      // Use the SAME text the user is reading: fall back to the HTML body for
+      // HTML-only emails (empty/thin body_text) so we never translate an empty string.
+      let body = cleanBodyText(selected.body_text || "");
+      if (body.replace(/\s+/g, " ").trim().length < 15 && selected.body_html) {
+        body = cleanBodyText(selected.body_html);
+      }
+      if (!body.trim()) { toast.error("No hay texto que traducir"); setTranslating(false); return; }
       // First detect, then translate
       const detectResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
         method: "POST",
@@ -2370,6 +2379,11 @@ export default function Unibox() {
                                   className="text-[15px] text-foreground leading-[1.75] break-words [&_p]:my-3 [&_a]:text-primary [&_a]:underline"
                                   dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(tm.body || "") }}
                                 />
+                              ) : (translatedBody && tm.id === selected.id) ? (
+                                // Show the Spanish translation IN PLACE of this message's body.
+                                <div className="text-[15px] text-foreground leading-[1.75] whitespace-pre-wrap break-words">
+                                  {translatedBody}
+                                </div>
                               ) : tm.body_html && tm.body_html.trim().length > 20 ? (
                                 <div
                                   className="max-w-none text-foreground leading-[1.75] text-[15px] break-words overflow-x-auto
@@ -2412,7 +2426,12 @@ export default function Unibox() {
                           </span>
                         </div>
                         <div className="px-6 pb-6 pl-[3.75rem]">
-                          {selected.body_html && selected.body_html.trim().length > 20 ? (
+                          {translatedBody ? (
+                            // Show the Spanish translation IN PLACE of the original body.
+                            <div className="text-[15px] text-foreground leading-[1.8] whitespace-pre-wrap break-words">
+                              {translatedBody}
+                            </div>
+                          ) : selected.body_html && selected.body_html.trim().length > 20 ? (
                             <div
                               className="max-w-none text-foreground leading-[1.8] text-[15px] break-words overflow-x-auto
                                 [&_p]:my-3 [&_a]:text-primary [&_a]:underline [&_a]:break-all
