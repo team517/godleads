@@ -714,8 +714,19 @@ async function sendSmtpEmail(
         }
 
         await sendTls("DATA");
-        const dataResp = await writeRawTls(fullMessage);
-        const sent = dataResp.includes("250");
+        let dataResp: string;
+        try {
+          dataResp = await writeRawTls(fullMessage);
+        } catch (e: any) {
+          try { conn.close(); } catch {}
+          // The full message (incl. terminating "\r\n.\r\n") was already written; only
+          // the ACK read failed/timed out. The server may have queued it → treat as
+          // POSSIBLY SENT (at-most-once): advance the step, never retry, so the
+          // prospect is not emailed twice.
+          return { ok: false, error: `Send unconfirmed post-DATA: ${e?.message || e}`, errorClass: "sent_unconfirmed" };
+        }
+        const dLinesTls = dataResp.trim().split(/\r?\n/);
+        const sent = /^250[ -]/.test((dLinesTls[dLinesTls.length - 1] || "").trim());
         try { await sendTls("QUIT"); } catch {}
         try { conn.close(); } catch {}
         return sent
@@ -749,8 +760,17 @@ async function sendSmtpEmail(
     }
 
     await send("DATA");
-    const dataResp = await writeRaw(fullMessage);
-    const sent = dataResp.includes("250");
+    let dataResp: string;
+    try {
+      dataResp = await writeRaw(fullMessage);
+    } catch (e: any) {
+      try { conn.close(); } catch {}
+      // Body already fully written; ACK read failed/timed out → POSSIBLY SENT
+      // (at-most-once): advance the step, never retry (avoids a duplicate email).
+      return { ok: false, error: `Send unconfirmed post-DATA: ${e?.message || e}`, errorClass: "sent_unconfirmed" };
+    }
+    const dLines = dataResp.trim().split(/\r?\n/);
+    const sent = /^250[ -]/.test((dLines[dLines.length - 1] || "").trim());
     try { await send("QUIT"); } catch {}
     try { conn.close(); } catch {}
     return sent
@@ -776,17 +796,21 @@ serve(async (req) => {
     // ─── Global lock: only ONE queue run at a time ───
     // Stops overlapping cron ticks from double-sending follow-ups or overshooting
     // limits when a run takes longer than the cron interval (heavy multi-campaign load).
-    // Fail-open: if the lock RPC errors, we still run (never halt sending on infra hiccups).
+    // FAIL-CLOSED: never run without confirming we hold the lock. Two concurrent runs
+    // would double-send follow-ups (which have no per-lead claim, unlike step 0). If
+    // the lock RPC errors we skip this tick — the next cron tick (2 min) retries; a
+    // 2-minute delay is far cheaper than a duplicate email to a prospect.
     const LOCK_NAME = "process-campaign-queue";
     const { data: gotLock, error: lockErr } = await adminClient.rpc("acquire_job_lock", {
       p_name: LOCK_NAME,
       p_ttl_seconds: 600,
     });
-    if (!lockErr && gotLock === false) {
-      return new Response(JSON.stringify({ success: true, skipped: "already_running" }), {
+    if (lockErr || gotLock === false) {
+      return new Response(JSON.stringify({ success: true, skipped: lockErr ? "lock_error" : "already_running" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // We hold the lock (gotLock === true) — safe to release it at the end.
     const releaseLock = async () => {
       try { await adminClient.rpc("release_job_lock", { p_name: LOCK_NAME }); } catch (_) { /* TTL will free it */ }
     };
@@ -968,11 +992,30 @@ serve(async (req) => {
 
       if (!steps?.length) continue;
 
-      const { data: campaignLeads } = await adminClient
-        .from("campaign_leads")
-        .select("*, leads(*)")
-        .eq("campaign_id", campaign.id)
-        .in("status", ["pending", "in_progress"]);
+      // BOUNDED + DETERMINISTIC lead fetch. A single unbounded query hit PostgREST's
+      // implicit 1000-row cap in NON-deterministic heap order — campaigns with 7k–12k
+      // pending leads only ever saw an arbitrary ~10% slice, so follow-ups (and new
+      // leads) beyond the slice could be delayed for weeks. We now fetch two ordered,
+      // bounded windows: overdue FOLLOW-UPS first (oldest last_sent_at), then the
+      // OLDEST new leads. Deterministic order → coverage advances monotonically.
+      const LEAD_FETCH_CAP = 500; // comfortably above MAX_LEADS_SCANNED_PER_CAMPAIGN (300)
+      const [followupRes, newRes] = await Promise.all([
+        adminClient
+          .from("campaign_leads")
+          .select("*, leads(*)")
+          .eq("campaign_id", campaign.id)
+          .eq("status", "in_progress")
+          .order("last_sent_at", { ascending: true, nullsFirst: true })
+          .limit(LEAD_FETCH_CAP),
+        adminClient
+          .from("campaign_leads")
+          .select("*, leads(*)")
+          .eq("campaign_id", campaign.id)
+          .eq("status", "pending")
+          .order("id", { ascending: true })
+          .limit(LEAD_FETCH_CAP),
+      ]);
+      const campaignLeads = [...(followupRes.data || []), ...(newRes.data || [])];
 
       if (!campaignLeads?.length) continue;
 
@@ -1491,7 +1534,11 @@ serve(async (req) => {
 
         // Determine final status based on error class (Instantly-style smart handling)
         const errClass = (result as any).errorClass as string | undefined;
-        let finalStatus: string = result.ok ? "sent" : "failed";
+        // A post-DATA timeout ('sent_unconfirmed') is treated as SENT: the message
+        // was already handed to the server, so we advance the step and never retry
+        // (at-most-once) — a duplicate cold email is worse than a possibly-missed one.
+        const treatAsSent = result.ok || errClass === 'sent_unconfirmed';
+        let finalStatus: string = treatAsSent ? "sent" : "failed";
         if (!result.ok && (errClass === 'hard')) {
           finalStatus = 'bounced'; // permanent — don't retry
         }
@@ -1502,7 +1549,7 @@ serve(async (req) => {
           lead_id: lead.id, to_email: lead.email,
           subject: threadSubject, body: finalBody,
           status: finalStatus,
-          sent_at: result.ok ? now.toISOString() : null,
+          sent_at: treatAsSent ? now.toISOString() : null,
           bounced_at: finalStatus === 'bounced' ? now.toISOString() : null,
           error_message: result.error || null,
           variant_index: variantIndex,
@@ -1515,7 +1562,7 @@ serve(async (req) => {
           await adminClient.from("sent_emails").insert(fallbackPayload);
         }
 
-        if (result.ok) {
+        if (treatAsSent) {
           totalSent++;
           sentThisCampaign++;
           if (currentStepIndex === 0) { newSentTotal++; newLeadsSentThisRun++; }

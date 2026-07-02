@@ -235,13 +235,22 @@ function isForeignMessage(subject: string, body: string): boolean {
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50
 ): Promise<{ ok: boolean; messages: ImapMessage[]; error?: string }> {
+  // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
+  // block the whole rotating window forever. On timeout the socket is dropped
+  // and the account fails cleanly (recorded in errors[] + last_sync stays old).
+  const withTimeout = <T,>(p: Promise<T>, ms: number, what: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`IMAP timeout (${what})`)), ms)),
+    ]);
+
   try {
     let conn: Deno.Conn;
 
     if (port === 993) {
-      conn = await Deno.connectTls({ hostname: host, port });
+      conn = await withTimeout(Deno.connectTls({ hostname: host, port }), 12000, "connect");
     } else {
-      conn = await Deno.connect({ hostname: host, port });
+      conn = await withTimeout(Deno.connect({ hostname: host, port }), 12000, "connect");
     }
 
     // Read the IMAP socket as windows-1252 — preserves every byte 1:1 (no U+FFFD replacement).
@@ -252,7 +261,7 @@ async function fetchImapMessages(
 
     const read = async (): Promise<string> => {
       const buf = new Uint8Array(131072); // 128KB buffer
-      const n = await conn.read(buf);
+      const n = await withTimeout(conn.read(buf), 15000, "read");
       return decoder.decode(buf.subarray(0, n || 0));
     };
 
@@ -336,7 +345,15 @@ async function fetchImapMessages(
         if (fromLower && (fromLower === accountLower || fromLower === imapLower)) continue;
 
         const bodyParts = part.split(/\r?\n\r?\n/);
-        const rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n").replace(/\)[\s\S]*$/, "").trim() : "";
+        // Strip ONLY the trailing IMAP framing that follows the body — the tagged
+        // completion line ("A005 OK …") and the closing ")" on its own line.
+        // The old code `.replace(/\)[\s\S]*$/,"")` cut at the FIRST ")" anywhere,
+        // destroying every reply containing a paren ("(VG)", "recipient(s)", etc.).
+        let rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n") : "";
+        rawBody = rawBody
+          .replace(/(\r?\n)?[A-Za-z0-9]{1,8} (OK|NO|BAD)[^\n]*\s*$/, "")
+          .replace(/(\r?\n)?\)\s*$/, "")
+          .trim();
 
         if (fromEmail) {
           const decodedSubject = decodeMimeWords(subjectMatch ? subjectMatch[1].trim() : "");

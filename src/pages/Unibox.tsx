@@ -655,11 +655,18 @@ function looksLikeWarmupCode(t: string): boolean {
   return false;
 }
 
-/** True if the text (subject OR body) contains a warm-up code. URLs, emails and
- *  HTML tags are stripped first so link slugs / tracking params never trip it —
- *  that is what keeps real messages (which often carry links) from being hidden. */
-function textHasWarmupCode(text: string | null): boolean {
-  if (!text) return false;
+// Spanish/business identifiers that are letter+digit but 100% legitimate and must
+// NEVER be treated as a warm-up code: NIE (X1234567L), CIF (Q2826000H), old-format
+// car plates (B1234CS), DNI-with-letter. A lead writing "mi NIE es X1234567L" stays.
+const ID_WHITELIST_RE = /^(?:[XYZ]\d{7}[A-Z]|[A-HJ-NP-SUVW]\d{7}[0-9A-J]|\d{8}[A-Z]|[A-Z]{1,2}\d{4}[A-Z]{0,2})$/;
+
+/** True if the text (subject OR body) contains warm-up codes. URLs, emails and HTML
+ *  are stripped first so link slugs / tracking params never trip it. To avoid hiding
+ *  real replies, we require **≥2** code-like tokens — warm-up traffic reliably injects
+ *  several ("FJRI829FJSC CHBV6J7"), whereas a genuine message almost never contains
+ *  two random alphanumeric tokens (a lone order ref / NIE / CIF is kept). */
+function countWarmupCodes(text: string | null): number {
+  if (!text) return 0;
   const cleaned = String(text)
     .replace(/<[^>]+>/g, " ")                 // HTML tags
     .replace(/https?:\/\/\S+/gi, " ")         // URLs
@@ -667,10 +674,16 @@ function textHasWarmupCode(text: string | null): boolean {
     .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/gi, " ") // emails
     .slice(0, 4000);
   const tokens = cleaned.match(/[A-Za-z0-9]{6,20}/g) || [];
+  let n = 0;
+  const seen = new Set<string>();
   for (const t of tokens) {
-    if (looksLikeWarmupCode(t)) return true;
+    if (ID_WHITELIST_RE.test(t)) continue;
+    if (looksLikeWarmupCode(t) && !seen.has(t)) { seen.add(t); n++; }
   }
-  return false;
+  return n;
+}
+function textHasWarmupCode(text: string | null): boolean {
+  return countWarmupCodes(text) >= 2;
 }
 
 /** C) Bounce / delivery-failure / known system senders — always hidden. */
@@ -953,7 +966,10 @@ export default function Unibox() {
   // English gate: domains that belong to leads in the user's lists. English (or
   // other-foreign) messages from senders OUTSIDE these domains are hidden.
   const [leadDomains, setLeadDomains] = useState<Set<string>>(new Set());
-  const checkedDomainsRef = useRef<Set<string>>(new Set());
+  // Domains whose leads-table lookup COMPLETED (success). Until a domain is resolved
+  // its EN messages are shown (optimistic) — never hidden by a pending/failed query.
+  const [checkedDomains, setCheckedDomains] = useState<Set<string>>(new Set());
+  const inflightDomainsRef = useRef<Set<string>>(new Set());
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1396,32 +1412,42 @@ export default function Unibox() {
       const lang = messageLang(m);
       if (lang !== "en" && lang !== "other") continue;
       const dom = (m.from_email || "").split("@")[1]?.toLowerCase();
-      if (dom && !checkedDomainsRef.current.has(dom)) pending.add(dom);
+      // Query a domain only if not resolved AND not already in flight.
+      if (dom && !checkedDomains.has(dom) && !inflightDomainsRef.current.has(dom)) pending.add(dom);
     }
     if (pending.size === 0) return;
     const domains = [...pending];
-    domains.forEach((d) => checkedDomainsRef.current.add(d));
+    domains.forEach((d) => inflightDomainsRef.current.add(d));
     (async () => {
       const found = new Set<string>();
+      const resolved = new Set<string>();     // only domains whose query SUCCEEDED
       const CHUNK = 15;
       for (let i = 0; i < domains.length; i += CHUNK) {
         const chunk = domains.slice(i, i + CHUNK);
-        const { data } = await supabase
+        // Escape %,comma in a domain so the PostgREST .or() filter can't be broken.
+        const safe = (d: string) => d.replace(/[%,()]/g, "");
+        const { data, error } = await supabase
           .from("leads")
           .select("email")
           .eq("user_id", user.id)
-          .or(chunk.map((d) => `email.ilike.%@${d}`).join(","))
+          .or(chunk.map((d) => `email.ilike.%@${safe(d)}`).join(","))
           .limit(1000);
+        if (error) {
+          // Leave these domains UN-checked so they retry next cycle (their EN
+          // messages keep showing meanwhile — never hidden by a failed query).
+          chunk.forEach((d) => inflightDomainsRef.current.delete(d));
+          continue;
+        }
+        for (const d of chunk) { resolved.add(d); inflightDomainsRef.current.delete(d); }
         for (const l of data || []) {
           const dom = (l.email || "").split("@")[1]?.toLowerCase();
           if (dom) found.add(dom);
         }
       }
-      if (found.size > 0) {
-        setLeadDomains((prev) => new Set([...prev, ...found]));
-      }
+      if (resolved.size > 0) setCheckedDomains((prev) => new Set([...prev, ...resolved]));
+      if (found.size > 0) setLeadDomains((prev) => new Set([...prev, ...found]));
     })();
-  }, [messages, user, messageLang]);
+  }, [messages, user, messageLang, checkedDomains]);
 
   // Warm-up classification — revealed by "Mostrar warmup". Rules:
   //  1) Any message carrying a random letters+digits code (e.g. "FJRI829FJSC")
@@ -1431,20 +1457,23 @@ export default function Unibox() {
   //     matches a lead in the lists. Unknown English senders = warm-up network noise.
   //     ES/CA, FR, IT and ambiguous messages always show.
   const isWarmupHidden = useCallback((m: any): boolean => {
-    if (subjectHasWarmupCode(m.subject)) return true;          // code in subject
     let body = cleanBodyText(m.body_text || "");
     if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
       body = cleanBodyText(m.body_html);
     }
-    if (textHasWarmupCode(body)) return true;                  // code in body
+    // Warm-up code: require ≥2 random letter+digit tokens across subject+body, so a
+    // single order ref / NIE / CIF in a real reply never hides the whole message.
+    if (countWarmupCodes(`${decodeSubjectKeepCodes(m.subject)} ${body}`) >= 2) return true;
     const lang = messageLang(m);
     if (lang === "en" || lang === "other") {
       if (m.lead_id || m.campaign_id) return false;            // reply from a lead → show
       const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
-      if (!leadDomains.has(dom)) return true;                  // unknown EN sender → hide
+      // Optimistic: only hide once the domain is RESOLVED and it isn't a lead domain.
+      // While a domain is still being checked (or its query failed) the message shows.
+      if (checkedDomains.has(dom) && !leadDomains.has(dom)) return true;
     }
     return false;
-  }, [messageLang, leadDomains]);
+  }, [messageLang, leadDomains, checkedDomains]);
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
