@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; }
@@ -71,6 +71,12 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [emailAccounts, setEmailAccounts] = useState<any[]>([]);
   const [testAccountId, setTestAccountId] = useState<string>("");
   const [campaignLeadEmails, setCampaignLeadEmails] = useState<string[]>([]);
+  // Inbox-placement (spam) test state
+  const [placTestId, setPlacTestId] = useState<string | null>(null);
+  const [placRunning, setPlacRunning] = useState(false);
+  const [placChecking, setPlacChecking] = useState(false);
+  const [placResults, setPlacResults] = useState<any[] | null>(null);
+  const [placPct, setPlacPct] = useState<number | null>(null);
   // Templates state
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [showLoadTemplate, setShowLoadTemplate] = useState(false);
@@ -193,6 +199,28 @@ export default function CampaignSequences({ campaignId }: Props) {
     } finally {
       setTestSending(false);
     }
+  };
+
+  // ── Inbox-placement (spam) test: sends THIS step's real subject+body from the
+  // chosen account to the seed mailboxes, then checks by IMAP where each landed. ──
+  const runPlacement = async () => {
+    if (!testAccountId) { toast.error("Elige la cuenta de envío arriba"); return; }
+    setPlacRunning(true); setPlacResults(null); setPlacPct(null); setPlacTestId(null);
+    const { data, error } = await supabase.functions.invoke("placement-test", {
+      body: { action: "run", account_id: testAccountId, subject: getCurrentSubject(), html: getCurrentBody() },
+    });
+    setPlacRunning(false);
+    if (error || data?.error) { toast.error(data?.error || error?.message || "Error al enviar la prueba"); return; }
+    setPlacTestId(data.test_id);
+    toast.success(`Enviado a ${data.sent}/${data.seeds} buzones semilla. Espera 1-2 min y pulsa "Comprobar".`);
+  };
+  const checkPlacement = async () => {
+    if (!placTestId) return;
+    setPlacChecking(true);
+    const { data, error } = await supabase.functions.invoke("placement-test", { body: { action: "check", test_id: placTestId } });
+    setPlacChecking(false);
+    if (error || data?.error) { toast.error(data?.error || error?.message || "Error al comprobar"); return; }
+    setPlacResults(data.results); setPlacPct(data.inbox_pct);
   };
 
   const toggleBold = () => {
@@ -969,6 +997,52 @@ export default function CampaignSequences({ campaignId }: Props) {
             <p className="text-sm font-medium">{getCurrentSubject() || "<Sin asunto>"}</p>
             <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4">{getCurrentBody()}</p>
             <p className="text-[10px] text-muted-foreground mt-1">Las variables se reemplazarán con datos del primer lead</p>
+          </div>
+
+          {/* ── Inbox-placement (spam) test: does THIS email land in inbox or spam? ── */}
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Verificar entregabilidad (spam / bandeja)</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Manda ESTE correo a tus buzones semilla (Gmail, Outlook…) y mira dónde cae. Añade cuentas con el tag <code className="rounded bg-muted px-1">seed</code> en Cuentas Email si aún no tienes.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" className="h-7 gap-1.5 text-xs" onClick={runPlacement} disabled={placRunning || !testAccountId}>
+                {placRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {placRunning ? "Enviando…" : "Enviar a semillas"}
+              </Button>
+              {placTestId && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={checkPlacement} disabled={placChecking}>
+                  {placChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                  {placChecking ? "Comprobando…" : "Comprobar dónde cayó"}
+                </Button>
+              )}
+            </div>
+            {placTestId && !placResults && (
+              <p className="text-[11px] text-muted-foreground">Enviado. Espera 1-2 min (el correo tarda) y pulsa "Comprobar dónde cayó".</p>
+            )}
+            {placResults && (
+              <div className="space-y-1.5 pt-1">
+                <div className="text-center">
+                  <span className="text-2xl font-bold text-foreground">{placPct}%</span>
+                  <span className="text-xs text-muted-foreground"> en Bandeja</span>
+                </div>
+                {placResults.map((r: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <span className="truncate">{r.email} <span className="text-muted-foreground">({r.provider})</span></span>
+                    <span className={
+                      r.folder === "inbox" ? "text-emerald-600 font-medium"
+                      : r.folder === "spam" ? "text-red-600 font-medium"
+                      : "text-amber-600"
+                    }>
+                      {r.folder === "inbox" ? "📥 Bandeja" : r.folder === "spam" ? "🚫 Spam" : r.folder === "missing" ? "❓ No llegó" : "⚠ Error"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter>
