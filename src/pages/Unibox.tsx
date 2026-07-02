@@ -736,21 +736,24 @@ function detectLanguageBucket(text: string): "es" | "en" | "fr" | "it" | "other"
   const fr = (t.match(LANG_FR) || []).length;
   const it = (t.match(LANG_IT) || []).length;
   const other = (t.match(LANG_OTHER) || []).length;
-  // Spanish/Catalan-specific characters are a strong ES signal (English has none).
+  // Spanish/Catalan-specific characters are a signal (English has none).
   const esChars = /[ñ¿¡]|·l|ç/.test(t) ? 1 : 0;
   const esScore = es + esChars * 2;
 
-  // Spanish/Catalan wins as soon as there is real ES signal not beaten by another language.
-  if (esScore > 0 && esScore >= en && esScore >= fr && esScore >= it) return "es";
-  // French / Italian REAL replies (user's markets) — show them when they clearly dominate.
-  if (fr >= 2 && fr >= it && fr >= en) return "fr";
-  if (it >= 2 && it >= fr && it >= en) return "it";
-  // Only hide on a CLEAR foreign signal (≥2 markers and no ES signal), so a stray
-  // English word in a Spanish mail never hides it. Ambiguous → "unknown" (shown).
-  if (esScore === 0 && en >= 2) return "en";
-  if (esScore === 0 && other >= 2) return "other";
+  // Pick the language with the STRONGEST signal. English is classified whenever its
+  // word count wins — a stray accent (esChars) no longer rescues an English mail as
+  // "es" (that was the main leak: "Hola John, best regards" counted as Spanish).
+  if (en >= 2 && en >= esScore && en >= fr && en >= it) return "en";
+  if (esScore >= 2 && esScore >= en && esScore >= fr && esScore >= it) return "es";
+  if (fr >= 2 && fr >= en && fr >= esScore && fr >= it) return "fr";
+  if (it >= 2 && it >= en && it >= esScore && it >= fr) return "it";
+  if (other >= 2 && other >= en && other >= esScore) return "other";
+  // Weak signal: a single strong ES word/accent → es; a single English word → en.
   if (esScore > 0) return "es";
-  return "unknown"; // ambiguo / poco texto -> no ocultar
+  if (en > 0) return "en";
+  if (fr > 0) return "fr";
+  if (it > 0) return "it";
+  return "unknown"; // no hay señal — poco texto
 }
 
 type MessageCategory = "interested" | "not_interested" | "question" | "out_of_office" | "neutral";
@@ -1440,14 +1443,22 @@ export default function Unibox() {
     // Warm-up code: require ≥2 random letter+digit tokens across subject+body, so a
     // single order ref / NIE / CIF in a real reply never hides the whole message.
     if (countWarmupCodes(`${decodeSubjectKeepCodes(m.subject)} ${body}`) >= 2) return true;
+
+    // DOMAIN-CENTRIC gate. A real reply always comes from a lead: it's either linked
+    // (lead_id/campaign_id) or the sender's domain is one of the user's lead domains.
+    // Those are ALWAYS shown, in any language.
+    if (m.lead_id || m.campaign_id) return false;
+    const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
+    if (dom && leadDomains.has(dom)) return false;
+
+    // Unknown sender (NOT a lead, NOT a lead domain). Only clearly home-language
+    // inbound (ES/CA, FR, IT — the user's markets) is shown. ENGLISH — and anything
+    // ambiguous/other from a stranger — is warm-up/outreach noise → HIDDEN. This is
+    // exactly "English replies only if the domain is in a lead list", without being
+    // over-aggressive: real Spanish/French/Italian mail from anyone still shows.
     const lang = messageLang(m);
-    if (lang === "en" || lang === "other") {
-      if (m.lead_id || m.campaign_id) return false;            // reply linked to a lead → show
-      const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
-      if (dom && leadDomains.has(dom)) return false;           // sender domain is a lead → show
-      return true;                                              // STRICT: any other English → hide
-    }
-    return false;
+    if (lang === "es" || lang === "fr" || lang === "it") return false;
+    return true;
   }, [messageLang, leadDomains]);
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
