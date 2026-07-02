@@ -107,9 +107,11 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = (body as any).action;
 
-    // Seeds = the user's accounts tagged 'seed'
-    const { data: seeds } = await userClient.from("email_accounts").select("*").contains("tags", ["seed"]).eq("status", "connected");
-    if (!seeds || seeds.length === 0) return json({ error: "No hay buzones semilla. Añade cuentas (Gmail/Outlook/Zoho…) con el tag 'seed'." }, 400);
+    // Seeds live in a SEPARATE table (placement_seeds) with their OWN IMAP creds —
+    // NOT in email_accounts, so fetch-inbox never syncs them and they NEVER appear in
+    // the campaign Unibox. Fully parallel monitoring.
+    const { data: seeds } = await userClient.from("placement_seeds").select("*");
+    if (!seeds || seeds.length === 0) return json({ error: "No hay buzones semilla. Añádelos en Entregabilidad (Gmail/Outlook/Zoho… con su IMAP)." }, 400);
 
     if (action === "run") {
       const { account_id, subject, html } = body as any;
@@ -137,7 +139,7 @@ serve(async (req) => {
       let inbox = 0, spam = 0, missing = 0;
       const results: any[] = [];
       for (const s of seeds) {
-        const folder = await imapFindFolder(s.imap_host, s.imap_port || 993, s.imap_username, s.imap_password, test.token);
+        const folder = await imapFindFolder(s.imap_host, s.imap_port || 993, s.imap_user, s.imap_pass, test.token);
         if (folder === "inbox") inbox++; else if (folder === "spam") spam++; else missing++;
         results.push({ email: s.email, provider: providerOf(s.email), folder });
       }

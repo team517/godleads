@@ -1006,7 +1006,7 @@ export default function CampaignSequences({ campaignId }: Props) {
               <span className="text-sm font-medium">Verificar entregabilidad (spam / bandeja)</span>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Manda ESTE correo a tus buzones semilla (Gmail, Outlook…) y mira dónde cae. Añade cuentas con el tag <code className="rounded bg-muted px-1">seed</code> en Cuentas Email si aún no tienes.
+              Manda ESTE correo a tus buzones semilla (Gmail, Outlook…) y mira dónde cae. Los buzones semilla son un sistema aparte (no van al Unibox) — añádelos en <strong>Entregabilidad</strong> si aún no tienes.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="secondary" className="h-7 gap-1.5 text-xs" onClick={runPlacement} disabled={placRunning || !testAccountId}>
