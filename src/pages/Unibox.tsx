@@ -965,11 +965,11 @@ export default function Unibox() {
   const [messages, setMessages] = useState<any[]>([]);
   // English gate: domains that belong to leads in the user's lists. English (or
   // other-foreign) messages from senders OUTSIDE these domains are hidden.
+  // ALL lead domains for this user, loaded once via the get_lead_domains RPC.
+  // English/other-foreign messages are HIDDEN unless the sender is a known lead
+  // (lead_id/campaign_id) or its domain is in this set — strict, no leaks.
   const [leadDomains, setLeadDomains] = useState<Set<string>>(new Set());
-  // Domains whose leads-table lookup COMPLETED (success). Until a domain is resolved
-  // its EN messages are shown (optimistic) — never hidden by a pending/failed query.
-  const [checkedDomains, setCheckedDomains] = useState<Set<string>>(new Set());
-  const inflightDomainsRef = useRef<Set<string>>(new Set());
+  const [leadDomainsReady, setLeadDomainsReady] = useState(false);
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1401,60 +1401,36 @@ export default function Unibox() {
     return bucket;
   }, []);
 
-  // Resolve which sender domains belong to LEADS. Only queried for English/other
-  // foreign messages that aren't already linked to a lead/campaign; results (hits
-  // AND misses) are cached so each domain is checked against the DB exactly once.
+  // Load ALL of this user's lead domains ONCE (get_lead_domains RPC, auth.uid-scoped).
+  // Complete + deterministic → English is gated strictly with no per-message lazy
+  // lookups and no leaks. Retries a few times on failure.
   useEffect(() => {
-    if (!user || messages.length === 0) return;
-    const pending = new Set<string>();
-    for (const m of messages) {
-      if (m.lead_id || m.campaign_id) continue;
-      const lang = messageLang(m);
-      if (lang !== "en" && lang !== "other") continue;
-      const dom = (m.from_email || "").split("@")[1]?.toLowerCase();
-      // Query a domain only if not resolved AND not already in flight.
-      if (dom && !checkedDomains.has(dom) && !inflightDomainsRef.current.has(dom)) pending.add(dom);
-    }
-    if (pending.size === 0) return;
-    const domains = [...pending];
-    domains.forEach((d) => inflightDomainsRef.current.add(d));
+    if (!user) return;
+    let cancelled = false;
     (async () => {
-      const found = new Set<string>();
-      const resolved = new Set<string>();     // only domains whose query SUCCEEDED
-      const CHUNK = 15;
-      for (let i = 0; i < domains.length; i += CHUNK) {
-        const chunk = domains.slice(i, i + CHUNK);
-        // Escape %,comma in a domain so the PostgREST .or() filter can't be broken.
-        const safe = (d: string) => d.replace(/[%,()]/g, "");
-        const { data, error } = await supabase
-          .from("leads")
-          .select("email")
-          .eq("user_id", user.id)
-          .or(chunk.map((d) => `email.ilike.%@${safe(d)}`).join(","))
-          .limit(1000);
-        if (error) {
-          // Leave these domains UN-checked so they retry next cycle (their EN
-          // messages keep showing meanwhile — never hidden by a failed query).
-          chunk.forEach((d) => inflightDomainsRef.current.delete(d));
-          continue;
+      for (let attempt = 0; attempt < 4 && !cancelled; attempt++) {
+        const { data, error } = await (supabase as any).rpc("get_lead_domains");
+        if (!error && Array.isArray(data)) {
+          const set = new Set<string>();
+          for (const r of data) {
+            const d = (r?.domain || "").toLowerCase().trim();
+            if (d) set.add(d);
+          }
+          if (!cancelled) { setLeadDomains(set); setLeadDomainsReady(true); }
+          return;
         }
-        for (const d of chunk) { resolved.add(d); inflightDomainsRef.current.delete(d); }
-        for (const l of data || []) {
-          const dom = (l.email || "").split("@")[1]?.toLowerCase();
-          if (dom) found.add(dom);
-        }
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
       }
-      if (resolved.size > 0) setCheckedDomains((prev) => new Set([...prev, ...resolved]));
-      if (found.size > 0) setLeadDomains((prev) => new Set([...prev, ...found]));
     })();
-  }, [messages, user, messageLang, checkedDomains]);
+    return () => { cancelled = true; };
+  }, [user]);
 
   // Warm-up classification — revealed by "Mostrar warmup". Rules:
-  //  1) Any message carrying a random letters+digits code (e.g. "FJRI829FJSC")
-  //     in the subject OR body is hidden — intelligent detector, no false positives.
-  //  2) ENGLISH GATE: English (or other-foreign) messages only show when they come
-  //     from a KNOWN lead — linked lead_id/campaign_id, or a sender whose domain
-  //     matches a lead in the lists. Unknown English senders = warm-up network noise.
+  //  1) A message with ≥2 random letters+digits codes (e.g. "FJRI829FJSC CHBV6J7")
+  //     in subject+body is hidden — intelligent detector, no false positives.
+  //  2) ENGLISH GATE (strict): English/other-foreign messages are HIDDEN unless the
+  //     sender is a known lead — linked lead_id/campaign_id, OR its domain is in the
+  //     user's lead domains. Everything else English = warm-up/outreach noise → hidden.
   //     ES/CA, FR, IT and ambiguous messages always show.
   const isWarmupHidden = useCallback((m: any): boolean => {
     let body = cleanBodyText(m.body_text || "");
@@ -1466,14 +1442,13 @@ export default function Unibox() {
     if (countWarmupCodes(`${decodeSubjectKeepCodes(m.subject)} ${body}`) >= 2) return true;
     const lang = messageLang(m);
     if (lang === "en" || lang === "other") {
-      if (m.lead_id || m.campaign_id) return false;            // reply from a lead → show
+      if (m.lead_id || m.campaign_id) return false;            // reply linked to a lead → show
       const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
-      // Optimistic: only hide once the domain is RESOLVED and it isn't a lead domain.
-      // While a domain is still being checked (or its query failed) the message shows.
-      if (checkedDomains.has(dom) && !leadDomains.has(dom)) return true;
+      if (dom && leadDomains.has(dom)) return false;           // sender domain is a lead → show
+      return true;                                              // STRICT: any other English → hide
     }
     return false;
-  }, [messageLang, leadDomains, checkedDomains]);
+  }, [messageLang, leadDomains]);
 
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {

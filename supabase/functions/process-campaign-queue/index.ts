@@ -816,10 +816,17 @@ serve(async (req) => {
     };
 
     try {
+    // FAIRNESS: order active campaigns by least-recently-served first. Without an
+    // ORDER BY they came back in arbitrary heap order, so the same campaign(s)
+    // always went first and ate the whole per-run send budget — starving other
+    // users' campaigns ("una campaña de otro usuario tira más"). Serving the
+    // campaign with the oldest last_campaign_send_at first rotates fairly across
+    // every campaign and every user, tick after tick.
     const { data: campaigns, error: campError } = await adminClient
       .from("campaigns")
       .select("*")
-      .eq("status", "active");
+      .eq("status", "active")
+      .order("last_campaign_send_at", { ascending: true, nullsFirst: true });
 
     if (campError || !campaigns) {
       return new Response(JSON.stringify({ error: campError?.message || "No campaigns" }), {
@@ -843,7 +850,7 @@ serve(async (req) => {
     // expires. Capping keeps every run comfortably fast; the cron fires every 1-2
     // min, so throughput is unaffected — the same volume just spreads over more,
     // safer ticks instead of a single risky one.
-    const MAX_SENDS_PER_INVOCATION = 6;
+    const MAX_SENDS_PER_INVOCATION = 10;
     // Counts every real SMTP attempt (success AND failure/timeout). Capping on
     // this — not just successful sends — is what actually bounds worst-case
     // wall-clock: a string of failing/hung accounts would never trip a
