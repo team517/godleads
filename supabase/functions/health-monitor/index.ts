@@ -42,11 +42,18 @@ async function sendSmtpEmail(host: string, port: number, username: string, passw
 type Check = { key: string; failing: boolean; msg: string };
 
 function evaluate(m: any): Check[] {
-  const inWindow = m.hour_madrid >= 9 && m.hour_madrid < 18;
   const bouncePct = m.sent_2h >= 30 ? (m.bounced_2h / m.sent_2h) * 100 : 0;
+  // Core hours only, and only if the engine is TOTALLY dead (nothing sent in 2h).
+  // The per-account cadence is personalised (slow ramp + cooldowns), so normal gaps
+  // must NOT alert — this fires only when the whole engine is stuck, not per-account pacing.
+  const coreHours = m.hour_madrid >= 10 && m.hour_madrid < 17;
   return [
-    { key: "sends_stalled", failing: inWindow && m.active_campaigns > 0 && m.pending_leads > 0 && (m.last_send_min_ago == null || m.last_send_min_ago > 30),
-      msg: `⛔ Envíos PARADOS: ${m.last_send_min_ago ?? "∞"} min sin enviar, con ${m.pending_leads} leads pendientes y estando en ventana de envío.` },
+    { key: "over_sending", failing: m.accounts_over_cap > 0 || m.campaigns_over_limit > 0,
+      msg: `🚀 SE HA PASADO DE LO PROGRAMADO (riesgo de quemar dominios): ${
+        [m.accounts_over_cap > 0 ? `cuentas por encima del tope diario → ${m.over_cap_detail}` : "",
+         m.campaigns_over_limit > 0 ? `campañas por encima de su límite → ${m.over_limit_detail}` : ""].filter(Boolean).join(" · ")}` },
+    { key: "engine_dead", failing: coreHours && m.active_campaigns > 0 && m.pending_leads > 0 && (m.last_send_min_ago == null || m.last_send_min_ago > 120),
+      msg: `⛔ El motor de envío parece PARADO: ${m.last_send_min_ago ?? "∞"} min sin ningún envío (con ${m.pending_leads} leads pendientes en horario central).` },
     { key: "unibox_no_intake", failing: m.hour_madrid >= 9 && m.hour_madrid < 21 && m.inbox_last_hour === 0,
       msg: `📭 No ha entrado NINGÚN mensaje al Unibox en la última hora — la sincronización IMAP podría estar caída.` },
     { key: "accounts_out_of_sync", failing: m.accounts_stale_30m > 8,

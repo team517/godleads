@@ -21,6 +21,11 @@ RETURNS json LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS $fn$
     'accounts_connected',   (select count(*) from email_accounts where status='connected'),
     'accounts_stale_30m',   (select count(*) from email_accounts where status='connected' and (last_sync is null or last_sync < now()-interval '30 minutes')),
     'accounts_auth_failed', (select count(*) from email_accounts where status='auth_failed'),
+    -- OVER-SENDING (personalised cadence → never alert on gaps; alert if it EXCEEDS the plan).
+    'accounts_over_cap',    (select count(*) from email_accounts where status='connected' and sent_today > 30),
+    'over_cap_detail',      (select coalesce(string_agg(email||' ('||sent_today||')', ', '),'') from email_accounts where status='connected' and sent_today > 30),
+    'campaigns_over_limit', (select count(*) from campaigns c where c.status='active' and coalesce(c.daily_limit,0) > 0 and (select count(*) from sent_emails se where se.campaign_id=c.id and se.status in ('sent','bounced') and se.sent_at::date=(now() at time zone 'Europe/Madrid')::date) > (c.daily_limit*1.15+10)),
+    'over_limit_detail',    (select coalesce(string_agg(c.name||' ('||(select count(*) from sent_emails se where se.campaign_id=c.id and se.status in ('sent','bounced') and se.sent_at::date=(now() at time zone 'Europe/Madrid')::date)||'/'||c.daily_limit||')', ', '),'') from campaigns c where c.status='active' and coalesce(c.daily_limit,0)>0 and (select count(*) from sent_emails se where se.campaign_id=c.id and se.status in ('sent','bounced') and se.sent_at::date=(now() at time zone 'Europe/Madrid')::date) > (c.daily_limit*1.15+10)),
     'inbox_last_hour',      (select count(*) from inbox_messages where received_at > now()-interval '60 minutes'),
     'cron_failures_15m',    (select count(*) from cron.job_run_details where start_time > now()-interval '15 minutes' and status='failed'),
     'zombie_locks',         (select count(*) from processing_locks where locked_until < now()-interval '1 hour'),
