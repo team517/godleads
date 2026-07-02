@@ -153,10 +153,9 @@ export default function CampaignSequences({ campaignId }: Props) {
       .limit(25);
     const leads = (data || []).map((cl: any) => cl.leads).filter((l: any) => l?.email);
     setCampaignLeadEmails([...new Set(leads.map((l: any) => l.email))] as string[]);
-    // Keep the richest lead (most custom fields) around for the test-email preview.
-    const richest = [...leads].sort((a: any, b: any) =>
-      Object.keys(b?.custom_fields || {}).length - Object.keys(a?.custom_fields || {}).length
-    )[0];
+    // Keep the richest lead (most NON-EMPTY fields) for the test-email preview.
+    const filledCount = (cf: any) => Object.values(cf || {}).filter((v) => v != null && String(v).trim() !== "").length;
+    const richest = [...leads].sort((a: any, b: any) => filledCount(b?.custom_fields) - filledCount(a?.custom_fields))[0];
     if (richest) setTestLead({ email: richest.email, custom_fields: (richest.custom_fields || {}) as Record<string, string> });
   };
 
@@ -175,9 +174,8 @@ export default function CampaignSequences({ campaignId }: Props) {
       const candidates = (sampleLeads || [])
         .map((r: any) => r.leads)
         .filter((l: any) => l && l.email);
-      const richest = candidates.sort((a: any, b: any) =>
-        Object.keys(b?.custom_fields || {}).length - Object.keys(a?.custom_fields || {}).length
-      )[0];
+      const filledCount = (cf: any) => Object.values(cf || {}).filter((v) => v != null && String(v).trim() !== "").length;
+      const richest = candidates.sort((a: any, b: any) => filledCount(b?.custom_fields) - filledCount(a?.custom_fields))[0];
 
       // Sender fields come from the sending account (SenderFirstName, etc.).
       const { data: sendAcc } = await supabase
