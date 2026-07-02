@@ -27,7 +27,7 @@ export default function CampaignReportBar({ campaign }: Props) {
       setLoading(true);
       const [sentRes, stepsRes, posRes] = await Promise.all([
         supabase.from("sent_emails")
-          .select("status, sent_at, opened_at, replied_at, bounced_at")
+          .select("status, sent_at, opened_at, replied_at, bounced_at, to_email")
           .eq("campaign_id", campaign.id),
         supabase.from("campaign_steps")
           .select("id", { count: "exact", head: true })
@@ -40,12 +40,24 @@ export default function CampaignReportBar({ campaign }: Props) {
       if (!alive) return;
       const e = sentRes.data || [];
       const sent = e.filter((x: any) => x.status === "sent" || x.sent_at).length;
+      // Sender Bounced = recipients we could NOT deliver to. Count DISTINCT
+      // recipients (not raw attempt rows) and exclude any that later succeeded —
+      // otherwise one address retried N times inflates the % to nonsense.
+      const okEmails = new Set(
+        e.filter((x: any) => x.status === "sent" || x.sent_at || x.status === "bounced")
+         .map((x: any) => (x.to_email || "").toLowerCase())
+      );
+      const failedEmails = new Set(
+        e.filter((x: any) => x.status === "failed")
+         .map((x: any) => (x.to_email || "").toLowerCase())
+         .filter((em: string) => em && !okEmails.has(em))
+      );
       setM({
         sent,
         opened: e.filter((x: any) => x.opened_at).length,
         replied: e.filter((x: any) => x.replied_at).length,
         bounced: e.filter((x: any) => x.bounced_at).length,
-        senderBounced: e.filter((x: any) => x.status === "failed").length,
+        senderBounced: failedEmails.size,
         positive: posRes.count || 0,
         sequences: stepsRes.count || 0,
       });

@@ -17,14 +17,20 @@ export default function CampaignMetricsInline({ campaignId }: { campaignId: stri
     };
     (async () => {
       const sentBase = () => supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId);
-      const [sent, opened, replied, bounced, senderBounced, positive] = await Promise.all([
+      const [sent, opened, replied, bounced, positive, failRows] = await Promise.all([
         count(sentBase().not("sent_at", "is", null)),
         count(sentBase().not("opened_at", "is", null)),
         count(sentBase().not("replied_at", "is", null)),
         count(sentBase().not("bounced_at", "is", null)),
-        count(sentBase().eq("status", "failed")),
         count(supabase.from("inbox_messages").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).contains("labels", ["Interesado"])),
+        // Sender Bounced = DISTINCT recipients we couldn't deliver to, excluding any
+        // that later succeeded. Counting raw `failed` rows lets one address retried
+        // N times balloon the % (a single stuck lead once showed 63%).
+        supabase.from("sent_emails").select("to_email, status, sent_at").eq("campaign_id", campaignId).limit(5000),
       ]);
+      const rows: any[] = (failRows as any)?.data || [];
+      const okEmails = new Set(rows.filter((x) => x.sent_at || x.status === "sent" || x.status === "bounced").map((x) => (x.to_email || "").toLowerCase()));
+      const senderBounced = new Set(rows.filter((x) => x.status === "failed").map((x) => (x.to_email || "").toLowerCase()).filter((em) => em && !okEmails.has(em))).size;
       if (!alive) return;
       setM({ sent, opened, replied, bounced, senderBounced, positive });
     })();

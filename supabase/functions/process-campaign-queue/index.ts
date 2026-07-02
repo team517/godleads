@@ -855,6 +855,9 @@ serve(async (req) => {
     // min, so throughput is unaffected — the same volume just spreads over more,
     // safer ticks instead of a single risky one.
     const MAX_SENDS_PER_INVOCATION = 10;
+    // After this many TRANSIENT send failures to the SAME recipient on the SAME
+    // step, the lead is parked as undeliverable instead of retried forever.
+    const MAX_SEND_ATTEMPTS_PER_STEP = 5;
     // Counts every real SMTP attempt (success AND failure/timeout). Capping on
     // this — not just successful sends — is what actually bounds worst-case
     // wall-clock: a string of failing/hung accounts would never trip a
@@ -1516,15 +1519,15 @@ serve(async (req) => {
         // (it shadows the primary and completes silently). Runs only for leads that
         // already passed every gate and are about to send — a handful per tick.
         {
-          const { data: sibSent } = await adminClient
+          const { data: priorRows } = await adminClient
             .from("sent_emails")
-            .select("id")
+            .select("status")
             .eq("campaign_id", campaign.id)
             .eq("campaign_step_id", step.id)
             .ilike("to_email", leadEmail)
-            .in("status", ["sent", "bounced"])
-            .limit(1);
-          if (sibSent?.length) {
+            .limit(200);
+          const okAlready = (priorRows || []).some((r: any) => r.status === "sent" || r.status === "bounced");
+          if (okAlready) {
             const advStep = currentStepIndex + 1;
             await adminClient.from("campaign_leads").update({
               current_step: advStep,
@@ -1532,6 +1535,21 @@ serve(async (req) => {
               assigned_account_id: (cl as any).assigned_account_id || account.id,
               status: advStep >= steps.length ? "completed" : "in_progress",
             }).eq("id", cl.id);
+            totalSkipped++;
+            continue;
+          }
+          // RETRY CAP: a recipient that keeps returning a TRANSIENT error (e.g. IONOS
+          // "451 local error in processing", greylisting, an unreachable MX) would
+          // otherwise be retried every cron cycle forever — one poisoned lead once
+          // logged 101 `failed` rows in 5h, wrecking the campaign's Sender-Bounced %.
+          // After MAX_SEND_ATTEMPTS_PER_STEP transient failures we give up on this
+          // address for THIS step and park the lead as undeliverable (never re-queued).
+          const failedAttempts = (priorRows || []).filter((r: any) => r.status === "failed").length;
+          if (failedAttempts >= MAX_SEND_ATTEMPTS_PER_STEP) {
+            await adminClient.from("campaign_leads")
+              .update({ status: "failed", last_sent_at: now.toISOString() })
+              .eq("id", cl.id);
+            console.warn(`RETRY CAP hit: ${leadEmail} failed ${failedAttempts}× on step ${currentStepIndex} → parked as undeliverable`);
             totalSkipped++;
             continue;
           }
