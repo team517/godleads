@@ -140,6 +140,15 @@ async function sendWebPush(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Server-to-server only: require the service-role key. Was fully open (verify_jwt
+  // =false, no auth) so anyone with the public anon key could push spoofed
+  // notifications to any user_id's devices. Internal callers pass the service role.
+  {
+    const _svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!_svc || (req.headers.get("Authorization") || "") !== `Bearer ${_svc}`) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
 
   try {
     const { user_id, title, body: msgBody, url } = await req.json();

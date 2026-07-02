@@ -83,6 +83,15 @@ async function sendSmtpEmail(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Server-to-server only: require the service-role key. Was fully open (verify_jwt
+  // =false, no auth) so anyone could forge "interested lead" emails through any
+  // user's own SMTP account. Internal callers pass the service role.
+  {
+    const _svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!_svc || (req.headers.get("Authorization") || "") !== `Bearer ${_svc}`) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
 
   try {
     const { user_id, from_email, from_name, subject } = await req.json();

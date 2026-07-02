@@ -172,6 +172,15 @@ async function sendRawSmtp(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Debug/test function: require the service-role key. Was fully open (verify_jwt
+  // =false, no auth) and read any user's campaign steps + email account and sent
+  // through their SMTP credentials for caller-supplied IDs. Lock to internal use.
+  {
+    const _svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!_svc || (req.headers.get("Authorization") || "") !== `Bearer ${_svc}`) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json().catch(() => ({}));
