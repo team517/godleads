@@ -20,6 +20,7 @@ const Campaigns = lazy(() => import("./pages/Campaigns"));
 const Leads = lazy(() => import("./pages/Leads"));
 const Unibox = lazy(() => import("./pages/Unibox"));
 const Stats = lazy(() => import("./pages/Stats"));
+const DeliverabilityTest = lazy(() => import("./pages/DeliverabilityTest"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AIPrompts = lazy(() => import("./pages/AIPrompts"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
@@ -62,6 +63,7 @@ const App = () => (
                 <Route path="/leads" element={<Leads />} />
                 <Route path="/unibox" element={<Unibox />} />
                 <Route path="/stats" element={<Stats />} />
+                <Route path="/deliverability" element={<DeliverabilityTest />} />
                 <Route path="/ai-prompts" element={<AIPrompts />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/community" element={<Community />} />
