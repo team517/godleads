@@ -206,7 +206,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       if (steps.length && !abSelectedStep) setAbSelectedStep(steps[0].id);
       if (campRes.data) {
         const d = campRes.data as any;
-        setDailyLimit(d.daily_limit || 50);
+        setDailyLimit(d.daily_limit && d.daily_limit > 0 ? d.daily_limit : 0); // 0 = auto
         setStopOnReply(d.stop_on_reply ?? true);
         setIncludeUnsubscribe(d.include_unsubscribe ?? false);
         setUnsubAll(d.unsubscribe_all ?? true);
@@ -258,8 +258,8 @@ export default function CampaignOptions({ campaignId }: Props) {
 
   const save = async () => {
     await supabase.from("campaigns").update({
-      // Persist the user's ceiling as-is. If unset, default to today's capacity.
-      daily_limit: dailyLimit > 0 ? dailyLimit : (capacityToday || 0),
+      // Persist as-is: >0 = manual ceiling, 0 = AUTO (backend tracks account capacity).
+      daily_limit: dailyLimit > 0 ? dailyLimit : 0,
       stop_on_reply: stopOnReply,
       include_unsubscribe: includeUnsubscribe,
       unsubscribe_all: unsubAll,
@@ -387,18 +387,12 @@ export default function CampaignOptions({ campaignId }: Props) {
   const intervalPerAccountMin = quotaPerAccount > 0 ? Math.round(windowMinutes / quotaPerAccount) : 0;
   const fmtInterval = (m: number) => (m <= 0 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60 ? (m % 60) + "min" : ""}`.trim());
 
-  // The daily limit is a HARD CEILING the user sets — the backend never exceeds it
-  // (stops when reached). We do NOT auto-overwrite it (that used to clobber a manual
-  // lower limit, e.g. 50, back up to full capacity). If it's unset (0), default it to
-  // today's account capacity ONCE so a fresh campaign has a sensible ceiling.
-  const limitInitedRef = useRef(false);
-  useEffect(() => {
-    if (limitInitedRef.current) return;
-    if (usedAccounts.length && (!dailyLimit || dailyLimit <= 0) && capacityToday > 0) {
-      setDailyLimit(capacityToday);
-      limitInitedRef.current = true;
-    }
-  }, [capacityToday, usedAccounts.length, dailyLimit]);
+  // Daily limit modes:
+  //  • AUTO  (dailyLimit <= 0): the limit tracks the accounts' capacity and RISES on
+  //    its own each day as the warm-up ramps. Backend uses autoAccountCapTotal.
+  //  • MANUAL (dailyLimit > 0): a HARD ceiling you set. The campaign NEVER exceeds it
+  //    and STOPS when reached. Backend uses min(dailyLimit, capacity).
+  const autoLimit = !(dailyLimit > 0);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24">
@@ -406,9 +400,21 @@ export default function CampaignOptions({ campaignId }: Props) {
       {/* ── ENVÍO Y RITMO ── */}
       <Section label="Envío y ritmo">
         <Row icon={<Gauge className="h-4 w-4" />} tint="primary"
-          title="Límite diario de envíos (tope)"
-          desc={`Tope de correos/día de la campaña. NUNCA lo sobrepasa: al llegar, para. Capacidad de tus cuentas hoy: ${capacityToday}${dailyLimit > capacityToday ? " (tu tope es mayor; manda la capacidad)" : ""}.`}
-          control={<Stepper value={dailyLimit} min={0} step={10} onChange={(v) => { setDailyLimit(v); markDirty(); }} />}
+          title="Límite diario de envíos"
+          desc={autoLimit
+            ? `Automático: sube solo cada día con el warm-up. Hoy la capacidad de tus cuentas es ${capacityToday} correos/día.`
+            : `Tope fijo: la campaña NUNCA lo sobrepasa — al llegar, para. Capacidad de tus cuentas hoy: ${capacityToday}${dailyLimit > capacityToday ? " (tu tope es mayor; manda la capacidad)" : ""}.`}
+          control={
+            <div className="flex items-center gap-3">
+              {autoLimit
+                ? <span className="text-base font-bold tabular-nums text-foreground">{capacityToday}</span>
+                : <Stepper value={dailyLimit} min={10} step={10} onChange={(v) => { setDailyLimit(v); markDirty(); }} />}
+              <label className="flex items-center gap-1.5">
+                <Switch checked={autoLimit} onCheckedChange={(v) => { setDailyLimit(v ? 0 : (capacityToday || 30)); markDirty(); }} />
+                <span className="text-[11px] text-muted-foreground">Auto</span>
+              </label>
+            </div>
+          }
         />
         <Row icon={<Mail className="h-4 w-4" />} tint="emerald"
           title="Parar al recibir respuesta"
