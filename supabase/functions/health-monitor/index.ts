@@ -11,7 +11,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, apikey" };
-const RE_ALERT_MS = 60 * 60 * 1000; // remind at most once per hour while still failing
+// A problem alerts ONCE, when confirmed (failing on two consecutive runs), then
+// stays quiet. A single gentle reminder is allowed only if it is STILL failing a
+// full day later, so a genuinely stuck issue isn't forgotten — but never the old
+// once-an-hour nagging of the same ongoing error.
+const SAFETY_REMINDER_MS = 24 * 60 * 60 * 1000;
 
 // Minimal SMTP sender (implicit TLS 465 or STARTTLS 587) — same scheme as notify-interested.
 async function sendSmtpEmail(host: string, port: number, username: string, password: string, from: string, to: string, subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
@@ -80,27 +84,48 @@ serve(async (req) => {
     const failing = checks.filter((c) => c.failing);
     const failingKeys = new Set(failing.map((c) => c.key));
 
-    // Debounce state
+    // ── Debounce state (edge-triggered: alert once, no hourly repeats) ──
     const { data: stateRows } = await admin.from("health_monitor_state").select("*");
     const state = new Map<string, any>((stateRows || []).map((r: any) => [r.check_key, r]));
     const nowIso = new Date().toISOString();
     const nowMs = Date.now();
 
-    let shouldNotify = false;
+    // Which failing checks do we actually email about this run?
+    //   • CONFIRM: a check must be failing on TWO consecutive runs before it can
+    //     alert — kills transient 5-min blips and flapping (no alert/recovery spam).
+    //   • ONCE per episode; then silent until it recovers.
+    //   • One gentle reminder only if STILL failing a full day later.
+    const toNotify: Check[] = [];
     for (const c of failing) {
       const prev = state.get(c.key);
-      const lastMs = prev?.last_notified ? new Date(prev.last_notified).getTime() : 0;
-      if (!prev || !prev.last_notified || nowMs - lastMs > RE_ALERT_MS) shouldNotify = true;
+      if (!prev) {
+        // First sighting — open the episode, do NOT alert yet (confirm next run).
+        await admin.from("health_monitor_state").upsert(
+          { check_key: c.key, failing: true, since: nowIso, last_notified: null },
+          { onConflict: "check_key" },
+        );
+        continue;
+      }
+      const lastMs = prev.last_notified ? new Date(prev.last_notified).getTime() : 0;
+      const notYetAlerted = !prev.last_notified;                            // confirmed but never delivered
+      const dueReminder = !!prev.last_notified && nowMs - lastMs > SAFETY_REMINDER_MS;
+      if (notYetAlerted || dueReminder) toNotify.push(c);
       await admin.from("health_monitor_state").upsert(
-        { check_key: c.key, failing: true, since: prev?.since || nowIso, last_notified: prev?.last_notified || null },
+        { check_key: c.key, failing: true, since: prev.since || nowIso, last_notified: prev.last_notified || null },
         { onConflict: "check_key" },
       );
     }
-    // Recovered checks (had a row, no longer failing)
-    const recovered = (stateRows || []).filter((r: any) => !failingKeys.has(r.check_key));
-    if (recovered.length) await admin.from("health_monitor_state").delete().in("check_key", recovered.map((r: any) => r.check_key));
 
-    const wantEmail = shouldNotify || (recovered.length > 0 && failing.length === 0);
+    // Recovered = had a row, no longer failing. Announce ONLY the ones the user was
+    // actually alerted about (last_notified set); silently drop blips that never
+    // got past the confirm step.
+    const recoveredRows = (stateRows || []).filter((r: any) => !failingKeys.has(r.check_key));
+    const recoveredAnnounce = recoveredRows.filter((r: any) => r.last_notified);
+    if (recoveredRows.length) {
+      await admin.from("health_monitor_state").delete().in("check_key", recoveredRows.map((r: any) => r.check_key));
+    }
+
+    const wantEmail = toNotify.length > 0 || recoveredAnnounce.length > 0;
     let emailed = false;
     if (wantEmail) {
       // Pick any healthy connected account to send FROM.
@@ -109,26 +134,28 @@ serve(async (req) => {
         .eq("status", "connected").not("smtp_host", "is", null).limit(1).maybeSingle();
       const to = Deno.env.get("ALERT_EMAIL") || "team@onepulso.online";
       if (acc?.smtp_host) {
-        const subject = failing.length
-          ? `🚨 OnePulso: ${failing.length} problema(s) detectado(s)`
-          : `✅ OnePulso: todo recuperado`;
-        const rows = (failing.length ? failing.map((c) => `<li style="margin:6px 0">${c.msg}</li>`).join("")
-          : `<li style="margin:6px 0">Todos los sistemas vuelven a estar OK.</li>`);
+        const problemRows = toNotify.map((c) => `<li style="margin:6px 0">${c.msg}</li>`).join("");
+        const recoveredList = recoveredAnnounce.map((r: any) => `<li style="margin:6px 0">✅ Resuelto: <code>${r.check_key}</code></li>`).join("");
+        const subject = toNotify.length
+          ? `🚨 OnePulso: ${toNotify.length} problema(s) detectado(s)`
+          : `✅ OnePulso: incidencia(s) resuelta(s)`;
+        const sections =
+          (toNotify.length ? `<h2 style="margin:0 0 10px">Problemas detectados</h2><ul style="padding-left:18px;margin:0 0 14px">${problemRows}</ul>` : "")
+          + (recoveredAnnounce.length ? `<h2 style="margin:0 0 10px;font-size:15px">Recuperado</h2><ul style="padding-left:18px;margin:0 0 14px">${recoveredList}</ul>` : "");
         const html = `<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#0a0d14">`
-          + `<h2 style="margin:0 0 10px">${failing.length ? "Problemas detectados en la plataforma" : "Todo recuperado ✅"}</h2>`
-          + `<ul style="padding-left:18px;margin:0 0 14px">${rows}</ul>`
+          + sections
           + `<p style="color:#667085;font-size:12px">Snapshot: ${metrics.active_campaigns} campañas activas · ${metrics.accounts_connected} cuentas · ${metrics.inbox_last_hour} msgs/última hora · ${metrics.sent_2h} enviados/2h.</p>`
-          + `<p style="color:#98a2b3;font-size:11px">Monitor automático · comprueba cada 5 min · re-avisa como máx. 1×/hora.</p></div>`;
+          + `<p style="color:#98a2b3;font-size:11px">Monitor automático · comprueba cada 5 min · te aviso UNA vez por incidencia y otra cuando se resuelve.</p></div>`;
         const r = await sendSmtpEmail(acc.smtp_host, acc.smtp_port || 465, acc.smtp_username, acc.smtp_password, acc.email, to, subject, html);
         emailed = r.ok;
-        if (r.ok && failing.length) {
-          // Reset the 1h timer for all currently-failing checks.
-          for (const c of failing) await admin.from("health_monitor_state").update({ last_notified: nowIso }).eq("check_key", c.key);
+        if (r.ok && toNotify.length) {
+          // Mark these as alerted so they stay quiet until recovery / the daily reminder.
+          for (const c of toNotify) await admin.from("health_monitor_state").update({ last_notified: nowIso }).eq("check_key", c.key);
         }
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, failing: failing.map((c) => c.key), recovered: recovered.map((r: any) => r.check_key), emailed }), {
+    return new Response(JSON.stringify({ ok: true, failing: failing.map((c) => c.key), notified: toNotify.map((c) => c.key), recovered: recoveredAnnounce.map((r: any) => r.check_key), emailed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
