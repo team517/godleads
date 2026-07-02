@@ -328,10 +328,14 @@ function formatMailbox(name: string | undefined, email: string): string {
 //          'rate' = rate-limited (backoff this account)
 function classifySmtpError(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unknown' {
   const e = (err || '').toLowerCase();
-  // Auth/credential failures
-  if (/535|534|530|auth|password|credential|invalid login/i.test(e)) return 'auth';
-  // Rate limits / throttling
-  if (/421|450|451|452|throttle|rate|too many|temporarily|try again|exceeded/i.test(e)) return 'rate';
+  // TRANSIENT first — many of these mention "auth" but are NOT credential failures
+  // and must NOT disconnect the account (that froze all its leads forever). E.g.
+  // "Authentication temporarily unavailable", "too many auth attempts", greylisting.
+  if (/421|450|451|452|throttle|rate limit|too many|temporar|try again|greylist|exceeded|4\.7\./i.test(e)) return 'rate';
+  // "530 must issue STARTTLS" is a config/handshake issue, not bad credentials.
+  if (/must issue a? ?starttls|starttls (command )?first|530 5\.7\.0/i.test(e)) return 'soft';
+  // PERMANENT credential failures ONLY → disconnect the account.
+  if (/535|534|authentication failed|invalid login|bad credentials|invalid credentials|password (in)?correct|auth\w* (failed|invalid|denied|rejected)/i.test(e)) return 'auth';
   // Hard bounces — recipient permanently invalid
   if (/550|551|553|554|5\.1\.[0-9]|5\.7\.1|mailbox unavailable|user unknown|does not exist|no such user|invalid recipient|address rejected|recipient rejected/i.test(e)) return 'hard';
   // Connection / TLS / DNS — soft errors
@@ -890,8 +894,15 @@ serve(async (req) => {
         currentMinute = now.getUTCMinutes();
       }
 
-      const startHour = campaign.send_start_hour ?? 9;
-      const endHour = campaign.send_end_hour ?? 18;
+      let startHour = campaign.send_start_hour ?? 9;
+      let endHour = campaign.send_end_hour ?? 18;
+      // Defense against an invalid window (start>=end). The gate below would ALWAYS
+      // be true → the campaign stays "active" but silently never sends, and the owner
+      // (who "no revisa nada") never sees it. Fall back to the default 9–18 window.
+      if (!(startHour < endHour)) {
+        console.warn(`Campaign "${campaign.name}" has invalid window ${startHour}-${endHour}; using default 9-18`);
+        startHour = 9; endHour = 18;
+      }
       if (currentHour < startHour || currentHour >= endHour) continue;
 
       // Minutes left until the window closes today — used to pace sends evenly
@@ -1604,12 +1615,11 @@ serve(async (req) => {
           if (currentStepIndex === 0) { newSentTotal++; newLeadsSentThisRun++; }
           else { followupsSentTotal++; }
 
-          // Update LIVE counter on the account row so EmailAccounts UI shows
-          // sent_today/30 in real time.
-          await adminClient.from("email_accounts").update({
-            sent_today: account.sent_today + 1,
-            last_send_at: now.toISOString(),
-          }).eq("id", account.id);
+          // ATOMIC increment (sent_today = sent_today + 1 in the DB). The old
+          // read-modify-write wrote the in-memory value read minutes earlier, so if
+          // the daily reset ran in between it could resurrect a stale count (account
+          // "wakes up" at ~30 and sends nothing all day) or lose a concurrent bump.
+          await adminClient.rpc("increment_account_sent", { p_account_id: account.id });
           account.sent_today++;
           account.last_send_at = now.toISOString();
           accountSendsThisTick[account.id] = (accountSendsThisTick[account.id] || 0) + 1;

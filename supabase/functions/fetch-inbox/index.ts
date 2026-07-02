@@ -430,7 +430,10 @@ serve(async (req) => {
     // Cron (anon, no user) self-chains through all accounts in small windows (each
     // window stays under the edge worker's CPU/memory budget). Keep the default small.
     const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 10);
-    const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(50, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 50);
+    // Cron default raised 50→120: if a mailbox was disconnected for a while and
+    // reconnects with a backlog, a bigger window drains more of it per pass so real
+    // replies below the old cutoff aren't stranded forever.
+    const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(50, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 120);
 
     let accounts: any[] = [];
     let totalAccounts = 0;

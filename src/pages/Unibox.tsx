@@ -1525,8 +1525,12 @@ export default function Unibox() {
   // only real replies). English/other languages never appear anywhere.
   const filtered = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
+    // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
+    // English/warmup filter hides is ever unrecoverable from the UI.
+    const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
     const list = messages
-      .filter(m => !hiddenFromClean(m))
+      .filter(m => bypassFilters || !hiddenFromClean(m))
       .filter(m => {
         if (viewTab === "reminders") return !!reminders[m.id];
         if (viewTab === "campaigns") {
@@ -1552,7 +1556,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce]);
+  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -1902,6 +1906,16 @@ export default function Unibox() {
               title="Reconecta todas las cuentas IMAP y trae los mensajes nuevos">
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
               {syncing ? "Actualizando…" : "Actualizar"}
+            </Button>
+            <Button
+              variant={showWarmup ? "default" : "outline"}
+              size="sm"
+              className="h-8 gap-1.5 px-3 text-xs md:text-sm"
+              onClick={() => setShowWarmup(v => !v)}
+              title="Muestra también los correos que el filtro oculta (inglés de desconocidos, warmup). Úsalo para recuperar algo si se ocultó por error."
+            >
+              <Megaphone className="h-3.5 w-3.5" />
+              {showWarmup ? "Ocultar warmup" : "Mostrar warmup"}
             </Button>
             {!isMobile && (
               <Button

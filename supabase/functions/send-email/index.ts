@@ -558,9 +558,8 @@ serve(async (req) => {
       });
 
       if (result.ok) {
-        await adminClient.from("email_accounts").update({
-          sent_today: account.sent_today + 1,
-        }).eq("id", resolvedAccountId);
+        // Atomic increment (avoids stale read-modify-write across the daily reset).
+        await adminClient.rpc("increment_account_sent", { p_account_id: resolvedAccountId });
       }
     }
 

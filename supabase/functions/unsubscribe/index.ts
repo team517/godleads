@@ -34,6 +34,33 @@ function decodeToken(token: string): { userId: string; email: string } | null {
   return { userId, email };
 }
 
+// HMAC-SHA256 (hex) — same scheme the sender uses to sign `${payload}`.
+async function hmacHex(message: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function timingSafeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+// Verify the token signature against the current secret(s). Accepts either UNSUB_SECRET
+// or the service-role key (the sender falls back to it). Used to gate `resubscribe`.
+async function verifyTokenSig(token: string): Promise<boolean> {
+  const parts = (token || "").split(".");
+  if (parts.length < 2 || !parts[0] || !parts[1]) return false;
+  const [payload, sig] = parts;
+  const secrets = [Deno.env.get("UNSUB_SECRET"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")].filter(Boolean) as string[];
+  for (const secret of secrets) {
+    if (timingSafeEq(await hmacHex(payload, secret), sig)) return true;
+  }
+  return false;
+}
+
 function json(b: unknown, status = 200) {
   return new Response(JSON.stringify(b), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
@@ -61,8 +88,12 @@ Deno.serve(async (req) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { userId, email } = parsed;
 
-    // ── UNDO: re-subscribe. Removes the suppression and restores the leads. Nothing was deleted. ──
+    // ── UNDO: re-subscribe. COMPLIANCE-CRITICAL: re-activating an opted-out address
+    // must be authenticated, so require a valid HMAC signature (a forged token can no
+    // longer resubscribe people who legitimately unsubscribed). The legit "undo" button
+    // always carries a freshly-signed token, so this never blocks a real user. ──
     if (action === "resubscribe") {
+      if (!(await verifyTokenSig(token))) return json({ ok: false, error: "invalid_signature" }, 403);
       await admin.from("blocklist")
         .delete().eq("user_id", userId).eq("entry_type", "email").eq("value", email);
       const { data: leadRows } = await admin
