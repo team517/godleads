@@ -1487,6 +1487,35 @@ serve(async (req) => {
         // this follow-up and the next ones are sent as fresh new messages
 
         // Instantly API v2 does NOT support outbound transactional sending — only
+        // EMAIL-LEVEL DE-DUP. The same person can exist as several lead rows in one
+        // campaign (imported twice) — leads has no unique (user_id, email). Without
+        // this, each duplicate row gets the full sequence, so a prospect receives the
+        // same cold email 2-3× (spam complaints, domain burn). If a sibling row for
+        // the SAME email already received THIS step, advance this lead WITHOUT sending
+        // (it shadows the primary and completes silently). Runs only for leads that
+        // already passed every gate and are about to send — a handful per tick.
+        {
+          const { data: sibSent } = await adminClient
+            .from("sent_emails")
+            .select("id")
+            .eq("campaign_id", campaign.id)
+            .eq("campaign_step_id", step.id)
+            .ilike("to_email", leadEmail)
+            .in("status", ["sent", "bounced"])
+            .limit(1);
+          if (sibSent?.length) {
+            const advStep = currentStepIndex + 1;
+            await adminClient.from("campaign_leads").update({
+              current_step: advStep,
+              last_sent_at: now.toISOString(),
+              assigned_account_id: (cl as any).assigned_account_id || account.id,
+              status: advStep >= steps.length ? "completed" : "in_progress",
+            }).eq("id", cl.id);
+            totalSkipped++;
+            continue;
+          }
+        }
+
         // inbox/reply ops on existing campaigns. We always send via local SMTP
         // (with full deliverability headers: List-Unsubscribe, Reply-To, QP, Feedback-ID).
         let result: { ok: boolean; error?: string; messageId?: string; errorClass?: string };
