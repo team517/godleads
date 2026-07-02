@@ -56,6 +56,20 @@ function correctVarsInText(text: string, valid: ValidVar[]): { text: string; cha
   return { text: out, changes };
 }
 
+// Variable replacement — MUST match process-campaign-queue's replaceVariables
+// exactly so a test email renders identically to what a lead really receives:
+// tolerates spaces ({{ first_name }}) and is case/underscore-insensitive
+// (first_name == firstName == FirstName). Unknown variables are left literal,
+// same as production (so an empty field is visible, not silently blanked).
+function renderVariables(text: string, fields: Record<string, string>): string {
+  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
+  const normalized: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) normalized[norm(k)] = v;
+  return (text || "").replace(/\{\{\s*([\w\-\s]+?)\s*\}\}/g, (match, key) =>
+    fields[key] ?? normalized[norm(key)] ?? match
+  );
+}
+
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
   const [steps, setSteps] = useState<any[]>([]);
@@ -71,6 +85,7 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [emailAccounts, setEmailAccounts] = useState<any[]>([]);
   const [testAccountId, setTestAccountId] = useState<string>("");
   const [campaignLeadEmails, setCampaignLeadEmails] = useState<string[]>([]);
+  const [testLead, setTestLead] = useState<{ email: string; custom_fields: Record<string, string> } | null>(null);
   // Inbox-placement (spam) test state
   const [placTestId, setPlacTestId] = useState<string | null>(null);
   const [placRunning, setPlacRunning] = useState(false);
@@ -133,31 +148,60 @@ export default function CampaignSequences({ campaignId }: Props) {
   const loadLeadEmails = async () => {
     const { data } = await supabase
       .from("campaign_leads")
-      .select("leads(email)")
+      .select("leads(email, custom_fields)")
       .eq("campaign_id", campaignId)
-      .limit(20);
-    const emails = (data || []).map((cl: any) => cl.leads?.email).filter(Boolean);
-    setCampaignLeadEmails([...new Set(emails)] as string[]);
+      .limit(25);
+    const leads = (data || []).map((cl: any) => cl.leads).filter((l: any) => l?.email);
+    setCampaignLeadEmails([...new Set(leads.map((l: any) => l.email))] as string[]);
+    // Keep the richest lead (most custom fields) around for the test-email preview.
+    const richest = [...leads].sort((a: any, b: any) =>
+      Object.keys(b?.custom_fields || {}).length - Object.keys(a?.custom_fields || {}).length
+    )[0];
+    if (richest) setTestLead({ email: richest.email, custom_fields: (richest.custom_fields || {}) as Record<string, string> });
   };
 
   const sendTestEmail = async () => {
     if (!testTo || !testAccountId || !selectedStep) return;
     setTestSending(true);
     try {
-      // Build sample fields from first lead
-      const { data: sampleLead } = await supabase
+      // Pull a handful of REAL leads and pick the richest one (most custom fields)
+      // so the variables actually resolve to real data — a test with an empty lead
+      // would just show {{variables}}, which is exactly what we're fixing.
+      const { data: sampleLeads } = await supabase
         .from("campaign_leads")
         .select("leads(email, custom_fields)")
         .eq("campaign_id", campaignId)
-        .limit(1)
-        .single();
+        .limit(25);
+      const candidates = (sampleLeads || [])
+        .map((r: any) => r.leads)
+        .filter((l: any) => l && l.email);
+      const richest = candidates.sort((a: any, b: any) =>
+        Object.keys(b?.custom_fields || {}).length - Object.keys(a?.custom_fields || {}).length
+      )[0];
 
-      const sampleFields: Record<string, string> = { email: testTo };
-      if (sampleLead?.leads?.custom_fields && typeof sampleLead.leads.custom_fields === "object") {
-        Object.entries(sampleLead.leads.custom_fields as Record<string, string>).forEach(([k, v]) => {
-          sampleFields[k] = v;
-        });
-      }
+      // Sender fields come from the sending account (SenderFirstName, etc.).
+      const { data: sendAcc } = await supabase
+        .from("email_accounts")
+        .select("email, first_name, last_name")
+        .eq("id", testAccountId)
+        .maybeSingle();
+
+      // Build the field set EXACTLY like process-campaign-queue does.
+      const customFields = (richest?.custom_fields && typeof richest.custom_fields === "object"
+        ? richest.custom_fields : {}) as Record<string, string>;
+      const sampleFields: Record<string, string> = {
+        ...customFields,
+        Email: richest?.email || testTo,
+        email: richest?.email || testTo,
+      };
+      if (sendAcc?.first_name) sampleFields["SenderFirstName"] = sendAcc.first_name;
+      if (sendAcc?.last_name) sampleFields["SenderLastName"] = sendAcc.last_name;
+      if (sendAcc?.email) sampleFields["SenderEmail"] = sendAcc.email;
+
+      // Render on the client with the SAME logic as production, so the test is a
+      // faithful copy of the real email (no reliance on any weaker replacer).
+      const renderedSubject = renderVariables(getCurrentSubject(), sampleFields);
+      const renderedBody = renderVariables(getCurrentBody(), sampleFields);
 
       // Mirror the campaign's unsubscribe setting so the test shows the baja link too.
       let includeUnsub = false;
@@ -181,8 +225,9 @@ export default function CampaignSequences({ campaignId }: Props) {
         body: {
           account_id: testAccountId,
           to_email: testTo,
-          subject: getCurrentSubject(),
-          body: getCurrentBody(),
+          subject: renderedSubject,
+          body: renderedBody,
+          // Already rendered above; pass fields too as a harmless safety net.
           custom_fields: sampleFields,
           is_test: true,
           include_unsubscribe: includeUnsub,
@@ -461,6 +506,21 @@ export default function CampaignSequences({ campaignId }: Props) {
       }
       setTimeout(() => { el.focus(); el.setSelectionRange(start + tag.length, start + tag.length); }, 0);
     }
+  };
+
+  // Fields used for the test-email PREVIEW — same shape as the real send, built
+  // from the richest real lead + the selected sending account.
+  const getTestFields = (): Record<string, string> => {
+    const acc = emailAccounts.find((a) => a.id === testAccountId);
+    const fallback = testLead?.email || testTo || "ejemplo@empresa.com";
+    return {
+      ...((testLead?.custom_fields || {}) as Record<string, string>),
+      Email: testLead?.email || fallback,
+      email: testLead?.email || fallback,
+      ...(acc?.first_name ? { SenderFirstName: acc.first_name } : {}),
+      ...(acc?.last_name ? { SenderLastName: acc.last_name } : {}),
+      ...(acc?.email ? { SenderEmail: acc.email } : {}),
+    };
   };
 
   const previewText = (text: string) => {
@@ -994,9 +1054,13 @@ export default function CampaignSequences({ campaignId }: Props) {
           </div>
           <div className="rounded-md bg-muted/50 p-3 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">Vista previa</p>
-            <p className="text-sm font-medium">{getCurrentSubject() || "<Sin asunto>"}</p>
-            <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4">{getCurrentBody()}</p>
-            <p className="text-[10px] text-muted-foreground mt-1">Las variables se reemplazarán con datos del primer lead</p>
+            <p className="text-sm font-medium">{renderVariables(getCurrentSubject(), getTestFields()) || "<Sin asunto>"}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4">{renderVariables(getCurrentBody(), getTestFields())}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {testLead
+                ? "Variables reemplazadas con datos de un lead real de esta campaña."
+                : "Aún sin leads con datos en esta campaña — las variables sin datos se mostrarán tal cual."}
+            </p>
           </div>
 
           {/* ── Inbox-placement (spam) test: does THIS email land in inbox or spam? ── */}

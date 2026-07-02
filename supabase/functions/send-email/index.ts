@@ -7,7 +7,16 @@ const corsHeaders = {
 };
 
 function replaceVariables(text: string, fields: Record<string, string>): string {
-  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => fields[key] || `{{${key}}}`);
+  // Matches process-campaign-queue: tolerate spaces ({{ first_name }}) and be
+  // case/underscore-insensitive (first_name == firstName == FirstName). The old
+  // /\{\{(\w+)\}\}/ missed spaced/differently-cased keys, so test emails showed
+  // raw {{variables}} instead of the lead's data.
+  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
+  const normalized: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) normalized[norm(k)] = v;
+  return text.replace(/\{\{\s*([\w\-\s]+?)\s*\}\}/g, (match, key) =>
+    fields[key] ?? normalized[norm(key)] ?? match
+  );
 }
 
 function textToHtml(text: string): string {
