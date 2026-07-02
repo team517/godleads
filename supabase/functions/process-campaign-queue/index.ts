@@ -1073,10 +1073,13 @@ serve(async (req) => {
         .gte("sent_at", todayStart);
 
       const campaignSentToday = sentToday?.length || 0;
-      // Auto daily limit: never let a stale/low manual number throttle the
-      // campaign below what its own connected accounts can support today —
-      // the real ceiling is always autoAccountCapTotal (slow-ramp aware).
-      const campaignDailyLimit = Math.max(campaign.daily_limit || 0, autoAccountCapTotal);
+      // HARD CEILING = the LOWER of the campaign's configured daily_limit and what its
+      // accounts can safely support today (autoAccountCapTotal, slow-ramp aware). The
+      // old code used max(), so a campaign with daily_limit=50 whose accounts could do
+      // 80 sent 80 — OVER the user's limit (CHIPSFINDER ITALIA hit 68/50). Now the
+      // configured limit is respected as a true ceiling; the campaign STOPS when reached.
+      const configuredLimit = (campaign.daily_limit && campaign.daily_limit > 0) ? campaign.daily_limit : autoAccountCapTotal;
+      const campaignDailyLimit = Math.min(configuredLimit, autoAccountCapTotal);
       if (campaignSentToday >= campaignDailyLimit) continue;
 
       // ═══ Hour-based pacing (self-regulating "token bucket") ═══

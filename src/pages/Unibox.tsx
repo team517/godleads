@@ -1494,18 +1494,21 @@ export default function Unibox() {
         body = cleanBodyText(selected.body_html);
       }
       if (!body.trim()) { toast.error("No hay texto que traducir"); setTranslating(false); return; }
-      // First detect, then translate
-      const detectResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ text: body.slice(0, 500), mode: "detect" }),
-      });
-      const detectResult = await detectResp.json();
-      if (detectResult.error) { toast.error(detectResult.error); setTranslating(false); return; }
-      const lang = detectResult.language || "en";
-      setDetectedLang(lang);
-      if (lang === "es") { toast.info("El mensaje ya está en español"); setTranslating(false); return; }
-      // Now translate
+      // Detect is BEST-EFFORT (only to label the language + skip if already Spanish).
+      // If it fails, we translate anyway — the user clicked "Traducir". DeepSeek
+      // translates ANY language (Italian, German, etc.) to Spanish.
+      try {
+        const detectResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ text: body.slice(0, 500), mode: "detect" }),
+        });
+        const detectResult = await detectResp.json();
+        const lang = detectResult.language || null;
+        if (lang) setDetectedLang(lang);
+        if (lang === "es" || lang === "ca") { toast.info("El mensaje ya está en español"); setTranslating(false); return; }
+      } catch { /* detect failed — translate anyway */ }
+      // Translate to Spanish (works for any source language)
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },

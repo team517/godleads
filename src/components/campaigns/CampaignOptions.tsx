@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -258,7 +258,8 @@ export default function CampaignOptions({ campaignId }: Props) {
 
   const save = async () => {
     await supabase.from("campaigns").update({
-      daily_limit: usedAccounts.length ? capacityToday : dailyLimit,
+      // Persist the user's ceiling as-is. If unset, default to today's capacity.
+      daily_limit: dailyLimit > 0 ? dailyLimit : (capacityToday || 0),
       stop_on_reply: stopOnReply,
       include_unsubscribe: includeUnsubscribe,
       unsubscribe_all: unsubAll,
@@ -386,16 +387,18 @@ export default function CampaignOptions({ campaignId }: Props) {
   const intervalPerAccountMin = quotaPerAccount > 0 ? Math.round(windowMinutes / quotaPerAccount) : 0;
   const fmtInterval = (m: number) => (m <= 0 ? "—" : m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60 ? (m % 60) + "min" : ""}`.trim());
 
-  // Límite diario AUTOMÁTICO: es siempre la suma del límite efectivo de cada
-  // cuenta seleccionada (slow-ramp aware, así que sube solo cada día). Mantiene
-  // la columna daily_limit sincronizada para que backend + UI coincidan.
+  // The daily limit is a HARD CEILING the user sets — the backend never exceeds it
+  // (stops when reached). We do NOT auto-overwrite it (that used to clobber a manual
+  // lower limit, e.g. 50, back up to full capacity). If it's unset (0), default it to
+  // today's account capacity ONCE so a fresh campaign has a sensible ceiling.
+  const limitInitedRef = useRef(false);
   useEffect(() => {
-    if (!usedAccounts.length) return;
-    if (dailyLimit !== capacityToday) {
+    if (limitInitedRef.current) return;
+    if (usedAccounts.length && (!dailyLimit || dailyLimit <= 0) && capacityToday > 0) {
       setDailyLimit(capacityToday);
-      supabase.from("campaigns").update({ daily_limit: capacityToday } as any).eq("id", campaignId);
+      limitInitedRef.current = true;
     }
-  }, [capacityToday, usedAccounts.length]);
+  }, [capacityToday, usedAccounts.length, dailyLimit]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-24">
@@ -403,16 +406,9 @@ export default function CampaignOptions({ campaignId }: Props) {
       {/* ── ENVÍO Y RITMO ── */}
       <Section label="Envío y ritmo">
         <Row icon={<Gauge className="h-4 w-4" />} tint="primary"
-          title="Límite diario de envíos"
-          desc={slowRampEnabled
-            ? "Automático: suma del límite de cada cuenta seleccionada. Con slow ramp sube solo cada día."
-            : "Automático: límite por cuenta × nº de cuentas seleccionadas. Se recalcula solo."}
-          control={
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-bold tabular-nums text-foreground">{capacityToday}</span>
-              <Badge variant="secondary" className="text-[10px]">auto</Badge>
-            </div>
-          }
+          title="Límite diario de envíos (tope)"
+          desc={`Tope de correos/día de la campaña. NUNCA lo sobrepasa: al llegar, para. Capacidad de tus cuentas hoy: ${capacityToday}${dailyLimit > capacityToday ? " (tu tope es mayor; manda la capacidad)" : ""}.`}
+          control={<Stepper value={dailyLimit} min={0} step={10} onChange={(v) => { setDailyLimit(v); markDirty(); }} />}
         />
         <Row icon={<Mail className="h-4 w-4" />} tint="emerald"
           title="Parar al recibir respuesta"
