@@ -249,8 +249,11 @@ export default function CampaignSequences({ campaignId }: Props) {
   const runPlacement = async () => {
     if (!testAccountId) { toast.error("Elige la cuenta de envío arriba"); return; }
     setPlacRunning(true); setPlacResults(null); setPlacPct(null); setPlacTestId(null);
+    // Send REAL content (variables replaced with a real lead's data), so the spam
+    // test measures a representative email — not a broken "{{personalized_message}}".
+    const fields = getTestFields();
     const { data, error } = await supabase.functions.invoke("placement-test", {
-      body: { action: "run", account_id: testAccountId, subject: getCurrentSubject(), html: getCurrentBody() },
+      body: { action: "run", account_id: testAccountId, subject: renderVariables(getCurrentSubject(), fields), html: renderVariables(getCurrentBody(), fields) },
     });
     setPlacRunning(false);
     if (error || data?.error) { toast.error(data?.error || error?.message || "Error al enviar la prueba"); return; }
