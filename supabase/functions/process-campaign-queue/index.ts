@@ -1045,7 +1045,7 @@ serve(async (req) => {
       // leads) beyond the slice could be delayed for weeks. We now fetch two ordered,
       // bounded windows: overdue FOLLOW-UPS first (oldest last_sent_at), then the
       // OLDEST new leads. Deterministic order → coverage advances monotonically.
-      const LEAD_FETCH_CAP = 500; // comfortably above MAX_LEADS_SCANNED_PER_CAMPAIGN (300)
+      const LEAD_FETCH_CAP = 500; // ≥ each per-lane scan cap (follow-ups 300, new 200)
       const [followupRes, newRes] = await Promise.all([
         adminClient
           .from("campaign_leads")
@@ -1196,12 +1196,16 @@ serve(async (req) => {
       // counter is enough for daily cap; this tick-level limit is just for
       // burst protection when many leads are pending).
 
-      let leadsScannedThisCampaign = 0;
-      // Generous but bounded: protects against a future steady-state where
-      // thousands of leads at the front of the list are already in_progress/on
-      // cooldown and would otherwise cost a DB round-trip each to skip past,
-      // before ever reaching a fresh one worth attempting.
-      const MAX_LEADS_SCANNED_PER_CAMPAIGN = 300;
+      // SEPARATE scan budgets for follow-ups vs new leads. With a single shared cap,
+      // a campaign with ≥cap in-sequence leads (e.g. SITUATE's 300 in_progress) burned
+      // the ENTIRE budget skipping not-yet-due follow-ups and NEVER reached its new
+      // leads → it sent 0 cold emails/day despite 9k pending. Independent lanes
+      // guarantee new leads are always reached (Instantly sends follow-ups AND new
+      // every day). continue (not break) so exhausting one lane still reaches the other.
+      const MAX_FOLLOWUP_SCAN = 300;
+      const MAX_NEW_LEAD_SCAN = 200;
+      let followupsScanned = 0;
+      let newLeadsScanned = 0;
 
       for (const cl of campaignLeads) {
         if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
@@ -1209,7 +1213,9 @@ serve(async (req) => {
         // Per-tick fairness cap: leave slots for the OTHER campaigns in this tick.
         if (sentThisCampaign >= MAX_SENDS_PER_CAMPAIGN_PER_TICK) break;
         if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
-        if (++leadsScannedThisCampaign > MAX_LEADS_SCANNED_PER_CAMPAIGN) break;
+        // Per-lane scan cap — continue past an exhausted lane so the other is reached.
+        if ((cl.current_step || 0) === 0) { if (++newLeadsScanned > MAX_NEW_LEAD_SCAN) continue; }
+        else { if (++followupsScanned > MAX_FOLLOWUP_SCAN) continue; }
 
         const lead = cl.leads;
         if (!lead) continue;
@@ -1226,6 +1232,24 @@ serve(async (req) => {
         if (blockedEmails.has(leadEmail) || blockedDomains.has(leadDomain)) {
           await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
           continue;
+        }
+
+        // STEP + DUE-DATE gate FIRST, before any per-lead DB query. A not-yet-due
+        // follow-up is skipped with pure date math — previously the stop_on_reply
+        // query ran for every scanned lead (incl. hundreds of not-due ones) each tick.
+        const currentStepIndex = cl.current_step || 0;
+        if (currentStepIndex >= steps.length) {
+          await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
+          continue;
+        }
+        const step = steps[currentStepIndex];
+        if (currentStepIndex > 0 && cl.last_sent_at) {
+          const lastSent = new Date(cl.last_sent_at);
+          const delayMs = (step.delay_days || 0) * 24 * 60 * 60 * 1000;
+          if (now.getTime() - lastSent.getTime() < delayMs) {
+            totalSkipped++;
+            continue;
+          }
         }
 
         // Domain daily limit check
@@ -1251,23 +1275,7 @@ serve(async (req) => {
           if (cl.status === "replied") continue;
         }
 
-        const currentStepIndex = cl.current_step || 0;
-        if (currentStepIndex >= steps.length) {
-          await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
-          continue;
-        }
-
-        const step = steps[currentStepIndex];
-
-        // Check delay between steps
-        if (currentStepIndex > 0 && cl.last_sent_at) {
-          const lastSent = new Date(cl.last_sent_at);
-          const delayMs = (step.delay_days || 0) * 24 * 60 * 60 * 1000;
-          if (now.getTime() - lastSent.getTime() < delayMs) {
-            totalSkipped++;
-            continue;
-          }
-        }
+        // (currentStepIndex, step and the due-date gate were resolved above.)
 
         // getEffectiveLimit / rampDaysActive are computed once per campaign per
         // tick (above, right after `accounts` is fetched) — not re-queried here
