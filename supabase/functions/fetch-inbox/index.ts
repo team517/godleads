@@ -323,18 +323,28 @@ async function fetchImapMessages(
       for (const part of parts) {
         if (!part.trim()) continue;
 
-        const fromMatch = part.match(/From:\s*(.+?)(?:\r?\n)/i);
-        const subjectMatch = part.match(/Subject:\s*(.+?)(?:\r?\n)/i);
+        // Capture header value INCLUDING folded continuation lines (RFC 5322: a
+        // header can wrap onto following lines that start with space/tab). The old
+        // regex stopped at the first newline, so a long display name pushed the
+        // <email> onto line 2 and we stored the NAME as the address — which then
+        // made replies fail ("RCPT TO:<ignacio garcia cuadrado>" → SMTP 500).
+        const headerVal = (re: RegExp) => {
+          const m = part.match(re);
+          return m ? m[1].replace(/\r?\n[ \t]+/g, " ").trim() : "";
+        };
+        const fromStr = headerVal(/From:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
+        const subjectStr = headerVal(/Subject:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
         const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
         const msgIdMatch = part.match(/Message-ID:\s*<?(.+?)>?(?:\r?\n)/i);
 
         let fromEmail = "";
         let fromName = "";
-        if (fromMatch) {
-          const fromStr = fromMatch[1].trim();
-          const emailMatch = fromStr.match(/<(.+?)>/);
-          fromEmail = emailMatch ? emailMatch[1] : fromStr;
-          const nameMatch = fromStr.match(/^"?([^"<]+)"?\s*</);
+        if (fromStr) {
+          // Prefer <email>; else the first bare addr token anywhere in the value.
+          // NEVER fall back to the whole string (that's how a name became the address).
+          const emailMatch = fromStr.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/) || fromStr.match(/([^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+)/);
+          fromEmail = emailMatch ? emailMatch[1] : "";
+          const nameMatch = fromStr.match(/^"?([^"<]+?)"?\s*</);
           fromName = nameMatch ? nameMatch[1].trim() : "";
         }
 
@@ -356,7 +366,7 @@ async function fetchImapMessages(
           .trim();
 
         if (fromEmail) {
-          const decodedSubject = decodeMimeWords(subjectMatch ? subjectMatch[1].trim() : "");
+          const decodedSubject = decodeMimeWords(subjectStr);
           if (isAutomatedSender(fromEmail)) continue;
 
           // Dedupe across folders (same message can appear in INBOX + a copy)

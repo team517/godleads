@@ -446,6 +446,26 @@ serve(async (req) => {
       include_unsubscribe,
     } = await req.json();
 
+    // Recipient sanitisation. `to_email` can arrive as "Name <email>" or — from older
+    // inbox rows where a folded From header was mis-parsed — as just a display name
+    // with NO address. Extract a real email; if none and we have a lead_id, use the
+    // lead's actual address. Reject clearly otherwise: this is what turned a reply
+    // into the cryptic SMTP 500 "command unrecognized" (RCPT TO:<a name>), and it
+    // also blocks header injection.
+    let cleanTo = String(to_email || "").match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/)?.[1]
+      || String(to_email || "").match(/[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+/)?.[0]
+      || "";
+    if (!cleanTo && lead_id) {
+      const { data: leadRow } = await adminClient.from("leads").select("email").eq("id", lead_id).maybeSingle();
+      if (leadRow?.email) cleanTo = leadRow.email;
+    }
+    cleanTo = cleanTo.trim().toLowerCase();
+    if (!/^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(cleanTo)) {
+      return new Response(JSON.stringify({ error: `Dirección de destino no válida: "${to_email}". No se pudo determinar un email al que responder.` }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     let resolvedAccountId = account_id as string;
     let resolvedInReplyTo = in_reply_to as string | undefined;
     let resolvedReferences = references as string | undefined;
@@ -528,7 +548,7 @@ serve(async (req) => {
     // (even on threaded follow-ups). Unibox replies simply don't pass the flag.
     let unsubscribeUrl: string | undefined;
     if (include_unsubscribe) {
-      const token = await makeUnsubToken(userId, to_email, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const token = await makeUnsubToken(userId, cleanTo, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
     }
 
@@ -538,7 +558,7 @@ serve(async (req) => {
       account.smtp_username,
       account.smtp_password,
       account.email,
-      to_email,
+      cleanTo,
       finalSubject,
       finalBody,
       {
@@ -557,7 +577,7 @@ serve(async (req) => {
         campaign_step_id: campaign_step_id || null,
         account_id: resolvedAccountId,
         lead_id: lead_id || null,
-        to_email,
+        to_email: cleanTo,
         subject: finalSubject,
         body: finalBody,
         status: result.ok ? "sent" : "failed",

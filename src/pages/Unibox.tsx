@@ -1000,6 +1000,8 @@ export default function Unibox() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncLockRef = useRef(false);
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replyDraftRef = useRef(""); // mirrors `reply` so the debounced reload can skip while composing
   const backgroundSyncOffsetRef = useRef(0);
   const lastAutoSyncAttemptRef = useRef(0);
   const replyRef = useRef<HTMLTextAreaElement>(null);
@@ -1374,21 +1376,45 @@ export default function Unibox() {
     return () => clearTimeout(syncTimeout);
   }, [load, autoSync, loadReminders]);
 
+  // Keep a ref of the reply draft so the debounced reload can tell if the user is
+  // mid-compose without re-creating the callback on every keystroke.
+  useEffect(() => { replyDraftRef.current = reply; }, [reply]);
+
+  // DEBOUNCED, compose-aware reload. A background IMAP sync inserts many rows at
+  // once; firing load() on each realtime event re-rendered the whole list over and
+  // over ("the screen keeps refreshing"). Now we coalesce bursts into ONE reload a
+  // few seconds after activity settles, and NEVER reload while the user is writing a
+  // reply — the data still syncs, the screen just doesn't yank under their hands.
+  const scheduleReload = useCallback(() => {
+    if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    const run = () => {
+      if (replyDraftRef.current.trim().length > 0) {
+        reloadTimerRef.current = setTimeout(run, 8000); // busy composing → try again later
+        return;
+      }
+      load();
+    };
+    reloadTimerRef.current = setTimeout(run, 4000);
+  }, [load]);
+
   // Realtime subscription
   useEffect(() => {
     if (!user) return;
     const channel = supabase
       .channel("unibox-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` }, () => scheduleReload())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user, load]);
+  }, [user, scheduleReload]);
 
-  // Auto-refresh DB every 30 seconds
+  // Safety net refresh (much less often than before, and coalesced/compose-aware).
   useEffect(() => {
-    intervalRef.current = setInterval(() => { load(); }, 30_000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [load]);
+    intervalRef.current = setInterval(() => { scheduleReload(); }, 120_000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    };
+  }, [scheduleReload]);
 
   // Auto-sync IMAP every 60 seconds (no manual "Sincronizar" needed)
   useEffect(() => {
