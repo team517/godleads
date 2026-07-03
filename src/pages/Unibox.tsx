@@ -163,7 +163,22 @@ function stripQuotedReply(text: string): string {
   return trimmed.length >= 2 ? trimmed : text;
 }
 
+// MEMOISED wrapper. cleanBodyText is pure (~60 regexes) and was re-run for every
+// message on every render/keystroke (category counts, unread count, hiddenFromClean,
+// previews) → the Unibox felt sluggish with many messages. Same input → same output,
+// so cache it. Bounded to keep memory in check.
+const _cleanTextCache = new Map<string, string>();
 function cleanBodyText(raw: string | null, keepCodes = false): string {
+  if (!raw) return "";
+  const key = (keepCodes ? "1|" : "0|") + raw;
+  const hit = _cleanTextCache.get(key);
+  if (hit !== undefined) return hit;
+  const out = cleanBodyTextRaw(raw, keepCodes);
+  if (_cleanTextCache.size > 5000) _cleanTextCache.clear();
+  _cleanTextCache.set(key, out);
+  return out;
+}
+function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   if (!raw) return "";
   // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
   let text = decodeBase64Body(raw);

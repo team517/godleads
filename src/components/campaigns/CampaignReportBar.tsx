@@ -27,7 +27,7 @@ export default function CampaignReportBar({ campaign }: Props) {
       setLoading(true);
       const [sentRes, stepsRes, posRes] = await Promise.all([
         supabase.from("sent_emails")
-          .select("status, sent_at, opened_at, replied_at, bounced_at, to_email")
+          .select("status, sent_at, opened_at, replied_at, bounced_at, to_email, lead_id")
           .eq("campaign_id", campaign.id),
         supabase.from("campaign_steps")
           .select("id", { count: "exact", head: true })
@@ -52,10 +52,15 @@ export default function CampaignReportBar({ campaign }: Props) {
          .map((x: any) => (x.to_email || "").toLowerCase())
          .filter((em: string) => em && !okEmails.has(em))
       );
+      // Replied = DISTINCT leads who replied (people), not raw send-rows — a lead who
+      // replied to two steps was being counted twice.
+      const repliedLeads = new Set(
+        e.filter((x: any) => x.replied_at).map((x: any) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)
+      );
       setM({
         sent,
         opened: e.filter((x: any) => x.opened_at).length,
-        replied: e.filter((x: any) => x.replied_at).length,
+        replied: repliedLeads.size,
         bounced: e.filter((x: any) => x.bounced_at).length,
         senderBounced: failedEmails.size,
         positive: posRes.count || 0,

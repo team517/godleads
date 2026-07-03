@@ -17,20 +17,21 @@ export default function CampaignMetricsInline({ campaignId }: { campaignId: stri
     };
     (async () => {
       const sentBase = () => supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId);
-      const [sent, opened, replied, bounced, positive, failRows] = await Promise.all([
+      const [sent, opened, bounced, positive, rowsRes] = await Promise.all([
         count(sentBase().not("sent_at", "is", null)),
         count(sentBase().not("opened_at", "is", null)),
-        count(sentBase().not("replied_at", "is", null)),
         count(sentBase().not("bounced_at", "is", null)),
         count(supabase.from("inbox_messages").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).contains("labels", ["Interesado"])),
-        // Sender Bounced = DISTINCT recipients we couldn't deliver to, excluding any
-        // that later succeeded. Counting raw `failed` rows lets one address retried
-        // N times balloon the % (a single stuck lead once showed 63%).
-        supabase.from("sent_emails").select("to_email, status, sent_at").eq("campaign_id", campaignId).limit(5000),
+        // One row pull drives Replied (distinct leads) AND Sender Bounced (distinct
+        // recipients) — counting raw rows double-counts a lead who replied to two
+        // steps, or one address retried N times.
+        supabase.from("sent_emails").select("to_email, status, sent_at, lead_id, replied_at").eq("campaign_id", campaignId).limit(5000),
       ]);
-      const rows: any[] = (failRows as any)?.data || [];
+      const rows: any[] = (rowsRes as any)?.data || [];
       const okEmails = new Set(rows.filter((x) => x.sent_at || x.status === "sent" || x.status === "bounced").map((x) => (x.to_email || "").toLowerCase()));
       const senderBounced = new Set(rows.filter((x) => x.status === "failed").map((x) => (x.to_email || "").toLowerCase()).filter((em) => em && !okEmails.has(em))).size;
+      // Replied = DISTINCT leads who replied (people, not send-rows).
+      const replied = new Set(rows.filter((x) => x.replied_at).map((x) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)).size;
       if (!alive) return;
       setM({ sent, opened, replied, bounced, senderBounced, positive });
     })();
