@@ -1036,7 +1036,8 @@ export default function Unibox() {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
-  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "campaigns" | "reminders">("global");
+  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "campaigns" | "reminders" | "sent">("global");
+  const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>("all");
   const [translatedBody, setTranslatedBody] = useState("");
@@ -1356,6 +1357,41 @@ export default function Unibox() {
     setThreadLoading(false);
   }, [user]);
 
+  // ENVIADOS: your manual replies/forwards live in sent_emails with campaign_id NULL
+  // (campaign auto-sends have a campaign_id). Map them into the same list shape so the
+  // existing row/detail/thread UI just works. from_email = the recipient, so clicking
+  // opens the full conversation.
+  const loadSent = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from("sent_emails")
+      .select("id, account_id, to_email, subject, body, sent_at, campaign_id, lead_id, smtp_message_id")
+      .eq("user_id", user.id)
+      .is("campaign_id", null)
+      .eq("status", "sent")
+      .order("sent_at", { ascending: false })
+      .limit(500);
+    setSentItems((data || []).map((s: any) => ({
+      id: s.id,
+      account_id: s.account_id,
+      from_email: s.to_email,
+      from_name: s.to_email,
+      to_email: s.to_email,
+      subject: s.subject,
+      body_text: s.body,
+      body_html: s.body,
+      received_at: s.sent_at,
+      is_read: true,
+      is_archived: false,
+      campaign_id: s.campaign_id,
+      lead_id: s.lead_id,
+      message_id: s.smtp_message_id,
+      _sent: true,
+    })));
+  }, [user]);
+
+  useEffect(() => { if (viewTab === "sent") loadSent(); }, [viewTab, loadSent]);
+
   // Clear the translation ONLY when the selected message changes — not on every
   // 30s messages reload (that used to make a just-made translation disappear).
   useEffect(() => { setTranslatedBody(""); }, [selectedId]);
@@ -1364,7 +1400,7 @@ export default function Unibox() {
   useEffect(() => {
     setAiSuggestion("");
     setAiPromptName("");
-    const msg = messages.find(m => m.id === selectedId);
+    const msg = messages.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId);
     if (msg) {
       // Proactively flag the language (cheap local detector) so the reply box can
       // offer auto-translate without the user first pressing "Traducir". Only the
@@ -1376,7 +1412,7 @@ export default function Unibox() {
       setDetectedLang(null);
       setThreadMessages([]);
     }
-  }, [selectedId, messages, loadThread]);
+  }, [selectedId, messages, sentItems, loadThread]);
 
 
 
@@ -1439,7 +1475,7 @@ export default function Unibox() {
 
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
-  const selected = useMemo(() => messages.find(m => m.id === selectedId) || null, [messages, selectedId]);
+  const selected = useMemo(() => messages.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || null, [messages, sentItems, selectedId]);
 
   // Language bucket per message, cached by id (text never changes). Cleared by "Re-filtrar idioma".
   const messageLang = useCallback((m: any): "es" | "en" | "fr" | "it" | "other" | "unknown" => {
@@ -1586,6 +1622,13 @@ export default function Unibox() {
   // Apply the unibox filters ALWAYS (Spanish/Catalan only, no warmup, no bounces,
   // only real replies). English/other languages never appear anywhere.
   const filtered = useMemo(() => {
+    // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
+    if (viewTab === "sent") {
+      const q = search.toLowerCase();
+      return sentItems.filter(m =>
+        !search || m.to_email?.toLowerCase().includes(q) || m.subject?.toLowerCase().includes(q)
+      );
+    }
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
     // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
@@ -1618,7 +1661,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup]);
+  }, [messages, sentItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -1883,6 +1926,7 @@ export default function Unibox() {
         toast.success("Respuesta enviada");
         setReply("");
         setReplyLang(null);
+        loadSent(); // keep the "Enviados" list fresh
         // Refresh thread to show the sent message
         const msg = messages.find(m => m.id === selectedId);
         if (msg) setTimeout(() => loadThread(msg), 500);
@@ -2059,7 +2103,7 @@ export default function Unibox() {
       {/* Tabs: Global / Campaigns */}
       <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-card px-3 py-2.5 md:flex-row md:items-center md:justify-between md:px-4">
         <Tabs value={viewTab} onValueChange={(v) => {
-          const nextTab = v as "global" | "all_mailboxes" | "campaigns" | "reminders";
+          const nextTab = v as "global" | "all_mailboxes" | "campaigns" | "reminders" | "sent";
           setViewTab(nextTab);
           setMailboxMode(nextTab === "all_mailboxes" ? "all" : "clean");
         }}>
@@ -2072,6 +2116,9 @@ export default function Unibox() {
             </TabsTrigger>
             <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
               <Megaphone className="h-3.5 w-3.5" /> Campaigns
+            </TabsTrigger>
+            <TabsTrigger value="sent" className="gap-1.5 text-xs">
+              <Send className="h-3.5 w-3.5" /> Enviados
             </TabsTrigger>
             <TabsTrigger value="reminders" className="gap-1.5 text-xs">
               <Bell className="h-3.5 w-3.5" /> Recordatorios
