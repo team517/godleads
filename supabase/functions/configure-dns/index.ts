@@ -1,7 +1,8 @@
 // Auto-configures SPF / DKIM / DMARC for an IONOS-hosted domain via the IONOS DNS API.
 // Idempotent: only creates the standard IONOS records that are missing — never deletes
-// or overrides anything the user already has. Requires a logged-in user (verify_jwt).
+// or overrides anything the user already has. Requires a logged-in user.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +26,13 @@ function json(body: unknown, status = 200) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
+    // AUTH: this is a privileged write proxy to the company IONOS DNS API, so it
+    // must never be anon-callable. Require a valid logged-in user.
+    const authHeader = req.headers.get("Authorization") || "";
+    const userClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: authHeader } } });
+    const { data: { user } } = await userClient.auth.getUser();
+    if (!user) return json({ ok: false, error: "No autorizado" }, 401);
+
     const KEY = Deno.env.get("IONOS_API_KEY");
     if (!KEY) return json({ ok: false, error: "IONOS_API_KEY no configurada" }, 500);
 

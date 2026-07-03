@@ -38,15 +38,21 @@ const LONG_MIXED_RE = /\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{2
 function stripWarmupTokens(input: string | null): string {
   if (!input) return "";
   let s = input;
-  // "| CODE", "- CODE", "· CODE" trailing separators that wrap a code
-  s = s.replace(/[\s]*[|·•·∙‧\-–—]+[\s]*(?=(?:[A-Za-z0-9]*[A-Za-z])(?:[A-Za-z0-9]*\d))[A-Za-z0-9]{5,20}\b/g, " ");
-  // Long hex hashes and long mixed tracking refs first (before the 5–20 rule)
+  // Only strip tokens that are REALLY warm-up/tracking codes (high-entropy mix via
+  // looksLikeWarmupCode), never legit business refs the lead actually wrote —
+  // "iPhone15", "ABC123X", a NIE "X1234567L", an invoice/booking code. Previously a
+  // blanket 5–20 alnum rule silently erased those from the message the user reads.
+  const isCode = (t: string) => looksLikeWarmupCode(t) && !ID_WHITELIST_RE.test(t);
+  // "| CODE", "- CODE", "· CODE" trailing separators that wrap a real code → drop both.
+  s = s.replace(/[ \t]*[|·•·∙‧\-–—]+[ \t]*((?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5,20})\b/g,
+    (full: string, code: string) => (isCode(code) ? "" : full));
+  // Long hex hashes / long mixed refs / long digit runs = unambiguous tracking
+  // artifacts (never appear in real prose) → safe to strip outright.
   s = s.replace(LONG_HEX_RE, "");
   s = s.replace(LONG_MIXED_RE, "");
-  // The codes themselves (any case)
-  s = s.replace(MIXED_CODE_RE, "");
-  // Long pure-digit tracking ids (keeps short numbers, prices, years, phones)
   s = s.replace(LONG_DIGIT_RE, "");
+  // The 5–20 char codes themselves — but ONLY the ones that look like warm-up codes.
+  s = s.replace(MIXED_CODE_RE, (m: string) => (isCode(m) ? "" : m));
   // Tidy up separators / whitespace the removals leave behind
   s = s.replace(/[ \t]*[|·•∙‧]+[ \t]*(?=$|\n)/gm, "");
   s = s.replace(/^[\s|·•\-–—]+|[\s|·•\-–—]+$/g, "");
@@ -1638,6 +1644,14 @@ export default function Unibox() {
 
   const handleCleanAll = async () => {
     if (!user) return;
+    // Guard: this archives the ENTIRE inbox, unread real replies included. One
+    // misclick used to bury everything silently — confirm, and say how many
+    // unread real replies are about to be archived.
+    const unreadReal = messages.filter((m) => !m.is_read && !hiddenFromClean(m)).length;
+    const warn = unreadReal > 0
+      ? `Vas a archivar TODO el Unibox, incluidas ${unreadReal} respuesta(s) sin leer. Podrás recuperarlas en "Archivados". ¿Seguro?`
+      : "Vas a archivar todos los mensajes del Unibox. ¿Seguro?";
+    if (!window.confirm(warn)) return;
     const { error } = await supabase
       .from("inbox_messages")
       .update({ is_archived: true })
