@@ -805,9 +805,12 @@ serve(async (req) => {
     // the lock RPC errors we skip this tick — the next cron tick (2 min) retries; a
     // 2-minute delay is far cheaper than a duplicate email to a prospect.
     const LOCK_NAME = "process-campaign-queue";
+    // TTL 240s: the self-imposed 90s deadline means a healthy run always finishes
+    // well inside it; if the platform hard-kills us (finally skipped, lock not
+    // released) sending resumes in ≤4 min instead of the old 10.
     const { data: gotLock, error: lockErr } = await adminClient.rpc("acquire_job_lock", {
       p_name: LOCK_NAME,
-      p_ttl_seconds: 600,
+      p_ttl_seconds: 240,
     });
     if (lockErr || gotLock === false) {
       return new Response(JSON.stringify({ success: true, skipped: lockErr ? "lock_error" : "already_running" }), {
@@ -854,7 +857,20 @@ serve(async (req) => {
     // expires. Capping keeps every run comfortably fast; the cron fires every 1-2
     // min, so throughput is unaffected — the same volume just spreads over more,
     // safer ticks instead of a single risky one.
-    const MAX_SENDS_PER_INVOCATION = 10;
+    const MAX_SENDS_PER_INVOCATION = 12;
+    // WALL-CLOCK DEADLINE — the real safety net. The attempt cap alone can't bound
+    // a tick's duration (each attempt costs 2–15s, plus per-lead DB round-trips),
+    // and an overrunning tick makes the NEXT cron fire hit the job lock and skip —
+    // silently halving throughput for every tenant. Past the deadline we exit
+    // cleanly; the next tick (≤2 min) continues where the rotation left off.
+    const TICK_DEADLINE_MS = 90_000;
+    const tickStartMs = Date.now();
+    const tickExpired = () => (Date.now() - tickStartMs) > TICK_DEADLINE_MS;
+    // FAIRNESS: hard cap per campaign per tick, so one behind-pace campaign (just
+    // activated / window just opened) can't take the whole invocation budget and
+    // make every other tenant wait N ticks. 12/tick ÷ 4 = at least 3 campaigns
+    // interleave in every full tick.
+    const MAX_SENDS_PER_CAMPAIGN_PER_TICK = 4;
     // After this many TRANSIENT send failures to the SAME recipient on the SAME
     // step, the lead is parked as undeliverable instead of retried forever.
     const MAX_SEND_ATTEMPTS_PER_STEP = 5;
@@ -873,10 +889,20 @@ serve(async (req) => {
     // cross-TICK source of truth; these maps cover the same-tick case.)
     const accountSendsThisTick: Record<string, number> = {};
     const accountCooldownMs: Record<string, number> = {};
-    const MIN_GAP_BETWEEN_SENDS_MS = 1500; // tiny natural pause between sends inside a tick
+    // Accounts that hit a rate/auth error THIS run — skipped for the rest of the
+    // tick across ALL campaigns. Before this was per-campaign (splice from the
+    // local array), so a second campaign sharing the mailbox re-attempted it in
+    // the same tick and burned another global slot on a guaranteed throttle.
+    const rateLimitedThisRun = new Set<string>();
+    const MIN_GAP_BETWEEN_SENDS_MS = 1500; // pause when the same sending DOMAIN repeats back-to-back
+    let lastSendDomain = ""; // sender domain of the previous send in this tick
 
     for (const campaign of campaigns) {
-      if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
+      if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
+      // ISOLATION: any unexpected throw while processing ONE campaign must never
+      // abort the tick for every other tenant (it would re-throw every 2 min and
+      // zero out the whole platform's sending). Log, skip, keep serving the rest.
+      try {
       const now = new Date();
       const tz = campaign.timezone || "UTC";
 
@@ -1180,7 +1206,9 @@ serve(async (req) => {
       for (const cl of campaignLeads) {
         if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
         if (sentThisCampaign >= paceBudgetThisRun) break; // stay on the hourly pace
-        if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION) break;
+        // Per-tick fairness cap: leave slots for the OTHER campaigns in this tick.
+        if (sentThisCampaign >= MAX_SENDS_PER_CAMPAIGN_PER_TICK) break;
+        if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
         if (++leadsScannedThisCampaign > MAX_LEADS_SCANNED_PER_CAMPAIGN) break;
 
         const lead = cl.leads;
@@ -1260,7 +1288,7 @@ serve(async (req) => {
             const providerMatching = (campaign as any).provider_matching ?? false;
 
             const scored = accounts
-              .filter(acc => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc))
+              .filter(acc => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id))
               .map(acc => {
                 const domain = acc.email.split("@")[1] || "unknown";
                 const domainAccounts = domainMap[domain];
@@ -1297,7 +1325,7 @@ serve(async (req) => {
 
           // True round-robin: pick the account with the LEAST sent_today
           // so load is evenly distributed across all available accounts.
-          const eligible = accounts.filter((acc: any) => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc));
+          const eligible = accounts.filter((acc: any) => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id));
           if (eligible.length === 0) return null;
           eligible.sort((a: any, b: any) => {
             if (a.sent_today !== b.sent_today) return a.sent_today - b.sent_today;
@@ -1312,15 +1340,20 @@ serve(async (req) => {
         // source of truth; sent_emails is a compatibility fallback for older campaign rows.
         let account: any = null;
         const assignedAccountId = (cl as any).assigned_account_id as string | null | undefined;
-        const { data: anyPrior } = await adminClient
-          .from("sent_emails")
-          .select("account_id, status")
-          .eq("campaign_id", campaign.id)
-          .eq("lead_id", lead.id)
-          .order("created_at", { ascending: true })
-          .limit(1);
-
-        const boundId = assignedAccountId || (anyPrior?.length ? anyPrior[0].account_id : null);
+        let boundId: string | null = assignedAccountId || null;
+        if (!boundId) {
+          // Compatibility fallback for older rows only — when the column is set
+          // (the common case) this query is skipped, saving up to 300 sequential
+          // round-trips per campaign of pure scan overhead.
+          const { data: anyPrior } = await adminClient
+            .from("sent_emails")
+            .select("account_id, status")
+            .eq("campaign_id", campaign.id)
+            .eq("lead_id", lead.id)
+            .order("created_at", { ascending: true })
+            .limit(1);
+          boundId = anyPrior?.length ? anyPrior[0].account_id : null;
+        }
         if (boundId) {
           account = accounts.find((a: any) => a.id === boundId);
           if (!account) {
@@ -1334,8 +1367,32 @@ serve(async (req) => {
             account = origAcc;
           }
           if (!account) {
-            // Bound account is disconnected — skip lead instead of switching sender
-            console.warn(`Lead ${lead.id} bound to unavailable account ${boundId}; skipping to preserve identity`);
+            // Bound account is disconnected. If this lead NEVER received a
+            // successful email (it was bound on a first attempt that failed),
+            // switching sender loses nothing — REBIND to a healthy account so the
+            // sequence isn't silently frozen forever behind a dead mailbox.
+            // Mid-sequence leads (already emailed) keep their identity and wait.
+            const { data: everSent } = await adminClient
+              .from("sent_emails")
+              .select("id")
+              .eq("campaign_id", campaign.id)
+              .eq("lead_id", lead.id)
+              .eq("status", "sent")
+              .limit(1);
+            if (everSent?.length) {
+              console.warn(`Lead ${lead.id} bound to unavailable account ${boundId}; skipping to preserve identity`);
+              totalSkipped++;
+              continue;
+            }
+            account = selectAccount();
+            if (!account) { totalSkipped++; continue; }
+            await adminClient.from("campaign_leads")
+              .update({ assigned_account_id: account.id })
+              .eq("id", cl.id);
+            console.warn(`Lead ${lead.id}: rebound from dead account ${boundId} → ${account.email} (no prior delivery)`);
+          }
+          // Skip accounts that already hit a rate/auth error this run
+          if (rateLimitedThisRun.has(account.id)) {
             totalSkipped++;
             continue;
           }
@@ -1379,7 +1436,10 @@ serve(async (req) => {
             }
           }
         }
-        if (!account) break;
+        // Rotation pool empty → no NEW lead can send, but keep scanning: bound
+        // follow-up leads further down fetch their account directly and may still
+        // be sendable (breaking here silently skipped them for the whole tick).
+        if (!account) { totalSkipped++; continue; }
 
         // Per-tick burst protection: don't allow a single account to send too
         // many emails in one cron invocation, even if it has remaining daily
@@ -1661,8 +1721,17 @@ serve(async (req) => {
             last_campaign_send_at: new Date().toISOString(),
           }).eq("id", campaign.id);
 
-          // Tiny pause between sends inside the same tick (natural cadence)
-          await new Promise(r => setTimeout(r, MIN_GAP_BETWEEN_SENDS_MS + Math.floor(Math.random() * 1500)));
+          // Pause between sends inside a tick. Consecutive sends almost always leave
+          // from DIFFERENT mailboxes (MAX_PER_ACCOUNT_PER_TICK=1) — a long gap there
+          // buys zero deliverability (receiving servers never see it) and only burns
+          // shared wall-clock. Keep the long pause ONLY when the same sending domain
+          // repeats back-to-back; otherwise a short jitter is plenty.
+          const thisSendDomain = (account.email || "").split("@")[1] || "";
+          const gapMs = thisSendDomain && thisSendDomain === lastSendDomain
+            ? MIN_GAP_BETWEEN_SENDS_MS + Math.floor(Math.random() * 1500)
+            : 250 + Math.floor(Math.random() * 350);
+          lastSendDomain = thisSendDomain;
+          await new Promise(r => setTimeout(r, gapMs));
         } else {
           // Smart error reaction (Instantly behaviour)
           console.warn(`SMTP fail [${errClass}] account=${account.email} → ${lead.email}: ${result.error}`);
@@ -1682,6 +1751,9 @@ serve(async (req) => {
               if (idx >= 0) accounts.splice(idx, 1);
             } else {
               console.warn(`[bypass] auth error on ${account.email} ignored — account kept active`);
+              // Still back it off for the REST OF THIS RUN so a broken bypass
+              // account can't burn one global send slot per lead, every tick.
+              rateLimitedThisRun.add(account.id);
             }
           } else if (errClass === 'hard') {
             // Permanent recipient failure — finish the lead, no more retries
@@ -1689,12 +1761,20 @@ serve(async (req) => {
               .update({ status: "bounced" })
               .eq("id", cl.id);
           } else if (errClass === 'rate') {
-            // Account is being throttled — back off this account for the rest of the run
+            // Account is being throttled — back off for the rest of the run,
+            // GLOBALLY (the set spans campaigns; the splice below only covers the
+            // current campaign's local pool).
+            rateLimitedThisRun.add(account.id);
             const idx = accounts.findIndex((a: any) => a.id === account.id);
             if (idx >= 0) accounts.splice(idx, 1);
           }
           // 'soft' / 'unknown' → leave campaign_lead pending, will retry next cron cycle
         }
+      }
+      } catch (campErr) {
+        // One poisoned campaign (bad data, null field, crypto error…) must not
+        // kill the tick for other tenants — log and move on to the next campaign.
+        console.error(`Campaign "${(campaign as any)?.name}" (${(campaign as any)?.id}) threw this tick — skipped:`, campErr);
       }
     }
 
