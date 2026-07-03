@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import CampaignDetail from "@/components/campaigns/CampaignDetail";
 import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
+import CampaignSendsChart from "@/components/campaigns/CampaignSendsChart";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
@@ -318,6 +319,7 @@ export default function Campaigns() {
           </Button>
         </div>
         <CampaignReportBar campaign={selectedCampaign} />
+        <CampaignSendsChart campaignId={selectedCampaign.id} />
         <CampaignDetail campaignId={selectedCampaign.id} />
       </div>
     );
