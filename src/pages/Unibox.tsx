@@ -163,7 +163,7 @@ function stripQuotedReply(text: string): string {
   return trimmed.length >= 2 ? trimmed : text;
 }
 
-function cleanBodyText(raw: string | null): string {
+function cleanBodyText(raw: string | null, keepCodes = false): string {
   if (!raw) return "";
   // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
   let text = decodeBase64Body(raw);
@@ -237,9 +237,11 @@ function cleanBodyText(raw: string | null): string {
   // Strip remaining zero-width / invisible Unicode that render as boxes
   text = text.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
 
-  // Remove warmup/tracking codes (e.g., GAJIE920CWH, CHBV6J7, 2YSB82T) and
-  // long digit ids — strip them everywhere so they never show in the body.
-  text = stripWarmupTokens(text);
+  // Remove warmup/tracking codes (e.g., GAJIE920CWH, CHBV6J7, 2YSB82T) and long
+  // digit ids. Skipped when keepCodes=true — used when DISPLAYING a real reply, so
+  // legit letter+digit refs the lead wrote (a chip part number "STM32F407", an
+  // order/invoice ref) stay visible in the body instead of being erased.
+  if (!keepCodes) text = stripWarmupTokens(text);
 
   // Remove long tracking URLs
   text = text.replace(/https?:\/\/[^\s]{100,}/g, "");
@@ -1446,26 +1448,25 @@ export default function Unibox() {
   //     user's lead domains. Everything else English = warm-up/outreach noise → hidden.
   //     ES/CA, FR, IT and ambiguous messages always show.
   const isWarmupHidden = useCallback((m: any): boolean => {
-    let body = cleanBodyText(m.body_text || "");
-    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
-      body = cleanBodyText(m.body_html);
-    }
-    // Warm-up code: require ≥2 random letter+digit tokens across subject+body, so a
-    // single order ref / NIE / CIF in a real reply never hides the whole message.
-    if (countWarmupCodes(`${decodeSubjectKeepCodes(m.subject)} ${body}`) >= 2) return true;
-
-    // DOMAIN-CENTRIC gate. A real reply always comes from a lead: it's either linked
-    // (lead_id/campaign_id) or the sender's domain is one of the user's lead domains.
-    // Those are ALWAYS shown, in any language.
+    // A message from a REAL lead is NEVER warm-up — warm-up traffic comes from other
+    // seed mailboxes, never from your prospects. Show it in full, in any language,
+    // WITH whatever letter+digit refs it carries (e.g. a chip part number a
+    // CHIPSFINDER lead replied with: "STM32F407", "ATMEGA328P", "LM358"). This gate
+    // MUST run BEFORE the warm-up-code rule, or a genuine reply listing 2+ part
+    // numbers would be wrongly hidden as "codes".
     if (m.lead_id || m.campaign_id) return false;
     const dom = (m.from_email || "").split("@")[1]?.toLowerCase() || "";
     if (dom && leadDomains.has(dom)) return false;
 
-    // Unknown sender (NOT a lead, NOT a lead domain). Only clearly home-language
-    // inbound (ES/CA, FR, IT — the user's markets) is shown. ENGLISH — and anything
-    // ambiguous/other from a stranger — is warm-up/outreach noise → HIDDEN. This is
-    // exactly "English replies only if the domain is in a lead list", without being
-    // over-aggressive: real Spanish/French/Italian mail from anyone still shows.
+    // Unknown sender only (NOT a lead, NOT a lead domain):
+    let body = cleanBodyText(m.body_text || "");
+    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
+      body = cleanBodyText(m.body_html);
+    }
+    // ≥2 random letter+digit code tokens = warm-up noise → hide.
+    if (countWarmupCodes(`${decodeSubjectKeepCodes(m.subject)} ${body}`) >= 2) return true;
+    // Only clearly home-language inbound (ES/CA, FR, IT) from a stranger is shown;
+    // English / ambiguous from an unknown sender = outreach noise → hidden.
     const lang = messageLang(m);
     if (lang === "es" || lang === "fr" || lang === "it") return false;
     return true;
@@ -2176,7 +2177,7 @@ export default function Unibox() {
                         </p>
                         <div className="flex items-center gap-2 mt-1">
                           <p className="line-clamp-2 flex-1 text-xs leading-5 text-muted-foreground/70">
-                            {cleanBodyText(msg.body_text).slice(0, 96)}
+                            {cleanBodyText(msg.body_text, true).slice(0, 96)}
                           </p>
                           {msgFolder && (
                             <span className="inline-flex items-center gap-1 text-[10px] font-medium whitespace-nowrap rounded px-1.5 py-0.5" style={{ backgroundColor: `${msgFolder.color}22`, color: msgFolder.color }}>
@@ -2430,7 +2431,7 @@ export default function Unibox() {
                                 />
                               ) : (
                                 <div className="text-[15px] text-foreground leading-[1.75] whitespace-pre-wrap break-words">
-                                  {cleanBodyText(tm.body_text)}
+                                  {cleanBodyText(tm.body_text, true)}
                                 </div>
                               )}
                               {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} />}
@@ -2469,7 +2470,7 @@ export default function Unibox() {
                             />
                           ) : (
                             <div className="text-[15px] text-foreground leading-[1.8] whitespace-pre-wrap break-words">
-                              {cleanBodyText(selected.body_text)}
+                              {cleanBodyText(selected.body_text, true)}
                             </div>
                           )}
                           <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} />
