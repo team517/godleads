@@ -1026,6 +1026,7 @@ export default function Unibox() {
   const [translating, setTranslating] = useState(false);
   const [detectedLang, setDetectedLang] = useState<string | null>(null);
   const [autoTranslating, setAutoTranslating] = useState(false);
+  const [replyLang, setReplyLang] = useState<string | null>(null); // lang the reply was translated into
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
   const [blockTarget, setBlockTarget] = useState<{ email: string; domain: string } | null>(null);
   const [blocking, setBlocking] = useState(false);
@@ -1758,6 +1759,55 @@ export default function Unibox() {
     setBlockTarget(null);
   };
 
+  // Translate the reply the user typed INTO the language the lead wrote in, in
+  // place, so they SEE exactly what will be sent (WYSIWYG) and then hit Responder.
+  // Replaces the old invisible auto-translate-on-send.
+  const translateReplyToLeadLang = async () => {
+    if (!selected || !reply.trim()) return;
+    setAutoTranslating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      // 1) Detect the LEAD's language. Fast client heuristic first; if inconclusive,
+      //    ask the server to detect it from the incoming message.
+      let target: string | null = null;
+      const heur = messageLang(selected);
+      if (heur === "es" || heur === "en" || heur === "fr" || heur === "it") target = heur;
+      if (!target) {
+        let body = cleanBodyText(selected.body_text || "", true);
+        if (body.replace(/\s+/g, " ").trim().length < 15 && selected.body_html) body = cleanBodyText(selected.body_html, true);
+        try {
+          const dResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+            body: JSON.stringify({ text: `${decodeSubject(selected.subject) || ""}\n${body}`.slice(0, 1500), mode: "detect" }),
+          });
+          const d = await dResp.json();
+          if (d.language) target = String(d.language).toLowerCase().slice(0, 2);
+        } catch { /* fall through */ }
+      }
+      if (!target) { toast.error("No pude detectar el idioma del lead."); setAutoTranslating(false); return; }
+      if (target === "es" || target === "ca") {
+        toast.info("El lead escribe en español — tu respuesta ya está en su idioma.");
+        setAutoTranslating(false); return;
+      }
+      // 2) Translate the reply into that language, in place.
+      const tResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ text: reply, target_lang: target, mode: "translate" }),
+      });
+      const t = await tResp.json();
+      if (t.translated) {
+        setReply(t.translated);
+        setReplyLang(target);
+        toast.success(`Traducido al ${langLabels[target] || target}. Revísalo y pulsa Responder.`);
+      } else {
+        toast.error(t.error || "No se pudo traducir.");
+      }
+    } catch (e: any) { toast.error(`Error: ${e.message}`); }
+    setAutoTranslating(false);
+  };
+
   const handleReply = async () => {
     if (!selected || !reply.trim() || !user) return;
     if (containsProfanity(reply)) {
@@ -1767,25 +1817,9 @@ export default function Unibox() {
     setSending(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      let finalBody = reply;
-
-      // Auto-translate reply if the original message is in another language
-      if (detectedLang && detectedLang !== "es") {
-        setAutoTranslating(true);
-        try {
-          const transResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-            body: JSON.stringify({ text: reply, target_lang: detectedLang, mode: "translate" }),
-          });
-          const transResult = await transResp.json();
-          if (transResult.translated) {
-            finalBody = transResult.translated;
-            toast.info(`Respuesta traducida automáticamente al ${langLabels[detectedLang] || detectedLang}`);
-          }
-        } catch { /* send in original if translation fails */ }
-        setAutoTranslating(false);
-      }
+      // WYSIWYG: send EXACTLY what's in the box. If the user wants it in the lead's
+      // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
+      const finalBody = reply;
 
       const originalSubject = decodeSubject(selected.subject) || "";
       const replySubject = originalSubject.toLowerCase().startsWith("re:") ? originalSubject : `Re: ${originalSubject}`;
@@ -1807,6 +1841,7 @@ export default function Unibox() {
       else {
         toast.success("Respuesta enviada");
         setReply("");
+        setReplyLang(null);
         // Refresh thread to show the sent message
         const msg = messages.find(m => m.id === selectedId);
         if (msg) setTimeout(() => loadThread(msg), 500);
@@ -2578,9 +2613,19 @@ export default function Unibox() {
                           }}>Insertar</Button>
                         </PopoverContent>
                       </Popover>
+                      <Button
+                        variant="outline" size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={translateReplyToLeadLang}
+                        disabled={autoTranslating || sending || !reply.trim()}
+                        title="Traduce tu respuesta al idioma en el que te escribió el lead"
+                      >
+                        <Languages className="h-3.5 w-3.5" />
+                        {autoTranslating ? "Traduciendo…" : (replyLang ? `En ${langLabels[replyLang] || replyLang}` : "Su idioma")}
+                      </Button>
                     </div>
                     <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || !reply.trim()}>
-                      <Send className="h-3.5 w-3.5" /> {autoTranslating ? "Traduciendo…" : sending ? "Enviando…" : "Responder"}
+                      <Send className="h-3.5 w-3.5" /> {sending ? "Enviando…" : "Responder"}
                     </Button>
                   </div>
                 </div>
