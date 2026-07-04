@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
-        display: ["Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
+        sans: ["Poppins", "Inter", "system-ui", "sans-serif"],
+        display: ["Poppins", "Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
         serif: ["Instrument Serif", "Georgia", "serif"],
       },
       colors: {
@@ -73,6 +73,10 @@ export default {
         info: {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
+        },
+        topbar: {
+          DEFAULT: "hsl(var(--topbar))",
+          foreground: "hsl(var(--topbar-foreground))",
         },
         brand: {
           blue: "hsl(var(--brand-blue))",

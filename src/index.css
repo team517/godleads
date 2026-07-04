@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,66 +6,73 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 6% 10%;
+    /* ── OnePulso panel theme (Smartlead-style): Poppins · violet #7c3aed ·
+       navy topbar #0b0a52 · light #f6f7fb bg · white sidebar. Only token VALUES
+       changed — every component re-themes automatically, no logic touched. ── */
+    --background: 228 33% 97%;        /* #f6f7fb light panel bg */
+    --foreground: 217 33% 17%;        /* #1e293b slate-800 */
 
     --card: 0 0% 100%;
-    --card-foreground: 240 6% 10%;
+    --card-foreground: 217 33% 17%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 6% 10%;
+    --popover-foreground: 217 33% 17%;
 
-    --primary: 249 84% 64%;
+    --primary: 262 83% 58%;           /* #7c3aed violet */
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 259 88% 66%;
+    --primary-glow: 262 90% 66%;
 
-    --secondary: 250 25% 96%;
-    --secondary-foreground: 240 6% 12%;
+    --secondary: 228 27% 96%;         /* #f3f4f8 */
+    --secondary-foreground: 217 33% 17%;
 
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
+    --muted: 228 27% 96%;
+    --muted-foreground: 215 16% 47%;  /* #64748b slate-500 */
 
-    --accent: 256 60% 96%;
-    --accent-foreground: 249 70% 52%;
+    --accent: 252 65% 94%;            /* #e7e2fb light purple */
+    --accent-foreground: 262 69% 45%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 0 72% 50%;         /* #dc2626 */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 249 84% 64%;
+    --border: 223 21% 94%;            /* #eceef3 */
+    --input: 223 21% 94%;
+    --ring: 262 83% 58%;
 
-    --radius: 0.75rem;
+    --radius: 0.625rem;
 
-    --sidebar-background: 252 56% 98%;
-    --sidebar-foreground: 248 12% 32%;
-    --sidebar-primary: 249 84% 62%;
+    --sidebar-background: 0 0% 100%;   /* white sidebar */
+    --sidebar-foreground: 215 25% 27%; /* #334155 */
+    --sidebar-primary: 262 83% 58%;    /* #7c3aed active */
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 255 70% 94%;
-    --sidebar-accent-foreground: 249 70% 52%;
-    --sidebar-border: 250 38% 89%;
-    --sidebar-ring: 249 84% 62%;
+    --sidebar-accent: 252 60% 96%;     /* light purple hover */
+    --sidebar-accent-foreground: 262 69% 45%;
+    --sidebar-border: 223 21% 94%;
+    --sidebar-ring: 262 83% 58%;
 
-    --success: 142 70% 38%;
+    /* Navy top bar (#0b0a52) — Smartlead signature */
+    --topbar: 241 78% 18%;
+    --topbar-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;           /* #16a34a */
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
+    --warning: 43 98% 48%;            /* #f5b301 */
     --warning-foreground: 0 0% 8%;
-    --info: 249 84% 64%;
+    --info: 262 83% 58%;
     --info-foreground: 0 0% 100%;
 
-    /* onepulso brand — lila editorial accent */
-    --brand-blue: 249 84% 64%;
-    --brand-cyan: 211 80% 57%;
-    --brand-indigo: 249 92% 58%;
-    --brand-purple: 259 88% 66%;
-    --brand-teal: 157 84% 42%;
-    --brand-sky: 211 80% 65%;
+    /* Metric / brand accents matching the panel columns */
+    --brand-blue: 262 83% 58%;        /* violet — Sent */
+    --brand-cyan: 220 90% 64%;        /* #4f7cf6 blue */
+    --brand-indigo: 262 69% 50%;      /* #6d28d9 */
+    --brand-purple: 325 77% 50%;      /* #e11d8f pink — Opened / Create */
+    --brand-teal: 172 66% 40%;        /* #14b8a6 — Replied */
+    --brand-sky: 220 90% 64%;
 
-    --gradient-hero: linear-gradient(135deg, hsl(249 84% 64% / 0.10), hsl(259 88% 66% / 0.08) 50%, hsl(211 80% 57% / 0.10));
-    --gradient-brand: linear-gradient(90deg, hsl(249 84% 64%), hsl(211 80% 57%) 52%, hsl(157 84% 42%));
-    --gradient-warm: linear-gradient(135deg, hsl(249 84% 64%), hsl(259 88% 66%));
-    --gradient-cool: linear-gradient(135deg, hsl(259 88% 66%), hsl(211 80% 57%));
-    --gradient-sky: linear-gradient(135deg, hsl(211 80% 65%), hsl(249 84% 64%));
+    --gradient-hero: linear-gradient(135deg, hsl(262 83% 58% / 0.10), hsl(325 77% 50% / 0.06) 50%, hsl(220 90% 64% / 0.08));
+    --gradient-brand: linear-gradient(90deg, hsl(262 83% 58%), hsl(325 77% 50%) 55%, hsl(172 66% 40%));
+    --gradient-warm: linear-gradient(135deg, hsl(262 83% 58%), hsl(325 77% 50%));
+    --gradient-cool: linear-gradient(135deg, hsl(262 69% 50%), hsl(262 83% 58%));
+    --gradient-sky: linear-gradient(135deg, hsl(220 90% 64%), hsl(262 83% 58%));
   }
 
   .dark {
@@ -125,10 +132,11 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Editorial display face for page-level titles across the panel. */
+  /* Poppins across the panel — Smartlead-style display face for titles too. */
   h1, h2 {
-    font-family: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
-    letter-spacing: -0.02em;
+    font-family: "Poppins", "Inter", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    font-weight: 700;
   }
 }
 
