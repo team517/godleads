@@ -136,6 +136,64 @@ function extractAttachmentNames(raw: string | null): string[] {
   return Array.from(names);
 }
 
+export type ParsedAttachment = { name: string; mime: string; base64: string };
+
+/** RFC2231 name*=utf-8''%xx or plain — best-effort decode of an attachment filename. */
+function decodeFilename(raw: string): string {
+  let v = (raw || "").trim().replace(/^"|"$/g, "");
+  const r2231 = v.match(/^[^']*''(.+)$/);
+  if (r2231) { try { return decodeURIComponent(r2231[1]); } catch { /* keep */ } }
+  return decodeSubjectKeepCodes(v).trim();
+}
+
+/** Extract downloadable attachments (name + mime + base64 payload) from the raw
+ *  MIME body. Fully client-side: the base64 is already stored in body_text/html.
+ *  Returns [] when no base64 part with a filename is present. */
+function extractAttachments(raw: string | null): ParsedAttachment[] {
+  if (!raw || raw.length < 64) return [];
+  const out: ParsedAttachment[] = [];
+  const seen = new Set<string>();
+  // Split into MIME parts. Prefer the declared boundary; fall back to any --token line.
+  const bMatch = raw.match(/boundary\s*=\s*"?([^";\r\n]+)"?/i);
+  let parts: string[];
+  if (bMatch) {
+    const esc = bMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    parts = raw.split(new RegExp("--" + esc + "(?:--)?[ \\t]*\\r?\\n", "g"));
+  } else {
+    parts = raw.split(/\r?\n--[A-Za-z0-9'()+_,\-./:=?]{6,}(?:--)?[ \t]*\r?\n/);
+  }
+  for (const part of parts) {
+    if (!/Content-Transfer-Encoding:\s*base64/i.test(part)) continue;
+    const nameM = part.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
+    if (!nameM) continue;
+    const name = decodeFilename(nameM[1] || nameM[2] || "adjunto");
+    const typeM = part.match(/Content-Type:\s*([^;\r\n]+)/i);
+    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase();
+    // header / body split (first blank line), then keep only base64 chars
+    const sp = part.split(/\r?\n\r?\n/);
+    if (sp.length < 2) continue;
+    const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
+    if (b64.length < 40) continue;
+    const key = name + "|" + b64.length;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, mime, base64: b64 });
+  }
+  return out;
+}
+
+/** Turn a parsed attachment into an object URL (or null if the base64 is bad). */
+function attachmentObjectUrl(att: ParsedAttachment): string | null {
+  try {
+    const bin = atob(att.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: att.mime || "application/octet-stream" }));
+  } catch {
+    return null;
+  }
+}
+
 // Markers where the QUOTED previous message begins. We cut here so only the new
 // reply shows (like Gmail/Outlook collapse the quote). Catalan/Spanish/English/etc.
 const QUOTE_MARKERS: RegExp[] = [
@@ -975,19 +1033,64 @@ function getMessageDeduplicationKey(message: any): string {
   return `fallback:${message?.account_id ?? ""}|${normalizedFrom}|${normalizedSubject}|${normalizedBody}|${normalizedReceivedAt}`;
 }
 
-/** Shows decoded attachment names (e.g. a PDF) as file chips under a message. */
+/** Shows attachments (e.g. a PDF) under a message. When the base64 payload is
+ *  present it offers Ver (open) + Descargar; otherwise a name-only chip. */
 function AttachmentChips({ bodyText, bodyHtml }: { bodyText?: string | null; bodyHtml?: string | null }) {
-  const names = useMemo(() => {
+  const atts = useMemo(() => {
+    const found = [...extractAttachments(bodyHtml || ""), ...extractAttachments(bodyText || "")];
+    const byKey = new Map<string, ParsedAttachment>();
+    for (const a of found) if (!byKey.has(a.name)) byKey.set(a.name, a);
+    return Array.from(byKey.values());
+  }, [bodyText, bodyHtml]);
+
+  // Fallback: names only (no decodable binary) — still show them as chips.
+  const nameOnly = useMemo(() => {
+    if (atts.length > 0) return [];
     const set = new Set<string>();
     extractAttachmentNames(bodyText || "").forEach((n) => set.add(n));
     extractAttachmentNames(bodyHtml || "").forEach((n) => set.add(n));
     return Array.from(set);
-  }, [bodyText, bodyHtml]);
+  }, [atts, bodyText, bodyHtml]);
 
-  if (names.length === 0) return null;
+  const openAtt = (att: ParsedAttachment) => {
+    const url = attachmentObjectUrl(att);
+    if (url) { window.open(url, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+  };
+  const downloadAtt = (att: ParsedAttachment) => {
+    const url = attachmentObjectUrl(att);
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url; a.download = att.name || "adjunto";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  if (atts.length === 0 && nameOnly.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
-      {names.map((name) => (
+      {atts.map((att) => (
+        <div
+          key={att.name}
+          title={att.name}
+          className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
+        >
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-primary/10">
+            <FileText className="h-4 w-4 text-primary" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-medium text-foreground">{att.name}</span>
+            <span className="mt-0.5 flex items-center gap-2">
+              <button type="button" onClick={() => openAtt(att)} className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-primary hover:underline">
+                <MailOpen className="h-2.5 w-2.5" /> Ver
+              </button>
+              <button type="button" onClick={() => downloadAtt(att)} className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-primary hover:underline">
+                <Download className="h-2.5 w-2.5" /> Descargar
+              </button>
+            </span>
+          </span>
+        </div>
+      ))}
+      {nameOnly.map((name) => (
         <div
           key={name}
           title={name}
@@ -1050,6 +1153,9 @@ export default function Unibox() {
   const [isDesktop, setIsDesktop] = useState(false);
   // Reader can be expanded to a big centered fullscreen modal (with backdrop).
   const [readerExpanded, setReaderExpanded] = useState(false);
+  // Files the user attaches to a reply (sent via send-email as base64 parts).
+  const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
+  const replyFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     const apply = () => setIsDesktop(mq.matches);
@@ -1933,8 +2039,28 @@ export default function Unibox() {
     setAutoTranslating(false);
   };
 
+  // Read picked files → base64 chips (capped: 10 files / 15 MB total).
+  const handlePickReplyFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    for (const f of files) {
+      const currentTotal = replyFiles.reduce((n, a) => n + a.size, 0);
+      if (replyFiles.length >= 10) { toast.error("Máximo 10 adjuntos por email"); break; }
+      if (currentTotal + f.size > 15 * 1024 * 1024) { toast.error("Los adjuntos superan 15 MB"); break; }
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(",")[1] || "");
+          r.onerror = () => reject(r.error);
+          r.readAsDataURL(f);
+        });
+        setReplyFiles((prev) => [...prev, { filename: f.name, mime: f.type || "application/octet-stream", base64, size: f.size }]);
+      } catch { toast.error(`No se pudo adjuntar ${f.name}`); }
+    }
+  };
+
   const handleReply = async () => {
-    if (!selected || !reply.trim() || !user) return;
+    if (!selected || (!reply.trim() && replyFiles.length === 0) || !user) return;
     if (containsProfanity(reply)) {
       toast.error("Tu respuesta contiene lenguaje inapropiado. Por favor, modifícala antes de enviar.");
       return;
@@ -1959,6 +2085,7 @@ export default function Unibox() {
           body: finalBody,
           in_reply_to: selected.message_id || undefined,
           references: selected.message_id || undefined,
+          attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
         }),
       });
       const result = await resp.json();
@@ -1966,6 +2093,7 @@ export default function Unibox() {
       else {
         toast.success("Respuesta enviada");
         setReply("");
+        setReplyFiles([]);
         setReplyLang(null);
         loadSent(); // keep the "Enviados" list fresh
         // Refresh thread to show the sent message
@@ -2403,7 +2531,7 @@ export default function Unibox() {
       {/* ── Conversation reader — on desktop it is portalled INTO the reading
           pane box (fills it exactly, inline, no overlay); on mobile it is a
           normal fullscreen modal with backdrop. ── */}
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); } }} modal={!isDesktop || readerExpanded}>
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); } }} modal={!isDesktop || readerExpanded}>
         <DialogContent
           portalContainer={isDesktop && !readerExpanded ? readingPaneRef.current : null}
           overlayClassName={readerExpanded ? "" : "lg:hidden"}
@@ -2743,6 +2871,20 @@ export default function Unibox() {
                     value={reply}
                     onChange={e => setReply(e.target.value)}
                   />
+                  {replyFiles.length > 0 && (
+                    <div className="mb-2.5 flex flex-wrap gap-2">
+                      {replyFiles.map((f, i) => (
+                        <span key={`${f.filename}-${i}`} className="inline-flex max-w-[240px] items-center gap-1.5 rounded-lg border border-border/60 bg-muted/40 py-1 pl-2 pr-1 text-xs">
+                          <FileText className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+                          <span className="min-w-0 truncate font-medium text-foreground">{f.filename}</span>
+                          <span className="flex-shrink-0 text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(0)} KB</span>
+                          <button type="button" onClick={() => setReplyFiles((prev) => prev.filter((_, j) => j !== i))} className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Quitar">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-3 pr-20 md:pr-0">
                     <div className="flex items-center gap-1">
                       <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
@@ -2775,6 +2917,10 @@ export default function Unibox() {
                           }}>Insertar</Button>
                         </PopoverContent>
                       </Popover>
+                      <input ref={replyFileInputRef} type="file" multiple className="hidden" onChange={handlePickReplyFiles} />
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" title="Adjuntar archivo o PDF" onClick={() => replyFileInputRef.current?.click()}>
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="outline" size="sm"
                         className="h-8 gap-1.5 text-xs"
@@ -2786,7 +2932,7 @@ export default function Unibox() {
                         {autoTranslating ? "Traduciendo…" : (replyLang ? `En ${langLabels[replyLang] || replyLang}` : "Su idioma")}
                       </Button>
                     </div>
-                    <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || !reply.trim()}>
+                    <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
                       <Send className="h-3.5 w-3.5" /> {sending ? "Enviando…" : "Responder"}
                     </Button>
                   </div>

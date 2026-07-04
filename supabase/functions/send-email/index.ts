@@ -193,7 +193,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; attachments?: { filename: string; mime: string; base64: string }[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
@@ -291,8 +291,6 @@ async function sendSmtpEmail(
       }
       headers.push(`Auto-Submitted: no`);
 
-      headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
-
       // Visible opt-out link at the bottom (added after URL stripping so it survives).
       const plainTextFinal = unsubUrl
         ? `${plainText}\n\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
@@ -304,9 +302,8 @@ async function sendSmtpEmail(
       const qpText = quotedPrintableEncode(normalizeMimeText(plainTextFinal));
       const qpHtml = quotedPrintableEncode(normalizeMimeText(htmlFinal));
 
-      const msgLines = [
-        headers.join("\r\n"),
-        "",
+      // The text/html body is always a multipart/alternative block.
+      const altLines = [
         `--${boundary}`,
         "Content-Type: text/plain; charset=UTF-8",
         "Content-Transfer-Encoding: quoted-printable",
@@ -319,6 +316,38 @@ async function sendSmtpEmail(
         qpHtml,
         `--${boundary}--`,
       ];
+
+      const attachments = (opts?.attachments || []).filter((a) => a && a.base64);
+      let msgLines: string[];
+      if (attachments.length > 0) {
+        // multipart/mixed { multipart/alternative(text+html) , attachment* }
+        const mixed = `--==_mixed_${randomString(16)}_${randomString(10)}`;
+        headers.push(`Content-Type: multipart/mixed; boundary="${mixed}"`);
+        msgLines = [
+          headers.join("\r\n"),
+          "",
+          `--${mixed}`,
+          `Content-Type: multipart/alternative; boundary="${boundary}"`,
+          "",
+          ...altLines,
+        ];
+        for (const att of attachments) {
+          const safeName = encodeMimeHeader(att.filename || "adjunto");
+          const wrapped = (att.base64.replace(/[^A-Za-z0-9+/=]/g, "").match(/.{1,76}/g) || []).join("\r\n");
+          msgLines.push(
+            `--${mixed}`,
+            `Content-Type: ${att.mime || "application/octet-stream"}; name="${safeName}"`,
+            "Content-Transfer-Encoding: base64",
+            `Content-Disposition: attachment; filename="${safeName}"`,
+            "",
+            wrapped,
+          );
+        }
+        msgLines.push(`--${mixed}--`);
+      } else {
+        headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+        msgLines = [headers.join("\r\n"), "", ...altLines];
+      }
       // Dot-stuff content, then append DATA terminator
       const content = msgLines.join("\r\n");
       return dotStuff(content) + "\r\n.\r\n";
@@ -444,7 +473,27 @@ serve(async (req) => {
       in_reply_to,
       references,
       include_unsubscribe,
+      attachments,
     } = await req.json();
+
+    // Attachments: [{ filename, mime, base64 }]. Guard total size (~15 MB of
+    // base64) so a huge payload can't blow the SMTP DATA / function memory.
+    const safeAttachments = Array.isArray(attachments)
+      ? attachments
+          .filter((a: any) => a && typeof a.base64 === "string" && a.base64.length > 0)
+          .map((a: any) => ({
+            filename: String(a.filename || "adjunto").slice(0, 200),
+            mime: String(a.mime || "application/octet-stream").slice(0, 120),
+            base64: String(a.base64).replace(/\s+/g, ""),
+          }))
+          .slice(0, 10)
+      : [];
+    const totalB64 = safeAttachments.reduce((n, a) => n + a.base64.length, 0);
+    if (totalB64 > 20_000_000) {
+      return new Response(JSON.stringify({ error: "Los adjuntos superan el límite de tamaño (15 MB)." }), {
+        status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Recipient sanitisation. `to_email` can arrive as "Name <email>" or — from older
     // inbox rows where a folded From header was mis-parsed — as just a display name
@@ -567,6 +616,7 @@ serve(async (req) => {
         fromName: senderName,
         messageId: resolvedMessageId,
         unsubscribeUrl,
+        attachments: safeAttachments,
       }
     );
 
