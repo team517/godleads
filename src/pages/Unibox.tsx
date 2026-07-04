@@ -1044,6 +1044,17 @@ export default function Unibox() {
   const backgroundSyncOffsetRef = useRef(0);
   const lastAutoSyncAttemptRef = useRef(0);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  // Reading pane: on desktop the reader is portalled INTO this box so it fills
+  // the "Tu bandeja unificada" area exactly (inline, no popup/overlay).
+  const readingPaneRef = useRef<HTMLDivElement>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setIsDesktop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [aiSuggestion, setAiSuggestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -2277,7 +2288,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-card lg:w-[420px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
+          <div className="flex w-full flex-col bg-card lg:w-[440px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2316,14 +2327,12 @@ export default function Unibox() {
                         {getInitials(msg.from_name, msg.from_email)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
-                            <span className={`text-[15px] truncate ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
-                              {msg.from_name || msg.from_email?.split("@")[0]}
-                            </span>
-                          </div>
-                          <span className="text-[11.5px] text-muted-foreground whitespace-nowrap flex-shrink-0">
+                        <div className="flex items-center gap-2">
+                          {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
+                          <span className={`min-w-0 truncate text-[15px] ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
+                            {msg.from_name || msg.from_email?.split("@")[0]}
+                          </span>
+                          <span className="flex-shrink-0 whitespace-nowrap rounded bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">
                             {shortTimeAgo(msg.received_at)}
                           </span>
                         </div>
@@ -2370,28 +2379,35 @@ export default function Unibox() {
             </ScrollArea>
           </div>
 
-          {/* ── Reading pane (desktop): white empty state, hidden once a message
-              is open (the reader fills this same area inline). ── */}
-          {!selected && (
-            <div className="hidden lg:flex flex-1 flex-col items-center justify-center bg-card px-10 text-center">
-              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-                <MailOpen className="h-8 w-8 text-primary" />
+          {/* ── Reading pane (desktop): persistent box. Shows the empty state
+              underneath; the reader is portalled INTO this same box (absolute
+              inset-0) so it fills exactly this area inline — no popup. ── */}
+          <div ref={readingPaneRef} className="relative hidden lg:flex flex-1 flex-col bg-card">
+            {!selected && (
+              <div className="flex flex-1 flex-col items-center justify-center px-10 text-center">
+                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                  <MailOpen className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
+                <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
+                  Selecciona un mensaje de la lista para leerlo y responder aquí.
+                </p>
               </div>
-              <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
-              <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
-                Selecciona un mensaje de la lista para leerlo y responder aquí.
-              </p>
-            </div>
-          )}
+            )}
+          </div>
 
         </div>
 
-      {/* ── Conversation modal — opens centered with blurred backdrop ── */}
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
+      {/* ── Conversation reader — on desktop it is portalled INTO the reading
+          pane box (fills it exactly, inline, no overlay); on mobile it is a
+          normal fullscreen modal with backdrop. ── */}
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }} modal={!isDesktop}>
         <DialogContent
-          overlayClassName="lg:bg-transparent lg:backdrop-blur-none lg:pointer-events-none"
+          portalContainer={isDesktop ? readingPaneRef.current : null}
+          overlayClassName="lg:hidden"
+          onInteractOutside={(e) => { if (isDesktop) e.preventDefault(); }}
           className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
-            lg:left-[684px] lg:right-6 lg:top-[150px] lg:bottom-6 lg:translate-x-0 lg:translate-y-0 lg:h-auto lg:max-h-none lg:w-auto lg:max-w-none lg:rounded-xl lg:border lg:shadow-sm data-[state=open]:lg:slide-in-from-right-2"
+            lg:absolute lg:inset-0 lg:left-0 lg:right-0 lg:top-0 lg:bottom-0 lg:translate-x-0 lg:translate-y-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-none lg:rounded-none lg:border-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-2"
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (
