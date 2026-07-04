@@ -2270,6 +2270,7 @@ export default function Unibox() {
                 const due = isReminderDue(msg.id);
                 const hasReminder = !!reminders[msg.id];
                 const msgFolder = msg.folder_id ? folders.find((f) => f.id === msg.folder_id) : null;
+                const campaignName = msg.campaign_id ? (campaigns.find((c) => c.id === msg.campaign_id)?.name || null) : null;
                 return (
                   <button
                     key={msg.id}
@@ -2288,33 +2289,35 @@ export default function Unibox() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`text-sm truncate ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/80"}`}>
+                          <span className={`text-[15px] truncate ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
                             {msg.from_name || msg.from_email?.split("@")[0]}
                           </span>
-                          <span className="text-[10px] text-muted-foreground whitespace-nowrap flex-shrink-0">
+                          <span className="text-[11.5px] text-muted-foreground whitespace-nowrap flex-shrink-0">
                             {timeAgo(msg.received_at)}
                           </span>
                         </div>
-                        <p className={`text-[13px] truncate mt-0.5 ${isUnread ? "text-foreground/80" : "text-muted-foreground"}`}>
+                        <p className={`text-sm truncate mt-0.5 ${isUnread ? "text-foreground/85 font-medium" : "text-muted-foreground"}`}>
                           {decodeSubject(msg.subject)}
                         </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <p className="line-clamp-2 flex-1 text-xs leading-5 text-muted-foreground/70">
-                            {cleanBodyText(msg.body_text, true).slice(0, 96)}
-                          </p>
-                          {msgFolder && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium whitespace-nowrap rounded px-1.5 py-0.5" style={{ backgroundColor: `${msgFolder.color}22`, color: msgFolder.color }}>
-                              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: msgFolder.color }} />
-                              {msgFolder.name}
-                            </span>
-                          )}
-                          {catCfg.label && (
-                            <span className={`inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-2 py-0.5 text-[10px] font-semibold ${catCfg.text} whitespace-nowrap`}>
-                              <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} />
-                              {catCfg.label}
-                            </span>
-                          )}
-                        </div>
+                        <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1">
+                          {cleanBodyText(msg.body_text, true).slice(0, 120)}
+                        </p>
+                        {/* Bottom row: campaign tag (only if it belongs to a campaign) + folder */}
+                        {(campaignName || msgFolder) && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                            {campaignName && (
+                              <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/5 px-2 py-0.5 text-[11px] font-semibold text-primary whitespace-nowrap">
+                                <Megaphone className="h-3 w-3" /> {campaignName}
+                              </span>
+                            )}
+                            {msgFolder && (
+                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium whitespace-nowrap" style={{ backgroundColor: `${msgFolder.color}18`, color: msgFolder.color }}>
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: msgFolder.color }} />
+                                {msgFolder.name}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col items-center gap-1 flex-shrink-0">
                         {hasReminder && (
@@ -2354,7 +2357,8 @@ export default function Unibox() {
       {/* ── Conversation modal — opens centered with blurred backdrop ── */}
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
         <DialogContent
-          className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden"
+          className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
+            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[58vw] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 data-[state=open]:lg:slide-in-from-right-6"
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (
