@@ -195,6 +195,10 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   text = text.replace(/^--[a-zA-Z0-9_=.-]{10,}--?\s*$/gm, "");
   text = text.replace(/----_[^\r\n]+/g, "");
   text = text.replace(/^--=_[^\r\n]+/gm, "");
+  // MIME part markers that leak mid-line into previews, e.g. "--_000_URP_", "--_009_om_"
+  text = text.replace(/--_+[A-Za-z0-9]+_+[A-Za-z0-9._-]*/g, " ");
+  // Inline-image content-id refs, e.g. "[cid:Logo-135]"
+  text = text.replace(/\[cid:[^\]]*\]/gi, " ");
   // Remove =_Part_... boundary identifiers and boundary="..." declarations
   text = text.replace(/=_Part_[0-9_.]+/g, "");
   text = text.replace(/boundary="[^"]*"/gi, "");
@@ -333,6 +337,8 @@ function cleanBodyHtml(raw: string | null): string {
   html = html.replace(/^--[a-zA-Z0-9_=.-]{10,}--?\s*$/gm, "");
   html = html.replace(/----_[^\r\n]+/g, "");
   html = html.replace(/^--=_[^\r\n]+/gm, "");
+  html = html.replace(/--_+[A-Za-z0-9]+_+[A-Za-z0-9._-]*/g, " ");
+  html = html.replace(/\[cid:[^\]]*\]/gi, " ");
   html = html.replace(/=_Part_[0-9_.]+/g, "");
   html = html.replace(/boundary="[^"]*"/gi, "");
   html = html.replace(/boundary=[^\s;]+/gi, "");
