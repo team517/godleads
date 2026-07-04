@@ -2248,8 +2248,8 @@ export default function Unibox() {
       ) : (
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
-          {/* ── Message list (full width — detail opens as modal) ── */}
-          <div className="flex w-full flex-col bg-muted/20">
+          {/* ── Message list — fixed width on desktop, full width on mobile ── */}
+          <div className="flex w-full flex-col bg-muted/20 lg:w-[420px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2334,6 +2334,19 @@ export default function Unibox() {
                 </div>
               )}
             </ScrollArea>
+          </div>
+
+          {/* ── Reading pane (desktop): OnePulso empty state. Clicking a message
+              opens the full reader modal, so all reply/translate/forward logic
+              stays exactly as-is. ── */}
+          <div className="hidden lg:flex flex-1 flex-col items-center justify-center bg-background/40 px-10 text-center">
+            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+              <MailOpen className="h-8 w-8 text-primary" />
+            </div>
+            <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
+            <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
+              Selecciona un mensaje de la lista para leerlo y responder aquí.
+            </p>
           </div>
 
         </div>
