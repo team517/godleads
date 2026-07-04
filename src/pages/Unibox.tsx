@@ -2309,7 +2309,7 @@ export default function Unibox() {
                             </span>
                           )}
                           {catCfg.label && (
-                            <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${catCfg.text} whitespace-nowrap`}>
+                            <span className={`inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-2 py-0.5 text-[10px] font-semibold ${catCfg.text} whitespace-nowrap`}>
                               <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} />
                               {catCfg.label}
                             </span>
