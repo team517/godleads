@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "react-router-dom";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend,
@@ -57,6 +58,10 @@ export function ColdEmailChatbot() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
+  const location = useLocation();
+  // The Unibox reader lives bottom-right too — hide this floating bubble there
+  // so it never covers the "Responder" button.
+  const hideHere = location.pathname.startsWith("/unibox");
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -626,6 +631,8 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
       </form>
     </div>
   );
+
+  if (hideHere) return null;
 
   return (
     <>

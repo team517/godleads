@@ -2860,11 +2860,11 @@ export default function Unibox() {
                 {/* Reply box */}
                   <div className="border-t border-border/60 bg-card px-3 pb-20 pt-3 md:px-4 md:pb-6 md:pt-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-[10px] md:text-xs text-muted-foreground truncate">
+                    <div className="flex min-w-0 items-center gap-2 text-[10px] md:text-xs text-muted-foreground">
                       <Send className="h-3 w-3 flex-shrink-0" />
                       <span className="truncate">→ {selected.from_name || selected.from_email}</span>
                       {detectedLang && detectedLang !== "es" && (
-                          <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
+                          <span className="hidden items-center gap-1 whitespace-nowrap rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info sm:inline-flex">
                           <Languages className="h-2.5 w-2.5" />
                           Auto-traducir a {langLabels[detectedLang] || detectedLang}
                         </span>
@@ -2874,12 +2874,13 @@ export default function Unibox() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-7 gap-1.5 border-primary/30 px-2.5 text-[11px] text-primary hover:bg-primary/10"
+                        className="h-7 flex-shrink-0 gap-1.5 border-primary/30 px-2.5 text-[11px] text-primary hover:bg-primary/10"
                         onClick={handleAiSuggest}
                         disabled={aiLoading}
                       >
                         {aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                        {aiLoading ? "Generando…" : "Sugerir respuesta IA"}
+                        <span className="hidden sm:inline">{aiLoading ? "Generando…" : "Sugerir respuesta IA"}</span>
+                        <span className="sm:hidden">{aiLoading ? "…" : "Sugerir IA"}</span>
                       </Button>
                     )}
                   </div>
