@@ -98,7 +98,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           "flex items-center gap-3 rounded-lg py-2.5 text-[13.5px] transition-all duration-150 relative group",
           collapsed ? "justify-center px-0" : "px-3.5",
           isActive
-            ? "bg-sidebar-accent text-sidebar-primary font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
+            ? cn(
+                "text-sidebar-primary font-semibold",
+                // Collapsed: only the square icon marks active — no side bar, no pill.
+                !collapsed && "bg-sidebar-accent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
+              )
             : "font-medium text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent/60"
         )}
       >
