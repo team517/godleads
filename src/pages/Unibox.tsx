@@ -368,7 +368,7 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
 }
 
 /** Clean HTML email body for safe rendering — aggressively strips artifacts for a clean Gmail-style view */
-function cleanBodyHtml(raw: string | null): string {
+function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   if (!raw) return "";
   // Decode a base64-encoded HTML body if it arrived un-decoded
   let html = repairMojibake(decodeBase64Body(raw));
@@ -376,9 +376,12 @@ function cleanBodyHtml(raw: string | null): string {
   html = stripAttachmentJunk(html);
 
   // Cut the quoted reply chain (everything from the gmail/outlook quote block on)
-  // so only the new message is shown — like Gmail collapses the quote.
-  const qIdx = html.search(/<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/i);
-  if (qIdx > 30) html = html.slice(0, qIdx);
+  // so only the new message is shown — like Gmail collapses the quote. When the
+  // user asks for the full email ("Ver completo"), keep the quote.
+  if (!keepQuote) {
+    const qIdx = html.search(/<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/i);
+    if (qIdx > 30) html = html.slice(0, qIdx);
+  }
 
   // Remove MIME headers that leaked into the HTML
   html = html.replace(/^Content-Type:[^\n]+(\n\s+[^\n]+)*/gim, "");
@@ -1200,6 +1203,9 @@ export default function Unibox() {
   const [isDesktop, setIsDesktop] = useState(false);
   // Reader can be expanded to a big centered fullscreen modal (with backdrop).
   const [readerExpanded, setReaderExpanded] = useState(false);
+  // Show the FULL original email (signature + quoted thread) instead of the clean
+  // collapsed version — matches how a normal webmail shows the message.
+  const [showFullEmail, setShowFullEmail] = useState(false);
   // Files the user attaches to a reply (sent via send-email as base64 parts).
   const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
@@ -2465,7 +2471,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-card 2xl:w-[400px] 2xl:flex-shrink-0 2xl:border-r 2xl:border-border/60">
+          <div className="flex w-full flex-col bg-card lg:w-[380px] lg:flex-shrink-0 lg:border-r lg:border-border/60 xl:w-[420px]">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2492,6 +2498,7 @@ export default function Unibox() {
                     key={msg.id}
                     onClick={() => {
                       setSelectedId(msg.id);
+                      setShowFullEmail(false);
                       if (isUnread) handleMarkRead(msg.id);
                     }}
                     className={`relative w-full border-b border-border/30 px-4 py-3.5 text-left transition-all
@@ -2559,7 +2566,7 @@ export default function Unibox() {
           {/* ── Reading pane (desktop): persistent box. Shows the empty state
               underneath; the reader is portalled INTO this same box (absolute
               inset-0) so it fills exactly this area inline — no popup. ── */}
-          <div ref={readingPaneRef} className="relative hidden 2xl:flex flex-1 flex-col bg-card">
+          <div ref={readingPaneRef} className="relative hidden lg:flex flex-1 flex-col bg-card">
             {!selected && (
               <div className="flex flex-1 flex-col items-center justify-center px-10 text-center">
                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -2578,15 +2585,12 @@ export default function Unibox() {
       {/* ── Conversation reader — on desktop it is portalled INTO the reading
           pane box (fills it exactly, inline, no overlay); on mobile it is a
           normal fullscreen modal with backdrop. ── */}
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); } }} modal={!isDesktop || readerExpanded}>
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); setShowFullEmail(false); } }}>
         <DialogContent
-          portalContainer={isDesktop && !readerExpanded ? readingPaneRef.current : null}
-          overlayClassName={isDesktop && !readerExpanded ? "2xl:hidden" : ""}
-          onInteractOutside={(e) => { if (isDesktop && !readerExpanded) e.preventDefault(); }}
-          className={`w-[96vw] max-w-[1300px] h-[92vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
-            isDesktop && !readerExpanded
-              ? "2xl:absolute 2xl:inset-0 2xl:left-0 2xl:right-0 2xl:top-0 2xl:bottom-0 2xl:translate-x-0 2xl:translate-y-0 2xl:h-full 2xl:max-h-none 2xl:w-full 2xl:max-w-none 2xl:rounded-none 2xl:border-0 2xl:shadow-none data-[state=open]:2xl:slide-in-from-right-2"
-              : "lg:h-[94vh]"
+          className={`p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
+            readerExpanded
+              ? "w-screen h-screen max-w-none rounded-none border-0"
+              : "w-[95vw] max-w-[1400px] h-[93vh] rounded-xl"
           }`}
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -2595,7 +2599,7 @@ export default function Unibox() {
                 {/* Subject bar — top like Gmail */}
                 <div className="border-b border-border/60 px-4 pb-4 pt-4 md:px-8 md:pb-5 md:pt-6">
                   <div className="flex items-start gap-3">
-                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 2xl:hidden" onClick={() => setSelectedId(null)}>
+                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 lg:hidden" onClick={() => setSelectedId(null)}>
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div className="flex-1 min-w-0">
@@ -2690,7 +2694,7 @@ export default function Unibox() {
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleArchive(selected.id)} title="Archivar">
                         <Archive className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary 2xl:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
+                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary sm:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
                         {readerExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSelectedId(null)} title="Cerrar">
@@ -2738,6 +2742,19 @@ export default function Unibox() {
                         <button onClick={handleTranslateBody} className="text-sm text-primary font-medium hover:underline">Ver original</button>
                       </div>
                     )}
+
+                    {/* Full-email toggle: reveal signature + quoted thread, like a webmail */}
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setShowFullEmail((v) => !v)}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title={showFullEmail ? "Mostrar solo el mensaje nuevo" : "Mostrar el email completo (firma e hilo citado)"}
+                      >
+                        <Mail className="h-3 w-3" />
+                        {showFullEmail ? "Ver solo lo nuevo" : "Ver email completo"}
+                      </button>
+                    </div>
 
                     {/* Thread messages */}
                     {threadLoading ? (
@@ -2799,7 +2816,7 @@ export default function Unibox() {
                                     [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-3
                                     [&_table]:w-full [&_table]:border-collapse [&_table]:my-3
                                     [&_td]:p-2 [&_th]:p-2 [&_th]:font-semibold"
-                                  dangerouslySetInnerHTML={{ __html: cleanBodyHtml(tm.body_html) }}
+                                  dangerouslySetInnerHTML={{ __html: cleanBodyHtml(tm.body_html, showFullEmail) }}
                                 />
                               ) : (
                                 <div className="text-[15px] text-foreground leading-[1.75] whitespace-pre-wrap break-words">
@@ -2838,7 +2855,7 @@ export default function Unibox() {
                                 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6
                                 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md [&_img]:my-3
                                 [&_strong]:font-semibold [&_blockquote]:border-l-4 [&_blockquote]:border-primary/30 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-muted-foreground"
-                              dangerouslySetInnerHTML={{ __html: cleanBodyHtml(selected.body_html) }}
+                              dangerouslySetInnerHTML={{ __html: cleanBodyHtml(selected.body_html, showFullEmail) }}
                             />
                           ) : (
                             <div className="text-[15px] text-foreground leading-[1.8] whitespace-pre-wrap break-words">
