@@ -924,6 +924,21 @@ function timeAgo(dateStr: string) {
   return formatDistanceToNow(new Date(dateStr), { addSuffix: true, locale: es });
 }
 
+// Compact "hace X" — Spanish formatDistanceToNow gets long ("hace alrededor de 2
+// horas") and clipped in the narrow list. This stays short and always fits.
+function shortTimeAgo(dateStr: string) {
+  const d = new Date(dateStr);
+  const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (secs < 60) return "ahora";
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h} h`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `hace ${days} d`;
+  return d.toLocaleDateString("es", { day: "numeric", month: "short" });
+}
+
 function getInitials(name: string | null, email: string): string {
   if (name && name.trim().length > 0) {
     const parts = name.trim().split(/\s+/);
@@ -2289,11 +2304,14 @@ export default function Unibox() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`text-[15px] truncate ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
-                            {msg.from_name || msg.from_email?.split("@")[0]}
-                          </span>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
+                            <span className={`text-[15px] truncate ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
+                              {msg.from_name || msg.from_email?.split("@")[0]}
+                            </span>
+                          </div>
                           <span className="text-[11.5px] text-muted-foreground whitespace-nowrap flex-shrink-0">
-                            {timeAgo(msg.received_at)}
+                            {shortTimeAgo(msg.received_at)}
                           </span>
                         </div>
                         <p className={`text-sm truncate mt-0.5 ${isUnread ? "text-foreground/85 font-medium" : "text-muted-foreground"}`}>
@@ -2629,7 +2647,7 @@ export default function Unibox() {
                 </ScrollArea>
 
                 {/* Reply box */}
-                  <div className="border-t border-border/60 bg-muted/10 px-3 pb-20 pt-3 md:px-4 md:pb-6 md:pt-3">
+                  <div className="border-t border-border/60 bg-card px-3 pb-20 pt-3 md:px-4 md:pb-6 md:pt-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-[10px] md:text-xs text-muted-foreground truncate">
                       <Send className="h-3 w-3 flex-shrink-0" />
