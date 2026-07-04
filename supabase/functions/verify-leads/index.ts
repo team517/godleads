@@ -28,7 +28,51 @@ const TEMP_DOMAINS = new Set([
   "moakt.cc","moakt.ws","mailgw.com","generator.email","emailnax.com","safetymail.info"
 ]);
 
-const GENERIC_PREFIXES = ["info", "support", "admin", "contact", "sales", "hello", "help", "noreply", "no-reply", "webmaster", "postmaster"];
+// Role / generic mailboxes — real verifiers flag these "risky" (not a person).
+const ROLE_PREFIXES = new Set([
+  "info","support","admin","administrator","contact","contacto","sales","ventas","hello","hola",
+  "help","ayuda","soporte","noreply","no-reply","donotreply","do-not-reply","webmaster","postmaster",
+  "hostmaster","abuse","billing","facturacion","careers","jobs","empleo","rrhh","hr","marketing",
+  "press","prensa","office","oficina","team","equipo","enquiries","feedback","legal","privacy",
+  "security","service","servicio","newsletter","subscribe","unsubscribe","mailer","mail","email",
+]);
+
+// From-identity used for the SMTP probe. A real, MX-backed domain gets far fewer
+// defensive rejections than a random one.
+const PROBE_FROM = "verify@onepulso.online";
+const PROBE_HELO = "onepulso.online";
+
+// Common free/consumer domains for typo ("did you mean") detection.
+const COMMON_DOMAINS = [
+  "gmail.com","googlemail.com","yahoo.com","yahoo.es","yahoo.co.uk","hotmail.com","hotmail.es",
+  "hotmail.co.uk","outlook.com","outlook.es","live.com","live.co.uk","msn.com","icloud.com",
+  "me.com","aol.com","protonmail.com","proton.me","gmx.com","gmx.net","mail.com","yandex.com","zoho.com",
+];
+
+function randomString(n: number): string {
+  const a = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = ""; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)];
+  return s;
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[m][n];
+}
+
+/** "gmial.com" → "gmail.com". Returns null if the domain is fine or unrecognisable. */
+function suggestDomain(domain: string): string | null {
+  for (const d of COMMON_DOMAINS) {
+    if (d === domain) return null;
+    if (Math.abs(d.length - domain.length) <= 2 && levenshtein(domain, d) <= 1) return d;
+  }
+  return null;
+}
 
 function validateFormat(email: string): boolean {
   return /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(email);
@@ -70,25 +114,72 @@ async function checkDns(domain: string): Promise<{ exists: boolean; hasMx: boole
   }
 }
 
-async function checkSmtp(mxHost: string): Promise<boolean> {
+type SmtpVerdict = "deliverable" | "undeliverable" | "catch_all" | "unknown";
+
+/**
+ * Real mailbox check via the SMTP conversation, exactly like ZeroBounce/NeverBounce:
+ *   EHLO → MAIL FROM → RCPT TO:<target> → RCPT TO:<random@domain> (catch-all probe) → QUIT
+ * Interprets the RCPT reply codes:
+ *   250/251 target + reject random  → deliverable (mailbox exists)
+ *   250/251 target + accept random  → catch_all  (server accepts everything → can't confirm)
+ *   55x target + not-55x random     → undeliverable (mailbox really doesn't exist)
+ *   anything else / blocked / 4xx   → unknown (never delete on a guess)
+ * NOTE: Supabase Edge often can't open port 25 (egress blocked) — then this returns
+ * "unknown" and verifyEmail falls back to the MX-level verdict. For guaranteed
+ * mailbox-level results this probe must run somewhere with port-25 egress (a VPS)
+ * or be swapped for a verification API.
+ */
+async function smtpVerify(mxHost: string, email: string, domain: string): Promise<SmtpVerdict> {
+  let conn: Deno.Conn | null = null;
   try {
-    const conn = await withTimeout(
-      Deno.connect({ hostname: mxHost, port: 25, transport: "tcp" }),
-      2000,
-      null
-    );
-    if (!conn) return true; // timeout = inconclusive, don't mark invalid
-    
-    const buf = new Uint8Array(1024);
-    const n = await withTimeout(conn.read(buf), 3000, null);
-    conn.close();
-    if (n && typeof n === "number") {
-      const greeting = new TextDecoder().decode(buf.subarray(0, n));
-      return greeting.startsWith("220");
-    }
-    return true; // inconclusive
+    conn = await withTimeout(Deno.connect({ hostname: mxHost, port: 25 }), 4000, null as unknown as Deno.Conn);
+    if (!conn) return "unknown";
+    const dec = new TextDecoder();
+    const enc = new TextEncoder();
+
+    const read = async (): Promise<number> => {
+      let result = "";
+      while (true) {
+        const buf = new Uint8Array(1024);
+        const n = await withTimeout(conn!.read(buf), 4000, null);
+        if (!n || typeof n !== "number") break;
+        result += dec.decode(buf.subarray(0, n));
+        const lines = result.split(/\r?\n/).filter((l) => l.length > 0);
+        const last = lines[lines.length - 1] || "";
+        if (/^\d{3} /.test(last)) break; // final line (space, not '-')
+      }
+      const lines = result.trim().split(/\r?\n/);
+      const code = parseInt((lines[lines.length - 1] || "").slice(0, 3), 10);
+      return isNaN(code) ? 0 : code;
+    };
+    const cmd = async (line: string): Promise<number> => {
+      await conn!.write(enc.encode(line + "\r\n"));
+      return await read();
+    };
+
+    if ((await read()) !== 220) { try { conn.close(); } catch { /* */ } return "unknown"; }
+
+    let ehlo = await cmd(`EHLO ${PROBE_HELO}`);
+    if (ehlo !== 250) ehlo = await cmd(`HELO ${PROBE_HELO}`);
+    if (ehlo !== 250) { try { conn.close(); } catch { /* */ } return "unknown"; }
+
+    const mailFrom = await cmd(`MAIL FROM:<${PROBE_FROM}>`);
+    if (mailFrom !== 250) { try { conn.close(); } catch { /* */ } return "unknown"; }
+
+    const target = await cmd(`RCPT TO:<${email}>`);
+    const random = await cmd(`RCPT TO:<probe-${randomString(12)}@${domain}>`);
+    try { await cmd("QUIT"); } catch { /* */ }
+    try { conn.close(); } catch { /* */ }
+
+    const accepts = (c: number) => c === 250 || c === 251;
+    const rejects = (c: number) => [550, 551, 553, 554, 501, 552, 505, 511].includes(c);
+
+    if (accepts(target)) return accepts(random) ? "catch_all" : "deliverable";
+    if (rejects(target)) return rejects(random) ? "unknown" : "undeliverable"; // both-reject = anti-probe → don't trust
+    return "unknown"; // 4xx greylist / odd codes
   } catch {
-    return true; // Don't mark as invalid if we can't connect
+    try { conn?.close(); } catch { /* */ }
+    return "unknown";
   }
 }
 
@@ -101,21 +192,32 @@ async function verifyEmail(email: string): Promise<{ status: string; reason: str
   const domain = parts[1];
   if (!domain || !localPart) return { status: "invalid", reason: "formato inválido" };
 
-  if (TEMP_DOMAINS.has(domain)) return { status: "invalid", reason: "email temporal" };
+  if (TEMP_DOMAINS.has(domain)) return { status: "invalid", reason: "email temporal / desechable" };
 
   const dns = await checkDns(domain);
-  
-  if (!dns.exists) return { status: "invalid", reason: "dominio no existe" };
-  if (!dns.hasMx) return { status: "invalid", reason: "sin registros MX" };
+  if (!dns.exists) {
+    const hint = suggestDomain(domain);
+    return { status: "invalid", reason: hint ? `dominio no existe (¿quisiste decir ${hint}?)` : "dominio no existe" };
+  }
+  if (!dns.hasMx) return { status: "invalid", reason: "el dominio no recibe correo (sin MX)" };
 
-  if (dns.mxHosts.length > 0) {
-    const smtpOk = await checkSmtp(dns.mxHosts[0]);
-    if (!smtpOk) return { status: "invalid", reason: "servidor MX no responde" };
+  const isRole = ROLE_PREFIXES.has(localPart);
+
+  // Mailbox-level probe against the primary MX (best-effort).
+  const smtp: SmtpVerdict = dns.mxHosts.length > 0 ? await smtpVerify(dns.mxHosts[0], normalized, domain) : "unknown";
+
+  if (smtp === "undeliverable") return { status: "invalid", reason: "el buzón no existe (SMTP 550)" };
+  if (smtp === "catch_all") return { status: "risky", reason: "dominio catch-all: acepta todo, buzón no confirmable" };
+  if (smtp === "deliverable") {
+    return isRole
+      ? { status: "risky", reason: "buzón confirmado pero es genérico/rol" }
+      : { status: "valid", reason: "buzón confirmado por SMTP" };
   }
 
-  if (GENERIC_PREFIXES.some(p => localPart === p)) return { status: "risky", reason: "email genérico" };
-
-  return { status: "valid", reason: "email válido" };
+  // SMTP inconclusive (port 25 blocked / greylist): fall back to MX-level confidence.
+  return isRole
+    ? { status: "risky", reason: "email genérico/rol (dominio válido, buzón no confirmado)" }
+    : { status: "valid", reason: "dominio válido (buzón no confirmado por SMTP)" };
 }
 
 serve(async (req) => {
@@ -184,7 +286,7 @@ serve(async (req) => {
         }
         return withTimeout(
           verifyEmail(l.email),
-          5000,
+          18000, // room for the full SMTP RCPT conversation before giving up
           { status: "valid", reason: "verificación timeout - marcado válido" }
         );
       }));
