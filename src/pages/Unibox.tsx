@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1048,6 +1048,8 @@ export default function Unibox() {
   // the "Tu bandeja unificada" area exactly (inline, no popup/overlay).
   const readingPaneRef = useRef<HTMLDivElement>(null);
   const [isDesktop, setIsDesktop] = useState(false);
+  // Reader can be expanded to a big centered fullscreen modal (with backdrop).
+  const [readerExpanded, setReaderExpanded] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     const apply = () => setIsDesktop(mq.matches);
@@ -2329,11 +2331,11 @@ export default function Unibox() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
-                          <span className={`min-w-0 truncate text-[15px] ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
-                            {msg.from_name || msg.from_email?.split("@")[0]}
-                          </span>
                           <span className="flex-shrink-0 whitespace-nowrap rounded bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">
                             {shortTimeAgo(msg.received_at)}
+                          </span>
+                          <span className={`min-w-0 truncate text-[15px] ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
+                            {msg.from_name || msg.from_email?.split("@")[0]}
                           </span>
                         </div>
                         <p className={`text-sm truncate mt-0.5 ${isUnread ? "text-foreground/85 font-medium" : "text-muted-foreground"}`}>
@@ -2401,13 +2403,16 @@ export default function Unibox() {
       {/* ── Conversation reader — on desktop it is portalled INTO the reading
           pane box (fills it exactly, inline, no overlay); on mobile it is a
           normal fullscreen modal with backdrop. ── */}
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }} modal={!isDesktop}>
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); } }} modal={!isDesktop || readerExpanded}>
         <DialogContent
-          portalContainer={isDesktop ? readingPaneRef.current : null}
-          overlayClassName="lg:hidden"
-          onInteractOutside={(e) => { if (isDesktop) e.preventDefault(); }}
-          className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
-            lg:absolute lg:inset-0 lg:left-0 lg:right-0 lg:top-0 lg:bottom-0 lg:translate-x-0 lg:translate-y-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-none lg:rounded-none lg:border-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-2"
+          portalContainer={isDesktop && !readerExpanded ? readingPaneRef.current : null}
+          overlayClassName={readerExpanded ? "" : "lg:hidden"}
+          onInteractOutside={(e) => { if (isDesktop && !readerExpanded) e.preventDefault(); }}
+          className={`max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden ${
+            isDesktop && !readerExpanded
+              ? "lg:absolute lg:inset-0 lg:left-0 lg:right-0 lg:top-0 lg:bottom-0 lg:translate-x-0 lg:translate-y-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-none lg:rounded-none lg:border-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-2"
+              : "lg:w-[96vw] lg:max-w-[1400px] lg:h-[94vh] lg:rounded-xl lg:border"
+          }`}
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (
@@ -2509,6 +2514,9 @@ export default function Unibox() {
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleArchive(selected.id)} title="Archivar">
                         <Archive className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary lg:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
+                        {readerExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSelectedId(null)} title="Cerrar">
                         <X className="h-4 w-4" />

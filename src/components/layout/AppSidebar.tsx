@@ -103,7 +103,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         )}
       >
         <span className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-[4px] transition-colors",
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-none transition-colors",
           isActive
             ? "bg-sidebar-primary text-white shadow-sm"
             : "bg-muted/50 text-sidebar-foreground/70 group-hover:bg-sidebar-accent group-hover:text-sidebar-primary"
