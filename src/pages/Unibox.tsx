@@ -1204,7 +1204,7 @@ export default function Unibox() {
   const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1280px)");
+    const mq = window.matchMedia("(min-width: 1536px)");
     const apply = () => setIsDesktop(mq.matches);
     apply();
     mq.addEventListener("change", apply);
@@ -2465,7 +2465,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-card xl:w-[360px] xl:flex-shrink-0 xl:border-r xl:border-border/60 2xl:w-[420px]">
+          <div className="flex w-full flex-col bg-card 2xl:w-[400px] 2xl:flex-shrink-0 2xl:border-r 2xl:border-border/60">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2559,7 +2559,7 @@ export default function Unibox() {
           {/* ── Reading pane (desktop): persistent box. Shows the empty state
               underneath; the reader is portalled INTO this same box (absolute
               inset-0) so it fills exactly this area inline — no popup. ── */}
-          <div ref={readingPaneRef} className="relative hidden xl:flex flex-1 flex-col bg-card">
+          <div ref={readingPaneRef} className="relative hidden 2xl:flex flex-1 flex-col bg-card">
             {!selected && (
               <div className="flex flex-1 flex-col items-center justify-center px-10 text-center">
                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -2581,12 +2581,12 @@ export default function Unibox() {
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); } }} modal={!isDesktop || readerExpanded}>
         <DialogContent
           portalContainer={isDesktop && !readerExpanded ? readingPaneRef.current : null}
-          overlayClassName={isDesktop && !readerExpanded ? "xl:hidden" : ""}
+          overlayClassName={isDesktop && !readerExpanded ? "2xl:hidden" : ""}
           onInteractOutside={(e) => { if (isDesktop && !readerExpanded) e.preventDefault(); }}
-          className={`w-[95vw] max-w-5xl h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden ${
+          className={`w-[96vw] max-w-[1300px] h-[92vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
             isDesktop && !readerExpanded
-              ? "xl:absolute xl:inset-0 xl:left-0 xl:right-0 xl:top-0 xl:bottom-0 xl:translate-x-0 xl:translate-y-0 xl:h-full xl:max-h-none xl:w-full xl:max-w-none xl:rounded-none xl:border-0 xl:shadow-none data-[state=open]:xl:slide-in-from-right-2"
-              : "lg:w-[96vw] lg:max-w-[1400px] lg:h-[94vh] lg:rounded-xl lg:border"
+              ? "2xl:absolute 2xl:inset-0 2xl:left-0 2xl:right-0 2xl:top-0 2xl:bottom-0 2xl:translate-x-0 2xl:translate-y-0 2xl:h-full 2xl:max-h-none 2xl:w-full 2xl:max-w-none 2xl:rounded-none 2xl:border-0 2xl:shadow-none data-[state=open]:2xl:slide-in-from-right-2"
+              : "lg:h-[94vh]"
           }`}
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -2595,7 +2595,7 @@ export default function Unibox() {
                 {/* Subject bar — top like Gmail */}
                 <div className="border-b border-border/60 px-4 pb-4 pt-4 md:px-8 md:pb-5 md:pt-6">
                   <div className="flex items-start gap-3">
-                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 xl:hidden" onClick={() => setSelectedId(null)}>
+                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 2xl:hidden" onClick={() => setSelectedId(null)}>
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div className="flex-1 min-w-0">
@@ -2690,7 +2690,7 @@ export default function Unibox() {
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleArchive(selected.id)} title="Archivar">
                         <Archive className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary xl:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
+                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary 2xl:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
                         {readerExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSelectedId(null)} title="Cerrar">
@@ -2701,8 +2701,8 @@ export default function Unibox() {
                 </div>
 
                 {/* Conversation thread */}
-                <ScrollArea className="min-h-0 flex-1">
-                  <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-4 md:px-8 md:py-6">
+                <ScrollArea className="min-h-0 flex-1 outline-none focus:outline-none [&_[data-radix-scroll-area-viewport]]:outline-none [&_[data-radix-scroll-area-viewport]]:focus-visible:outline-none [&_[data-radix-scroll-area-viewport]>div]:!block">
+                  <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-5 md:px-8 md:py-7">
                     {/* Reminder banner */}
                     {reminders[selected.id] && (
                       <div className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${isReminderDue(selected.id) ? "border border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
