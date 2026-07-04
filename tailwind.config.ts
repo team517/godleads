@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Poppins", "Inter", "system-ui", "sans-serif"],
-        display: ["Poppins", "Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
+        sans: ["DM Sans", "Inter", "system-ui", "sans-serif"],
+        display: ["DM Sans", "Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
         serif: ["Instrument Serif", "Georgia", "serif"],
       },
       colors: {

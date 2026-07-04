@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,51 +6,51 @@
 
 @layer base {
   :root {
-    /* ── OnePulso panel theme (Smartlead-style): Poppins · violet #7c3aed ·
-       navy topbar #0b0a52 · light #f6f7fb bg · white sidebar. Only token VALUES
-       changed — every component re-themes automatically, no logic touched. ── */
-    --background: 228 33% 97%;        /* #f6f7fb light panel bg */
-    --foreground: 217 33% 17%;        /* #1e293b slate-800 */
+    /* ── OnePulso brand tokens (from OnePulso App design): DM Sans · violet
+       #6a4cf7 · navy topbar #191152 · light #f4f5f9 bg · white sidebar. Token
+       VALUES only — every component re-themes automatically, no logic touched. ── */
+    --background: 228 24% 97%;        /* #f4f5f9 light panel bg */
+    --foreground: 236 19% 17%;        /* #232433 */
 
     --card: 0 0% 100%;
-    --card-foreground: 217 33% 17%;
+    --card-foreground: 236 19% 17%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 217 33% 17%;
+    --popover-foreground: 236 19% 17%;
 
-    --primary: 262 83% 58%;           /* #7c3aed violet */
+    --primary: 251 91% 63%;           /* #6a4cf7 violet */
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 262 90% 66%;
+    --primary-glow: 250 100% 69%;     /* #7b62ff */
 
-    --secondary: 228 27% 96%;         /* #f3f4f8 */
-    --secondary-foreground: 217 33% 17%;
+    --secondary: 228 27% 96%;
+    --secondary-foreground: 236 19% 17%;
 
     --muted: 228 27% 96%;
-    --muted-foreground: 215 16% 47%;  /* #64748b slate-500 */
+    --muted-foreground: 231 9% 46%;   /* #6b6e80 */
 
-    --accent: 252 65% 94%;            /* #e7e2fb light purple */
-    --accent-foreground: 262 69% 45%;
+    --accent: 255 100% 97%;           /* #f4f0ff light violet */
+    --accent-foreground: 251 91% 60%;
 
-    --destructive: 0 72% 50%;         /* #dc2626 */
+    --destructive: 0 72% 50%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 223 21% 94%;            /* #eceef3 */
     --input: 223 21% 94%;
-    --ring: 262 83% 58%;
+    --ring: 251 91% 63%;
 
     --radius: 0.625rem;
 
     --sidebar-background: 0 0% 100%;   /* white sidebar */
-    --sidebar-foreground: 215 25% 27%; /* #334155 */
-    --sidebar-primary: 262 83% 58%;    /* #7c3aed active */
+    --sidebar-foreground: 231 21% 26%; /* #3b3d52 */
+    --sidebar-primary: 251 91% 63%;    /* #6a4cf7 active */
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 252 60% 96%;     /* light purple hover */
-    --sidebar-accent-foreground: 262 69% 45%;
+    --sidebar-accent: 255 100% 97%;    /* #f4f0ff hover */
+    --sidebar-accent-foreground: 251 91% 60%;
     --sidebar-border: 223 21% 94%;
-    --sidebar-ring: 262 83% 58%;
+    --sidebar-ring: 251 91% 63%;
 
-    /* Navy top bar (#0b0a52) — Smartlead signature */
-    --topbar: 241 78% 18%;
+    /* Navy top bar #191152 (OnePulso) */
+    --topbar: 248 66% 19%;
     --topbar-foreground: 0 0% 100%;
 
     --success: 142 76% 36%;           /* #16a34a */
@@ -132,10 +132,10 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Poppins across the panel — Smartlead-style display face for titles too. */
+  /* DM Sans across the panel — OnePulso brand face for titles too. */
   h1, h2 {
-    font-family: "Poppins", "Inter", system-ui, sans-serif;
-    letter-spacing: -0.01em;
+    font-family: "DM Sans", "Inter", system-ui, sans-serif;
+    letter-spacing: -0.02em;
     font-weight: 700;
   }
 }
