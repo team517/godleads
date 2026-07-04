@@ -102,7 +102,14 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
             : "font-medium text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent/60"
         )}
       >
-        <item.icon strokeWidth={1.7} className={cn("h-[19px] w-[19px] shrink-0 transition-colors", isActive ? "text-sidebar-primary" : "text-sidebar-foreground/70 group-hover:text-sidebar-primary")} />
+        <span className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors",
+          isActive
+            ? "bg-sidebar-primary text-white shadow-sm"
+            : "bg-muted/50 text-sidebar-foreground/70 group-hover:bg-sidebar-accent group-hover:text-sidebar-primary"
+        )}>
+          <item.icon strokeWidth={1.9} className="h-[17px] w-[17px]" />
+        </span>
         {!collapsed && item.label}
         {item.path === "/unibox" && unreadCount > 0 && (
           collapsed ? (
