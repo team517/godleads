@@ -1054,6 +1054,79 @@ function humanSize(base64: string): string {
   return Math.max(1, Math.round(bytes / 1024)) + " KB";
 }
 
+function humanBytes(bytes: number): string {
+  if (!bytes) return "";
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+export type StoredAttachment = { name: string; mime: string; size: number; path: string };
+
+/** Attachment whose binary lives in Supabase Storage. Opens/downloads via a
+ *  short-lived signed URL; images get an inline thumbnail. */
+function StoredAttachmentCard({ att }: { att: StoredAttachment }) {
+  const kind = useMemo(() => fileKind(att.name, att.mime), [att.name, att.mime]);
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    if (!kind.isImage) return;
+    let alive = true;
+    supabase.storage.from("inbox-attachments").createSignedUrl(att.path, 3600).then(({ data }) => {
+      if (alive) setThumb(data?.signedUrl || null);
+    });
+    return () => { alive = false; };
+  }, [att.path, kind.isImage]);
+
+  const open = async () => {
+    const { data } = await supabase.storage.from("inbox-attachments").createSignedUrl(att.path, 3600);
+    if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener");
+  };
+  const download = async () => {
+    const { data } = await supabase.storage.from("inbox-attachments").createSignedUrl(att.path, 3600, { download: att.name });
+    if (data?.signedUrl) {
+      const a = document.createElement("a");
+      a.href = data.signedUrl; a.download = att.name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  };
+
+  if (kind.isImage && thumb) {
+    return (
+      <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+        <button type="button" onClick={open} title={`Ver ${att.name}`} className="block">
+          <img src={thumb} alt={att.name} className="max-h-56 w-auto max-w-full object-contain" />
+        </button>
+        <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-card/80 px-2.5 py-1.5">
+          <span className="min-w-0 truncate text-[11px] font-medium text-foreground" title={att.name}>{att.name}</span>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">{humanBytes(att.size)}</span>
+            <button type="button" onClick={download} title="Descargar" className="text-muted-foreground hover:text-primary"><Download className="h-3.5 w-3.5" /></button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
+      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${kind.color}`}>
+        <FileText className="h-5 w-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-semibold text-foreground" title={att.name}>{att.name}</div>
+        <div className="text-[11px] text-muted-foreground">{kind.label}{att.size ? ` · ${humanBytes(att.size)}` : ""}</div>
+        <div className="mt-1 flex items-center gap-3">
+          <button type="button" onClick={open} className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline">
+            <MailOpen className="h-3 w-3" /> Ver
+          </button>
+          <button type="button" onClick={download} className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline">
+            <Download className="h-3 w-3" /> Descargar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** One received attachment. Images show an inline thumbnail; everything else a
  *  typed file card. Both open in a new tab and download. */
 function AttachmentCard({ att }: { att: ParsedAttachment }) {
@@ -1120,26 +1193,31 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
 /** Shows attachments (e.g. a PDF) under a message. When the base64 payload is
  *  present it renders rich cards (Ver/Descargar + image previews); otherwise a
  *  name-only chip. */
-function AttachmentChips({ bodyText, bodyHtml }: { bodyText?: string | null; bodyHtml?: string | null }) {
+function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | null; bodyHtml?: string | null; stored?: StoredAttachment[] | null }) {
+  // Prefer attachments stored in Storage by the sync (real binary → view/download).
+  const storedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.path) : []), [stored]);
+
   const atts = useMemo(() => {
+    if (storedAtts.length > 0) return [];
     const found = [...extractAttachments(bodyHtml || ""), ...extractAttachments(bodyText || "")];
     const byKey = new Map<string, ParsedAttachment>();
     for (const a of found) if (!byKey.has(a.name)) byKey.set(a.name, a);
     return Array.from(byKey.values());
-  }, [bodyText, bodyHtml]);
+  }, [bodyText, bodyHtml, storedAtts]);
 
-  // Fallback: names only (no decodable binary) — still show them as chips.
+  // Fallback: names only (no stored binary and none decodable from the body).
   const nameOnly = useMemo(() => {
-    if (atts.length > 0) return [];
+    if (storedAtts.length > 0 || atts.length > 0) return [];
     const set = new Set<string>();
     extractAttachmentNames(bodyText || "").forEach((n) => set.add(n));
     extractAttachmentNames(bodyHtml || "").forEach((n) => set.add(n));
     return Array.from(set);
-  }, [atts, bodyText, bodyHtml]);
+  }, [storedAtts, atts, bodyText, bodyHtml]);
 
-  if (atts.length === 0 && nameOnly.length === 0) return null;
+  if (storedAtts.length === 0 && atts.length === 0 && nameOnly.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2.5">
+      {storedAtts.map((att) => <StoredAttachmentCard key={att.path} att={att} />)}
       {atts.map((att) => <AttachmentCard key={att.name} att={att} />)}
       {nameOnly.map((name) => (
         <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
@@ -2823,7 +2901,7 @@ export default function Unibox() {
                                   {cleanBodyText(tm.body_text, true)}
                                 </div>
                               )}
-                              {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} />}
+                              {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} stored={tm.attachments} />}
                             </div>
                           </div>
                         );
@@ -2862,7 +2940,7 @@ export default function Unibox() {
                               {cleanBodyText(selected.body_text, true)}
                             </div>
                           )}
-                          <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} />
+                          <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} stored={selected.attachments} />
                         </div>
                       </div>
                     )}

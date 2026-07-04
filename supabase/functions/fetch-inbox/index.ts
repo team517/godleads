@@ -6,6 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+interface ParsedAttachment { name: string; mime: string; base64: string }
+
 interface ImapMessage {
   from_email: string;
   from_name: string;
@@ -14,6 +16,58 @@ interface ImapMessage {
   body_html: string;
   message_id: string;
   date: string;
+  attachments: ParsedAttachment[];
+}
+
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // skip anything bigger than 15 MB
+const MAX_ATTACHMENTS_PER_MSG = 10;
+
+/** Decode an RFC2231/2047 attachment filename best-effort. */
+function decodeAttachmentName(raw: string): string {
+  let v = (raw || "").trim().replace(/^"|"$/g, "");
+  const r2231 = v.match(/^[^']*''(.+)$/);
+  if (r2231) { try { return decodeURIComponent(r2231[1]); } catch { /* keep */ } }
+  return v;
+}
+
+/** Pull downloadable attachment parts (name + mime + base64) out of the raw MIME
+ *  body. Same idea as the frontend parser but runs in the sync so the binary is
+ *  captured before it's discarded. */
+function extractAttachments(raw: string): ParsedAttachment[] {
+  if (!raw || raw.length < 64) return [];
+  const out: ParsedAttachment[] = [];
+  const bMatch = raw.match(/boundary\s*=\s*"?([^";\r\n]+)"?/i);
+  let parts: string[];
+  if (bMatch) {
+    const esc = bMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    parts = raw.split(new RegExp("--" + esc + "(?:--)?[ \\t]*\\r?\\n", "g"));
+  } else {
+    parts = raw.split(/\r?\n--[A-Za-z0-9'()+_,\-./:=?]{6,}(?:--)?[ \t]*\r?\n/);
+  }
+  for (const part of parts) {
+    if (out.length >= MAX_ATTACHMENTS_PER_MSG) break;
+    if (!/Content-Transfer-Encoding:\s*base64/i.test(part)) continue;
+    const nameM = part.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
+    if (!nameM) continue;
+    const name = decodeAttachmentName(nameM[1] || nameM[2] || "adjunto").slice(0, 200);
+    const typeM = part.match(/Content-Type:\s*([^;\r\n]+)/i);
+    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
+    const sp = part.split(/\r?\n\r?\n/);
+    if (sp.length < 2) continue;
+    const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
+    if (b64.length < 40) continue;
+    if (b64.length * 0.75 > MAX_ATTACHMENT_BYTES) continue;
+    out.push({ name, mime, base64: b64 });
+  }
+  return out;
+}
+
+/** base64 → bytes (Deno-safe). */
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
 /** Remove null bytes and invalid Unicode escape sequences that PostgreSQL rejects */
@@ -385,6 +439,7 @@ async function fetchImapMessages(
             body_html: bodyHtml,
             message_id: msgId,
             date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
+            attachments: extractAttachments(rawBody),
           });
         }
       }
@@ -583,6 +638,44 @@ serve(async (req) => {
           }
         }
 
+        // ── Attachments → Storage ──────────────────────────────────────────
+        // Skip messages already in the DB (their row + attachments already exist)
+        // so we don't re-upload the same PDF on every sync.
+        const withAtt = result.messages.filter((m) => (m.attachments?.length || 0) > 0);
+        if (withAtt.length > 0) {
+          const attMsgIds = withAtt.map((m) => m.message_id).filter(Boolean);
+          const alreadyStored = new Set<string>();
+          if (attMsgIds.length > 0) {
+            const { data: existRows } = await adminClient
+              .from("inbox_messages")
+              .select("message_id")
+              .eq("user_id", account.user_id)
+              .in("message_id", attMsgIds);
+            for (const r of existRows || []) if (r.message_id) alreadyStored.add(r.message_id);
+          }
+          for (const msg of withAtt) {
+            if (msg.message_id && alreadyStored.has(msg.message_id)) { (msg as unknown as { _stored: unknown[] })._stored = []; continue; }
+            const stored: { name: string; mime: string; size: number; path: string }[] = [];
+            const msgKey = (msg.message_id || `${msg.from_email}-${msg.date}`).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 90) || "msg";
+            const nameCount: Record<string, number> = {};
+            for (const att of msg.attachments) {
+              try {
+                const bytes = base64ToBytes(att.base64);
+                let safeName = att.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "adjunto";
+                // De-dupe identical filenames within one message
+                if (nameCount[safeName] != null) { nameCount[safeName]++; safeName = `${nameCount[safeName]}_${safeName}`; }
+                else nameCount[safeName] = 0;
+                const path = `${account.user_id}/${msgKey}/${safeName}`;
+                const { error: upErr } = await adminClient.storage
+                  .from("inbox-attachments")
+                  .upload(path, bytes, { contentType: att.mime, upsert: true });
+                if (!upErr) stored.push({ name: att.name, mime: att.mime, size: bytes.length, path });
+              } catch (_e) { /* skip this attachment */ }
+            }
+            (msg as unknown as { _stored: unknown[] })._stored = stored;
+          }
+        }
+
         // Build batch insert payload (dedupe_hash trigger + unique constraint will reject duplicates)
         const rows = result.messages.map(msg => {
           let parsedDate: string;
@@ -601,6 +694,7 @@ serve(async (req) => {
             body_text: msg.body_text,
             body_html: msg.body_html || null,
             received_at: parsedDate,
+            attachments: (msg as unknown as { _stored?: unknown[] })._stored || [],
           };
         });
 
