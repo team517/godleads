@@ -56,8 +56,12 @@ function evaluate(m: any): Check[] {
       msg: `🚀 SE HA PASADO DE LO PROGRAMADO (riesgo de quemar dominios): ${
         [m.accounts_over_cap > 0 ? `cuentas por encima del tope diario → ${m.over_cap_detail}` : "",
          m.campaigns_over_limit > 0 ? `campañas por encima de su límite → ${m.over_limit_detail}` : ""].filter(Boolean).join(" · ")}` },
-    { key: "engine_dead", failing: coreHours && m.active_campaigns > 0 && m.pending_leads > 0 && (m.last_send_min_ago == null || m.last_send_min_ago > 120),
-      msg: `⛔ El motor de envío parece PARADO: ${m.last_send_min_ago ?? "∞"} min sin ningún envío (con ${m.pending_leads} leads pendientes en horario central).` },
+    // Only "dead" if a campaign is ACTUALLY supposed to be sending right now: today is
+    // in its send_days AND we're inside its window. On weekends / non-send days
+    // (m.campaigns_scheduled_now === 0) NOT sending is CORRECT, so we never alert —
+    // no more "engine stopped" false alarms on a Saturday the campaigns are paused.
+    { key: "engine_dead", failing: m.campaigns_scheduled_now > 0 && coreHours && m.pending_leads > 0 && (m.last_send_min_ago == null || m.last_send_min_ago > 120),
+      msg: `⛔ El motor de envío parece PARADO: ${m.last_send_min_ago ?? "∞"} min sin ningún envío (con ${m.campaigns_scheduled_now} campaña(s) que deberían estar enviando ahora y ${m.pending_leads} leads pendientes).` },
     { key: "unibox_no_intake", failing: m.hour_madrid >= 9 && m.hour_madrid < 21 && m.inbox_last_hour === 0,
       msg: `📭 No ha entrado NINGÚN mensaje al Unibox en la última hora — la sincronización IMAP podría estar caída.` },
     { key: "accounts_out_of_sync", failing: m.accounts_stale_30m > 8,

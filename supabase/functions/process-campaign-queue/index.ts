@@ -65,6 +65,22 @@ function getDayAbbr(date: Date, tz: string): string {
   }
 }
 
+// Count how many SENDING days elapsed between `start` and today (today excluded):
+// only dates whose weekday is in the campaign's send_days count. So the slow-ramp
+// advances one step per day it ACTUALLY sends and PAUSES on non-sending days
+// (weekends / days the user didn't enable) — Monday resumes where Friday left off,
+// not +3 for the calendar weekend. Bounded loop (warm-up spans weeks, not years).
+function countSendingDays(start: Date, now: Date, sendDays: string[], tz: string): number {
+  const d = new Date(start); d.setUTCHours(0, 0, 0, 0);
+  const end = new Date(now); end.setUTCHours(0, 0, 0, 0);
+  let count = 0, guard = 0;
+  while (d < end && guard++ < 400) {
+    if (sendDays.includes(getDayAbbr(d, tz))) count++;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return count;
+}
+
 function randomString(length: number): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
   let output = "";
@@ -989,18 +1005,21 @@ serve(async (req) => {
           .limit(1);
         if (firstSent && firstSent.length && firstSent[0].sent_at) {
           const startAt = new Date(firstSent[0].sent_at);
-          rampDaysActive = Math.max(0, Math.floor((now.getTime() - startAt.getTime()) / (1000 * 60 * 60 * 24)));
+          // Count only SENDING days, so the ramp pauses on weekends / non-send days.
+          rampDaysActive = countSendingDays(startAt, now, sendDays, tz);
         }
       }
 
       const getEffectiveLimit = (acc: any) => {
         let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
 
-        // Account-level slow ramp: ramps from `warmup_started_at` by warmup_increment
-        // per day up to warmup_limit. Day 1 = increment, Day 2 = 2*increment, …
+        // Account-level slow ramp: ramps by warmup_increment per SENDING day up to
+        // warmup_limit. Counting sending days (not calendar days) means the ramp
+        // freezes over the weekend / non-send days and resumes Monday exactly where
+        // Friday left off — never jumping ahead for idle days.
         if (acc.warmup_enabled && acc.warmup_started_at) {
           const startedAt = new Date(acc.warmup_started_at);
-          const days = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24)));
+          const days = countSendingDays(startedAt, now, sendDays, tz);
           const inc = acc.warmup_increment || 2;
           const target = acc.warmup_limit || limit;
           const accRamp = Math.min((days + 1) * inc, target);
