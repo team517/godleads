@@ -1033,8 +1033,90 @@ function getMessageDeduplicationKey(message: any): string {
   return `fallback:${message?.account_id ?? ""}|${normalizedFrom}|${normalizedSubject}|${normalizedBody}|${normalizedReceivedAt}`;
 }
 
+function fileKind(name: string, mime: string): { label: string; color: string; isImage: boolean } {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const m = (mime || "").toLowerCase();
+  if (m.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic"].includes(ext)) return { label: "Imagen", color: "bg-violet-100 text-violet-600", isImage: true };
+  if (m.includes("pdf") || ext === "pdf") return { label: "PDF", color: "bg-red-100 text-red-600", isImage: false };
+  if (["doc", "docx", "odt", "rtf"].includes(ext) || m.includes("word") || m.includes("opendocument.text")) return { label: "Documento", color: "bg-blue-100 text-blue-600", isImage: false };
+  if (["xls", "xlsx", "csv", "ods"].includes(ext) || m.includes("sheet") || m.includes("excel")) return { label: "Hoja de cálculo", color: "bg-emerald-100 text-emerald-600", isImage: false };
+  if (["ppt", "pptx", "odp"].includes(ext) || m.includes("presentation") || m.includes("powerpoint")) return { label: "Presentación", color: "bg-orange-100 text-orange-600", isImage: false };
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return { label: "Comprimido", color: "bg-amber-100 text-amber-600", isImage: false };
+  return { label: ext ? ext.toUpperCase() : "Archivo", color: "bg-slate-100 text-slate-600", isImage: false };
+}
+
+function humanSize(base64: string): string {
+  const bytes = Math.floor(base64.length * 0.75);
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+/** One received attachment. Images show an inline thumbnail; everything else a
+ *  typed file card. Both open in a new tab and download. */
+function AttachmentCard({ att }: { att: ParsedAttachment }) {
+  const kind = useMemo(() => fileKind(att.name, att.mime), [att.name, att.mime]);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!kind.isImage) return;
+    const u = attachmentObjectUrl(att);
+    setThumbUrl(u);
+    return () => { if (u) URL.revokeObjectURL(u); };
+  }, [att, kind.isImage]);
+
+  const open = () => {
+    const url = attachmentObjectUrl(att);
+    if (url) { window.open(url, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(url), 120000); }
+  };
+  const download = () => {
+    const url = attachmentObjectUrl(att);
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url; a.download = att.name || "adjunto";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  };
+
+  if (kind.isImage && thumbUrl) {
+    return (
+      <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+        <button type="button" onClick={open} title={`Ver ${att.name}`} className="block">
+          <img src={thumbUrl} alt={att.name} className="max-h-56 w-auto max-w-full object-contain" />
+        </button>
+        <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-card/80 px-2.5 py-1.5 backdrop-blur">
+          <span className="min-w-0 truncate text-[11px] font-medium text-foreground" title={att.name}>{att.name}</span>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">{humanSize(att.base64)}</span>
+            <button type="button" onClick={download} title="Descargar" className="text-muted-foreground hover:text-primary"><Download className="h-3.5 w-3.5" /></button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
+      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${kind.color}`}>
+        <FileText className="h-5 w-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-semibold text-foreground" title={att.name}>{att.name}</div>
+        <div className="text-[11px] text-muted-foreground">{kind.label} · {humanSize(att.base64)}</div>
+        <div className="mt-1 flex items-center gap-3">
+          <button type="button" onClick={open} className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline">
+            <MailOpen className="h-3 w-3" /> Ver
+          </button>
+          <button type="button" onClick={download} className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline">
+            <Download className="h-3 w-3" /> Descargar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Shows attachments (e.g. a PDF) under a message. When the base64 payload is
- *  present it offers Ver (open) + Descargar; otherwise a name-only chip. */
+ *  present it renders rich cards (Ver/Descargar + image previews); otherwise a
+ *  name-only chip. */
 function AttachmentChips({ bodyText, bodyHtml }: { bodyText?: string | null; bodyHtml?: string | null }) {
   const atts = useMemo(() => {
     const found = [...extractAttachments(bodyHtml || ""), ...extractAttachments(bodyText || "")];
@@ -1052,57 +1134,19 @@ function AttachmentChips({ bodyText, bodyHtml }: { bodyText?: string | null; bod
     return Array.from(set);
   }, [atts, bodyText, bodyHtml]);
 
-  const openAtt = (att: ParsedAttachment) => {
-    const url = attachmentObjectUrl(att);
-    if (url) { window.open(url, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(url), 60000); }
-  };
-  const downloadAtt = (att: ParsedAttachment) => {
-    const url = attachmentObjectUrl(att);
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url; a.download = att.name || "adjunto";
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  };
-
   if (atts.length === 0 && nameOnly.length === 0) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {atts.map((att) => (
-        <div
-          key={att.name}
-          title={att.name}
-          className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
-        >
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-primary/10">
-            <FileText className="h-4 w-4 text-primary" />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-medium text-foreground">{att.name}</span>
-            <span className="mt-0.5 flex items-center gap-2">
-              <button type="button" onClick={() => openAtt(att)} className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-primary hover:underline">
-                <MailOpen className="h-2.5 w-2.5" /> Ver
-              </button>
-              <button type="button" onClick={() => downloadAtt(att)} className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-primary hover:underline">
-                <Download className="h-2.5 w-2.5" /> Descargar
-              </button>
-            </span>
-          </span>
-        </div>
-      ))}
+    <div className="mt-3 flex flex-wrap gap-2.5">
+      {atts.map((att) => <AttachmentCard key={att.name} att={att} />)}
       {nameOnly.map((name) => (
-        <div
-          key={name}
-          title={name}
-          className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
-        >
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-primary/10">
-            <FileText className="h-4 w-4 text-primary" />
+        <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+            <FileText className="h-4 w-4" />
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-xs font-medium text-foreground">{name}</span>
-            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Paperclip className="h-2.5 w-2.5" /> Adjunto
+            <span className="block truncate text-[13px] font-medium text-foreground">{name}</span>
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Paperclip className="h-3 w-3" /> Adjunto
             </span>
           </span>
         </div>
@@ -2418,7 +2462,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-card lg:w-[440px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
+          <div className="flex w-full flex-col bg-card lg:w-[300px] lg:flex-shrink-0 lg:border-r lg:border-border/60 xl:w-[360px] 2xl:w-[420px]">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
