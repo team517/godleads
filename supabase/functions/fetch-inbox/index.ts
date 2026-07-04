@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +65,50 @@ function extractAttachments(raw: string): ParsedAttachment[] {
     out.push({ name, mime, base64: b64 });
   }
   return out;
+}
+
+// ── Attachment infra bootstrap ────────────────────────────────────────────
+// Mirrors migration 20260704120000_inbox_attachments.sql. Runs the DDL from
+// inside the function (SUPABASE_DB_URL is a default edge-function secret) so
+// the feature works even if the migration hasn't been pushed yet. Idempotent,
+// and guarded so it executes at most once per warm isolate — and only does the
+// DDL round-trip when the column is actually missing.
+let attachmentInfraReady = false;
+async function ensureAttachmentInfra(adminClient: ReturnType<typeof createClient>): Promise<boolean> {
+  if (attachmentInfraReady) return true;
+  try {
+    // Fast probe: if the column already exists, only make sure the bucket does too.
+    const probe = await adminClient.from("inbox_messages").select("attachments").limit(1);
+    if (!probe.error) {
+      const { data: bucket } = await adminClient.storage.getBucket("inbox-attachments");
+      if (!bucket) await adminClient.storage.createBucket("inbox-attachments", { public: false });
+      attachmentInfraReady = true;
+      return true;
+    }
+    const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+    if (!dbUrl) return false;
+    const sql = postgres(dbUrl, { prepare: false, max: 1 });
+    try {
+      await sql.unsafe(`
+        alter table public.inbox_messages
+          add column if not exists attachments jsonb not null default '[]'::jsonb;
+        insert into storage.buckets (id, name, public)
+        values ('inbox-attachments', 'inbox-attachments', false)
+        on conflict (id) do nothing;
+        drop policy if exists "inbox attachments: owner can read" on storage.objects;
+        create policy "inbox attachments: owner can read"
+          on storage.objects for select to authenticated
+          using (bucket_id = 'inbox-attachments' and (storage.foldername(name))[1] = auth.uid()::text);
+      `);
+    } finally {
+      await sql.end({ timeout: 3 });
+    }
+    attachmentInfraReady = true;
+    return true;
+  } catch (e) {
+    console.error("attachment infra bootstrap failed:", (e as Error).message);
+    return false;
+  }
 }
 
 /** base64 → bytes (Deno-safe). */
@@ -643,9 +688,12 @@ serve(async (req) => {
         }
 
         // ── Attachments → Storage ──────────────────────────────────────────
+        // Bootstrap the column/bucket/policy if missing. If it fails, sync
+        // continues WITHOUT attachments (rows must not reference the column).
+        const attInfraOk = await ensureAttachmentInfra(adminClient);
         // Skip messages already in the DB (their row + attachments already exist)
         // so we don't re-upload the same PDF on every sync.
-        const withAtt = result.messages.filter((m) => (m.attachments?.length || 0) > 0);
+        const withAtt = attInfraOk ? result.messages.filter((m) => (m.attachments?.length || 0) > 0) : [];
         if (withAtt.length > 0) {
           const attMsgIds = withAtt.map((m) => m.message_id).filter(Boolean);
           const alreadyStored = new Set<string>();
@@ -698,7 +746,9 @@ serve(async (req) => {
             body_text: msg.body_text,
             body_html: msg.body_html || null,
             received_at: parsedDate,
-            attachments: (msg as unknown as { _stored?: unknown[] })._stored || [],
+            // Only reference the column when the bootstrap confirmed it exists —
+            // otherwise the whole insert would fail and break the sync.
+            ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),
           };
         });
 
