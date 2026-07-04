@@ -65,7 +65,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
 
   const verifyBatch = useCallback(async (leadIds: string[]) => {
     const { data, error } = await supabase.functions.invoke("verify-leads", {
-      body: { lead_ids: leadIds },
+      body: { lead_ids: leadIds, skip_coin_check: true },
     });
     if (error) throw new Error(error.message || "Error verificando");
     if (data?.error === "insufficient_coins") throw new Error("Monedas insuficientes");
@@ -80,12 +80,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
     const allPendingIds = await fetchUnverifiedIds(listId);
     if (!allPendingIds.length) { toast.info("No hay leads sin verificar"); return; }
 
-    const totalCost = Math.ceil(allPendingIds.length * 0.1);
-    if (!profile.infiniteCoins && profile.coins < totalCost) {
-      toast.error(`Necesitas ${totalCost} monedas para verificar toda la lista.`);
-      return;
-    }
-
+    // Verification is free — no coin check.
     setVerifying(true);
     setProgress({ current: 0, total: allPendingIds.length, valid: 0, invalid: 0, risky: 0 });
 

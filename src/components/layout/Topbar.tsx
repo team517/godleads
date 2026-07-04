@@ -13,6 +13,7 @@ import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushPermissio
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/hooks/use-theme";
+import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import coinIcon from "@/assets/coin-icon.png";
 import {
   Popover,
@@ -177,15 +178,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
             <Menu className="h-5 w-5" />
           </Button>
         )}
-        {!isMobile && (
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Buscar campañas, leads, correos..."
-              className="pl-10 bg-white/95 text-foreground placeholder:text-muted-foreground border-0"
-            />
-          </div>
-        )}
+        {!isMobile && <GlobalSearch />}
       </div>
 
       <div className="flex items-center gap-2 md:gap-3">

@@ -17,6 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 import { useVerification } from "@/contexts/VerificationContext";
+import { useSearchParams } from "react-router-dom";
 
 const FINAL_VERIFICATION_STATUSES = new Set(["valid", "risky", "invalid"]);
 
@@ -32,7 +33,8 @@ export default function Leads() {
   const [leads, setLeads] = useState<any[]>([]);
   const [lists, setLists] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get("q") || "");
   const [showAdd, setShowAdd] = useState(false);
   const [showList, setShowList] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
@@ -601,7 +603,7 @@ export default function Leads() {
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <Checkbox checked={verifyAfterImport} onCheckedChange={(v) => setVerifyAfterImport(!!v)} />
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-              Verificar al importar (0.1 monedas/lead)
+              Verificar al importar (gratis)
             </label>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => { setShowCsvReview(false); setCsvRows([]); setCsvHeaders([]); parsedRowsRef.current = []; }}>
@@ -630,10 +632,7 @@ export default function Leads() {
               <div className="flex items-center justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : unverifiedTotalCount === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">Todos los leads ya están verificados.</p>
-            ) : (() => {
-              const cost = Math.ceil(unverifiedTotalCount * 0.1);
-              const canAfford = profile.infiniteCoins || profile.coins >= cost;
-              return (
+            ) : (
                 <>
                   <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
                     <div className="flex justify-between gap-3">
@@ -645,31 +644,23 @@ export default function Leads() {
                       <span className="font-semibold">Todos</span>
                     </div>
                     <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">Coste total</span>
-                      <span className="font-semibold">{cost} monedas</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">Saldo</span>
-                      <span className="font-semibold">{profile.infiniteCoins ? "∞" : profile.coins} monedas</span>
+                      <span className="text-muted-foreground">Coste</span>
+                      <span className="font-semibold text-emerald-600">Gratis</span>
                     </div>
                   </div>
 
                   <p className="text-sm text-muted-foreground">
                     Se procesarán absolutamente todos los leads pendientes de la lista actual y los no contactables se eliminarán automáticamente.
                   </p>
-                  {!canAfford && (
-                    <p className="text-sm text-destructive">No tienes suficientes monedas. Recarga desde el icono de monedas en la barra superior.</p>
-                  )}
                   <Button
                     className="w-full gap-2"
-                    disabled={!canAfford || unverifiedTotalCount === 0}
+                    disabled={unverifiedTotalCount === 0}
                     onClick={handleVerifyAllLeads}
                   >
                     <ShieldCheck className="h-4 w-4" /> Verificar los {unverifiedTotalCount} leads pendientes
                   </Button>
                 </>
-              );
-            })()}
+            )}
           </div>
         </DialogContent>
       </Dialog>
