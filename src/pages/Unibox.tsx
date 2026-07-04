@@ -2665,7 +2665,7 @@ export default function Unibox() {
                     ref={replyRef}
                     id="unibox-reply-textarea"
                     placeholder="Escribe tu respuesta…"
-                      className="mb-2.5 min-h-[72px] resize-none bg-card text-sm"
+                      className="mb-2.5 min-h-[92px] resize-none rounded-xl border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-sm focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
                     value={reply}
                     onChange={e => setReply(e.target.value)}
                   />
