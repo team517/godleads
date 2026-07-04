@@ -95,14 +95,14 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         onClick={handleNavClick}
         title={collapsed ? item.label : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150 relative group",
-          collapsed ? "justify-center px-0" : "px-3",
+          "flex items-center gap-3 rounded-lg py-2.5 text-[13.5px] transition-all duration-150 relative group",
+          collapsed ? "justify-center px-0" : "px-3.5",
           isActive
-            ? "bg-sidebar-accent text-sidebar-primary"
-            : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+            ? "bg-sidebar-accent text-sidebar-primary font-semibold before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
+            : "font-medium text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent/60"
         )}
       >
-        <item.icon className={cn("h-[18px] w-[18px] shrink-0 transition-colors", isActive ? "text-sidebar-primary" : "text-sidebar-foreground/40 group-hover:text-sidebar-foreground/70")} />
+        <item.icon strokeWidth={1.7} className={cn("h-[19px] w-[19px] shrink-0 transition-colors", isActive ? "text-sidebar-primary" : "text-sidebar-foreground/70 group-hover:text-sidebar-primary")} />
         {!collapsed && item.label}
         {item.path === "/unibox" && unreadCount > 0 && (
           collapsed ? (
