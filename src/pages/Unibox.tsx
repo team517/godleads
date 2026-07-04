@@ -1668,12 +1668,16 @@ export default function Unibox() {
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
       .filter(m => categoryFilter === "all" || classifyMessage(m.subject, m.body_text) === categoryFilter)
-      .filter(m =>
-        !search ||
-        m.from_email?.toLowerCase().includes(search.toLowerCase()) ||
-        m.from_name?.toLowerCase().includes(search.toLowerCase()) ||
-        m.subject?.toLowerCase().includes(search.toLowerCase())
-      );
+      .filter(m => {
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return (
+          m.from_email?.toLowerCase().includes(q) ||
+          m.from_name?.toLowerCase().includes(q) ||
+          decodeSubject(m.subject)?.toLowerCase().includes(q) ||
+          cleanBodyText(m.body_text, true).toLowerCase().includes(q)
+        );
+      });
     // Sort: due reminders first (yellow), then by received_at desc
     return list.sort((a, b) => {
       const aDue = isReminderDue(a.id);
@@ -2363,26 +2367,28 @@ export default function Unibox() {
             </ScrollArea>
           </div>
 
-          {/* ── Reading pane (desktop): OnePulso empty state. Clicking a message
-              opens the full reader modal, so all reply/translate/forward logic
-              stays exactly as-is. ── */}
-          <div className="hidden lg:flex flex-1 flex-col items-center justify-center bg-background/40 px-10 text-center">
-            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-              <MailOpen className="h-8 w-8 text-primary" />
+          {/* ── Reading pane (desktop): white empty state, hidden once a message
+              is open (the reader fills this same area inline). ── */}
+          {!selected && (
+            <div className="hidden lg:flex flex-1 flex-col items-center justify-center bg-card px-10 text-center">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <MailOpen className="h-8 w-8 text-primary" />
+              </div>
+              <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
+              <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
+                Selecciona un mensaje de la lista para leerlo y responder aquí.
+              </p>
             </div>
-            <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
-            <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
-              Selecciona un mensaje de la lista para leerlo y responder aquí.
-            </p>
-          </div>
+          )}
 
         </div>
 
       {/* ── Conversation modal — opens centered with blurred backdrop ── */}
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
         <DialogContent
+          overlayClassName="lg:bg-transparent lg:backdrop-blur-none"
           className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
-            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[58vw] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 data-[state=open]:lg:slide-in-from-right-6"
+            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[calc(100vw-256px-420px)] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-4"
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (

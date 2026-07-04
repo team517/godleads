@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "preview",
+      "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "preview", "--", "--port", "4173"],
+      "runtimeArgs": ["run", "dev", "--", "--port", "4173", "--host"],
       "port": 4173
     }
   ]
