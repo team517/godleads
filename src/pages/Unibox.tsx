@@ -2274,7 +2274,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-muted/20 lg:w-[420px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
+          <div className="flex w-full flex-col bg-card lg:w-[420px] lg:flex-shrink-0 lg:border-r lg:border-border/60">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2388,7 +2388,7 @@ export default function Unibox() {
         <DialogContent
           overlayClassName="lg:bg-transparent lg:backdrop-blur-none"
           className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
-            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[calc(100vw-256px-420px)] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-4"
+            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[calc(100vw-240px-420px)] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-4"
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (
