@@ -2389,9 +2389,9 @@ export default function Unibox() {
       {/* ── Conversation modal — opens centered with blurred backdrop ── */}
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }}>
         <DialogContent
-          overlayClassName="lg:bg-transparent lg:backdrop-blur-none"
+          overlayClassName="lg:bg-transparent lg:backdrop-blur-none lg:pointer-events-none"
           className="max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden
-            lg:left-auto lg:right-0 lg:top-0 lg:translate-x-0 lg:translate-y-0 lg:h-screen lg:max-h-screen lg:w-[calc(100vw-240px-420px)] lg:max-w-none lg:rounded-none lg:border-l lg:border-t-0 lg:border-b-0 lg:border-r-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-4"
+            lg:left-[684px] lg:right-6 lg:top-[150px] lg:bottom-6 lg:translate-x-0 lg:translate-y-0 lg:h-auto lg:max-h-none lg:w-auto lg:max-w-none lg:rounded-xl lg:border lg:shadow-sm data-[state=open]:lg:slide-in-from-right-2"
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             {selected ? (
