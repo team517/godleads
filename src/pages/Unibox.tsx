@@ -1194,6 +1194,9 @@ export default function Unibox() {
   // Reading pane: on desktop the reader is portalled INTO this box so it fills
   // the "Tu bandeja unificada" area exactly (inline, no popup/overlay).
   const readingPaneRef = useRef<HTMLDivElement>(null);
+  // "Wide" = ≥1280px (xl): only then is there room for the 2-column inline reader
+  // inside the pane. Below that (laptops), a message opens as a comfortable wide
+  // modal so it's actually readable instead of a cramped ~480px column.
   const [isDesktop, setIsDesktop] = useState(false);
   // Reader can be expanded to a big centered fullscreen modal (with backdrop).
   const [readerExpanded, setReaderExpanded] = useState(false);
@@ -1201,7 +1204,7 @@ export default function Unibox() {
   const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
+    const mq = window.matchMedia("(min-width: 1280px)");
     const apply = () => setIsDesktop(mq.matches);
     apply();
     mq.addEventListener("change", apply);
@@ -2462,7 +2465,7 @@ export default function Unibox() {
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
-          <div className="flex w-full flex-col bg-card lg:w-[300px] lg:flex-shrink-0 lg:border-r lg:border-border/60 xl:w-[360px] 2xl:w-[420px]">
+          <div className="flex w-full flex-col bg-card xl:w-[360px] xl:flex-shrink-0 xl:border-r xl:border-border/60 2xl:w-[420px]">
             <div className="border-b border-border/60 bg-card p-2.5">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2556,7 +2559,7 @@ export default function Unibox() {
           {/* ── Reading pane (desktop): persistent box. Shows the empty state
               underneath; the reader is portalled INTO this same box (absolute
               inset-0) so it fills exactly this area inline — no popup. ── */}
-          <div ref={readingPaneRef} className="relative hidden lg:flex flex-1 flex-col bg-card">
+          <div ref={readingPaneRef} className="relative hidden xl:flex flex-1 flex-col bg-card">
             {!selected && (
               <div className="flex flex-1 flex-col items-center justify-center px-10 text-center">
                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -2578,11 +2581,11 @@ export default function Unibox() {
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); } }} modal={!isDesktop || readerExpanded}>
         <DialogContent
           portalContainer={isDesktop && !readerExpanded ? readingPaneRef.current : null}
-          overlayClassName={readerExpanded ? "" : "lg:hidden"}
+          overlayClassName={isDesktop && !readerExpanded ? "xl:hidden" : ""}
           onInteractOutside={(e) => { if (isDesktop && !readerExpanded) e.preventDefault(); }}
-          className={`max-w-5xl w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden ${
+          className={`w-[95vw] max-w-5xl h-[90vh] p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl [&>button.absolute]:hidden ${
             isDesktop && !readerExpanded
-              ? "lg:absolute lg:inset-0 lg:left-0 lg:right-0 lg:top-0 lg:bottom-0 lg:translate-x-0 lg:translate-y-0 lg:h-full lg:max-h-none lg:w-full lg:max-w-none lg:rounded-none lg:border-0 lg:shadow-none data-[state=open]:lg:slide-in-from-right-2"
+              ? "xl:absolute xl:inset-0 xl:left-0 xl:right-0 xl:top-0 xl:bottom-0 xl:translate-x-0 xl:translate-y-0 xl:h-full xl:max-h-none xl:w-full xl:max-w-none xl:rounded-none xl:border-0 xl:shadow-none data-[state=open]:xl:slide-in-from-right-2"
               : "lg:w-[96vw] lg:max-w-[1400px] lg:h-[94vh] lg:rounded-xl lg:border"
           }`}
         >
@@ -2592,7 +2595,7 @@ export default function Unibox() {
                 {/* Subject bar — top like Gmail */}
                 <div className="border-b border-border/60 px-4 pb-4 pt-4 md:px-8 md:pb-5 md:pt-6">
                   <div className="flex items-start gap-3">
-                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 lg:hidden" onClick={() => setSelectedId(null)}>
+                    <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 xl:hidden" onClick={() => setSelectedId(null)}>
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div className="flex-1 min-w-0">
@@ -2687,7 +2690,7 @@ export default function Unibox() {
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => handleArchive(selected.id)} title="Archivar">
                         <Archive className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary lg:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
+                      <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-muted-foreground hover:text-primary xl:inline-flex" onClick={() => setReaderExpanded((v) => !v)} title={readerExpanded ? "Reducir" : "Pantalla completa"}>
                         {readerExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
                       </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSelectedId(null)} title="Cerrar">
