@@ -1308,6 +1308,7 @@ export default function Unibox() {
   const [aiPromptName, setAiPromptName] = useState("");
   const [aiPrompts, setAiPrompts] = useState<any[]>([]);
   const [accountsMap, setAccountsMap] = useState<Record<string, string[]>>({});
+  const [accountEmailMap, setAccountEmailMap] = useState<Record<string, string>>({});
   const [reminders, setReminders] = useState<Record<string, any>>({});
   const [reminderBody, setReminderBody] = useState("");
   const [folders, setFolders] = useState<any[]>([]);
@@ -1549,12 +1550,15 @@ export default function Unibox() {
       // from the email address, so the Spanish/Catalan filter applies everywhere
       // by default and English never leaks through.
       const tcx = new Set<string>();
+      const emailMap: Record<string, string> = {};
       accounts?.forEach((a: any) => {
         map[a.id] = a.tags || [];
+        if (a.email) emailMap[a.id] = a.email;
         const tagHit = (a.tags || []).some((t: string) => String(t).trim().toLowerCase() === "tcx");
         if (tagHit) tcx.add(a.id);
       });
       setAccountsMap(map);
+      setAccountEmailMap(emailMap);
       setTcxAccounts(tcx);
     };
     loadAI();
@@ -2868,6 +2872,9 @@ export default function Unibox() {
                                   </span>
                                   {isSent && (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Enviado</span>
+                                  )}
+                                  {isSent && accountEmailMap[tm.account_id] && (
+                                    <span className="text-xs text-muted-foreground truncate">desde &lt;{accountEmailMap[tm.account_id]}&gt;</span>
                                   )}
                                   {!isSent && (
                                     <span className="text-xs text-muted-foreground truncate">&lt;{tm.from_email}&gt;</span>
