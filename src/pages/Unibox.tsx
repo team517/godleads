@@ -934,6 +934,7 @@ function timeAgo(dateStr: string) {
 // horas") and clipped in the narrow list. This stays short and always fits.
 function shortTimeAgo(dateStr: string) {
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
   const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
   if (secs < 60) return "ahora";
   const m = Math.floor(secs / 60);
@@ -941,8 +942,10 @@ function shortTimeAgo(dateStr: string) {
   const h = Math.floor(m / 60);
   if (h < 24) return `hace ${h} h`;
   const days = Math.floor(h / 24);
-  if (days < 7) return `hace ${days} d`;
-  return d.toLocaleDateString("es", { day: "numeric", month: "short" });
+  if (days < 30) return `hace ${days} d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `hace ${months} ${months === 1 ? "mes" : "meses"}`;
+  return `hace ${Math.floor(months / 12)} a`;
 }
 
 function getInitials(name: string | null, email: string): string {
