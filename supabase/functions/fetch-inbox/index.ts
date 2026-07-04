@@ -830,6 +830,9 @@ serve(async (req) => {
     // rotating window above — every connected account is checked every
     // ~⌈total/batch⌉ minutes without any chain that can break.
 
+    // Surface attachment-infra state so deploys can be verified externally.
+    const attachmentsReady = await ensureAttachmentInfra(adminClient);
+
     return new Response(JSON.stringify({
       success: true,
       accounts_checked: accounts.length,
@@ -837,6 +840,7 @@ serve(async (req) => {
       new_messages: totalNew,
       next_offset: hasMore ? nextOffset : null,
       has_more: hasMore,
+      attachments_ready: attachmentsReady,
       errors: errors.length > 0 ? errors : undefined,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
