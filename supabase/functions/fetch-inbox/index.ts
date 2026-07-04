@@ -24,10 +24,12 @@ const MAX_ATTACHMENTS_PER_MSG = 10;
 
 /** Decode an RFC2231/2047 attachment filename best-effort. */
 function decodeAttachmentName(raw: string): string {
-  let v = (raw || "").trim().replace(/^"|"$/g, "");
-  const r2231 = v.match(/^[^']*''(.+)$/);
-  if (r2231) { try { return decodeURIComponent(r2231[1]); } catch { /* keep */ } }
-  return v;
+  let v = (raw || "").trim().replace(/^"+|"+$/g, "").trim();
+  const r2231 = v.match(/^[\w-]+''(.+)$/);
+  if (r2231) { try { return decodeURIComponent(r2231[1]).replace(/^"+|"+$/g, "").trim(); } catch { /* keep */ } }
+  // Join adjacent encoded-words split by folding, then decode RFC2047 (=?..?=)
+  v = v.replace(/\?=\s*=\?/g, "?==?");
+  return decodeMimeWords(v).replace(/^"+|"+$/g, "").trim();
 }
 
 /** Pull downloadable attachment parts (name + mime + base64) out of the raw MIME
@@ -47,13 +49,15 @@ function extractAttachments(raw: string): ParsedAttachment[] {
   for (const part of parts) {
     if (out.length >= MAX_ATTACHMENTS_PER_MSG) break;
     if (!/Content-Transfer-Encoding:\s*base64/i.test(part)) continue;
-    const nameM = part.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
-    if (!nameM) continue;
-    const name = decodeAttachmentName(nameM[1] || nameM[2] || "adjunto").slice(0, 200);
-    const typeM = part.match(/Content-Type:\s*([^;\r\n]+)/i);
-    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
     const sp = part.split(/\r?\n\r?\n/);
     if (sp.length < 2) continue;
+    // Unfold the header so a folded/QP filename is captured whole before decoding.
+    const header = (sp[0] || "").replace(/=\r?\n[ \t]*/g, "").replace(/\r?\n[ \t]+/g, "");
+    const nameM = header.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
+    if (!nameM) continue;
+    const name = decodeAttachmentName(nameM[1] || nameM[2] || "adjunto").slice(0, 200);
+    const typeM = header.match(/Content-Type:\s*([^;\r\n]+)/i);
+    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
     const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
     if (b64.length < 40) continue;
     if (b64.length * 0.75 > MAX_ATTACHMENT_BYTES) continue;

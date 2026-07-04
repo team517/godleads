@@ -124,26 +124,32 @@ function stripAttachmentJunk(text: string): string {
 /** Decode attachment file names found in the raw MIME body (e.g. name="...pdf"). */
 function extractAttachmentNames(raw: string | null): string[] {
   if (!raw) return [];
+  // Unfold: drop QP soft breaks (=\r\n) and header folding so a filename split
+  // across lines is captured whole before decoding.
+  const unfolded = raw.replace(/=\r?\n[ \t]*/g, "").replace(/\r?\n[ \t]+/g, "");
   const names = new Set<string>();
   // value = quoted string, a full MIME encoded-word, or a bare token
   const re = /(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|(=\?[^\r\n;]+?\?=)|([^\s";\r\n]+))/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(raw)) !== null) {
+  while ((m = re.exec(unfolded)) !== null) {
     const rawVal = m[1] || m[2] || m[3] || "";
-    const decoded = decodeSubjectKeepCodes(rawVal).trim();
-    if (decoded && decoded.length < 200 && /\.[A-Za-z0-9]{2,5}$/.test(decoded)) names.add(decoded);
+    const decoded = decodeFilename(rawVal);
+    if (decoded && decoded.length < 200 && /\.[A-Za-z0-9]{2,6}$/.test(decoded)) names.add(decoded);
   }
   return Array.from(names);
 }
 
 export type ParsedAttachment = { name: string; mime: string; base64: string };
 
-/** RFC2231 name*=utf-8''%xx or plain — best-effort decode of an attachment filename. */
+/** Decode an attachment filename: RFC2231 (name*=utf-8''%xx), RFC2047 encoded-words
+ *  (=?UTF-8?Q?..?=), joining adjacent words and stripping stray quotes. */
 function decodeFilename(raw: string): string {
-  let v = (raw || "").trim().replace(/^"|"$/g, "");
-  const r2231 = v.match(/^[^']*''(.+)$/);
-  if (r2231) { try { return decodeURIComponent(r2231[1]); } catch { /* keep */ } }
-  return decodeSubjectKeepCodes(v).trim();
+  let v = (raw || "").trim().replace(/^"+|"+$/g, "").trim();
+  const r2231 = v.match(/^[\w-]+''(.+)$/);
+  if (r2231) { try { return decodeURIComponent(r2231[1]).replace(/^"+|"+$/g, "").trim(); } catch { /* keep */ } }
+  // Join adjacent encoded-words that were separated by folding whitespace
+  v = v.replace(/\?=\s*=\?/g, "?==?");
+  return decodeSubjectKeepCodes(v).replace(/^"+|"+$/g, "").trim();
 }
 
 /** Extract downloadable attachments (name + mime + base64 payload) from the raw
@@ -164,14 +170,16 @@ function extractAttachments(raw: string | null): ParsedAttachment[] {
   }
   for (const part of parts) {
     if (!/Content-Transfer-Encoding:\s*base64/i.test(part)) continue;
-    const nameM = part.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
-    if (!nameM) continue;
-    const name = decodeFilename(nameM[1] || nameM[2] || "adjunto");
-    const typeM = part.match(/Content-Type:\s*([^;\r\n]+)/i);
-    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase();
-    // header / body split (first blank line), then keep only base64 chars
+    // header / body split (first blank line); unfold the header so a folded
+    // filename is matched whole. Body keeps its original base64.
     const sp = part.split(/\r?\n\r?\n/);
     if (sp.length < 2) continue;
+    const header = (sp[0] || "").replace(/=\r?\n[ \t]*/g, "").replace(/\r?\n[ \t]+/g, "");
+    const nameM = header.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
+    if (!nameM) continue;
+    const name = decodeFilename(nameM[1] || nameM[2] || "adjunto");
+    const typeM = header.match(/Content-Type:\s*([^;\r\n]+)/i);
+    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase();
     const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
     if (b64.length < 40) continue;
     const key = name + "|" + b64.length;
