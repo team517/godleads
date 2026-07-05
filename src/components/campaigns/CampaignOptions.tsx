@@ -99,6 +99,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [slowRampEnabled, setSlowRampEnabled] = useState(false);
   const [slowRampMax, setSlowRampMax] = useState(2);
   const [slowRampIncrement, setSlowRampIncrement] = useState(2);
+  const [sendDays, setSendDays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
   const [campaignCreatedAt, setCampaignCreatedAt] = useState<string | null>(null);
   // Anchor for the campaign-level slow ramp = first ACTUAL send (mirrors backend),
   // not the creation date. A never-sent campaign stays at the starting cap.
@@ -216,6 +217,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         setSlowRampEnabled(d.slow_ramp_enabled ?? false);
         setSlowRampMax(d.slow_ramp_max ?? 2);
         setSlowRampIncrement(d.slow_ramp_increment ?? 2);
+        setSendDays(d.send_days || ["mon", "tue", "wed", "thu", "fri"]);
         setCampaignCreatedAt(d.created_at || null);
         // First actual send anchors the campaign slow ramp (same as the backend).
         supabase.from("sent_emails").select("sent_at").eq("campaign_id", campaignId).eq("status", "sent")
@@ -354,8 +356,22 @@ export default function CampaignOptions({ campaignId }: Props) {
   const rampInfo = (() => {
     if (!slowRampEnabled) return null;
     // Anchor to first ACTUAL send (matches backend rampDaysActive). Never sent → day 0.
-    const anchor = campaignFirstSentAt ? new Date(campaignFirstSentAt).getTime() : null;
-    const days = anchor ? Math.max(0, Math.floor((Date.now() - anchor) / (1000 * 60 * 60 * 24))) : 0;
+    // Count only SENDING days (skip weekends / non-send days) and EXCLUDE today —
+    // exactly like the backend's countSendingDays — so the shown limit matches what
+    // actually gets sent (a raw calendar-day count over-counted weekends).
+    const anchor = campaignFirstSentAt ? new Date(campaignFirstSentAt) : null;
+    let days = 0;
+    if (anchor) {
+      const DAY_ABBR = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+      const active = sendDays.length ? sendDays : ["mon", "tue", "wed", "thu", "fri"];
+      const d = new Date(anchor); d.setHours(0, 0, 0, 0);
+      const end = new Date(); end.setHours(0, 0, 0, 0);
+      let guard = 0;
+      while (d < end && guard++ < 400) {
+        if (active.includes(DAY_ABBR[d.getDay()])) days++;
+        d.setDate(d.getDate() + 1);
+      }
+    }
     return { days, eff: slowRampMax + days * slowRampIncrement };
   })();
 
