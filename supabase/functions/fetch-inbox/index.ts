@@ -584,7 +584,12 @@ async function fetchImapMessages(
         const fromStr = headerVal(/From:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
         const subjectStr = headerVal(/Subject:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
         const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
-        const msgIdMatch = part.match(/Message-ID:\s*<?(.+?)>?(?:\r?\n)/i);
+        // Message-ID — folded-aware, and pull the <id@host> reliably (a missing/
+        // mangled Message-ID is what makes a reply land as a NEW message instead of
+        // threading). Prefer the value inside <…>; else the bare token.
+        const msgIdRaw = headerVal(/Message-ID:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
+        const msgIdInner = msgIdRaw.match(/<([^<>\s]+)>/) || msgIdRaw.match(/([^\s<>]+@[^\s<>]+)/);
+        const msgIdMatch: RegExpMatchArray | null = msgIdInner ? ([msgIdInner[0], msgIdInner[1]] as unknown as RegExpMatchArray) : null;
         // Thread chain: References + In-Reply-To of the received message, so a
         // reply can carry the FULL chain and thread perfectly in every client.
         const referencesStr = headerVal(/References:\s*(<[^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);

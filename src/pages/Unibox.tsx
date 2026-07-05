@@ -2316,7 +2316,16 @@ export default function Unibox() {
       // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
       const finalBody = reply;
 
-      const originalSubject = decodeSubject(selected.subject) || "";
+      // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
+      // (its Message-ID is exactly what the recipient's client matches to thread),
+      // not just the clicked row — which sometimes had a missing/weak message_id and
+      // landed the reply as a brand-new message. Fall back to the selected row.
+      const receivedInThread = (threadMessages || []).filter((tm: any) => tm && tm._type !== "sent" && tm.message_id);
+      const replyTarget: any = receivedInThread.length ? receivedInThread[receivedInThread.length - 1] : selected;
+      const targetMsgId: string = replyTarget?.message_id || selected.message_id || "";
+      const targetRefChain: string = replyTarget?.ref_chain || selected.ref_chain || "";
+
+      const originalSubject = decodeSubject(replyTarget?.subject || selected.subject) || "";
       const replySubject = originalSubject.toLowerCase().startsWith("re:") ? originalSubject : `Re: ${originalSubject}`;
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
@@ -2327,10 +2336,10 @@ export default function Unibox() {
           to_email: selected.from_email,
           subject: replySubject,
           body: finalBody,
-          in_reply_to: selected.message_id || undefined,
-          // Full thread chain (original References + its Message-ID) so the reply
-          // threads perfectly in every client, not just by subject.
-          references: ([selected.ref_chain, selected.message_id].filter(Boolean).join(" ").trim()) || undefined,
+          in_reply_to: targetMsgId || undefined,
+          // Full thread chain (original References + the target's Message-ID) so the
+          // reply threads perfectly in every client, not just by subject.
+          references: ([targetRefChain, targetMsgId].filter(Boolean).join(" ").trim()) || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
         }),
         signal: controller.signal,
