@@ -1,17 +1,19 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BarChart3, Users, ListChecks, Clock, Settings, Mail, Heart, Ban } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import CampaignAnalytics from "./CampaignAnalytics";
-import CampaignLeads from "./CampaignLeads";
-import CampaignSequences from "./CampaignSequences";
-import CampaignSchedule from "./CampaignSchedule";
-import CampaignOptions from "./CampaignOptions";
-import CampaignSentLog from "./CampaignSentLog";
-import CampaignCRM from "./CampaignCRM";
-import CampaignUnsubscribes from "./CampaignUnsubscribes";
+// Each tab is loaded only when opened — Analytics pulls recharts, others are
+// heavy too, so eager-importing all of them made every campaign open slow.
+const CampaignAnalytics = lazy(() => import("./CampaignAnalytics"));
+const CampaignLeads = lazy(() => import("./CampaignLeads"));
+const CampaignSequences = lazy(() => import("./CampaignSequences"));
+const CampaignSchedule = lazy(() => import("./CampaignSchedule"));
+const CampaignOptions = lazy(() => import("./CampaignOptions"));
+const CampaignSentLog = lazy(() => import("./CampaignSentLog"));
+const CampaignCRM = lazy(() => import("./CampaignCRM"));
+const CampaignUnsubscribes = lazy(() => import("./CampaignUnsubscribes"));
 
 interface Props { campaignId: string; }
 
@@ -63,20 +65,22 @@ export default function CampaignDetail({ campaignId }: Props) {
         <span className="text-xs text-muted-foreground">Activar CRM (leads interesados)</span>
       </div>
 
-      <TabsContent value="analytics" className="mt-4"><CampaignAnalytics campaignId={campaignId} /></TabsContent>
-      <TabsContent value="leads" className="mt-4"><CampaignLeads campaignId={campaignId} /></TabsContent>
-      <TabsContent value="sequences" className="mt-4"><CampaignSequences campaignId={campaignId} /></TabsContent>
-      <TabsContent value="sent" className="mt-4"><CampaignSentLog campaignId={campaignId} /></TabsContent>
-      <TabsContent value="schedule" className="mt-4"><CampaignSchedule campaignId={campaignId} /></TabsContent>
-      <TabsContent value="options" className="mt-4">
-        <div ref={optionsRef}>
-          <CampaignOptions campaignId={campaignId} />
-        </div>
-      </TabsContent>
-      <TabsContent value="unsubscribes" className="mt-4"><CampaignUnsubscribes campaignId={campaignId} /></TabsContent>
-      {crmEnabled && (
-        <TabsContent value="crm" className="mt-4"><CampaignCRM campaignId={campaignId} /></TabsContent>
-      )}
+      <Suspense fallback={<div className="mt-4 py-12 text-center text-sm text-muted-foreground">Cargando…</div>}>
+        <TabsContent value="analytics" className="mt-4"><CampaignAnalytics campaignId={campaignId} /></TabsContent>
+        <TabsContent value="leads" className="mt-4"><CampaignLeads campaignId={campaignId} /></TabsContent>
+        <TabsContent value="sequences" className="mt-4"><CampaignSequences campaignId={campaignId} /></TabsContent>
+        <TabsContent value="sent" className="mt-4"><CampaignSentLog campaignId={campaignId} /></TabsContent>
+        <TabsContent value="schedule" className="mt-4"><CampaignSchedule campaignId={campaignId} /></TabsContent>
+        <TabsContent value="options" className="mt-4">
+          <div ref={optionsRef}>
+            <CampaignOptions campaignId={campaignId} />
+          </div>
+        </TabsContent>
+        <TabsContent value="unsubscribes" className="mt-4"><CampaignUnsubscribes campaignId={campaignId} /></TabsContent>
+        {crmEnabled && (
+          <TabsContent value="crm" className="mt-4"><CampaignCRM campaignId={campaignId} /></TabsContent>
+        )}
+      </Suspense>
     </Tabs>
   );
 }

@@ -9,7 +9,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+// jsPDF (~350KB) is loaded on demand inside handleDownloadPDF — not at page load.
 
 interface Props { campaignId: string; }
 
@@ -138,6 +138,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
     setDownloading(true);
     try {
       const imgData = await captureAnalytics();
+      const { default: jsPDF } = await import("jspdf");
       const pdf = new jsPDF("landscape", "mm", "a4");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
