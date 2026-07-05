@@ -1720,14 +1720,16 @@ export default function Unibox() {
 
 
 
-  // Initial load + initial IMAP sync + reminders
+  // Initial load + initial IMAP sync + reminders + blocklist (for filtering)
   useEffect(() => {
     load();
     loadReminders();
+    loadBlockedEntries();
     const syncTimeout = setTimeout(() => {
       autoSync();
     }, 1500);
     return () => clearTimeout(syncTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, autoSync, loadReminders]);
 
   // Keep a ref of the reply draft so the debounced reload can tell if the user is
@@ -1922,6 +1924,24 @@ export default function Unibox() {
     return new Date(r.remind_at) <= new Date();
   };
 
+  // Blocked senders/domains → their messages never appear in the Unibox (not
+  // even in "Todos"/warmup), so blocking truly removes them from view.
+  const blockedEmailSet = useMemo(
+    () => new Set(blockedEntries.filter((e) => e.entry_type === "email").map((e) => String(e.value).toLowerCase())),
+    [blockedEntries],
+  );
+  const blockedDomainSet = useMemo(
+    () => new Set(blockedEntries.filter((e) => e.entry_type === "domain").map((e) => String(e.value).toLowerCase())),
+    [blockedEntries],
+  );
+  const isBlockedSender = useCallback((email?: string | null) => {
+    const e = (email || "").toLowerCase();
+    if (!e) return false;
+    if (blockedEmailSet.has(e)) return true;
+    const dom = e.split("@")[1] || "";
+    return dom ? blockedDomainSet.has(dom) : false;
+  }, [blockedEmailSet, blockedDomainSet]);
+
   // Apply the unibox filters ALWAYS (Spanish/Catalan only, no warmup, no bounces,
   // only real replies). English/other languages never appear anywhere.
   const filtered = useMemo(() => {
@@ -1938,6 +1958,7 @@ export default function Unibox() {
     // English/warmup filter hides is ever unrecoverable from the UI.
     const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
     const list = messages
+      .filter(m => !isBlockedSender(m.from_email)) // blocked senders never show
       .filter(m => bypassFilters || !hiddenFromClean(m))
       .filter(m => {
         if (viewTab === "reminders") return !!reminders[m.id];
@@ -1968,7 +1989,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, sentItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup]);
+  }, [messages, sentItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2003,25 +2024,39 @@ export default function Unibox() {
     await supabase.from("inbox_messages").update({ is_read: true }).eq("id", id);
   };
 
+  // Remove a message from the visible list + the instant cache so it doesn't
+  // flash back on the next re-entry before the reload.
+  const dropMessageLocally = (id: string): any[] => {
+    const remaining = messages.filter((message) => message.id !== id);
+    setMessages(remaining);
+    cacheSet("unibox:messages", remaining);
+    return remaining;
+  };
+
   const handleArchive = async (id: string) => {
-    await supabase.from("inbox_messages").update({ is_archived: true }).eq("id", id);
+    const { error } = await supabase.from("inbox_messages").update({ is_archived: true }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    const remaining = dropMessageLocally(id);
+    setSelectedId((current) => (current === id ? (isMobile ? null : remaining[0]?.id ?? null) : current));
     toast.success("Archivado");
-    setSelectedId(null);
   };
 
   const handleDeleteMessage = async (id: string) => {
     const target = messages.find((message) => message.id === id);
     if (!target) return;
-    if (!window.confirm(`¿Eliminar el email de ${target.from_name || target.from_email}? Esta acción no se puede deshacer.`)) return;
+    if (!window.confirm(`¿Eliminar el email de ${target.from_name || target.from_email}?`)) return;
 
-    const { error } = await supabase.from("inbox_messages").delete().eq("id", id);
+    // Soft-delete (is_archived=true) instead of a hard delete. A hard delete
+    // removes the dedupe row, so the very next IMAP sync re-downloads and
+    // re-inserts the SAME message → it reappears. Keeping the row hidden means
+    // it's gone from view AND never comes back.
+    const { error } = await supabase.from("inbox_messages").update({ is_archived: true }).eq("id", id);
     if (error) {
       toast.error(error.message);
       return;
     }
 
-    const remaining = messages.filter((message) => message.id !== id);
-    setMessages(remaining);
+    const remaining = dropMessageLocally(id);
     setReminders((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -2107,22 +2142,36 @@ export default function Unibox() {
   };
 
 
+  // Hide (archive) every inbox message from a blocked email/domain + drop them
+  // from the local list and cache, so blocking removes them from view right away
+  // and they persist hidden (never re-synced into view).
+  const hideMessagesFromSender = async (predicate: (m: any) => boolean) => {
+    const ids = messages.filter(predicate).map((m) => m.id);
+    if (ids.length > 0) {
+      for (let i = 0; i < ids.length; i += 100) {
+        await supabase.from("inbox_messages").update({ is_archived: true }).in("id", ids.slice(i, i + 100));
+      }
+    }
+    const remaining = messages.filter((m) => !predicate(m));
+    setMessages(remaining);
+    cacheSet("unibox:messages", remaining);
+    setSelectedId((cur) => (cur && ids.includes(cur) ? null : cur));
+    return ids.length;
+  };
+
   const handleBlockEmail = async (email: string) => {
     if (!user) return;
+    const value = email.toLowerCase();
     setBlocking(true);
     try {
-      // 1. Add to blocklist
-      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "email", value: email.toLowerCase() }, { onConflict: "user_id,entry_type,value" });
-      // 2. Find all leads with this email
-      const { data: leads } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("email", email.toLowerCase());
-      if (leads && leads.length > 0) {
-        const leadIds = leads.map(l => l.id);
-        // Remove from all campaign_leads
-        for (const lid of leadIds) {
-          await supabase.from("campaign_leads").delete().eq("lead_id", lid);
-        }
-      }
-      toast.success(`${email} bloqueado y eliminado de todas las campañas`);
+      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "email", value }, { onConflict: "user_id,entry_type,value" });
+      // Filter it out of the Unibox now (optimistic), then hide its messages.
+      setBlockedEntries((prev) => (prev.some((e) => e.entry_type === "email" && e.value === value) ? prev : [{ id: `tmp-${value}`, entry_type: "email", value, created_at: new Date().toISOString() }, ...prev]));
+      await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase() === value);
+      const { data: leads } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("email", value);
+      for (const l of leads || []) await supabase.from("campaign_leads").delete().eq("lead_id", l.id);
+      loadBlockedEntries();
+      toast.success(`${email} bloqueado — sus mensajes ocultados y fuera de campañas`);
     } catch (e: any) { toast.error(e.message); }
     setBlocking(false);
     setBlockDialogOpen(false);
@@ -2131,19 +2180,18 @@ export default function Unibox() {
 
   const handleBlockDomain = async (domain: string) => {
     if (!user) return;
+    const value = domain.toLowerCase();
     setBlocking(true);
     try {
-      // 1. Add domain to blocklist
-      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "domain", value: domain.toLowerCase() }, { onConflict: "user_id,entry_type,value" });
-      // 2. Find all leads with this domain
+      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "domain", value }, { onConflict: "user_id,entry_type,value" });
+      setBlockedEntries((prev) => (prev.some((e) => e.entry_type === "domain" && e.value === value) ? prev : [{ id: `tmp-${value}`, entry_type: "domain", value, created_at: new Date().toISOString() }, ...prev]));
+      const n = await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase().endsWith(`@${value}`));
       const { data: leads } = await supabase.from("leads").select("id, email").eq("user_id", user.id);
-      const domainLeads = (leads || []).filter(l => l.email.toLowerCase().endsWith(`@${domain.toLowerCase()}`));
-      if (domainLeads.length > 0) {
-        for (const lead of domainLeads) {
-          await supabase.from("campaign_leads").delete().eq("lead_id", lead.id);
-        }
+      for (const lead of (leads || []).filter((l) => (l.email || "").toLowerCase().endsWith(`@${value}`))) {
+        await supabase.from("campaign_leads").delete().eq("lead_id", lead.id);
       }
-      toast.success(`Dominio @${domain} bloqueado — ${domainLeads.length} leads eliminados de campañas`);
+      loadBlockedEntries();
+      toast.success(`Dominio @${domain} bloqueado — ${n} mensaje(s) ocultados`);
     } catch (e: any) { toast.error(e.message); }
     setBlocking(false);
     setBlockDialogOpen(false);
