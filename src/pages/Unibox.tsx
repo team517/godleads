@@ -1331,6 +1331,11 @@ export default function Unibox() {
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
   const [blockTarget, setBlockTarget] = useState<{ email: string; domain: string } | null>(null);
   const [blocking, setBlocking] = useState(false);
+  // Blocklist manager (view + unblock emails/domains)
+  const [blockManagerOpen, setBlockManagerOpen] = useState(false);
+  const [blockedEntries, setBlockedEntries] = useState<any[]>([]);
+  const [blockedLoading, setBlockedLoading] = useState(false);
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
   const [threadMessages, setThreadMessages] = useState<any[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   // Forward (reenviar)
@@ -2133,6 +2138,31 @@ export default function Unibox() {
     setBlockTarget(null);
   };
 
+  const loadBlockedEntries = async () => {
+    if (!user) return;
+    setBlockedLoading(true);
+    const { data, error } = await supabase
+      .from("blocklist")
+      .select("id, entry_type, value, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    if (error) toast.error(`No se pudo cargar la lista: ${error.message}`);
+    setBlockedEntries(data || []);
+    setBlockedLoading(false);
+  };
+
+  const openBlockManager = () => { setBlockManagerOpen(true); loadBlockedEntries(); };
+
+  const handleUnblock = async (entry: { id: string; entry_type: string; value: string }) => {
+    if (!user) return;
+    setUnblockingId(entry.id);
+    const { error } = await supabase.from("blocklist").delete().eq("id", entry.id).eq("user_id", user.id);
+    if (error) { toast.error(`No se pudo desbloquear: ${error.message}`); setUnblockingId(null); return; }
+    setBlockedEntries((prev) => prev.filter((e) => e.id !== entry.id));
+    toast.success(`${entry.entry_type === "domain" ? "@" + entry.value : entry.value} desbloqueado`);
+    setUnblockingId(null);
+  };
+
   // Translate the reply the user typed INTO the language the lead wrote in, in
   // place, so they SEE exactly what will be sent (WYSIWYG) and then hit Responder.
   // Replaces the old invisible auto-translate-on-send.
@@ -2371,6 +2401,10 @@ export default function Unibox() {
             <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
               <InboxIcon className="mr-1.5 h-3.5 w-3.5" /> {messages.length} totales
             </Badge>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={openBlockManager}
+              title="Ver y desbloquear emails y dominios bloqueados">
+              <ShieldBan className="h-3.5 w-3.5" /> Bloqueados
+            </Button>
             <Button variant="default" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}
               title="Reconecta todas las cuentas IMAP y trae los mensajes nuevos">
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
@@ -3146,6 +3180,59 @@ export default function Unibox() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Procesando...
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Blocklist manager — view + unblock emails and domains */}
+      <Dialog open={blockManagerOpen} onOpenChange={setBlockManagerOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldBan className="h-5 w-5 text-destructive" /> Bloqueados
+            </DialogTitle>
+            <DialogDescription>
+              Emails y dominios que has bloqueado. No reciben envíos ni aparecen en el Unibox. Pulsa <strong>Desbloquear</strong> para quitarlos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto">
+            {blockedLoading ? (
+              <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            ) : blockedEntries.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">No tienes nada bloqueado.</div>
+            ) : (
+              <div className="space-y-1.5">
+                {blockedEntries.map((entry) => (
+                  <div key={entry.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2">
+                    <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md ${entry.entry_type === "domain" ? "bg-amber-100 text-amber-600" : "bg-red-100 text-red-600"}`}>
+                      {entry.entry_type === "domain" ? <Globe className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {entry.entry_type === "domain" ? `@${entry.value}` : entry.value}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {entry.entry_type === "domain" ? "Dominio" : "Email"}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline" size="sm"
+                      className="h-7 flex-shrink-0 gap-1.5 text-xs"
+                      onClick={() => handleUnblock(entry)}
+                      disabled={unblockingId === entry.id}
+                    >
+                      {unblockingId === entry.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                      Desbloquear
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {!blockedLoading && blockedEntries.length > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              {blockedEntries.filter(e => e.entry_type === "email").length} emails · {blockedEntries.filter(e => e.entry_type === "domain").length} dominios
+            </p>
           )}
         </DialogContent>
       </Dialog>
