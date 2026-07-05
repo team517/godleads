@@ -725,7 +725,11 @@ export default function EmailAccounts() {
     const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
     const inc = acc.warmup_increment || 2;
     const target = acc.warmup_limit || acc.daily_limit || 30;
-    const eff = Math.min((days + 1) * inc, target);
+    // The account's daily_limit is a HARD ceiling the engine always applies
+    // (getEffectiveLimit = min(daily_limit, ramp, …)). Cap the shown value by it
+    // too, so setting the daily limit to 12 actually reads 12 — not the raw ramp.
+    const hardCap = acc.daily_limit && acc.daily_limit > 0 ? acc.daily_limit : 30;
+    const eff = Math.min((days + 1) * inc, target, hardCap);
     return { day: days + 1, eff, target };
   };
 
