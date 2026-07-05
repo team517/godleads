@@ -589,6 +589,10 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Make sure the global-suppression RPC exists (once per warm isolate) so the
+    // sending queue and the async-bounce path can always call it.
+    const suppressReady = await ensureSuppressFn();
+
     let targetUserId: string | null = null;
     let specificAccountId: string | null = null;
 
@@ -934,6 +938,7 @@ serve(async (req) => {
       next_offset: hasMore ? nextOffset : null,
       has_more: hasMore,
       attachments_ready: attachmentsReady,
+      suppress_ready: suppressReady,
       errors: errors.length > 0 ? errors : undefined,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
