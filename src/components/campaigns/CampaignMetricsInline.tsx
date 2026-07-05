@@ -4,12 +4,14 @@ import { Send, MailOpen, MessageSquareReply, DollarSign, AlertTriangle, MailX } 
 
 type Stats = { sent: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number };
 
-/** Compact metrics strip for a campaign card in the list view. Uses cheap HEAD
- *  count queries (no row transfer) so it scales to many campaigns. */
-export default function CampaignMetricsInline({ campaignId }: { campaignId: string }) {
-  const [m, setM] = useState<Stats | null>(null);
+/** Compact metrics strip for a campaign card. When `metrics` is passed by the
+ *  parent (from the single campaign_metrics_for_user RPC) it renders instantly
+ *  with ZERO queries. Falls back to its own load only if none is provided. */
+export default function CampaignMetricsInline({ campaignId, metrics }: { campaignId: string; metrics?: Stats | null }) {
+  const [m, setM] = useState<Stats | null>(metrics ?? null);
 
   useEffect(() => {
+    if (metrics !== undefined) { setM(metrics); return; } // parent-provided → no query
     let alive = true;
     const count = async (q: any): Promise<number> => {
       const { count } = await q;
@@ -36,7 +38,8 @@ export default function CampaignMetricsInline({ campaignId }: { campaignId: stri
       setM({ sent, opened, replied, bounced, senderBounced, positive });
     })();
     return () => { alive = false; };
-  }, [campaignId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, metrics]);
 
   const pct = (n: number) => (m && m.sent > 0 ? `${((n / m.sent) * 100).toFixed(1)}%` : "0%");
 

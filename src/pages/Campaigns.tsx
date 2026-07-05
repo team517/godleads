@@ -67,6 +67,9 @@ export default function Campaigns() {
   // Instant re-entry: paint the cached list immediately, refresh in background.
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("campaigns:list") || []);
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("campaigns:list"));
+  // All campaigns' metrics from ONE server-side RPC → cards render instantly with
+  // zero per-card queries (was: up to 5000 sent_emails rows downloaded PER card).
+  const [metricsMap, setMetricsMap] = useState<Record<string, any>>(() => cacheGet<Record<string, any>>("campaigns:metrics") || {});
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "" });
@@ -81,6 +84,24 @@ export default function Campaigns() {
     setCampaigns(data || []);
     cacheSet("campaigns:list", data || []);
     setLoading(false);
+    // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer).
+    const { data: rows, error } = await supabase.rpc("campaign_metrics_for_user" as any, { p_user_id: user.id });
+    if (!error && Array.isArray(rows)) {
+      const map: Record<string, any> = {};
+      for (const r of rows as any[]) {
+        map[r.campaign_id] = {
+          sent: Number(r.sent) || 0,
+          opened: Number(r.opened) || 0,
+          replied: Number(r.replied) || 0,
+          positive: Number(r.positive) || 0,
+          bounced: Number(r.bounced) || 0,
+          senderBounced: Number(r.sender_bounced) || 0,
+          sequences: Number(r.sequences) || 0,
+        };
+      }
+      setMetricsMap(map);
+      cacheSet("campaigns:metrics", map);
+    }
   };
 
   useEffect(() => { load(); }, [user]);
@@ -321,7 +342,7 @@ export default function Campaigns() {
             {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pause</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Launch" : "Resume"}</>}
           </Button>
         </div>
-        <CampaignReportBar campaign={selectedCampaign} />
+        <CampaignReportBar campaign={selectedCampaign} metrics={metricsMap[selectedCampaign.id]} />
         <CampaignSendsChart campaignId={selectedCampaign.id} />
         <CampaignDetail campaignId={selectedCampaign.id} />
       </div>
@@ -392,7 +413,7 @@ export default function Campaigns() {
                   </div>
                   {/* Inline metrics */}
                   <div className="mt-3 border-t border-border/40 pt-3">
-                    <CampaignMetricsInline campaignId={campaign.id} />
+                    <CampaignMetricsInline campaignId={campaign.id} metrics={metricsMap[campaign.id]} />
                   </div>
                 </CardContent>
               </Card>

@@ -153,6 +153,76 @@ async function ensureSuppressFn(): Promise<boolean> {
   }
 }
 
+// Bootstrap the campaign-metrics RPC (mirrors migration
+// 20260705140000_campaign_metrics_rpc.sql) so the campaign list can fetch all
+// metrics in ONE server-side call instead of downloading thousands of rows.
+let metricsFnReady = false;
+async function ensureMetricsFn(): Promise<boolean> {
+  if (metricsFnReady) return true;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (!dbUrl) return false;
+  const sql = postgres(dbUrl, { prepare: false, max: 1 });
+  try {
+    await sql.unsafe(`
+      create or replace function public.campaign_metrics_for_user(p_user_id uuid)
+      returns table (campaign_id uuid, sent bigint, opened bigint, bounced bigint,
+                     replied bigint, sender_bounced bigint, positive bigint, sequences bigint)
+      language sql stable security definer set search_path = public as $mfn$
+        with c as (
+          select id from public.campaigns where user_id = auth.uid()
+        ),
+        se as (
+          select s.campaign_id, lower(coalesce(s.to_email,'')) as email,
+                 s.status, s.sent_at, s.opened_at, s.replied_at, s.bounced_at, s.lead_id
+          from public.sent_emails s join c on c.id = s.campaign_id
+        ),
+        okmail as (
+          select campaign_id, email, bool_or(sent_at is not null or status in ('sent','bounced')) as ok
+          from se group by campaign_id, email
+        ),
+        failed as (
+          select se.campaign_id, count(distinct se.email) as n
+          from se join okmail o on o.campaign_id = se.campaign_id and o.email = se.email
+          where se.status = 'failed' and o.ok = false and se.email <> '' group by se.campaign_id
+        ),
+        agg as (
+          select campaign_id,
+            count(*) filter (where sent_at is not null or status = 'sent') as sent,
+            count(*) filter (where opened_at is not null) as opened,
+            count(*) filter (where bounced_at is not null) as bounced,
+            count(distinct coalesce(lead_id::text, email)) filter (where replied_at is not null) as replied
+          from se group by campaign_id
+        ),
+        pos as (
+          select im.campaign_id, count(*) as n from public.inbox_messages im
+          join c on c.id = im.campaign_id where im.labels @> array['Interesado']::text[]
+          group by im.campaign_id
+        ),
+        seq as (
+          select cs.campaign_id, count(*) as n from public.campaign_steps cs
+          join c on c.id = cs.campaign_id group by cs.campaign_id
+        )
+        select c.id, coalesce(agg.sent,0), coalesce(agg.opened,0), coalesce(agg.bounced,0),
+          coalesce(agg.replied,0), coalesce(failed.n,0), coalesce(pos.n,0), coalesce(seq.n,0)
+        from c
+        left join agg on agg.campaign_id = c.id
+        left join failed on failed.campaign_id = c.id
+        left join pos on pos.campaign_id = c.id
+        left join seq on seq.campaign_id = c.id;
+      $mfn$;
+      revoke all on function public.campaign_metrics_for_user(uuid) from public;
+      grant execute on function public.campaign_metrics_for_user(uuid) to authenticated;
+    `);
+    metricsFnReady = true;
+    return true;
+  } catch (e) {
+    console.error("metrics fn bootstrap failed:", (e as Error).message);
+    return false;
+  } finally {
+    await sql.end({ timeout: 3 });
+  }
+}
+
 /** base64 → bytes (Deno-safe). */
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -589,9 +659,10 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Make sure the global-suppression RPC exists (once per warm isolate) so the
-    // sending queue and the async-bounce path can always call it.
+    // Make sure the global-suppression + campaign-metrics RPCs exist (once per
+    // warm isolate) so the sending queue, bounce path and campaign list can use them.
     const suppressReady = await ensureSuppressFn();
+    const metricsReady = await ensureMetricsFn();
 
     let targetUserId: string | null = null;
     let specificAccountId: string | null = null;
@@ -939,6 +1010,7 @@ serve(async (req) => {
       has_more: hasMore,
       attachments_ready: attachmentsReady,
       suppress_ready: suppressReady,
+      metrics_ready: metricsReady,
       errors: errors.length > 0 ? errors : undefined,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {

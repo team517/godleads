@@ -6,7 +6,8 @@ import {
   Play, Pause, FileEdit, ExternalLink, DollarSign,
 } from "lucide-react";
 
-interface Props { campaign: any; }
+type Metrics = { sent: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number; sequences: number };
+interface Props { campaign: any; metrics?: Metrics | null; }
 
 const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play }> = {
   active:    { label: "Active",    cls: "text-emerald-600", icon: Play },
@@ -16,12 +17,14 @@ const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play
 };
 
 /** Instantly-style report bar: campaign details on the left, key metrics on the right. */
-export default function CampaignReportBar({ campaign }: Props) {
+export default function CampaignReportBar({ campaign, metrics: metricsProp }: Props) {
   const navigate = useNavigate();
-  const [m, setM] = useState({ sent: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 });
-  const [loading, setLoading] = useState(true);
+  const [m, setM] = useState(metricsProp ?? { sent: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 });
+  const [loading, setLoading] = useState(!metricsProp);
 
   useEffect(() => {
+    // Parent provided the numbers (from the single RPC) → render instantly, no query.
+    if (metricsProp) { setM(metricsProp); setLoading(false); return; }
     let alive = true;
     const load = async () => {
       setLoading(true);
@@ -70,7 +73,8 @@ export default function CampaignReportBar({ campaign }: Props) {
     };
     load();
     return () => { alive = false; };
-  }, [campaign.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaign.id, metricsProp]);
 
   const pct = (n: number) => (m.sent > 0 ? `${((n / m.sent) * 100).toFixed(2)}%` : "0%");
   const meta = statusMeta[campaign.status] || statusMeta.draft;
