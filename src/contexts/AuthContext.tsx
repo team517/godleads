@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from "react
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
+import { bindCacheUser } from "@/lib/instant-cache";
 
 interface AuthContextType {
   session: Session | null;
@@ -35,7 +36,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Bind the instant-cache to this user BEFORE pages mount, so persisted
+      // page snapshots hydrate for the right owner (and never across users).
+      // Purge ONLY on a real sign-out — a transient null (session still
+      // restoring / offline) must not wipe the snapshots.
+      if (event === "SIGNED_OUT") bindCacheUser(null);
+      else if (session?.user) bindCacheUser(session.user.id);
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
@@ -43,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     withAuthTimeout(supabase.auth.getSession(), 10000)
       .then(({ data: { session } }) => {
+        if (session?.user) bindCacheUser(session.user.id);
         setSession(session);
         setUser(session?.user ?? null);
       })
@@ -89,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn('signOut local failed, clearing state manually', e);
     }
+    bindCacheUser(null); // purge persisted page snapshots on sign-out
     setSession(null);
     setUser(null);
     // Best-effort: clear any persisted Supabase auth keys
