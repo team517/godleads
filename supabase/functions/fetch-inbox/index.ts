@@ -111,6 +111,46 @@ async function ensureAttachmentInfra(adminClient: ReturnType<typeof createClient
   }
 }
 
+// Bootstrap the global-suppression RPC (mirrors migration
+// 20260705120000_suppress_email_global.sql) so the feature works even before the
+// migration is pushed. Idempotent; once per warm isolate.
+let suppressFnReady = false;
+async function ensureSuppressFn(): Promise<boolean> {
+  if (suppressFnReady) return true;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (!dbUrl) return false;
+  const sql = postgres(dbUrl, { prepare: false, max: 1 });
+  try {
+    await sql.unsafe(`
+      create or replace function public.suppress_email_global(
+        p_user_id uuid, p_email text, p_reason text default 'bounce'
+      ) returns integer
+      language plpgsql security definer set search_path = public as $fn$
+      declare v_email text := lower(trim(p_email)); v_deleted integer := 0;
+      begin
+        if p_user_id is null or v_email is null
+           or v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$' then
+          return 0;
+        end if;
+        insert into public.blocklist (user_id, entry_type, value)
+        values (p_user_id, 'email', v_email)
+        on conflict (user_id, entry_type, value) do nothing;
+        delete from public.leads where user_id = p_user_id and lower(email) = v_email;
+        get diagnostics v_deleted = row_count;
+        return v_deleted;
+      end; $fn$;
+      grant execute on function public.suppress_email_global(uuid, text, text) to authenticated, service_role;
+    `);
+    suppressFnReady = true;
+    return true;
+  } catch (e) {
+    console.error("suppress fn bootstrap failed:", (e as Error).message);
+    return false;
+  } finally {
+    await sql.end({ timeout: 3 });
+  }
+}
+
 /** base64 → bytes (Deno-safe). */
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -318,6 +358,37 @@ function isAutomatedSender(email: string): boolean {
   return patterns.some(p => p.test(email));
 }
 
+/**
+ * Detect an async bounce (mailer-daemon DSN / NDR) and return the PERMANENTLY
+ * failed recipient addresses. Only permanent (5.x.x / 55x) failures are returned
+ * so a temporary greylist (4.x.x) never suppresses a good lead.
+ */
+function extractPermanentBounceRecipients(fromEmail: string, subject: string, rawBody: string): string[] {
+  const from = (fromEmail || "").toLowerCase();
+  const looksLikeDaemon = /mailer-daemon@|postmaster@|@.*mail.*daemon/i.test(from);
+  const subjBounce = /undeliverable|undelivered|delivery status|returned mail|returned to sender|mail delivery (failed|subsystem)|failure notice|delivery has failed|no se pudo entregar|correo no entregado|delivery incomplete/i.test(subject || "");
+  const bodyDsn = /Content-Type:\s*message\/delivery-status|Diagnostic-Code:|Final-Recipient:|This is the mail system at host|delivery to the following recipient|could not be delivered/i.test(rawBody || "");
+  if (!looksLikeDaemon && !subjBounce && !bodyDsn) return [];
+
+  // Only act on PERMANENT failures. Look for a 5.x.x status or a 55x SMTP code.
+  const permanent =
+    /Status:\s*5\.\d+\.\d+/i.test(rawBody) ||
+    /Diagnostic-Code:[^\n]*\b(5\d\d|5\.\d+\.\d+)\b/i.test(rawBody) ||
+    /\b55[0-9]\b[^\n]*(unknown|does not exist|no such user|not found|invalid|rejected|disabled|unavailable)/i.test(rawBody);
+  const temporary = /Status:\s*4\.\d+\.\d+/i.test(rawBody);
+  if (!permanent || temporary) return [];
+
+  const emails = new Set<string>();
+  const push = (e?: string | null) => {
+    const v = (e || "").trim().toLowerCase().replace(/^<|>$/g, "");
+    if (/^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/.test(v) && !isAutomatedSender(v)) emails.add(v);
+  };
+  // DSN standard fields (most reliable)
+  for (const m of rawBody.matchAll(/(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s<>;]+@[^\s<>;]+)>?/gi)) push(m[1]);
+  for (const m of rawBody.matchAll(/X-Failed-Recipients:\s*<?([^\s<>;,]+@[^\s<>;,]+)>?/gi)) push(m[1]);
+  return Array.from(emails);
+}
+
 // Only store Spanish/Catalan messages — drop English/other warm-up at import time
 // so the inbox doesn't fill with 10k+ foreign warm-up emails.
 const LANG_ES_CA = /\b(el|la|los|las|del|que|qué|por|para|con|como|pero|porque|cuando|donde|gracias|hola|saludos|cordial|atentamente|estimad[oa]s?|señor|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|quiero|queremos|podemos|tenemos|estamos|somos|también|según|sólo|solo|vale|claro|perfecto|encantad[oa]|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|també|molt|més|sense|fins|bon\s?dia|d'acord)\b/gi;
@@ -337,7 +408,7 @@ function isForeignMessage(subject: string, body: string): boolean {
 
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50
-): Promise<{ ok: boolean; messages: ImapMessage[]; error?: string }> {
+): Promise<{ ok: boolean; messages: ImapMessage[]; bouncedRecipients?: string[]; error?: string }> {
   // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
   // block the whole rotating window forever. On timeout the socket is dropped
   // and the account fails cleanly (recorded in errors[] + last_sync stays old).
@@ -386,7 +457,7 @@ async function fetchImapMessages(
     const loginResp = await send("A001", `LOGIN "${username}" "${password}"`);
     if (!loginResp.includes("A001 OK")) {
       conn.close();
-      return { ok: false, messages: [], error: `IMAP login failed` };
+      return { ok: false, messages: [], bouncedRecipients: [], error: `IMAP login failed` };
     }
 
     // Tag generator for the variable number of IMAP commands below.
@@ -407,6 +478,7 @@ async function fetchImapMessages(
 
     const targets = ["INBOX", ...(spamFolder ? [spamFolder] : [])];
     const messages: ImapMessage[] = [];
+    const bouncedRecipients = new Set<string>();
     const seenIds = new Set<string>();
     const limit = Math.max(50, Math.min(fetchLimit, 1000));
 
@@ -470,6 +542,9 @@ async function fetchImapMessages(
 
         if (fromEmail) {
           const decodedSubject = decodeMimeWords(subjectStr);
+          // Async bounce (mailer-daemon DSN): capture the failed recipient(s) so
+          // the handler can suppress them globally, THEN skip storing the bounce.
+          for (const r of extractPermanentBounceRecipients(fromEmail, decodedSubject, rawBody)) bouncedRecipients.add(r);
           if (isAutomatedSender(fromEmail)) continue;
 
           // Dedupe across folders (same message can appear in INBOX + a copy)
@@ -497,9 +572,9 @@ async function fetchImapMessages(
     await send(nextTag(), "LOGOUT");
     conn.close();
 
-    return { ok: true, messages };
+    return { ok: true, messages, bouncedRecipients: Array.from(bouncedRecipients) };
   } catch (e) {
-    return { ok: false, messages: [], error: `IMAP error: ${e.message}` };
+    return { ok: false, messages: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
   }
 }
 
@@ -635,6 +710,22 @@ serve(async (req) => {
         await adminClient.from("email_accounts")
           .update({ last_sync: new Date().toISOString() })
           .eq("id", account.id);
+
+        // ── Async bounce suppression ──────────────────────────────────────
+        // mailer-daemon DSNs caught during this fetch → suppress the failed
+        // recipient GLOBALLY (blocklist + remove from every list) so we stop
+        // emailing dead mailboxes and protect the client's sending reputation.
+        const bounced = result.bouncedRecipients || [];
+        if (bounced.length > 0 && await ensureSuppressFn()) {
+          for (const email of bounced) {
+            try {
+              await adminClient.rpc("suppress_email_global", {
+                p_user_id: account.user_id, p_email: email, p_reason: "async_bounce",
+              });
+            } catch (e) { console.error("suppress_email_global (async) failed:", (e as Error).message); }
+          }
+        }
+        if (bounced.length > 0) console.log(`Suppressed ${bounced.length} async-bounced recipient(s) via ${account.email}`);
 
         // STORE EVERY LANGUAGE. The old server-side ES/CA filter dropped real
         // replies before they ever reached the DB (e.g. a Spanish "buenas que tal"

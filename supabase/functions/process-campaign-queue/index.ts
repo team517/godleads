@@ -1787,6 +1787,14 @@ serve(async (req) => {
             await adminClient.from("campaign_leads")
               .update({ status: "bounced" })
               .eq("id", cl.id);
+            // GLOBAL suppression: blocklist the address + remove this lead from
+            // EVERY list (campaign_leads cascade; sent_emails/inbox keep history)
+            // so a dead mailbox is never emailed again for this client, anywhere.
+            try {
+              await adminClient.rpc("suppress_email_global", {
+                p_user_id: campaign.user_id, p_email: lead.email, p_reason: "hard_bounce",
+              });
+            } catch (e) { console.error("suppress_email_global (hard) failed:", (e as Error).message); }
           } else if (errClass === 'rate') {
             // Account is being throttled — back off for the rest of the run,
             // GLOBALLY (the set spans campaigns; the splice below only covers the
