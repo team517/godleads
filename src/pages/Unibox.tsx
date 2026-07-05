@@ -1375,7 +1375,7 @@ export default function Unibox() {
     // Typed as `string` on purpose: the generated types.ts is stale (missing
     // folder_id/labels/etc.), so a literal column list would fail TS validation
     // even though the columns exist at runtime. Widening to string skips that.
-    const LIST_COLS: string = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash";
+    const LIST_COLS: string = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain";
     const [linkedRes, unlinkedRes] = await Promise.all([
       supabase
         .from("inbox_messages")
@@ -2328,7 +2328,9 @@ export default function Unibox() {
           subject: replySubject,
           body: finalBody,
           in_reply_to: selected.message_id || undefined,
-          references: selected.message_id || undefined,
+          // Full thread chain (original References + its Message-ID) so the reply
+          // threads perfectly in every client, not just by subject.
+          references: ([selected.ref_chain, selected.message_id].filter(Boolean).join(" ").trim()) || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
         }),
         signal: controller.signal,

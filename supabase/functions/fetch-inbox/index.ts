@@ -17,6 +17,7 @@ interface ImapMessage {
   body_html: string;
   message_id: string;
   date: string;
+  ref_chain: string;
   attachments: ParsedAttachment[];
 }
 
@@ -164,6 +165,7 @@ async function ensureMetricsFn(): Promise<boolean> {
   const sql = postgres(dbUrl, { prepare: false, max: 1 });
   try {
     await sql.unsafe(`
+      alter table public.inbox_messages add column if not exists ref_chain text;
       create or replace function public.campaign_metrics_for_user(p_user_id uuid)
       returns table (campaign_id uuid, sent bigint, opened bigint, bounced bigint,
                      replied bigint, sender_bounced bigint, positive bigint, sequences bigint)
@@ -564,7 +566,7 @@ async function fetchImapMessages(
 
       const start = Math.max(1, totalMessages - limit + 1);
       // BODY.PEEK keeps messages unread on the server.
-      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID)] BODY.PEEK[TEXT])`);
+      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT])`);
 
       const parts = fetchResp.split(/\* \d+ FETCH/);
       for (const part of parts) {
@@ -583,6 +585,13 @@ async function fetchImapMessages(
         const subjectStr = headerVal(/Subject:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
         const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
         const msgIdMatch = part.match(/Message-ID:\s*<?(.+?)>?(?:\r?\n)/i);
+        // Thread chain: References + In-Reply-To of the received message, so a
+        // reply can carry the FULL chain and thread perfectly in every client.
+        const referencesStr = headerVal(/References:\s*(<[^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);
+        const inReplyToStr = headerVal(/In-Reply-To:\s*(<[^\r\n>]+>)/i);
+        const refChain = Array.from(new Set(
+          `${referencesStr} ${inReplyToStr}`.match(/<[^<>\s]+>/g) || []
+        )).join(" ").slice(0, 3000);
 
         let fromEmail = "";
         let fromName = "";
@@ -635,6 +644,7 @@ async function fetchImapMessages(
             body_html: bodyHtml,
             message_id: msgId,
             date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
+            ref_chain: sanitizeForPostgres(refChain),
             attachments: extractAttachments(rawBody),
           });
         }
@@ -914,9 +924,10 @@ serve(async (req) => {
             body_text: msg.body_text,
             body_html: msg.body_html || null,
             received_at: parsedDate,
-            // Only reference the column when the bootstrap confirmed it exists —
-            // otherwise the whole insert would fail and break the sync.
+            // Only reference these columns when their bootstrap confirmed they
+            // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),
+            ...(metricsReady ? { ref_chain: msg.ref_chain || null } : {}),
           };
         });
 
