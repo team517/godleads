@@ -725,14 +725,14 @@ serve(async (req) => {
             .from("email_accounts")
             .select("*")
             .eq("user_id", targetUserId)
-            .eq("status", "connected")
+            .in("status", ["connected", "auth_failed"])
             .order("id", { ascending: true })
             .range(requestedOffset, requestedOffset + requestedBatchSize - 1),
           adminClient
             .from("email_accounts")
             .select("id", { count: "exact", head: true })
             .eq("user_id", targetUserId)
-            .eq("status", "connected"),
+            .in("status", ["connected", "auth_failed"]),
         ]);
         accounts = data || [];
         totalAccounts = count || 0;
@@ -745,7 +745,7 @@ serve(async (req) => {
       const { count } = await adminClient
         .from("email_accounts")
         .select("id", { count: "exact", head: true })
-        .eq("status", "connected");
+        .in("status", ["connected", "auth_failed"]);
       totalAccounts = count || 0;
       // ROTATING WINDOW: the old design always started at offset 0 and relied on a
       // fragile self-chain to reach the rest — when any link died (resource limit,
@@ -763,7 +763,7 @@ serve(async (req) => {
       const { data } = await adminClient
         .from("email_accounts")
         .select("*")
-        .eq("status", "connected")
+        .in("status", ["connected", "auth_failed"])
         .order("id", { ascending: true })
         .range(usedOffset, usedOffset + requestedBatchSize - 1);
       accounts = data || [];
