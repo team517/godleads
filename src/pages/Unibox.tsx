@@ -1365,10 +1365,18 @@ export default function Unibox() {
     // warmup). Lane 1 always brings the latest LEAD-LINKED messages (real
     // replies); lane 2 brings the latest unlinked ones. Real replies can never
     // be displaced by warm-up volume.
+    // List payload: everything the list/filters/snippet need, but NOT body_html
+    // (up to ~50 KB each). The full HTML + attachments are fetched only when a
+    // message is opened (loadThread). This cut the Unibox load from ~55 MB to a
+    // few MB → much faster first paint and a fraction of the egress.
+    // Typed as `string` on purpose: the generated types.ts is stale (missing
+    // folder_id/labels/etc.), so a literal column list would fail TS validation
+    // even though the columns exist at runtime. Widening to string skips that.
+    const LIST_COLS: string = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash";
     const [linkedRes, unlinkedRes] = await Promise.all([
       supabase
         .from("inbox_messages")
-        .select("*")
+        .select(LIST_COLS)
         .eq("user_id", user.id)
         .eq("is_archived", false)
         .or("lead_id.not.is.null,campaign_id.not.is.null")
@@ -1376,7 +1384,7 @@ export default function Unibox() {
         .limit(500),
       supabase
         .from("inbox_messages")
-        .select("*")
+        .select(LIST_COLS)
         .eq("user_id", user.id)
         .eq("is_archived", false)
         .is("lead_id", null)
@@ -1385,7 +1393,7 @@ export default function Unibox() {
         .limit(500),
     ]);
     const seenIds = new Set<string>();
-    const raw = [...(linkedRes.data || []), ...(unlinkedRes.data || [])]
+    const raw = [...((linkedRes.data as any[]) || []), ...((unlinkedRes.data as any[]) || [])]
       .filter((m) => (seenIds.has(m.id) ? false : (seenIds.add(m.id), true)))
       .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
 
