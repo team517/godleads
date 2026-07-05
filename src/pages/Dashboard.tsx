@@ -5,34 +5,40 @@ import { Send, MessageCircle, Users, Mail, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import TodayMessages from "@/components/dashboard/TodayMessages";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ sent: 0, replied: 0, leads: 0, accounts: 0 });
-  const [campaigns, setCampaigns] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Instant re-entry: paint cached stats immediately, refresh in background.
+  const [stats, setStats] = useState(() => cacheGet<any>("dash:stats") || { sent: 0, replied: 0, leads: 0, accounts: 0 });
+  const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("dash:campaigns") || []);
+  const [loading, setLoading] = useState(() => !cacheGet<any>("dash:stats"));
 
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const [accountsRes, leadsRes, sentRes, campaignsRes] = await Promise.all([
-        supabase.from("email_accounts").select("id", { count: "exact" }).eq("user_id", user.id),
-        supabase.from("leads").select("id", { count: "exact" }).eq("user_id", user.id),
-        supabase.from("sent_emails").select("id, status, replied_at", { count: "exact" }).eq("user_id", user.id),
+      // COUNT-ONLY queries (head:true → zero rows over the wire). The old code
+      // downloaded EVERY sent_emails row just to count replies — slow + egress.
+      const [accountsRes, leadsRes, sentRes, repliedRes, campaignsRes] = await Promise.all([
+        supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("user_id", user.id).not("replied_at", "is", null),
         supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
       ]);
 
-      const repliedCount = (sentRes.data || []).filter((e: any) => e.replied_at).length;
-
-      setStats({
+      const newStats = {
         sent: sentRes.count || 0,
-        replied: repliedCount,
+        replied: repliedRes.count || 0,
         leads: leadsRes.count || 0,
         accounts: accountsRes.count || 0,
-      });
+      };
+      setStats(newStats);
       setCampaigns(campaignsRes.data || []);
+      cacheSet("dash:stats", newStats);
+      cacheSet("dash:campaigns", campaignsRes.data || []);
       setLoading(false);
     };
     load();

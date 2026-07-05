@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
@@ -1249,7 +1250,9 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
 export default function Unibox() {
   const { user } = useAuth();
   const isMobile = useIsMobile();
-  const [messages, setMessages] = useState<any[]>([]);
+  // Instant re-entry: seed from the session cache so coming back to the Unibox
+  // paints the last known list immediately; loadMessages refreshes in background.
+  const [messages, setMessages] = useState<any[]>(() => cacheGet<any[]>("unibox:messages") || []);
   // English gate: domains that belong to leads in the user's lists. English (or
   // other-foreign) messages from senders OUTSIDE these domains are hidden.
   // ALL lead domains for this user, loaded once via the get_lead_domains RPC.
@@ -1259,7 +1262,7 @@ export default function Unibox() {
   const [leadDomainsReady, setLeadDomainsReady] = useState(false);
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cacheGet<any[]>("unibox:messages"));
   const [syncing, setSyncing] = useState(false);
 
 
@@ -1407,6 +1410,7 @@ export default function Unibox() {
       return true;
     });
     setMessages(msgs);
+    cacheSet("unibox:messages", msgs); // instant paint on next visit
     setLoading(false);
 
     // Auto-label messages classified as "Interesado" that don't already have the label

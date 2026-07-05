@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { Button } from "@/components/ui/button";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,8 +83,9 @@ function AuthChip({ label, status }: { label: string; status: AuthStatusValue })
 
 export default function EmailAccounts() {
   const { user } = useAuth();
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Instant re-entry: seed from session cache, refresh in background.
+  const [accounts, setAccounts] = useState<any[]>(() => cacheGet<any[]>("accounts:list") || []);
+  const [loading, setLoading] = useState(() => !cacheGet<any[]>("accounts:list"));
   const [showBulk, setShowBulk] = useState(false);
   const [showBulkIonos, setShowBulkIonos] = useState(false);
   const [ionosRows, setIonosRows] = useState<{ email: string; first_name: string; last_name: string; password: string }[]>([{ email: "", first_name: "", last_name: "", password: "" }]);
@@ -300,7 +302,9 @@ export default function EmailAccounts() {
   const loadAccounts = async () => {
     if (!user) return;
     const { data } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id).order("created_at", { ascending: false });
-    setAccounts((data || []).map((account: any) => normalizeEmailAccount(account)));
+    const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
+    setAccounts(normalized);
+    cacheSet("accounts:list", normalized); // instant paint on next visit
     setLoading(false);
   };
 

@@ -10,6 +10,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 import { isSessionKept, clearKeepSession } from "@/components/KeepSessionBanner";
+import { prefetchRoute, prefetchAllRoutesOnIdle } from "@/lib/route-prefetch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const mainNav = [
@@ -65,6 +66,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
     checkAdmin();
   }, [user]);
 
+  // Prefetch all route chunks in the background after first render.
+  useEffect(() => { prefetchAllRoutesOnIdle(); }, []);
+
   const handleSoftExit = () => {
     // Just navigate away without destroying the session
     navigate("/");
@@ -93,6 +97,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
       <Link
         to={item.path}
         onClick={handleNavClick}
+        onMouseEnter={() => prefetchRoute(item.path)}
+        onFocus={() => prefetchRoute(item.path)}
         title={collapsed ? item.label : undefined}
         className={cn(
           "flex items-center gap-3 rounded-lg py-2.5 text-[13.5px] transition-all duration-150 relative group",

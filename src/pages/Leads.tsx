@@ -18,6 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 import { useVerification } from "@/contexts/VerificationContext";
 import { useSearchParams } from "react-router-dom";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 
 const FINAL_VERIFICATION_STATUSES = new Set(["valid", "risky", "invalid"]);
 
@@ -30,9 +31,10 @@ export default function Leads() {
   const { user } = useAuth();
   const { profile, refreshProfile } = useProfile();
   const { verifying, progress: verifyProgress, startVerification } = useVerification();
-  const [leads, setLeads] = useState<any[]>([]);
-  const [lists, setLists] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Instant re-entry: seed from session cache (default view), refresh in background.
+  const [leads, setLeads] = useState<any[]>(() => cacheGet<any>("leads:first")?.leads || []);
+  const [lists, setLists] = useState<any[]>(() => cacheGet<any>("leads:first")?.lists || []);
+  const [loading, setLoading] = useState(() => !cacheGet<any>("leads:first"));
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get("q") || "");
   const [showAdd, setShowAdd] = useState(false);
@@ -86,6 +88,8 @@ export default function Leads() {
     setLeads(leadsRes.data || []);
     setTotalCount(leadsRes.count || 0);
     setLists(listsRes.data || []);
+    // Cache only the default entry view (first page, all lists) for instant re-entry.
+    if (page === 0 && !activeList) cacheSet("leads:first", { leads: leadsRes.data || [], lists: listsRes.data || [] });
     setLoading(false);
   };
 

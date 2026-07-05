@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -63,8 +64,9 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
 export default function Campaigns() {
   const { user } = useAuth();
-  const [campaigns, setCampaigns] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Instant re-entry: paint the cached list immediately, refresh in background.
+  const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("campaigns:list") || []);
+  const [loading, setLoading] = useState(() => !cacheGet<any[]>("campaigns:list"));
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "" });
@@ -77,6 +79,7 @@ export default function Campaigns() {
     if (!user) return;
     const { data } = await supabase.from("campaigns").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
     setCampaigns(data || []);
+    cacheSet("campaigns:list", data || []);
     setLoading(false);
   };
 
