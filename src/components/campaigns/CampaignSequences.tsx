@@ -436,7 +436,10 @@ export default function CampaignSequences({ campaignId }: Props) {
   };
 
   const updateStepField = async (id: string, field: string, value: any) => {
-    await supabase.from("campaign_steps").update({ [field]: value }).eq("id", id);
+    const { error } = await supabase.from("campaign_steps").update({ [field]: value }).eq("id", id);
+    // Surface silent auto-save failures (e.g. delay_days / subject / body) so a
+    // lost change is visible instead of the user assuming it saved.
+    if (error) toast.error(`No se pudo guardar el cambio: ${error.message}`);
   };
 
   // Review every step + variant and fix mistyped variables to match real lead fields.

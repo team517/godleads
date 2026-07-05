@@ -257,7 +257,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   const markDirty = () => setSaved(false);
 
   const save = async () => {
-    await supabase.from("campaigns").update({
+    const { error } = await supabase.from("campaigns").update({
       // Persist as-is: >0 = manual ceiling, 0 = AUTO (backend tracks account capacity).
       daily_limit: dailyLimit > 0 ? dailyLimit : 0,
       stop_on_reply: stopOnReply,
@@ -280,6 +280,12 @@ export default function CampaignOptions({ campaignId }: Props) {
       signature_html: signatureHtml,
       break_thread_after: breakThreadAfter,
     } as any).eq("id", campaignId);
+    // Only confirm when the DB actually accepted the update — otherwise a failed
+    // save used to still show "guardadas" and the options were silently lost.
+    if (error) {
+      toast.error(`No se pudieron guardar las opciones: ${error.message}`);
+      return;
+    }
     setSaved(true);
     toast.success("Opciones guardadas");
   };

@@ -52,12 +52,16 @@ export default function CampaignSchedule({ campaignId }: Props) {
   };
 
   const save = async () => {
-    await supabase.from("campaigns").update({
+    const { error } = await supabase.from("campaigns").update({
       send_start_hour: startHour, send_end_hour: endHour, timezone,
       send_days: sendDays,
     } as any).eq("id", campaignId);
+    if (error) {
+      toast.error(`No se pudo guardar el horario: ${error.message}`);
+      return;
+    }
     setSaved(true);
-    toast.success("Schedule saved");
+    toast.success("Horario guardado");
   };
 
   return (
