@@ -10,7 +10,12 @@ import { VerificationProvider } from "@/contexts/VerificationContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { lazy, Suspense } from "react";
-import { ColdEmailChatbot } from "@/components/ColdEmailChatbot";
+// Lazy: the chatbot pulls in recharts + react-markdown + framer-motion. Loading
+// it eagerly bloated the initial bundle of EVERY page. Now it loads on idle,
+// after the page is interactive.
+const ColdEmailChatbot = lazy(() =>
+  import("@/components/ColdEmailChatbot").then((m) => ({ default: m.ColdEmailChatbot })),
+);
 
 const Landing = lazy(() => import("./pages/Landing"));
 const Auth = lazy(() => import("./pages/Auth"));
@@ -77,7 +82,9 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
-          <ColdEmailChatbot />
+          <Suspense fallback={null}>
+            <ColdEmailChatbot />
+          </Suspense>
         </VerificationProvider>
         </ProfileProvider>
         </SubscriptionProvider>
