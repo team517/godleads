@@ -37,27 +37,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // Bind the instant-cache to this user BEFORE pages mount, so persisted
-      // page snapshots hydrate for the right owner (and never across users).
-      // Purge ONLY on a real sign-out — a transient null (session still
-      // restoring / offline) must not wipe the snapshots.
-      if (event === "SIGNED_OUT") bindCacheUser(null);
-      else if (session?.user) bindCacheUser(session.user.id);
-      setSession(session);
-      setUser(session?.user ?? null);
+      // Only a REAL sign-out clears the session. Any other event with a null
+      // session (a transient token-refresh hiccup, offline blip, INITIAL_SESSION
+      // race) is IGNORED — we keep the current user so the app never "disconnects"
+      // and flickers back to the login screen. persistSession + autoRefreshToken
+      // restore it on their own.
+      if (event === "SIGNED_OUT") {
+        bindCacheUser(null);
+        setSession(null);
+        setUser(null);
+      } else if (session) {
+        bindCacheUser(session.user?.id ?? null);
+        setSession(session);
+        setUser(session.user ?? null);
+      }
       setLoading(false);
     });
 
-    withAuthTimeout(supabase.auth.getSession(), 10000)
+    // Confirm the session from storage/network. On timeout or transient error we
+    // DO NOT force a logout — onAuthStateChange (fired instantly from localStorage)
+    // already holds the real state. We only stop the loading spinner.
+    withAuthTimeout(supabase.auth.getSession(), 12000)
       .then(({ data: { session } }) => {
-        if (session?.user) bindCacheUser(session.user.id);
-        setSession(session);
-        setUser(session?.user ?? null);
+        if (session?.user) {
+          bindCacheUser(session.user.id);
+          setSession(session);
+          setUser(session.user);
+        }
       })
-      .catch(() => {
-        setSession(null);
-        setUser(null);
-      })
+      .catch(() => { /* keep whatever onAuthStateChange set — never auto sign-out */ })
       .finally(() => {
         setLoading(false);
       });
