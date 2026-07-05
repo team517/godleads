@@ -89,12 +89,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    try {
-      const { error } = await withAuthTimeout(supabase.auth.signInWithPassword({ email, password }));
-      return { error: error?.message ?? null };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "No se pudo iniciar sesión. Inténtalo de nuevo." };
+    // The Auth service can be briefly slow/cold. Give it a generous timeout and
+    // auto-retry ONCE before showing an error, so a transient slow response
+    // doesn't force the user to re-type and click again.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { error } = await withAuthTimeout(supabase.auth.signInWithPassword({ email, password }), 25000);
+        return { error: error?.message ?? null };
+      } catch (error) {
+        if (attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
+        return { error: "El servicio de acceso está tardando. Espera unos segundos y vuelve a intentarlo." };
+      }
     }
+    return { error: "No se pudo iniciar sesión. Inténtalo de nuevo." };
   };
 
   const signOut = async () => {

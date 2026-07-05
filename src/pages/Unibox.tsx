@@ -1466,13 +1466,17 @@ export default function Unibox() {
     const MAX_ROUNDS = silent ? 40 : 40;
     const PROGRESS_ID = "unibox-sync";
 
+    // Fetch the token ONCE per sync (not per round) — avoids pinging Auth up to
+    // 40× per sync, which needlessly loaded the auth service.
+    const { data: { session: syncSession } } = await supabase.auth.getSession();
+    const accessToken = syncSession?.access_token;
+
     const callOnce = async (offset: number, batch: number) => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return { ok: false, status: 401, json: { error: "Sesión no válida" } };
+        if (!accessToken) return { ok: false, status: 401, json: { error: "Sesión no válida" } };
         const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-inbox`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({ offset, batch_size: batch, fetch_limit: FETCH_LIMIT }),
         });
         let json: any = null;
