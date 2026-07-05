@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1262,6 +1262,9 @@ export default function Unibox() {
   const [leadDomainsReady, setLeadDomainsReady] = useState(false);
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Multi-select for bulk delete of Unibox messages.
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("unibox:messages"));
   const [syncing, setSyncing] = useState(false);
 
@@ -2037,6 +2040,39 @@ export default function Unibox() {
     return remaining;
   };
 
+  // ── Multi-select bulk delete ──────────────────────────────────────────────
+  const toggleBulk = (id: string) => setBulkSelected((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const clearBulk = () => setBulkSelected(new Set());
+  const selectAllVisible = () => setBulkSelected(new Set(filtered.map((m: any) => m.id)));
+
+  const handleBulkDelete = async () => {
+    if (!user || bulkSelected.size === 0) return;
+    const ids = Array.from(bulkSelected);
+    if (!window.confirm(`¿Eliminar ${ids.length} mensaje(s) seleccionado(s)?`)) return;
+    setBulkDeleting(true);
+    try {
+      // Soft-delete (is_archived) in chunks so they never re-appear on the next sync.
+      for (let i = 0; i < ids.length; i += 100) {
+        const { error } = await supabase.from("inbox_messages")
+          .update({ is_archived: true })
+          .in("id", ids.slice(i, i + 100))
+          .eq("user_id", user.id);
+        if (error) { toast.error(error.message); setBulkDeleting(false); return; }
+      }
+      const remaining = messages.filter((m) => !bulkSelected.has(m.id));
+      setMessages(remaining);
+      cacheSet("unibox:messages", remaining);
+      if (selectedId && bulkSelected.has(selectedId)) setSelectedId(null);
+      clearBulk();
+      toast.success(`${ids.length} mensaje(s) eliminado(s)`);
+    } catch (e: any) { toast.error(e?.message || "Error al eliminar"); }
+    setBulkDeleting(false);
+  };
+
   const handleArchive = async (id: string) => {
     const { error } = await supabase.from("inbox_messages").update({ is_archived: true }).eq("id", id);
     if (error) { toast.error(error.message); return; }
@@ -2703,6 +2739,19 @@ export default function Unibox() {
                 />
               </div>
             </div>
+            {/* Bulk-select action bar */}
+            {bulkSelected.size > 0 && (
+              <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-primary/5 px-3 py-2">
+                <span className="text-xs font-semibold text-foreground">{bulkSelected.size} seleccionado(s)</span>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={selectAllVisible} title="Seleccionar todos los visibles">Todos</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={clearBulk}>Cancelar</Button>
+                  <Button size="sm" variant="destructive" className="h-7 gap-1.5 px-2.5 text-xs" onClick={handleBulkDelete} disabled={bulkDeleting}>
+                    {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Eliminar
+                  </Button>
+                </div>
+              </div>
+            )}
             <ScrollArea className="flex-1">
               {filtered.map((msg) => {
                 const isActive = selectedId === msg.id;
@@ -2713,19 +2762,41 @@ export default function Unibox() {
                 const hasReminder = !!reminders[msg.id];
                 const msgFolder = msg.folder_id ? folders.find((f) => f.id === msg.folder_id) : null;
                 const campaignName = msg.campaign_id ? (campaigns.find((c) => c.id === msg.campaign_id)?.name || null) : null;
+                const isChecked = bulkSelected.has(msg.id);
                 return (
-                  <button
+                  <div
                     key={msg.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       setSelectedId(msg.id);
                       setShowFullEmail(false);
                       if (isUnread) handleMarkRead(msg.id);
                     }}
-                    className={`relative w-full border-b border-border/30 px-4 py-3.5 text-left transition-all
-                      ${due ? "bg-amber-100/70 dark:bg-amber-900/20 border-l-2 border-l-amber-500" : isActive ? "bg-primary/8 border-l-2 border-l-primary" : "hover:bg-muted/50 border-l-2 border-l-transparent"}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedId(msg.id);
+                        setShowFullEmail(false);
+                        if (isUnread) handleMarkRead(msg.id);
+                      }
+                    }}
+                    className={`group relative w-full cursor-pointer border-b border-border/30 px-4 py-3.5 text-left transition-all
+                      ${isChecked ? "bg-primary/10 border-l-2 border-l-primary" : due ? "bg-amber-100/70 dark:bg-amber-900/20 border-l-2 border-l-amber-500" : isActive ? "bg-primary/8 border-l-2 border-l-primary" : "hover:bg-muted/50 border-l-2 border-l-transparent"}
                     `}
                   >
                     <div className="flex items-center gap-3">
+                      {/* Select checkbox (bulk delete) */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleBulk(msg.id); }}
+                        title="Seleccionar"
+                        className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[3px] border transition-all ${
+                          isChecked ? "border-primary bg-primary text-white" : "border-border bg-card opacity-0 group-hover:opacity-100 hover:border-primary/60"
+                        }`}
+                      >
+                        {isChecked && <Check className="h-3 w-3" strokeWidth={3} />}
+                      </button>
                       {/* Avatar */}
                       <div className={`h-9 w-9 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${catCfg.bg || "bg-muted"} ${catCfg.text}`}>
                         {getInitials(msg.from_name, msg.from_email)}
@@ -2772,7 +2843,7 @@ export default function Unibox() {
                         )}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
               {filtered.length === 0 && (
