@@ -405,14 +405,24 @@ async function sendSmtpEmail(
         const authResp = await sendTls(`AUTH PLAIN ${creds}`);
         if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
 
-        await sendTls(`MAIL FROM:<${from}>`);
-        await sendTls(`RCPT TO:<${to}>`);
+        // Check EVERY step so a rejection is reported accurately instead of a
+        // confusing DATA error (or, worse, a false "sent").
+        const mailResp = await sendTls(`MAIL FROM:<${from}>`);
+        if (!mailResp.startsWith("250")) {
+          try { await sendTls("QUIT"); } catch {} try { conn.close(); } catch {}
+          return { ok: false, error: `El servidor rechazó el remitente (MAIL FROM): ${mailResp.trim().slice(0, 200)}` };
+        }
+        const rcptResp = await sendTls(`RCPT TO:<${to}>`);
+        if (!rcptResp.startsWith("250") && !rcptResp.startsWith("251")) {
+          try { await sendTls("QUIT"); } catch {} try { conn.close(); } catch {}
+          return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
+        }
         await sendTls("DATA");
         const dataResp = await writeRawTls(buildMessage());
         const sent = dataResp.includes("250");
         try { await sendTls("QUIT"); } catch {}
         try { conn.close(); } catch {}
-        return sent ? { ok: true, messageId } : { ok: false, error: `Send failed: ${dataResp}`, messageId };
+        return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
     }
 
     await send(`EHLO ${from.split("@")[1] || "localhost"}`);
@@ -420,14 +430,22 @@ async function sendSmtpEmail(
     const authResp = await send(`AUTH PLAIN ${creds}`);
     if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
 
-    await send(`MAIL FROM:<${from}>`);
-    await send(`RCPT TO:<${to}>`);
+    const mailResp = await send(`MAIL FROM:<${from}>`);
+    if (!mailResp.startsWith("250")) {
+      try { await send("QUIT"); } catch {} try { conn.close(); } catch {}
+      return { ok: false, error: `El servidor rechazó el remitente (MAIL FROM): ${mailResp.trim().slice(0, 200)}` };
+    }
+    const rcptResp = await send(`RCPT TO:<${to}>`);
+    if (!rcptResp.startsWith("250") && !rcptResp.startsWith("251")) {
+      try { await send("QUIT"); } catch {} try { conn.close(); } catch {}
+      return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
+    }
     await send("DATA");
     const dataResp = await writeRaw(buildMessage());
     const sent = dataResp.includes("250");
     try { await send("QUIT"); } catch {}
     try { conn.close(); } catch {}
-    return sent ? { ok: true, messageId } : { ok: false, error: `Send failed: ${dataResp}`, messageId };
+    return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `SMTP error: ${message}` };

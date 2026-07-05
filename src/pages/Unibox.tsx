@@ -2303,8 +2303,15 @@ export default function Unibox() {
       return;
     }
     setSending(true);
+    // Never hang forever waiting for a slow/overloaded server.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        toast.error("Sesión no válida. Vuelve a iniciar sesión y reintenta.");
+        return;
+      }
       // WYSIWYG: send EXACTLY what's in the box. If the user wants it in the lead's
       // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
       const finalBody = reply;
@@ -2314,7 +2321,7 @@ export default function Unibox() {
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           account_id: selected.account_id,
           to_email: selected.from_email,
@@ -2324,21 +2331,35 @@ export default function Unibox() {
           references: selected.message_id || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
         }),
+        signal: controller.signal,
       });
-      const result = await resp.json();
-      if (result.error) toast.error(result.error);
-      else {
-        toast.success("Respuesta enviada");
-        setReply("");
-        setReplyFiles([]);
-        setReplyLang(null);
-        loadSent(); // keep the "Enviados" list fresh
-        // Refresh thread to show the sent message
-        const msg = messages.find(m => m.id === selectedId);
-        if (msg) setTimeout(() => loadThread(msg), 500);
+      let result: any = null;
+      try { result = await resp.json(); } catch { /* non-JSON / empty response */ }
+
+      // Only celebrate a REAL success. Any non-2xx, missing body, or error field
+      // means the mail did NOT go out — say so and keep the draft for a retry.
+      if (!resp.ok || !result || result.error) {
+        toast.error(result?.error || `No se pudo enviar la respuesta (HTTP ${resp.status}). El correo NO ha salido — revisa la cuenta e inténtalo de nuevo.`);
+        return;
       }
-    } catch (e: any) { toast.error(`Error: ${e.message}`); }
-    setSending(false);
+
+      toast.success("Respuesta enviada");
+      setReply("");
+      setReplyFiles([]);
+      setReplyLang(null);
+      loadSent(); // keep the "Enviados" list fresh
+      // Refresh thread to show the sent message
+      const msg = messages.find(m => m.id === selectedId);
+      if (msg) setTimeout(() => loadThread(msg), 500);
+    } catch (e: any) {
+      const aborted = e?.name === "AbortError";
+      toast.error(aborted
+        ? "El envío tardó demasiado (servidor sobrecargado). El correo NO se confirmó — inténtalo de nuevo en unos segundos."
+        : `No se pudo enviar: ${e?.message || e}. El correo NO ha salido.`);
+    } finally {
+      clearTimeout(timeoutId);
+      setSending(false);
+    }
   };
 
   /** Forward (reenviar) the selected email to another address via the same account. */
