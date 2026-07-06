@@ -115,6 +115,24 @@ function sanitizeHtmlForDelivery(html: string): string {
     .trim();
 }
 
+// Make a signature render as a TIGHT block. sanitizeHtmlForDelivery strips inline
+// styles, so we can't control spacing with CSS — email clients then apply their
+// default ~16px margin to every <p>, blowing the signature apart. Fix structurally:
+// collapse paragraph breaks into single <br> line breaks so the block stays compact.
+function normalizeSignatureHtml(sanitized: string): string {
+  let s = (sanitized || "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")   // between paragraphs → one line break
+    .replace(/<\/?p[^>]*>/gi, "")             // strip remaining <p>/</p>
+    .replace(/<\/?div[^>]*>/gi, "")           // (divs already became <p>, belt-and-suspenders)
+    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>") // no runaway gaps
+    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")   // no leading break
+    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")   // no trailing break
+    .trim();
+  return s;
+}
+
 function htmlToPlainText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
@@ -251,7 +269,7 @@ async function sendSmtpEmail(
       const normalizedBody = sanitizeHtmlForDelivery(body);
       // Per-account signature (HTML) appended BELOW the message body. Sanitized like
       // the body so it's safe, and mirrored into the plain-text alternative.
-      const sigHtml = sanitizeHtmlForDelivery(opts?.signatureHtml?.trim() || "");
+      const sigHtml = normalizeSignatureHtml(sanitizeHtmlForDelivery(opts?.signatureHtml?.trim() || ""));
       const normalizedHtml = sigHtml
         ? `${normalizedBody}<br><br>${sigHtml}`
         : normalizedBody;

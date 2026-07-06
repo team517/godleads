@@ -268,6 +268,23 @@ function sanitizeHtmlForDelivery(html: string): string {
     .trim();
 }
 
+// Render a signature as a TIGHT block: collapse paragraph breaks into single <br>
+// line breaks so the email client's default ~16px <p> margins don't blow the
+// signature apart (the "no llega bien la firma" gaps).
+function normalizeSignatureHtml(sanitized: string): string {
+  let s = (sanitized || "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")
+    .replace(/<\/?p[^>]*>/gi, "")
+    .replace(/<\/?div[^>]*>/gi, "")
+    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>")
+    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")
+    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")
+    .trim();
+  return s;
+}
+
 // Calculates the spacing between sends for a campaign so that each account
 // reaches its daily target within the configured sending window.
 //
@@ -525,9 +542,9 @@ async function sendSmtpEmail(
     const isReply = !!opts.inReplyTo;
 
     const normalizedBody = opts.textOnly ? htmlBody : sanitizeHtmlForDelivery(htmlBody);
-    const signatureHtml = !opts.textOnly ? sanitizeHtmlForDelivery(opts.signatureHtml?.trim() || "") : "";
+    const signatureHtml = !opts.textOnly ? normalizeSignatureHtml(sanitizeHtmlForDelivery(opts.signatureHtml?.trim() || "")) : "";
     const fullHtml = !opts.textOnly && signatureHtml
-      ? `${normalizedBody}\n${signatureHtml}`
+      ? `${normalizedBody}<br><br>${signatureHtml}`
       : normalizedBody;
 
     const plainSignature = signatureHtml
