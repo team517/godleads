@@ -230,6 +230,44 @@ function stripQuotedReply(text: string): string {
   return trimmed.length >= 2 ? trimmed : text;
 }
 
+/** Rejoin words that a sender's client hard-wrapped MID-WORD (e.g. "respo\nnsable de…"
+ *  "explic\nar", "ofre\ncéis"). We only act when the message is CLEARLY wrapped that
+ *  way — a majority of its line breaks split a word (previous line ends in a letter/
+ *  digit, next line continues in lowercase). Then we glue those broken words back with
+ *  no space. Blank lines, new sentences and signature lines (which start uppercase)
+ *  keep their break, so normal emails are never altered. Fixes "el mensaje no se ve
+ *  completo": the body was showing chopped every ~40–55 chars in the middle of words. */
+function unwrapHardBreaks(text: string): string {
+  if (!text || text.indexOf("\n") === -1) return text;
+  const lines = text.split("\n");
+  let internal = 0, midWord = 0;
+  for (let i = 0; i < lines.length - 1; i++) {
+    const a = lines[i], b = lines[i + 1];
+    if (!a.trim() || !b.trim()) continue;
+    internal++;
+    if (/[\p{L}\p{N}]$/u.test(a) && /^[\p{Ll}]/u.test(b)) midWord++;
+  }
+  if (internal < 3 || midWord / internal < 0.5) return text; // not word-wrapped → leave as-is
+  // Short link-words: if the previous line ENDS with one of these, the wrap fell right
+  // after a whole word (a space was eaten) → rejoin WITH a space ("por la"+"mañana" →
+  // "por la mañana"). Otherwise the previous line ends in a word FRAGMENT → glue with
+  // no space ("respo"+"nsable" → "responsable").
+  const LINK = new Set(["de","la","el","los","las","un","una","unos","unas","por","con","que","para","del","al","en","y","e","o","u","su","sus","mi","mis","tu","tus","se","lo","le","les","no","mas","más","como","es","ha","he","nos","si","ni","ya","muy","sin","sobre","entre","hasta","desde","a"]);
+  const out: string[] = [];
+  for (const line of lines) {
+    if (out.length === 0) { out.push(line); continue; }
+    const prev = out[out.length - 1];
+    if (!prev.trim() || !line.trim()) { out.push(line); continue; }
+    if (/[\p{L}\p{N}]$/u.test(prev) && /^[\p{Ll}]/u.test(line)) {
+      const lastTok = (prev.match(/([\p{L}\p{N}]+)$/u)?.[1] || "").toLowerCase();
+      out[out.length - 1] = LINK.has(lastTok) ? prev + " " + line : prev + line;
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\n");
+}
+
 // MEMOISED wrapper. cleanBodyText is pure (~60 regexes) and was re-run for every
 // message on every render/keystroke (category counts, unread count, hiddenFromClean,
 // previews) → the Unibox felt sluggish with many messages. Same input → same output,
@@ -370,10 +408,10 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
     const shorter = firstHalf.length <= secondHalf.length ? firstHalf : secondHalf;
     const longer = firstHalf.length <= secondHalf.length ? secondHalf : firstHalf;
     if (shorter.length > 20 && longer.startsWith(shorter.slice(0, Math.min(shorter.length, 80)))) {
-      return resultLines.slice(0, mid).join("\n").trim();
+      return unwrapHardBreaks(resultLines.slice(0, mid).join("\n").trim());
     }
   }
-  return result;
+  return unwrapHardBreaks(result);
 }
 
 /** Clean HTML email body for safe rendering — aggressively strips artifacts for a clean Gmail-style view */
