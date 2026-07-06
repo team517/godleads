@@ -42,7 +42,7 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
         <Input
           value={name}
           onChange={e => setName(e.target.value)}
-          className="h-8 text-lg font-bold w-48 sm:w-64"
+          className="h-8 text-lg font-bold w-32 sm:w-48 md:w-64"
           autoFocus
           onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") { setName(campaign.name); setEditing(false); } }}
         />

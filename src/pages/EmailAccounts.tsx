@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import DOMPurify from "dompurify";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -121,10 +123,17 @@ export default function EmailAccounts() {
     smtp_password: "",
     send_start_hour: "",
     send_end_hour: "",
+    signature_html: "",
   });
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
   const [showSlowRamp, setShowSlowRamp] = useState(false);
   const [slowRampForm, setSlowRampForm] = useState({ increment: "2", target: "30" });
+  // ── Signature manager (apply an HTML signature to all / by tag / selected accounts) ──
+  const [showSignature, setShowSignature] = useState(false);
+  const [sigHtml, setSigHtml] = useState("");
+  const [sigScope, setSigScope] = useState<"all" | "tag" | "selected">("all");
+  const [sigTag, setSigTag] = useState("");
+  const [sigSaving, setSigSaving] = useState(false);
 
   // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
   type AuthStatus = "pass" | "warn" | "fail";
@@ -709,9 +718,42 @@ export default function EmailAccounts() {
   };
 
   const openBulkEdit = () => {
-    setBulkEditForm({ daily_limit: "", first_name: "", last_name: "", imap_host: "", imap_port: "", imap_username: "", imap_password: "", smtp_host: "", smtp_port: "", smtp_username: "", smtp_password: "", send_start_hour: "", send_end_hour: "" });
+    setBulkEditForm({ daily_limit: "", first_name: "", last_name: "", imap_host: "", imap_port: "", imap_username: "", imap_password: "", smtp_host: "", smtp_port: "", smtp_username: "", smtp_password: "", send_start_hour: "", send_end_hour: "", signature_html: "" });
     setBulkEditFields(new Set());
     setShowBulkEdit(true);
+  };
+
+  // ── Signature manager ──────────────────────────────────────────────────────
+  const openSignatureManager = () => {
+    // Prefill with an existing signature (the first account that already has one)
+    // so editing/reusing is easy.
+    const existing = (accounts.find(a => ((a as any).signature_html || "").trim()) as any)?.signature_html || "";
+    setSigHtml(existing);
+    setSigScope(selectedIds.size > 0 ? "selected" : "all");
+    setSigTag(allTags[0] || "");
+    setShowSignature(true);
+  };
+
+  // Accounts the signature will be written to, per the chosen scope.
+  const signatureTargetIds = useMemo(() => {
+    if (sigScope === "selected") return [...selectedIds];
+    if (sigScope === "tag") return accounts.filter(a => (a.tags || []).includes(sigTag)).map(a => a.id);
+    return accounts.map(a => a.id); // "all"
+  }, [sigScope, sigTag, accounts, selectedIds]);
+
+  const applySignature = async () => {
+    const ids = signatureTargetIds;
+    if (ids.length === 0) { toast.error("No hay cuentas en el alcance elegido"); return; }
+    setSigSaving(true);
+    // One query for the whole scope (up to all 84 accounts).
+    const { error } = await supabase.from("email_accounts").update({ signature_html: sigHtml } as any).in("id", ids);
+    setSigSaving(false);
+    if (error) { toast.error(`No se pudo aplicar la firma: ${error.message}`); return; }
+    toast.success(sigHtml.trim()
+      ? `Firma aplicada a ${ids.length} cuenta(s)`
+      : `Firma eliminada de ${ids.length} cuenta(s)`);
+    setShowSignature(false);
+    loadAccounts();
   };
 
   const toggleBulkEditField = (field: string) => {
@@ -788,10 +830,11 @@ export default function EmailAccounts() {
     if (bulkEditFields.has("send_start_hour") && bulkEditForm.send_start_hour) updates.send_start_hour = parseInt(bulkEditForm.send_start_hour);
     if (bulkEditFields.has("send_end_hour") && bulkEditForm.send_end_hour) updates.send_end_hour = parseInt(bulkEditForm.send_end_hour);
     if (Object.keys(updates).length === 0) { toast.error("No hay cambios que aplicar"); return; }
-    for (const id of selectedIds) {
-      await supabase.from("email_accounts").update(updates).eq("id", id);
-    }
-    toast.success(`${selectedIds.size} cuenta(s) actualizadas`);
+    // One query for ALL selected accounts (was N per-row updates — heavy on 84 cuentas).
+    const ids = [...selectedIds];
+    const { error } = await supabase.from("email_accounts").update(updates).in("id", ids);
+    if (error) { toast.error(`No se pudieron aplicar los cambios: ${error.message}`); return; }
+    toast.success(`${ids.length} cuenta(s) actualizadas`);
     setShowBulkEdit(false);
     setSelectedIds(new Set());
     loadAccounts();
@@ -835,7 +878,7 @@ export default function EmailAccounts() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1"><Label>Email</Label><Input value={form.email} onChange={e => {
           const email = e.target.value;
           setForm(prev => ({
@@ -860,14 +903,14 @@ export default function EmailAccounts() {
       {!isPreset && (
         <>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">IMAP</p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Usuario</Label><Input value={form.imap_username} onChange={e => setForm({...form, imap_username: e.target.value})} /></div>
             <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.imap_password} onChange={e => setForm({...form, imap_password: e.target.value})} /></div>
             <div className="space-y-1"><Label>Host</Label><Input value={form.imap_host} onChange={e => setForm({...form, imap_host: e.target.value})} placeholder="imap.gmail.com" /></div>
             <div className="space-y-1"><Label>Puerto</Label><Input value={form.imap_port} onChange={e => setForm({...form, imap_port: e.target.value})} /></div>
           </div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">SMTP</p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Usuario</Label><Input value={form.smtp_username} onChange={e => setForm({...form, smtp_username: e.target.value})} /></div>
             <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.smtp_password} onChange={e => setForm({...form, smtp_password: e.target.value})} /></div>
             <div className="space-y-1"><Label>Host</Label><Input value={form.smtp_host} onChange={e => setForm({...form, smtp_host: e.target.value})} placeholder="smtp.gmail.com" /></div>
@@ -911,6 +954,9 @@ export default function EmailAccounts() {
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulk(!showBulk)}>
             <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Bulk CSV</span><span className="sm:hidden">CSV</span>
+          </Button>
+          <Button variant="outline" size="sm" className="gap-2" onClick={openSignatureManager}>
+            <Pencil className="h-4 w-4" /> <span className="hidden sm:inline">Firma</span><span className="sm:hidden">Firma</span>
           </Button>
           <Dialog open={showAdd} onOpenChange={setShowAdd}>
             <DialogTrigger asChild>
@@ -1293,7 +1339,7 @@ export default function EmailAccounts() {
               Sube poco a poco los envíos diarios de cada cuenta para calentar los buzones.
               Se aplicará a <b>{selectedIds.size > 0 ? `${selectedIds.size} cuenta(s) seleccionadas` : `TODAS las cuentas (${accounts.length})`}</b>.
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label>Incremento diario</Label>
                 <Input type="number" min={1} value={slowRampForm.increment} onChange={(e) => setSlowRampForm({ ...slowRampForm, increment: e.target.value })} />
@@ -1381,6 +1427,77 @@ export default function EmailAccounts() {
           </div>
           <Button onClick={handleBulkEdit} className="w-full" disabled={bulkEditFields.size === 0}>
             Aplicar cambios a {selectedIds.size} cuentas
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Signature Manager Dialog ── */}
+      <Dialog open={showSignature} onOpenChange={setShowSignature}>
+        <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display">✍️ Firma de correo</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Se añade automáticamente <b>debajo de cada correo</b> (campañas y respuestas del Unibox) de las cuentas elegidas.
+          </p>
+          <div className="space-y-4">
+            {/* Scope */}
+            <div className="space-y-2">
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Aplicar a</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { key: "all", label: `Todas (${accounts.length})`, disabled: false },
+                  { key: "tag", label: "Por tag", disabled: allTags.length === 0 },
+                  { key: "selected", label: `Seleccionadas (${selectedIds.size})`, disabled: selectedIds.size === 0 },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={opt.disabled}
+                    onClick={() => setSigScope(opt.key)}
+                    className={`rounded-md border px-2 py-2 text-xs font-medium transition-colors ${
+                      sigScope === opt.key ? "border-primary bg-primary/10 text-primary" : "border-border/60 hover:bg-muted"
+                    } ${opt.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {sigScope === "tag" && (
+                <Select value={sigTag} onValueChange={setSigTag}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Elige un tag" /></SelectTrigger>
+                  <SelectContent>
+                    {allTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-[11px] text-muted-foreground">Se aplicará a <b>{signatureTargetIds.length}</b> cuenta(s).</p>
+            </div>
+
+            {/* HTML editor + live preview */}
+            <div className="space-y-2">
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Firma (HTML)</Label>
+              <Textarea
+                value={sigHtml}
+                onChange={e => setSigHtml(e.target.value)}
+                placeholder={'<p>Un saludo,<br><strong>Nombre Apellido</strong><br>Empresa · <a href="https://tuweb.com">tuweb.com</a></p>'}
+                className="min-h-[130px] font-mono text-xs leading-relaxed"
+                spellCheck={false}
+              />
+              <div className="rounded-md border border-border/60 bg-background p-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Vista previa</p>
+                {sigHtml.trim() ? (
+                  <div
+                    className="text-sm leading-relaxed break-words [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_p]:my-1"
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sigHtml) }}
+                  />
+                ) : (
+                  <p className="text-xs italic text-muted-foreground">Escribe tu firma HTML arriba para ver aquí cómo queda.</p>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">Deja el HTML <b>vacío</b> y pulsa Aplicar para <b>quitar</b> la firma de las cuentas elegidas.</p>
+            </div>
+          </div>
+          <Button onClick={applySignature} className="w-full" disabled={sigSaving || signatureTargetIds.length === 0}>
+            {sigSaving ? "Aplicando…" : (sigHtml.trim() ? `Aplicar firma a ${signatureTargetIds.length} cuenta(s)` : `Quitar firma de ${signatureTargetIds.length} cuenta(s)`)}
           </Button>
         </DialogContent>
       </Dialog>

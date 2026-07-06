@@ -1543,9 +1543,14 @@ serve(async (req) => {
         // paragraph spacing. Sending HTML through the text-only path would leak raw tags.
         const bodyHasHtml = hasExplicitHtml(personalizedBody);
         const forceTextOnly = !bodyHasHtml && (textOnlyEmails || (isFirstStep && firstEmailTextOnly));
+        // Signature: PREFER the per-account signature (set in Email Accounts → bulk
+        // edit) and fall back to the campaign-level one. Appended on every HTML send;
+        // a text-only cold email can't carry HTML so it stays clean.
+        const accountSignature = ((account as any).signature_html || "").trim();
         const campaignSignature = ((campaign as any).signature_html || "").trim();
-        const shouldIncludeSignature = !isFirstStep && !!campaignSignature;
-        const signatureHtml = shouldIncludeSignature ? campaignSignature : undefined;
+        const effectiveSignature = accountSignature || campaignSignature;
+        const shouldIncludeSignature = !forceTextOnly && !!effectiveSignature;
+        const signatureHtml = shouldIncludeSignature ? effectiveSignature : undefined;
 
         const finalBody = forceTextOnly
           ? removeUrlsAndTracking(personalizedBody)

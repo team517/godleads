@@ -222,7 +222,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-0" align="end">
+          <PopoverContent className="w-[calc(100vw-1.5rem)] max-w-80 p-0 sm:w-80" align="end">
             <div className="p-4 border-b">
               <div className="flex items-center gap-2 mb-1">
                 <img src={coinIcon} alt="" className="h-5 w-5" />

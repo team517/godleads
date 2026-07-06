@@ -115,9 +115,9 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
         {/* Right — Report */}
         <div className="min-w-0 flex-1">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Report</p>
-          <div className="grid grid-cols-3 gap-y-3 sm:grid-cols-6">
+          <div className="grid grid-cols-3 gap-x-1 gap-y-3 sm:grid-cols-6">
             {metrics.map((mt) => (
-              <div key={mt.key} className="min-w-[80px] px-1 text-center">
+              <div key={mt.key} className="min-w-[60px] px-1 text-center sm:min-w-[80px]">
                 <p className={`text-xl font-bold leading-none ${mt.color}`}>
                   {loading ? "—" : mt.value}
                   {!loading && mt.sub && (

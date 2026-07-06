@@ -193,7 +193,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; attachments?: { filename: string; mime: string; base64: string }[] }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
@@ -248,8 +248,17 @@ async function sendSmtpEmail(
     const messageId = opts?.messageId || generateMessageId(fromDomain);
 
     const buildMessage = () => {
-      const normalizedHtml = sanitizeHtmlForDelivery(body);
-      const plainText = removeUrlsAndTracking(htmlToPlainText(normalizedHtml));
+      const normalizedBody = sanitizeHtmlForDelivery(body);
+      // Per-account signature (HTML) appended BELOW the message body. Sanitized like
+      // the body so it's safe, and mirrored into the plain-text alternative.
+      const sigHtml = sanitizeHtmlForDelivery(opts?.signatureHtml?.trim() || "");
+      const normalizedHtml = sigHtml
+        ? `${normalizedBody}<br><br>${sigHtml}`
+        : normalizedBody;
+      const bodyPlain = removeUrlsAndTracking(htmlToPlainText(normalizedBody));
+      const plainText = sigHtml
+        ? `${bodyPlain}\n\n${htmlToPlainText(sigHtml)}`
+        : bodyPlain;
       // Human-style boundary, not bot fingerprint
       const boundary = `--==_mimepart_${randomString(16)}_${randomString(12)}`;
       const isReply = !!opts?.inReplyTo;
@@ -583,6 +592,33 @@ serve(async (req) => {
       }
     }
 
+    // UNIBOX REPLY THREADING SAFETY NET — a manual reply (no campaign context) that
+    // arrives without an In-Reply-To would go out as a brand-new message. Recover the
+    // thread server-side: point at the LATEST inbound from this contact that actually
+    // has a Message-ID, and build References from its stored chain. Only for non-campaign
+    // sends, so a genuine first-touch cold email is never wrongly threaded.
+    if (!campaign_id && !resolvedInReplyTo && cleanTo) {
+      const { data: lastInbound } = await adminClient
+        .from("inbox_messages")
+        .select("message_id, ref_chain, subject")
+        .eq("user_id", userId)
+        .eq("from_email", cleanTo)
+        .not("message_id", "is", null)
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastInbound?.message_id) {
+        resolvedInReplyTo = lastInbound.message_id;
+        if (!resolvedReferences) {
+          resolvedReferences = [lastInbound.ref_chain, lastInbound.message_id].filter(Boolean).join(" ").trim();
+        }
+        if (lastInbound.subject && !/^\s*re:/i.test(String(subject || ""))) {
+          const base = String(lastInbound.subject).replace(/^(Re:\s*)+/i, "").trim();
+          if (base) forcedThreadSubject = `Re: ${base}`;
+        }
+      }
+    }
+
     const { data: account, error: accError } = await supabase
       .from("email_accounts")
       .select("*")
@@ -634,6 +670,7 @@ serve(async (req) => {
         fromName: senderName,
         messageId: resolvedMessageId,
         unsubscribeUrl,
+        signatureHtml: (account as any).signature_html || undefined,
         attachments: safeAttachments,
       }
     );

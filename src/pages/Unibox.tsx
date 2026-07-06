@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1315,6 +1315,14 @@ export default function Unibox() {
   const [aiPrompts, setAiPrompts] = useState<any[]>([]);
   const [accountsMap, setAccountsMap] = useState<Record<string, string[]>>({});
   const [accountEmailMap, setAccountEmailMap] = useState<Record<string, string>>({});
+  // ── Signature manager (also reachable from Email Accounts) ──
+  const [sigAccounts, setSigAccounts] = useState<{ id: string; email: string; tags: string[]; signature_html?: string }[]>([]);
+  const [sigOpen, setSigOpen] = useState(false);
+  const [sigHtml, setSigHtml] = useState("");
+  const [sigScope, setSigScope] = useState<"all" | "tag" | "account">("all");
+  const [sigTag, setSigTag] = useState("");
+  const [sigAccountId, setSigAccountId] = useState("");
+  const [sigSaving, setSigSaving] = useState(false);
   const [reminders, setReminders] = useState<Record<string, any>>({});
   const [reminderBody, setReminderBody] = useState("");
   const [folders, setFolders] = useState<any[]>([]);
@@ -1327,6 +1335,11 @@ export default function Unibox() {
   const [linkText, setLinkText] = useState("");
   const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
+  // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
+  // inbound from one of these is a real conversation → it must always show in the
+  // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
+  // filter is correct from the first render (not only after visiting "Enviados").
+  const [repliedToSet, setRepliedToSet] = useState<Set<string>>(new Set());
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>("all");
   const [translatedBody, setTranslatedBody] = useState("");
@@ -1561,7 +1574,7 @@ export default function Unibox() {
     const loadAI = async () => {
       const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
-        supabase.from("email_accounts").select("id, email, tags").eq("user_id", user.id),
+        supabase.from("email_accounts").select("id, email, tags, signature_html").eq("user_id", user.id),
         supabase.from("campaigns").select("id, name").eq("user_id", user.id).order("name"),
         (supabase as any).from("unibox_folders").select("*").eq("user_id", user.id).order("created_at"),
       ]);
@@ -1583,6 +1596,7 @@ export default function Unibox() {
       });
       setAccountsMap(map);
       setAccountEmailMap(emailMap);
+      setSigAccounts((accounts || []).map((a: any) => ({ id: a.id, email: a.email, tags: a.tags || [], signature_html: a.signature_html || "" })));
       setTcxAccounts(tcx);
     };
     loadAI();
@@ -1701,6 +1715,22 @@ export default function Unibox() {
   }, [user]);
 
   useEffect(() => { if (viewTab === "sent") loadSent(); }, [viewTab, loadSent]);
+
+  // Load the set of addresses you've personally replied to (Unibox sends, not the
+  // campaign engine) so the clean-bandeja filter never hides a conversation you're
+  // already part of. Cheap: one slim query, to_email only.
+  const loadRepliedTo = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from("sent_emails")
+      .select("to_email")
+      .eq("user_id", user.id)
+      .is("campaign_id", null)   // manual/unibox replies only, never bulk campaign sends
+      .eq("status", "sent")
+      .limit(3000);
+    setRepliedToSet(new Set((data || []).map((r: any) => String(r.to_email || "").toLowerCase()).filter(Boolean)));
+  }, [user]);
+  useEffect(() => { loadRepliedTo(); }, [loadRepliedTo]);
 
   // Clear the translation ONLY when the selected message changes — not on every
   // 30s messages reload (that used to make a just-made translation disappear).
@@ -1865,11 +1895,16 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
+    // If YOU already replied to this sender from the Unibox, it's a real, ongoing
+    // conversation — never hide it from "Todos", whatever language it's written in.
+    // (Fixes: reply to a FR/EN lead → the inbound vanished from the clean bandeja and
+    // only the sent copy remained under "Enviados".)
+    if (repliedToSet.has((m.from_email || "").toLowerCase())) return false;
     if (isWarmupHidden(m)) return true;               // warmup codes + clearly-foreign language
     // NOTE: the old "only relevant replies" gate hid normal inbound mail and made the
     // bandeja look empty. We now show every non-bounce, non-warmup ES/CA message.
     return false;
-  }, [isWarmupHidden]);
+  }, [isWarmupHidden, repliedToSet]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
@@ -1917,6 +1952,39 @@ export default function Unibox() {
       else setTranslatedBody(result.translated);
     } catch (e: any) { toast.error(`Error: ${e.message}`); }
     setTranslating(false);
+  };
+
+  // ── Signature manager (Unibox entry) ──
+  const sigAllTags = useMemo(() => {
+    const s = new Set<string>();
+    sigAccounts.forEach(a => (a.tags || []).forEach(t => s.add(t)));
+    return Array.from(s).sort();
+  }, [sigAccounts]);
+  const sigTargetIds = useMemo(() => {
+    if (sigScope === "account") return sigAccountId ? [sigAccountId] : [];
+    if (sigScope === "tag") return sigAccounts.filter(a => (a.tags || []).includes(sigTag)).map(a => a.id);
+    return sigAccounts.map(a => a.id); // "all"
+  }, [sigScope, sigTag, sigAccountId, sigAccounts]);
+  const openSignature = () => {
+    const existing = sigAccounts.find(a => (a.signature_html || "").trim())?.signature_html || "";
+    setSigHtml(existing);
+    setSigScope("all");
+    setSigTag(sigAllTags[0] || "");
+    setSigAccountId(sigAccounts[0]?.id || "");
+    setSigOpen(true);
+  };
+  const applyUniboxSignature = async () => {
+    if (!user) return;
+    const ids = sigTargetIds;
+    if (!ids.length) { toast.error("No hay cuentas en el alcance elegido"); return; }
+    setSigSaving(true);
+    const { error } = await supabase.from("email_accounts").update({ signature_html: sigHtml } as any).in("id", ids);
+    setSigSaving(false);
+    if (error) { toast.error(`No se pudo aplicar la firma: ${error.message}`); return; }
+    // Reflect locally so the prefill/preview stay in sync without a full reload.
+    setSigAccounts(prev => prev.map(a => (ids.includes(a.id) ? { ...a, signature_html: sigHtml } : a)));
+    toast.success(sigHtml.trim() ? `Firma aplicada a ${ids.length} cuenta(s)` : `Firma quitada de ${ids.length} cuenta(s)`);
+    setSigOpen(false);
   };
 
   // Check if the selected message has a matching AI prompt
@@ -2358,8 +2426,29 @@ export default function Unibox() {
       // landed the reply as a brand-new message. Fall back to the selected row.
       const receivedInThread = (threadMessages || []).filter((tm: any) => tm && tm._type !== "sent" && tm.message_id);
       const replyTarget: any = receivedInThread.length ? receivedInThread[receivedInThread.length - 1] : selected;
-      const targetMsgId: string = replyTarget?.message_id || selected.message_id || "";
-      const targetRefChain: string = replyTarget?.ref_chain || selected.ref_chain || "";
+      let targetMsgId: string = replyTarget?.message_id || selected.message_id || "";
+      let targetRefChain: string = replyTarget?.ref_chain || selected.ref_chain || "";
+
+      // THREADING SAFETY NET: if neither the clicked row nor the loaded thread gave us
+      // a Message-ID (e.g. the row was synced before Message-ID capture, or a timing
+      // gap left the thread empty), ask the DB directly for the LATEST inbound from this
+      // contact that actually has one. Without this, the reply goes out with no
+      // In-Reply-To and lands as a brand-new message instead of threading.
+      if (!targetMsgId) {
+        const { data: lastInbound } = await supabase
+          .from("inbox_messages")
+          .select("message_id, ref_chain")
+          .eq("user_id", user.id)
+          .eq("from_email", selected.from_email)
+          .not("message_id", "is", null)
+          .order("received_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if ((lastInbound as any)?.message_id) {
+          targetMsgId = (lastInbound as any).message_id;
+          if (!targetRefChain) targetRefChain = (lastInbound as any).ref_chain || "";
+        }
+      }
 
       const originalSubject = decodeSubject(replyTarget?.subject || selected.subject) || "";
       const replySubject = originalSubject.toLowerCase().startsWith("re:") ? originalSubject : `Re: ${originalSubject}`;
@@ -2394,6 +2483,10 @@ export default function Unibox() {
       setReply("");
       setReplyFiles([]);
       setReplyLang(null);
+      // Mark this sender as "replied-to" NOW so the inbound message stays visible in
+      // "Todos" immediately (no wait for the next sent_emails reload).
+      const repliedEmail = (selected.from_email || "").toLowerCase();
+      if (repliedEmail) setRepliedToSet(prev => (prev.has(repliedEmail) ? prev : new Set(prev).add(repliedEmail)));
       loadSent(); // keep the "Enviados" list fresh
       // Refresh thread to show the sent message
       const msg = messages.find(m => m.id === selectedId);
@@ -2511,7 +2604,7 @@ export default function Unibox() {
   const selectedCatConfig = selectedCategory ? categoryConfig[selectedCategory] : null;
 
   return (
-    <div className="flex h-[calc(100vh-80px)] min-h-0 flex-col gap-2.5 lg:gap-3">
+    <div className="flex h-[calc(100dvh-132px)] min-h-0 flex-col gap-2.5 lg:h-[calc(100vh-80px)] lg:gap-3">
       {/* Header */}
       <div className="rounded-lg border border-border/60 bg-card px-3 py-2.5 shadow-sm md:px-4 md:py-3">
         <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
@@ -2533,24 +2626,28 @@ export default function Unibox() {
             <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
               <InboxIcon className="mr-1.5 h-3.5 w-3.5" /> {messages.length} totales
             </Badge>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={openBlockManager}
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs sm:px-3 md:text-sm" onClick={openBlockManager}
               title="Ver y desbloquear emails y dominios bloqueados">
-              <ShieldBan className="h-3.5 w-3.5" /> Bloqueados
+              <ShieldBan className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Bloqueados</span>
             </Button>
-            <Button variant="default" size="sm" className="h-8 gap-1.5 px-3 text-xs md:text-sm" onClick={handleSync} disabled={syncing}
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs sm:px-3 md:text-sm" onClick={openSignature}
+              title="Poner o cambiar la firma electrónica que se añade debajo de cada correo">
+              <Pencil className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Firma</span>
+            </Button>
+            <Button variant="default" size="sm" className="h-8 gap-1.5 px-2.5 text-xs sm:px-3 md:text-sm" onClick={handleSync} disabled={syncing}
               title="Reconecta todas las cuentas IMAP y trae los mensajes nuevos">
               <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Actualizando…" : "Actualizar"}
+              <span className={syncing ? "" : "hidden sm:inline"}>{syncing ? "Actualizando…" : "Actualizar"}</span>
             </Button>
             <Button
               variant={showWarmup ? "default" : "outline"}
               size="sm"
-              className="h-8 gap-1.5 px-3 text-xs md:text-sm"
+              className="h-8 gap-1.5 px-2.5 text-xs sm:px-3 md:text-sm"
               onClick={() => setShowWarmup(v => !v)}
               title="Muestra también los correos que el filtro oculta (inglés de desconocidos, warmup). Úsalo para recuperar algo si se ocultó por error."
             >
               <Megaphone className="h-3.5 w-3.5" />
-              {showWarmup ? "Ocultar warmup" : "Mostrar warmup"}
+              <span className="hidden sm:inline">{showWarmup ? "Ocultar warmup" : "Mostrar warmup"}</span>
             </Button>
             {!isMobile && (
               <Button
@@ -2585,7 +2682,7 @@ export default function Unibox() {
           setViewTab(nextTab);
           setMailboxMode(nextTab === "all_mailboxes" ? "all" : "clean");
         }}>
-          <TabsList className="h-9 w-full justify-start md:w-auto">
+          <TabsList className="h-9 w-full justify-start overflow-x-auto no-scrollbar [&>*]:flex-shrink-0 md:w-auto md:overflow-visible">
             <TabsTrigger value="global" className="gap-1.5 text-xs">
               <InboxIcon className="h-3.5 w-3.5" /> Global
             </TabsTrigger>
@@ -2791,8 +2888,8 @@ export default function Unibox() {
                         type="button"
                         onClick={(e) => { e.stopPropagation(); toggleBulk(msg.id); }}
                         title="Seleccionar"
-                        className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[3px] border transition-all ${
-                          isChecked ? "border-primary bg-primary text-white" : "border-border bg-card opacity-0 group-hover:opacity-100 hover:border-primary/60"
+                        className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[3px] border transition-all sm:h-4 sm:w-4 ${
+                          isChecked ? "border-primary bg-primary text-white" : "border-border bg-card hover:border-primary/60 sm:opacity-0 sm:group-hover:opacity-100"
                         }`}
                       >
                         {isChecked && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -2881,7 +2978,7 @@ export default function Unibox() {
           className={`p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
             readerExpanded
               ? "w-screen h-screen max-w-none rounded-none border-0"
-              : "w-[95vw] max-w-[1400px] h-[93vh] rounded-xl"
+              : "w-[95vw] max-w-[1400px] h-[92dvh] max-h-[92dvh] rounded-xl"
           }`}
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -2889,7 +2986,8 @@ export default function Unibox() {
               <>
                 {/* Subject bar — top like Gmail */}
                 <div className="border-b border-border/60 px-4 pb-4 pt-4 md:px-8 md:pb-5 md:pt-6">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                    <div className="flex min-w-0 items-start gap-2 sm:flex-1">
                     <Button variant="ghost" size="icon" className="-ml-2 mt-0.5 h-9 w-9 flex-shrink-0 lg:hidden" onClick={() => setSelectedId(null)}>
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
@@ -2904,7 +3002,8 @@ export default function Unibox() {
                         )}
                       </h2>
                     </div>
-                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                    </div>
+                    <div className="flex items-center gap-0.5 flex-shrink-0 overflow-x-auto no-scrollbar -mx-1 px-1 sm:mx-0 sm:px-0 [&_button]:h-9 [&_button]:w-9 sm:[&_button]:h-8 sm:[&_button]:w-8">
                       <Popover>
                         <PopoverTrigger asChild>
                           <Button variant="ghost" size="icon" className={`h-8 w-8 ${selected.folder_id ? "text-primary" : "text-muted-foreground hover:text-foreground"}`} title="Mover a carpeta">
@@ -3060,7 +3159,7 @@ export default function Unibox() {
 
                         return (
                           <div key={tm.id + "-" + idx} className={`rounded-xl border shadow-sm ${isSent ? "border-primary/20 bg-primary/5" : "border-border/60 bg-card"}`}>
-                            <div className="flex items-center gap-3 border-b border-border/40 px-5 py-3.5">
+                            <div className="flex items-center gap-2.5 border-b border-border/40 px-3 py-3 sm:gap-3 sm:px-5 sm:py-3.5">
                               <div className={`h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
                                 isSent ? "bg-primary/10 text-primary" : (selectedCatConfig?.bg || "bg-muted") + " " + (selectedCatConfig?.text || "text-muted-foreground")
                               }`}>
@@ -3084,7 +3183,7 @@ export default function Unibox() {
                               </div>
                               <span className="text-[11px] text-muted-foreground whitespace-nowrap flex-shrink-0">{dateStr}</span>
                             </div>
-                            <div className="px-5 py-5 md:px-8 md:py-6">
+                            <div className="px-3 py-4 sm:px-5 sm:py-5 md:px-8 md:py-6">
                               {isSent ? (
                                 <div
                                   className="text-[15px] text-foreground leading-[1.75] break-words [&_p]:my-3 [&_a]:text-primary [&_a]:underline"
@@ -3172,7 +3271,7 @@ export default function Unibox() {
                 </ScrollArea>
 
                 {/* Reply box */}
-                  <div className="border-t border-border/60 bg-card px-3 pb-20 pt-3 md:px-4 md:pb-6 md:pt-3">
+                  <div className="border-t border-border/60 bg-card px-3 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4 md:pt-3 md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2 text-[10px] md:text-xs text-muted-foreground">
                       <Send className="h-3 w-3 flex-shrink-0" />
@@ -3244,7 +3343,7 @@ export default function Unibox() {
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center justify-between gap-3 pr-20 md:pr-0">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1">
                       <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
                         <PopoverTrigger asChild>
@@ -3401,6 +3500,89 @@ export default function Unibox() {
               {blockedEntries.filter(e => e.entry_type === "email").length} emails · {blockedEntries.filter(e => e.entry_type === "domain").length} dominios
             </p>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Signature manager Dialog (Unibox) */}
+      <Dialog open={sigOpen} onOpenChange={setSigOpen}>
+        <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 font-display">
+              <Pencil className="h-5 w-5 text-primary" /> Firma electrónica
+            </DialogTitle>
+            <DialogDescription>
+              Se añade automáticamente <b>debajo de cada correo</b> (campañas y respuestas del Unibox) de las cuentas elegidas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Scope */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Aplicar a</p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { key: "all", label: `Todas (${sigAccounts.length})`, disabled: sigAccounts.length === 0 },
+                  { key: "tag", label: "Por tag", disabled: sigAllTags.length === 0 },
+                  { key: "account", label: "Una cuenta", disabled: sigAccounts.length === 0 },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={opt.disabled}
+                    onClick={() => setSigScope(opt.key)}
+                    className={`rounded-md border px-2 py-2 text-xs font-medium transition-colors ${
+                      sigScope === opt.key ? "border-primary bg-primary/10 text-primary" : "border-border/60 hover:bg-muted"
+                    } ${opt.disabled ? "cursor-not-allowed opacity-40" : ""}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {sigScope === "tag" && (
+                <Select value={sigTag} onValueChange={setSigTag}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Elige un tag" /></SelectTrigger>
+                  <SelectContent>
+                    {sigAllTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              {sigScope === "account" && (
+                <Select value={sigAccountId} onValueChange={setSigAccountId}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Elige una cuenta" /></SelectTrigger>
+                  <SelectContent>
+                    {sigAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.email}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-[11px] text-muted-foreground">Se aplicará a <b>{sigTargetIds.length}</b> cuenta(s).</p>
+            </div>
+
+            {/* HTML editor + live preview */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Firma (HTML)</p>
+              <Textarea
+                value={sigHtml}
+                onChange={e => setSigHtml(e.target.value)}
+                placeholder={'<p>Un saludo,<br><strong>Nombre Apellido</strong><br>Empresa · <a href="https://tuweb.com">tuweb.com</a></p>'}
+                className="min-h-[130px] font-mono text-xs leading-relaxed"
+                spellCheck={false}
+              />
+              <div className="rounded-md border border-border/60 bg-background p-3">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Vista previa</p>
+                {sigHtml.trim() ? (
+                  <div
+                    className="text-sm leading-relaxed break-words [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_p]:my-1"
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sigHtml) }}
+                  />
+                ) : (
+                  <p className="text-xs italic text-muted-foreground">Escribe tu firma HTML arriba para ver aquí cómo queda.</p>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">Deja el HTML <b>vacío</b> y pulsa Aplicar para <b>quitar</b> la firma.</p>
+            </div>
+          </div>
+          <Button onClick={applyUniboxSignature} className="w-full" disabled={sigSaving || sigTargetIds.length === 0}>
+            {sigSaving ? "Aplicando…" : (sigHtml.trim() ? `Aplicar firma a ${sigTargetIds.length} cuenta(s)` : `Quitar firma de ${sigTargetIds.length} cuenta(s)`)}
+          </Button>
         </DialogContent>
       </Dialog>
 

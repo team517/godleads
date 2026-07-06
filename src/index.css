@@ -140,6 +140,17 @@
   }
 }
 
+/* Hide scrollbars but keep scrolling (mobile chip rows, toolbars) */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* PWA safe area for notched devices */
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);

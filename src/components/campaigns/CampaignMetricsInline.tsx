@@ -53,9 +53,9 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
   ];
 
   return (
-    <div className="flex items-center gap-4 overflow-x-auto sm:gap-6">
+    <div className="flex items-center gap-3 overflow-x-auto no-scrollbar sm:gap-6">
       {items.map((it) => (
-        <div key={it.label} className="min-w-[48px] shrink-0 text-center">
+        <div key={it.label} className="min-w-[40px] shrink-0 text-center sm:min-w-[48px]">
           <p className={`text-sm font-bold leading-none ${it.color}`}>
             {m === null ? "—" : it.value}
             {m !== null && it.sub && <span className="ml-0.5 text-[10px] font-medium text-muted-foreground">{it.sub}</span>}
