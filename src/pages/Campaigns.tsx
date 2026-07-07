@@ -15,6 +15,7 @@ import CampaignDetail from "@/components/campaigns/CampaignDetail";
 import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
 import CampaignSendsChart from "@/components/campaigns/CampaignSendsChart";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
+import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   active: { label: "Active", variant: "default" },
@@ -70,6 +71,8 @@ export default function Campaigns() {
   // All campaigns' metrics from ONE server-side RPC → cards render instantly with
   // zero per-card queries (was: up to 5000 sent_emails rows downloaded PER card).
   const [metricsMap, setMetricsMap] = useState<Record<string, any>>(() => cacheGet<Record<string, any>>("campaigns:metrics") || {});
+  // Progress per campaign = leads already emailed / total leads (count-only queries).
+  const [progressMap, setProgressMap] = useState<Record<string, { sent: number; total: number }>>(() => cacheGet<Record<string, { sent: number; total: number }>>("campaigns:progress") || {});
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "" });
@@ -102,6 +105,19 @@ export default function Campaigns() {
       setMetricsMap(map);
       cacheSet("campaigns:metrics", map);
     }
+    // Progress = leads emailed / total leads, per campaign. COUNT-only (head:true) so
+    // no rows are transferred — cheap even with thousands of leads.
+    const list = data || [];
+    const progress: Record<string, { sent: number; total: number }> = {};
+    await Promise.all(list.map(async (c: any) => {
+      const [totalRes, sentRes] = await Promise.all([
+        supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id),
+        supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).not("last_sent_at", "is", null),
+      ]);
+      progress[c.id] = { total: totalRes.count || 0, sent: sentRes.count || 0 };
+    }));
+    setProgressMap(progress);
+    cacheSet("campaigns:progress", progress);
   };
 
   useEffect(() => { load(); }, [user]);
@@ -396,6 +412,10 @@ export default function Campaigns() {
                         {new Date(campaign.created_at).toLocaleDateString()}
                       </p>
                     </div>
+                    {/* Progress ring — how far the campaign has gone (leads emailed / total) */}
+                    {(progressMap[campaign.id]?.total ?? 0) > 0 && (
+                      <CampaignProgressRing sent={progressMap[campaign.id].sent} total={progressMap[campaign.id].total} />
+                    )}
                     <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
                       <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleStatusToggle(campaign)}>
                         {campaign.status === "active" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
