@@ -648,7 +648,10 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Account not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    if (account.sent_today >= account.daily_limit) {
+    // Daily limit applies ONLY to campaign sends. A manual Unibox reply/forward (no
+    // campaign_id) is a human answer to a real conversation — it must ALWAYS go out,
+    // never blocked by the campaign quota, and it does NOT increment sent_today.
+    if (campaign_id && account.sent_today >= account.daily_limit) {
       return new Response(JSON.stringify({ error: "Daily sending limit reached for this account" }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -709,7 +712,9 @@ serve(async (req) => {
         smtp_message_id: result.messageId || resolvedMessageId || null,
       });
 
-      if (result.ok) {
+      if (result.ok && campaign_id) {
+        // Only CAMPAIGN sends consume the daily quota. A manual Unibox reply/forward
+        // (no campaign_id) must NOT increment sent_today — replies have no limit.
         // Atomic increment (avoids stale read-modify-write across the daily reset).
         await adminClient.rpc("increment_account_sent", { p_account_id: resolvedAccountId });
       }
