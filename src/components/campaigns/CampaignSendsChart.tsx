@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from "recharts";
 import { BarChart3 } from "lucide-react";
 
 interface Props { campaignId: string; }
@@ -69,14 +69,18 @@ export default function CampaignSendsChart({ campaignId }: Props) {
   }, [campaignId]);
 
   const total = data.reduce((s, p) => s + p.envios, 0);
+  const totalReplies = data.reduce((s, p) => s + p.respuestas, 0);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm">
       <div className="mb-2 flex items-center justify-between">
         <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          <BarChart3 className="h-3.5 w-3.5" /> Envíos por día · últimos {DAYS_SHOWN} días
+          <BarChart3 className="h-3.5 w-3.5" /> Envíos y respuestas por día · últimos {DAYS_SHOWN} días
         </p>
-        <p className="text-[11px] text-muted-foreground">{loading ? "…" : `${total} envíos`}</p>
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-primary" /> {loading ? "…" : `${total} envíos`}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "hsl(173 58% 39%)" }} /> {loading ? "…" : `${totalReplies} respuestas`}</span>
+        </div>
       </div>
       <div className="h-40 w-full">
         {loading ? (
@@ -101,7 +105,12 @@ export default function CampaignSendsChart({ campaignId }: Props) {
                   );
                 }}
               />
-              <Bar dataKey="envios" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={28} />
+              <Bar dataKey="envios" name="Envíos" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={22} minPointSize={2}>
+                {/* The exact number ON TOP of the bar — so a real count reads clearly
+                    even when the bar looks short next to a much bigger day. */}
+                <LabelList dataKey="envios" position="top" style={{ fontSize: 9, fill: "hsl(var(--muted-foreground))", fontWeight: 600 }} formatter={(v: any) => (Number(v) > 0 ? v : "")} />
+              </Bar>
+              <Bar dataKey="respuestas" name="Respuestas" fill="hsl(173 58% 39%)" radius={[4, 4, 0, 0]} maxBarSize={22} minPointSize={2} />
             </BarChart>
           </ResponsiveContainer>
         )}
