@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil } from "lucide-react";
+import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil, Star } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -229,6 +229,9 @@ function stripQuotedReply(text: string): string {
   const trimmed = text.slice(0, cut).trim();
   return trimmed.length >= 2 ? trimmed : text;
 }
+
+/** Label used to flag a message as "Importante" (stored in inbox_messages.labels). */
+const IMPORTANT_LABEL = "Importante";
 
 /** Rejoin words that a sender's client hard-wrapped MID-WORD (e.g. "respo\nnsable de…"
  *  "explic\nar", "ofre\ncéis"). We only act when the message is CLEARLY wrapped that
@@ -1371,7 +1374,7 @@ export default function Unibox() {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
-  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "campaigns" | "reminders" | "sent">("global");
+  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
@@ -2025,6 +2028,33 @@ export default function Unibox() {
     setSigOpen(false);
   };
 
+  // ── Importantes: mark/unmark a message with the "Importante" label ──
+  const isImportant = (m: any): boolean => Array.isArray(m?.labels) && m.labels.includes(IMPORTANT_LABEL);
+  const importantCount = useMemo(
+    () => messages.filter(m => isImportant(m) && !m.is_archived).length,
+    [messages],
+  );
+  const toggleImportant = async (m: any) => {
+    if (!user || !m) return;
+    const cur: string[] = Array.isArray(m.labels) ? m.labels : [];
+    const wasImportant = cur.includes(IMPORTANT_LABEL);
+    const next = wasImportant ? cur.filter((l) => l !== IMPORTANT_LABEL) : [...cur, IMPORTANT_LABEL];
+    // Optimistic: update the list + cache immediately so the star and the tab react now.
+    setMessages((prev) => {
+      const upd = prev.map((msg) => (msg.id === m.id ? { ...msg, labels: next } : msg));
+      cacheSet("unibox:messages", upd);
+      return upd;
+    });
+    const { error } = await supabase.from("inbox_messages").update({ labels: next } as any).eq("id", m.id);
+    if (error) {
+      toast.error("No se pudo actualizar");
+      // Roll back on failure.
+      setMessages((prev) => prev.map((msg) => (msg.id === m.id ? { ...msg, labels: cur } : msg)));
+    } else {
+      toast.success(wasImportant ? "Quitado de Importantes" : "Marcado como importante");
+    }
+  };
+
   // Check if the selected message has a matching AI prompt
   const selectedAccountTags = selected ? (accountsMap[selected.account_id] || []) : [];
   const hasAiMatch = aiPrompts.some((p: any) =>
@@ -2069,11 +2099,14 @@ export default function Unibox() {
     // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
     // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
     // English/warmup filter hides is ever unrecoverable from the UI.
-    const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
+    // "Importantes" (like "Todos") shows whatever YOU flagged, regardless of the
+    // language/warmup filter — a message you starred must always be reachable.
+    const bypassFilters = viewTab === "all_mailboxes" || viewTab === "important" || showWarmup;
     const list = messages
       .filter(m => !isBlockedSender(m.from_email)) // blocked senders never show
       .filter(m => bypassFilters || !hiddenFromClean(m))
       .filter(m => {
+        if (viewTab === "important") return isImportant(m);
         if (viewTab === "reminders") return !!reminders[m.id];
         if (viewTab === "campaigns") {
           if (selectedCampaignId === "all") return true;
@@ -2716,7 +2749,7 @@ export default function Unibox() {
       {/* Tabs: Global / Campaigns */}
       <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-card px-3 py-2.5 md:flex-row md:items-center md:justify-between md:px-4">
         <Tabs value={viewTab} onValueChange={(v) => {
-          const nextTab = v as "global" | "all_mailboxes" | "campaigns" | "reminders" | "sent";
+          const nextTab = v as "global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent";
           setViewTab(nextTab);
           setMailboxMode(nextTab === "all_mailboxes" ? "all" : "clean");
         }}>
@@ -2729,6 +2762,14 @@ export default function Unibox() {
             </TabsTrigger>
             <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
               <Megaphone className="h-3.5 w-3.5" /> Campaigns
+            </TabsTrigger>
+            <TabsTrigger value="important" className="gap-1.5 text-xs">
+              <Star className="h-3.5 w-3.5" /> Importantes
+              {importantCount > 0 && (
+                <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                  {importantCount}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="sent" className="gap-1.5 text-xs">
               <Send className="h-3.5 w-3.5" /> Enviados
@@ -2939,6 +2980,7 @@ export default function Unibox() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
+                          {isImportant(msg) && <Star className="h-3.5 w-3.5 flex-shrink-0 fill-amber-500 text-amber-500" aria-label="Importante" />}
                           <span className="flex-shrink-0 whitespace-nowrap rounded bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">
                             {shortTimeAgo(msg.received_at)}
                           </span>
@@ -3107,6 +3149,15 @@ export default function Unibox() {
                           )}
                         </PopoverContent>
                       </Popover>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-8 w-8 ${isImportant(selected) ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-500"}`}
+                        onClick={() => toggleImportant(selected)}
+                        title={isImportant(selected) ? "Quitar de Importantes" : "Marcar como importante"}
+                      >
+                        <Star className={`h-4 w-4 ${isImportant(selected) ? "fill-amber-500" : ""}`} />
+                      </Button>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => { setForwardTo(""); setForwardNote(""); setForwardOpen(true); }} title="Reenviar">
                         <Forward className="h-4 w-4" />
                       </Button>
