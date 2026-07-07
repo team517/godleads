@@ -1376,6 +1376,7 @@ export default function Unibox() {
   const [linkText, setLinkText] = useState("");
   const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
+  const [importantItems, setImportantItems] = useState<any[]>([]); // messages you starred (label "Importante")
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
   // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
@@ -1757,6 +1758,24 @@ export default function Unibox() {
 
   useEffect(() => { if (viewTab === "sent") loadSent(); }, [viewTab, loadSent]);
 
+  // Load ALL starred messages straight from the DB (not just the ones inside the
+  // in-memory 500+500 window), so the "Importantes" tab always shows everything you
+  // flagged. Loaded on mount (for the tab badge count) and whenever the tab is opened.
+  const loadImportant = useCallback(async () => {
+    if (!user) return;
+    const { data } = await (supabase as any)
+      .from("inbox_messages")
+      .select("id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain")
+      .eq("user_id", user.id)
+      .eq("is_archived", false)
+      .contains("labels", [IMPORTANT_LABEL])
+      .order("received_at", { ascending: false })
+      .limit(500);
+    setImportantItems(data || []);
+  }, [user]);
+  useEffect(() => { loadImportant(); }, [loadImportant]);
+  useEffect(() => { if (viewTab === "important") loadImportant(); }, [viewTab, loadImportant]);
+
   // Load the set of addresses you've personally replied to (Unibox sends, not the
   // campaign engine) so the clean-bandeja filter never hides a conversation you're
   // already part of. Cheap: one slim query, to_email only.
@@ -2030,26 +2049,29 @@ export default function Unibox() {
 
   // ── Importantes: mark/unmark a message with the "Importante" label ──
   const isImportant = (m: any): boolean => Array.isArray(m?.labels) && m.labels.includes(IMPORTANT_LABEL);
-  const importantCount = useMemo(
-    () => messages.filter(m => isImportant(m) && !m.is_archived).length,
-    [messages],
-  );
+  const importantCount = importantItems.length; // source of truth (loaded from the DB)
   const toggleImportant = async (m: any) => {
     if (!user || !m) return;
     const cur: string[] = Array.isArray(m.labels) ? m.labels : [];
     const wasImportant = cur.includes(IMPORTANT_LABEL);
     const next = wasImportant ? cur.filter((l) => l !== IMPORTANT_LABEL) : [...cur, IMPORTANT_LABEL];
-    // Optimistic: update the list + cache immediately so the star and the tab react now.
+    // Optimistic: update the list (star icon) + cache and the Importantes tab NOW.
     setMessages((prev) => {
       const upd = prev.map((msg) => (msg.id === m.id ? { ...msg, labels: next } : msg));
       cacheSet("unibox:messages", upd);
       return upd;
+    });
+    setImportantItems((prev) => {
+      if (wasImportant) return prev.filter((msg) => msg.id !== m.id);
+      if (prev.some((msg) => msg.id === m.id)) return prev;
+      return [{ ...m, labels: next }, ...prev];
     });
     const { error } = await supabase.from("inbox_messages").update({ labels: next } as any).eq("id", m.id);
     if (error) {
       toast.error("No se pudo actualizar");
       // Roll back on failure.
       setMessages((prev) => prev.map((msg) => (msg.id === m.id ? { ...msg, labels: cur } : msg)));
+      loadImportant();
     } else {
       toast.success(wasImportant ? "Quitado de Importantes" : "Marcado como importante");
     }
@@ -2095,18 +2117,26 @@ export default function Unibox() {
         !search || m.to_email?.toLowerCase().includes(q) || m.subject?.toLowerCase().includes(q)
       );
     }
+    // IMPORTANTES tab: the starred messages, loaded straight from the DB so nothing is
+    // ever missing due to the in-memory window or a mid-session reload.
+    if (viewTab === "important") {
+      const q = search.toLowerCase();
+      return importantItems
+        .filter(m => !search ||
+          m.from_email?.toLowerCase().includes(q) ||
+          m.from_name?.toLowerCase().includes(q) ||
+          decodeSubject(m.subject)?.toLowerCase().includes(q))
+        .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
+    }
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
     // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
     // English/warmup filter hides is ever unrecoverable from the UI.
-    // "Importantes" (like "Todos") shows whatever YOU flagged, regardless of the
-    // language/warmup filter — a message you starred must always be reachable.
-    const bypassFilters = viewTab === "all_mailboxes" || viewTab === "important" || showWarmup;
+    const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
     const list = messages
       .filter(m => !isBlockedSender(m.from_email)) // blocked senders never show
       .filter(m => bypassFilters || !hiddenFromClean(m))
       .filter(m => {
-        if (viewTab === "important") return isImportant(m);
         if (viewTab === "reminders") return !!reminders[m.id];
         if (viewTab === "campaigns") {
           if (selectedCampaignId === "all") return true;
@@ -2135,7 +2165,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, sentItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
+  }, [messages, sentItems, importantItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
