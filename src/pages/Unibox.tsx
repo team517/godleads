@@ -1763,7 +1763,7 @@ export default function Unibox() {
   // flagged. Loaded on mount (for the tab badge count) and whenever the tab is opened.
   const loadImportant = useCallback(async () => {
     if (!user) return;
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .from("inbox_messages")
       .select("id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain")
       .eq("user_id", user.id)
@@ -1771,6 +1771,7 @@ export default function Unibox() {
       .contains("labels", [IMPORTANT_LABEL])
       .order("received_at", { ascending: false })
       .limit(500);
+    if (error) { console.warn("loadImportant failed, keeping current list:", error.message); return; }
     setImportantItems(data || []);
   }, [user]);
   useEffect(() => { loadImportant(); }, [loadImportant]);
@@ -2049,7 +2050,13 @@ export default function Unibox() {
 
   // ── Importantes: mark/unmark a message with the "Importante" label ──
   const isImportant = (m: any): boolean => Array.isArray(m?.labels) && m.labels.includes(IMPORTANT_LABEL);
-  const importantCount = importantItems.length; // source of truth (loaded from the DB)
+  // Count = union of DB-loaded starred rows + any in-memory message carrying the label.
+  const importantCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of importantItems) if (!m.is_archived) ids.add(m.id);
+    for (const m of messages) if (isImportant(m) && !m.is_archived) ids.add(m.id);
+    return ids.size;
+  }, [importantItems, messages]);
   const toggleImportant = async (m: any) => {
     if (!user || !m) return;
     const cur: string[] = Array.isArray(m.labels) ? m.labels : [];
@@ -2066,15 +2073,24 @@ export default function Unibox() {
       if (prev.some((msg) => msg.id === m.id)) return prev;
       return [{ ...m, labels: next }, ...prev];
     });
-    const { error } = await supabase.from("inbox_messages").update({ labels: next } as any).eq("id", m.id);
-    if (error) {
-      toast.error("No se pudo actualizar");
-      // Roll back on failure.
+    // Persist AND confirm: .select() returns the affected rows, so we know the write
+    // actually landed (0 rows = it silently didn't stick → tell the user, don't lie).
+    const { data, error } = await supabase
+      .from("inbox_messages")
+      .update({ labels: next } as any)
+      .eq("id", m.id)
+      .eq("user_id", user.id)
+      .select("id, labels");
+    if (error || !data || data.length === 0) {
+      toast.error(error ? `No se pudo guardar: ${error.message}` : "No se pudo guardar la marca (no se encontró el mensaje).");
+      // Roll back the optimistic changes.
       setMessages((prev) => prev.map((msg) => (msg.id === m.id ? { ...msg, labels: cur } : msg)));
-      loadImportant();
-    } else {
-      toast.success(wasImportant ? "Quitado de Importantes" : "Marcado como importante");
+      setImportantItems((prev) => (wasImportant
+        ? [{ ...m, labels: cur }, ...prev.filter((x) => x.id !== m.id)]
+        : prev.filter((x) => x.id !== m.id)));
+      return;
     }
+    toast.success(wasImportant ? "Quitado de Importantes" : "Marcado como importante");
   };
 
   // Check if the selected message has a matching AI prompt
@@ -2117,11 +2133,16 @@ export default function Unibox() {
         !search || m.to_email?.toLowerCase().includes(q) || m.subject?.toLowerCase().includes(q)
       );
     }
-    // IMPORTANTES tab: the starred messages, loaded straight from the DB so nothing is
-    // ever missing due to the in-memory window or a mid-session reload.
+    // IMPORTANTES tab: UNION of (starred rows loaded straight from the DB) + (any
+    // in-memory message that carries the label). The union means a just-starred
+    // message is never missing — not to a stale reload, not to a write/read race, not
+    // to the 500+500 window.
     if (viewTab === "important") {
       const q = search.toLowerCase();
-      return importantItems
+      const byId = new Map<string, any>();
+      for (const m of importantItems) if (!m.is_archived) byId.set(m.id, m);
+      for (const m of messages) if (isImportant(m) && !m.is_archived) byId.set(m.id, m);
+      return Array.from(byId.values())
         .filter(m => !search ||
           m.from_email?.toLowerCase().includes(q) ||
           m.from_name?.toLowerCase().includes(q) ||
