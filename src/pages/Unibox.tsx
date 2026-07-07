@@ -233,6 +233,29 @@ function stripQuotedReply(text: string): string {
 /** Label used to flag a message as "Importante" (stored in inbox_messages.labels). */
 const IMPORTANT_LABEL = "Importante";
 
+/** Append the account's HTML signature to a reply BODY, client-side, so it works with
+ *  just a frontend redeploy (no edge deploy needed). We build proper HTML: the plain
+ *  reply → paragraphs/<br> (mirrors send-email's textToHtml so line breaks survive),
+ *  then the signature as a COMPACT block (its <p> tags → single <br>, so the email
+ *  client's default ~16px paragraph margins don't blow it apart). Because the result
+ *  contains <br>/<p>, send-email's textToHtml passes it through untouched. */
+function buildBodyWithSignature(reply: string, sigHtmlRaw: string): string {
+  const sig = (sigHtmlRaw || "").trim();
+  if (!sig) return reply;
+  const replyHtml = /<(p|div|br)\b/i.test(reply)
+    ? reply
+    : reply.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+  const tightSig = sig
+    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")
+    .replace(/<\/?p[^>]*>/gi, "")
+    .replace(/<\/?div[^>]*>/gi, "")
+    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>")
+    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")
+    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")
+    .trim();
+  return `${replyHtml}<br><br>${tightSig}`;
+}
+
 /** Columns the list/search/thread need (NOT body_html — fetched only when a message
  *  is opened). Typed loosely because the generated types.ts is stale. */
 const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain";
@@ -2594,7 +2617,10 @@ export default function Unibox() {
       }
       // WYSIWYG: send EXACTLY what's in the box. If the user wants it in the lead's
       // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
-      const finalBody = reply;
+      // Then append the SENDING ACCOUNT's signature (client-side, so it works with just
+      // a frontend deploy — no edge deploy needed). "no se ve la firma" fix.
+      const acctSignature = (sigAccounts.find((a) => a.id === selected.account_id)?.signature_html || "").trim();
+      const finalBody = buildBodyWithSignature(reply, acctSignature);
 
       // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
       // (its Message-ID is exactly what the recipient's client matches to thread),

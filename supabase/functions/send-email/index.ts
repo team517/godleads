@@ -691,7 +691,10 @@ serve(async (req) => {
         fromName: senderName,
         messageId: resolvedMessageId,
         unsubscribeUrl,
-        signatureHtml: (account as any).signature_html || undefined,
+        // Unibox replies append the signature CLIENT-SIDE (in the body), so send-email
+        // must NOT add it again here (would double it). Only campaign sends routed
+        // through send-email get the account signature server-side.
+        signatureHtml: campaign_id ? ((account as any).signature_html || undefined) : undefined,
         attachments: safeAttachments,
       }
     );
