@@ -233,6 +233,10 @@ function stripQuotedReply(text: string): string {
 /** Label used to flag a message as "Importante" (stored in inbox_messages.labels). */
 const IMPORTANT_LABEL = "Importante";
 
+/** Columns the list/search/thread need (NOT body_html — fetched only when a message
+ *  is opened). Typed loosely because the generated types.ts is stale. */
+const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain";
+
 /** Rejoin words that a sender's client hard-wrapped MID-WORD (e.g. "respo\nnsable de…"
  *  "explic\nar", "ofre\ncéis"). We only act when the message is CLEARLY wrapped that
  *  way — a majority of its line breaks split a word (previous line ends in a letter/
@@ -1433,7 +1437,7 @@ export default function Unibox() {
     // Typed as `string` on purpose: the generated types.ts is stale (missing
     // folder_id/labels/etc.), so a literal column list would fail TS validation
     // even though the columns exist at runtime. Widening to string skips that.
-    const LIST_COLS: string = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain";
+    const LIST_COLS: string = INBOX_LIST_COLS;
     const [linkedRes, unlinkedRes] = await Promise.all([
       supabase
         .from("inbox_messages")
@@ -1765,7 +1769,7 @@ export default function Unibox() {
     if (!user) return;
     const { data, error } = await (supabase as any)
       .from("inbox_messages")
-      .select("id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain")
+      .select(INBOX_LIST_COLS)
       .eq("user_id", user.id)
       .eq("is_archived", false)
       .contains("labels", [IMPORTANT_LABEL])
@@ -1774,6 +1778,47 @@ export default function Unibox() {
     if (error) { console.warn("loadImportant failed, keeping current list:", error.message); return; }
     setImportantItems(data || []);
   }, [user]);
+
+  // ── Global search straight from the DB ──────────────────────────────────────
+  // The in-memory search only saw the loaded 500+500 window AND ran AFTER the
+  // language/warmup filter, so typing an email often found nothing. This queries the
+  // whole mailbox (received messages) by email / name / subject / body, ignoring the
+  // clean-bandeja filter — so a contact's conversation is always findable. Clicking a
+  // result opens the full thread (received + sent) via loadThread.
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) { setSearchResults(null); setSearching(false); return; }
+    if (!user) return;
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      // Sanitize for PostgREST or()/ilike: strip chars that break the filter grammar
+      // (comma, parens, asterisk). Dots/@/dashes in an email are fine.
+      const safe = q.replace(/[,()*]/g, " ").trim();
+      const pat = `*${safe}*`;
+      const { data, error } = await (supabase as any)
+        .from("inbox_messages")
+        .select(INBOX_LIST_COLS)
+        .eq("user_id", user.id)
+        .eq("is_archived", false)
+        .or(`from_email.ilike.${pat},from_name.ilike.${pat},subject.ilike.${pat},body_text.ilike.${pat}`)
+        .order("received_at", { ascending: false })
+        .limit(200);
+      if (cancelled) return;
+      if (error) { console.warn("unibox search failed:", error.message); setSearching(false); return; }
+      // One row per contact (newest), so results read like conversations, not dupes.
+      const byContact = new Map<string, any>();
+      for (const m of (data || [])) {
+        const key = (m.from_email || m.id).toLowerCase();
+        if (!byContact.has(key)) byContact.set(key, m);
+      }
+      setSearchResults(Array.from(byContact.values()));
+      setSearching(false);
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search, user]);
   useEffect(() => { loadImportant(); }, [loadImportant]);
   useEffect(() => { if (viewTab === "important") loadImportant(); }, [viewTab, loadImportant]);
 
@@ -1801,7 +1846,7 @@ export default function Unibox() {
   useEffect(() => {
     setAiSuggestion("");
     setAiPromptName("");
-    const msg = messages.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId);
+    const msg = messages.find(m => m.id === selectedId) || searchResults?.find(m => m.id === selectedId) || importantItems.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId);
     if (msg) {
       // Proactively flag the language (cheap local detector) so the reply box can
       // offer auto-translate without the user first pressing "Traducir". Only the
@@ -1813,7 +1858,7 @@ export default function Unibox() {
       setDetectedLang(null);
       setThreadMessages([]);
     }
-  }, [selectedId, messages, sentItems, loadThread]);
+  }, [selectedId, messages, sentItems, searchResults, importantItems, loadThread]);
 
 
 
@@ -1878,7 +1923,7 @@ export default function Unibox() {
 
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
-  const selected = useMemo(() => messages.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || null, [messages, sentItems, selectedId]);
+  const selected = useMemo(() => messages.find(m => m.id === selectedId) || (searchResults || []).find(m => m.id === selectedId) || importantItems.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || null, [messages, sentItems, searchResults, importantItems, selectedId]);
 
   // Language bucket per message, cached by id (text never changes). Cleared by "Re-filtrar idioma".
   const messageLang = useCallback((m: any): "es" | "en" | "fr" | "it" | "other" | "unknown" => {
@@ -2149,6 +2194,15 @@ export default function Unibox() {
           decodeSubject(m.subject)?.toLowerCase().includes(q))
         .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     }
+    // SEARCH (main inbox tabs): when there's a query, show the DB search results —
+    // the whole mailbox, ignoring the language/warmup filter and the loaded window —
+    // filtered only by the blocklist. This is what makes "type an email → find the
+    // conversation" actually work.
+    if (search.trim().length >= 2 && searchResults !== null) {
+      return searchResults
+        .filter(m => !isBlockedSender(m.from_email))
+        .filter(m => !folderFilter || m.folder_id === folderFilter);
+    }
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
     // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
@@ -2186,7 +2240,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, sentItems, importantItems, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
+  }, [messages, sentItems, importantItems, searchResults, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2959,12 +3013,27 @@ export default function Unibox() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre o email…"
-                  className="pl-9 h-8 text-sm bg-muted/40 border-0 focus-visible:ring-1"
+                  placeholder="Buscar por email, nombre o texto…"
+                  className="pl-9 pr-8 h-8 text-sm bg-muted/40 border-0 focus-visible:ring-1"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
+                {searching ? (
+                  <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-primary" />
+                ) : search ? (
+                  <button type="button" onClick={() => setSearch("")} title="Limpiar búsqueda"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
+              {search.trim().length >= 2 && !searching && (
+                <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
+                  {filtered.length === 0
+                    ? "Sin resultados en toda la bandeja."
+                    : `${filtered.length} conversación(es) — se busca en toda la bandeja.`}
+                </p>
+              )}
             </div>
             {/* Bulk-select action bar */}
             {bulkSelected.size > 0 && (
