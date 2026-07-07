@@ -1039,7 +1039,11 @@ serve(async (req) => {
           const days = countSendingDays(startedAt, now, sendDays, tz);
           const inc = acc.warmup_increment || 2;
           const target = acc.warmup_limit || limit;
-          const accRamp = Math.min((days + 1) * inc, target);
+          // warmup_day (repurposed) = the STARTING daily limit (day 1). 0/absent →
+          // start from `inc` (legacy: inc + days*inc = (days+1)*inc). Set e.g. to 18
+          // to begin at 18/day and climb by `inc` each sending day up to `target`.
+          const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
+          const accRamp = Math.min(startBase + days * inc, target);
           limit = Math.min(limit, accRamp);
         }
 

@@ -127,7 +127,7 @@ export default function EmailAccounts() {
   });
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
   const [showSlowRamp, setShowSlowRamp] = useState(false);
-  const [slowRampForm, setSlowRampForm] = useState({ increment: "2", target: "30" });
+  const [slowRampForm, setSlowRampForm] = useState({ start: "", increment: "2", target: "30" });
   // ── Signature manager (apply an HTML signature to all / by tag / selected accounts) ──
   const [showSignature, setShowSignature] = useState(false);
   const [sigHtml, setSigHtml] = useState("");
@@ -775,7 +775,10 @@ export default function EmailAccounts() {
     // (getEffectiveLimit = min(daily_limit, ramp, …)). Cap the shown value by it
     // too, so setting the daily limit to 12 actually reads 12 — not the raw ramp.
     const hardCap = acc.daily_limit && acc.daily_limit > 0 ? acc.daily_limit : 30;
-    const eff = Math.min((days + 1) * inc, target, hardCap);
+    // warmup_day (repurposed) = the STARTING daily limit (day 1). If 0/absent, start
+    // from `inc` (legacy: inc + days*inc = (days+1)*inc).
+    const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
+    const eff = Math.min(startBase + days * inc, target, hardCap);
     return { day: days + 1, eff, target };
   };
 
@@ -784,11 +787,13 @@ export default function EmailAccounts() {
     const ids = selectedIds.size > 0 ? [...selectedIds] : accounts.map((a) => a.id);
     if (ids.length === 0) { toast.error("No hay cuentas"); return; }
     const increment = Math.max(1, parseInt(slowRampForm.increment) || 2);
-    const target = Math.max(increment, parseInt(slowRampForm.target) || 30);
+    const start = Math.max(0, parseInt(slowRampForm.start) || 0); // 0 = start from increment (legacy)
+    const target = Math.max(start || increment, parseInt(slowRampForm.target) || 30);
     const payload: any = {
       warmup_enabled: true,
       warmup_increment: increment,
       warmup_limit: target,
+      warmup_day: start,           // repurposed: starting daily limit (día 1)
       warmup_started_at: new Date().toISOString(),
     };
     for (const id of ids) {
@@ -1339,9 +1344,13 @@ export default function EmailAccounts() {
               Sube poco a poco los envíos diarios de cada cuenta para calentar los buzones.
               Se aplicará a <b>{selectedIds.size > 0 ? `${selectedIds.size} cuenta(s) seleccionadas` : `TODAS las cuentas (${accounts.length})`}</b>.
             </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1">
-                <Label>Incremento diario</Label>
+                <Label>Inicio (día 1)</Label>
+                <Input type="number" min={0} placeholder="p.ej. 18" value={slowRampForm.start} onChange={(e) => setSlowRampForm({ ...slowRampForm, start: e.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label>+ por día</Label>
                 <Input type="number" min={1} value={slowRampForm.increment} onChange={(e) => setSlowRampForm({ ...slowRampForm, increment: e.target.value })} />
               </div>
               <div className="space-y-1">
@@ -1349,11 +1358,17 @@ export default function EmailAccounts() {
                 <Input type="number" min={1} value={slowRampForm.target} onChange={(e) => setSlowRampForm({ ...slowRampForm, target: e.target.value })} />
               </div>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Deja <b>Inicio</b> vacío para empezar desde el incremento. Con Inicio = 18 y + por día = 2:
+              arranca en 18/día y sube 2 cada día (20, 22, 24…) hasta el objetivo.
+            </p>
             {(() => {
               const inc = Math.max(1, parseInt(slowRampForm.increment) || 2);
-              const target = Math.max(inc, parseInt(slowRampForm.target) || 30);
-              const days = [1, 2, 3, 4, 5].map((d) => Math.min(d * inc, target));
-              const reachDay = Math.ceil(target / inc);
+              const startRaw = Math.max(0, parseInt(slowRampForm.start) || 0);
+              const base = startRaw > 0 ? startRaw : inc;               // día 1
+              const target = Math.max(base, parseInt(slowRampForm.target) || 30);
+              const days = [0, 1, 2, 3, 4].map((d) => Math.min(base + d * inc, target));
+              const reachDay = Math.max(1, Math.ceil((target - base) / inc) + 1);
               return (
                 <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                   <p className="font-medium text-foreground mb-1">Previsualización por cuenta</p>
