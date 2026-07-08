@@ -6,7 +6,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import DOMPurify from "dompurify";
-import { signatureToBrLines } from "@/lib/signature";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1503,7 +1502,7 @@ export default function EmailAccounts() {
                 {sigHtml.trim() ? (
                   <div
                     className="text-sm leading-relaxed break-words [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_p]:my-1"
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(signatureToBrLines(sigHtml)) }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sigHtml) }}
                   />
                 ) : (
                   <p className="text-xs italic text-muted-foreground">Escribe tu firma HTML arriba para ver aquí cómo queda.</p>

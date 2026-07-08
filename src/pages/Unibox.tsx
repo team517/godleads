@@ -3,7 +3,6 @@ import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
-import { signatureToBrLines } from "@/lib/signature";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -240,14 +239,6 @@ const IMPORTANT_LABEL = "Importante";
  *  then the signature as a COMPACT block (its <p> tags → single <br>, so the email
  *  client's default ~16px paragraph margins don't blow it apart). Because the result
  *  contains <br>/<p>, send-email's textToHtml passes it through untouched. */
-function buildBodyWithSignature(reply: string, sigHtmlRaw: string): string {
-  const tightSig = signatureToBrLines(sigHtmlRaw);
-  if (!tightSig) return reply;
-  const replyHtml = /<(p|div|br)\b/i.test(reply)
-    ? reply
-    : reply.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
-  return `${replyHtml}<br><br>${tightSig}`;
-}
 
 /** Columns the list/search/thread need (NOT body_html — fetched only when a message
  *  is opened). Typed loosely because the generated types.ts is stale. */
@@ -2610,10 +2601,10 @@ export default function Unibox() {
       }
       // WYSIWYG: send EXACTLY what's in the box. If the user wants it in the lead's
       // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
-      // Then append the SENDING ACCOUNT's signature (client-side, so it works with just
-      // a frontend deploy — no edge deploy needed). "no se ve la firma" fix.
+      const finalBody = reply;
+      // The sending account's RICH signature (logo/colours/badges) is sent as a SEPARATE
+      // field so send-email keeps it intact (the strict body sanitizer would flatten it).
       const acctSignature = (sigAccounts.find((a) => a.id === selected.account_id)?.signature_html || "").trim();
-      const finalBody = buildBodyWithSignature(reply, acctSignature);
 
       // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
       // (its Message-ID is exactly what the recipient's client matches to thread),
@@ -2660,6 +2651,7 @@ export default function Unibox() {
           // Full thread chain (original References + the target's Message-ID) so the
           // reply threads perfectly in every client, not just by subject.
           references: ([targetRefChain, targetMsgId].filter(Boolean).join(" ").trim()) || undefined,
+          signature_html: acctSignature || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
         }),
         signal: controller.signal,
@@ -3799,7 +3791,7 @@ export default function Unibox() {
                 {sigHtml.trim() ? (
                   <div
                     className="text-sm leading-relaxed break-words [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_p]:my-1"
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(signatureToBrLines(sigHtml)) }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sigHtml) }}
                   />
                 ) : (
                   <p className="text-xs italic text-muted-foreground">Escribe tu firma HTML arriba para ver aquí cómo queda.</p>

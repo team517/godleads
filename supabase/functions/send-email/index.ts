@@ -119,6 +119,20 @@ function sanitizeHtmlForDelivery(html: string): string {
 // styles, so we can't control spacing with CSS — email clients then apply their
 // default ~16px margin to every <p>, blowing the signature apart. Fix structurally:
 // collapse paragraph breaks into single <br> line breaks so the block stays compact.
+// A signature is the sender's OWN branded HTML (logo, colours, badge pills). Keep it
+// RICH — inline styles, images, tables, divs, links — so it lands exactly like the
+// in-app preview. Strip ONLY genuinely unsafe bits (scripts, event handlers, forms,
+// javascript: urls). This is what makes a branded signature deliver as designed.
+function sanitizeSignatureRich(html: string): string {
+  return (html || "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|iframe|object|embed|form|input|textarea|noscript)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(script|iframe|object|embed|form|input|meta|link|base)[^>]*>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    .trim();
+}
+
 function normalizeSignatureHtml(sanitized: string): string {
   let s = (sanitized || "").trim();
   if (!s) return "";
@@ -271,7 +285,9 @@ async function sendSmtpEmail(
       const normalizedBody = sanitizeHtmlForDelivery(body);
       // Per-account signature (HTML) appended BELOW the message body. Sanitized like
       // the body so it's safe, and mirrored into the plain-text alternative.
-      const sigHtml = normalizeSignatureHtml(sanitizeHtmlForDelivery(opts?.signatureHtml?.trim() || ""));
+      // Signature keeps its RICH HTML (logo/colours/badges) — sanitized for safety only,
+      // NOT flattened and NOT run through the strict body sanitizer.
+      const sigHtml = sanitizeSignatureRich(opts?.signatureHtml?.trim() || "");
       const normalizedHtml = sigHtml
         ? `${normalizedBody}<br><br>${sigHtml}`
         : normalizedBody;
@@ -521,6 +537,7 @@ serve(async (req) => {
       references,
       include_unsubscribe,
       attachments,
+      signature_html,   // rich branded signature (from the Unibox reply)
     } = await req.json();
 
     // Attachments: [{ filename, mime, base64 }]. Guard total size (~15 MB of
@@ -693,10 +710,11 @@ serve(async (req) => {
         fromName: senderName,
         messageId: resolvedMessageId,
         unsubscribeUrl,
-        // Unibox replies append the signature CLIENT-SIDE (in the body), so send-email
-        // must NOT add it again here (would double it). Only campaign sends routed
-        // through send-email get the account signature server-side.
-        signatureHtml: campaign_id ? ((account as any).signature_html || undefined) : undefined,
+        // Signature (kept RICH): the Unibox reply passes it explicitly; campaign sends
+        // fall back to the account's stored signature. Appended server-side, once.
+        signatureHtml: (signature_html && String(signature_html).trim())
+          || (campaign_id ? (account as any).signature_html : undefined)
+          || undefined,
         attachments: safeAttachments,
       }
     );
