@@ -9,15 +9,32 @@ import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 import { useNavigate } from "react-router-dom";
 import { getNotificationVolume, isNotificationEnabled } from "@/components/layout/Topbar";
+import { hasWarmupCodes, isBounceOrFailure, detectLangHeuristic } from "@/lib/inbox-filters";
 
 interface InboxMessage {
   id: string;
   from_email: string;
   from_name: string | null;
   subject: string | null;
+  body_text: string | null;
   received_at: string;
   is_read: boolean;
   labels: string[] | null;
+  lead_id: string | null;
+  campaign_id: string | null;
+}
+
+/** Same clean-bandeja filter the Unibox uses: no warmup codes, no bounce/noise senders,
+ *  and no clearly-foreign mail from senders that aren't real leads. Keeps the dashboard
+ *  glance showing only genuine replies. */
+function isRealMessage(m: Partial<InboxMessage>): boolean {
+  if (isBounceOrFailure(m.from_email || "")) return false;
+  if (hasWarmupCodes(m.subject || "", m.body_text || "")) return false;
+  if (!(m.lead_id || m.campaign_id)) {
+    const sample = (m.body_text && m.body_text.trim()) ? m.body_text : (m.subject || "");
+    if (detectLangHeuristic(sample) === "other") return false;
+  }
+  return true;
 }
 
 const createNotificationSound = () => {
@@ -40,13 +57,14 @@ export default function TodayMessages() {
 
     const { data } = await supabase
       .from("inbox_messages")
-      .select("id, from_email, from_name, subject, received_at, is_read, labels")
+      .select("id, from_email, from_name, subject, body_text, received_at, is_read, labels, lead_id, campaign_id")
       .eq("user_id", user.id)
+      .eq("is_archived", false)
       .gte("received_at", todayStart.toISOString())
       .order("received_at", { ascending: false })
-      .limit(20);
+      .limit(80); // fetch extra, then drop warmup/noise before showing 20
 
-    setMessages(data || []);
+    setMessages(((data as InboxMessage[]) || []).filter(isRealMessage).slice(0, 20));
     setLoading(false);
     if (!initialLoadDone.current) initialLoadDone.current = true;
   };
@@ -69,7 +87,8 @@ export default function TodayMessages() {
           const msg = payload.new as InboxMessage;
           const todayStart = new Date();
           todayStart.setHours(0, 0, 0, 0);
-          if (new Date(msg.received_at) >= todayStart) {
+          // Skip warmup / bounce / foreign noise — never show it or ping for it.
+          if (new Date(msg.received_at) >= todayStart && !(msg as any).is_archived && isRealMessage(msg)) {
             setMessages((prev) => [msg, ...prev].slice(0, 20));
 
             // Sound + toast notification
