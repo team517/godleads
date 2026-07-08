@@ -133,6 +133,24 @@ function sanitizeSignatureRich(html: string): string {
     .trim();
 }
 
+// Gmail (and others) BLOCK `data:` image src in emails, so a base64-embedded logo shows
+// broken. Pull those out, rewrite the <img src> to a `cid:` reference, and return the
+// images so buildMessage can attach them as multipart/related INLINE parts → the logo
+// then renders in every client.
+function inlineDataUriImages(html: string): { html: string; inlineImages: { cid: string; mime: string; base64: string }[] } {
+  const inlineImages: { cid: string; mime: string; base64: string }[] = [];
+  let idx = 0;
+  const out = html.replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["'])(data:[^"']+)\2([^>]*>)/gi, (whole, pre, q, dataUri, post) => {
+    const m = String(dataUri).match(/^data:([a-z0-9.+/-]+)?(?:;[^,]*)?;base64,(.+)$/i);
+    if (!m) return whole;
+    idx++;
+    const cid = `sig${idx}${randomString(10)}@onepulso.local`;
+    inlineImages.push({ cid, mime: (m[1] || "image/png").trim(), base64: m[2].replace(/\s+/g, "") });
+    return `${pre}${q}cid:${cid}${q}${post}`;
+  });
+  return { html: out, inlineImages };
+}
+
 function normalizeSignatureHtml(sanitized: string): string {
   let s = (sanitized || "").trim();
   if (!s) return "";
@@ -344,8 +362,11 @@ async function sendSmtpEmail(
         ? `${normalizedHtml}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`
         : normalizedHtml;
 
+      // Pull base64 data: images (logos) out of the HTML → inline CID parts.
+      const { html: htmlForSend, inlineImages } = inlineDataUriImages(htmlFinal);
+
       const qpText = quotedPrintableEncode(normalizeMimeText(plainTextFinal));
-      const qpHtml = quotedPrintableEncode(normalizeMimeText(htmlFinal));
+      const qpHtml = quotedPrintableEncode(normalizeMimeText(htmlForSend));
 
       // The text/html body is always a multipart/alternative block.
       const altLines = [
@@ -362,36 +383,67 @@ async function sendSmtpEmail(
         `--${boundary}--`,
       ];
 
+      const b64wrap = (b64: string) => (b64.replace(/[^A-Za-z0-9+/=]/g, "").match(/.{1,76}/g) || []).join("\r\n");
+
+      // Inner block = multipart/alternative, wrapped in multipart/related when the
+      // signature has inline (logo) images so they resolve via their Content-ID.
+      const relatedB = `--==_related_${randomString(14)}_${randomString(8)}`;
+      let innerType: string;
+      let innerLines: string[];
+      if (inlineImages.length > 0) {
+        innerType = `multipart/related; type="multipart/alternative"; boundary="${relatedB}"`;
+        innerLines = [
+          `--${relatedB}`,
+          `Content-Type: multipart/alternative; boundary="${boundary}"`,
+          "",
+          ...altLines,
+        ];
+        for (const img of inlineImages) {
+          innerLines.push(
+            `--${relatedB}`,
+            `Content-Type: ${img.mime}`,
+            "Content-Transfer-Encoding: base64",
+            `Content-ID: <${img.cid}>`,
+            "Content-Disposition: inline",
+            "",
+            b64wrap(img.base64),
+          );
+        }
+        innerLines.push(`--${relatedB}--`);
+      } else {
+        innerType = `multipart/alternative; boundary="${boundary}"`;
+        innerLines = [...altLines];
+      }
+
       const attachments = (opts?.attachments || []).filter((a) => a && a.base64);
       let msgLines: string[];
       if (attachments.length > 0) {
-        // multipart/mixed { multipart/alternative(text+html) , attachment* }
+        // multipart/mixed { inner(alternative|related) , attachment* }
         const mixed = `--==_mixed_${randomString(16)}_${randomString(10)}`;
         headers.push(`Content-Type: multipart/mixed; boundary="${mixed}"`);
         msgLines = [
           headers.join("\r\n"),
           "",
           `--${mixed}`,
-          `Content-Type: multipart/alternative; boundary="${boundary}"`,
+          `Content-Type: ${innerType}`,
           "",
-          ...altLines,
+          ...innerLines,
         ];
         for (const att of attachments) {
           const safeName = encodeMimeHeader(att.filename || "adjunto");
-          const wrapped = (att.base64.replace(/[^A-Za-z0-9+/=]/g, "").match(/.{1,76}/g) || []).join("\r\n");
           msgLines.push(
             `--${mixed}`,
             `Content-Type: ${att.mime || "application/octet-stream"}; name="${safeName}"`,
             "Content-Transfer-Encoding: base64",
             `Content-Disposition: attachment; filename="${safeName}"`,
             "",
-            wrapped,
+            b64wrap(att.base64),
           );
         }
         msgLines.push(`--${mixed}--`);
       } else {
-        headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
-        msgLines = [headers.join("\r\n"), "", ...altLines];
+        headers.push(`Content-Type: ${innerType}`);
+        msgLines = [headers.join("\r\n"), "", ...innerLines];
       }
       // Dot-stuff content, then append DATA terminator
       const content = msgLines.join("\r\n");
