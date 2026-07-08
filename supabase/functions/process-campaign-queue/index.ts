@@ -274,15 +274,16 @@ function sanitizeHtmlForDelivery(html: string): string {
 function normalizeSignatureHtml(sanitized: string): string {
   let s = (sanitized || "").trim();
   if (!s) return "";
+  // Normalize every line-break form (plain-text newlines, block ends, <br>) to \n;
+  // strip block OPEN tags but keep inline (<a>…); one <br> per line → compact block.
   s = s
-    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")
-    .replace(/<\/?p[^>]*>/gi, "")
-    .replace(/<\/?div[^>]*>/gi, "")
-    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>")
-    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")
-    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, "\n")
+    .replace(/<\s*(p|div|h[1-6]|ul|ol|li|table|tbody|tr|td)[^>]*>/gi, "")
+    .replace(/\n{2,}/g, "\n")
     .trim();
-  return s;
+  return s.split("\n").map((l) => l.trim()).filter(Boolean).join("<br>");
 }
 
 // Calculates the spacing between sends for a campaign so that each account

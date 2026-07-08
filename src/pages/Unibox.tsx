@@ -3,6 +3,7 @@ import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
+import { signatureToBrLines } from "@/lib/signature";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -240,19 +241,11 @@ const IMPORTANT_LABEL = "Importante";
  *  client's default ~16px paragraph margins don't blow it apart). Because the result
  *  contains <br>/<p>, send-email's textToHtml passes it through untouched. */
 function buildBodyWithSignature(reply: string, sigHtmlRaw: string): string {
-  const sig = (sigHtmlRaw || "").trim();
-  if (!sig) return reply;
+  const tightSig = signatureToBrLines(sigHtmlRaw);
+  if (!tightSig) return reply;
   const replyHtml = /<(p|div|br)\b/i.test(reply)
     ? reply
     : reply.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
-  const tightSig = sig
-    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")
-    .replace(/<\/?p[^>]*>/gi, "")
-    .replace(/<\/?div[^>]*>/gi, "")
-    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>")
-    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")
-    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")
-    .trim();
   return `${replyHtml}<br><br>${tightSig}`;
 }
 
@@ -3806,7 +3799,7 @@ export default function Unibox() {
                 {sigHtml.trim() ? (
                   <div
                     className="text-sm leading-relaxed break-words [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_p]:my-1"
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(sigHtml) }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(signatureToBrLines(sigHtml)) }}
                   />
                 ) : (
                   <p className="text-xs italic text-muted-foreground">Escribe tu firma HTML arriba para ver aquí cómo queda.</p>

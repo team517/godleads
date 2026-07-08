@@ -122,15 +122,17 @@ function sanitizeHtmlForDelivery(html: string): string {
 function normalizeSignatureHtml(sanitized: string): string {
   let s = (sanitized || "").trim();
   if (!s) return "";
+  // Normalize EVERY line-break form (real newlines from a plain-text signature, block
+  // ends </p></div>…, and <br>) to \n; strip block OPEN tags but keep inline (<a>…);
+  // then one <br> per non-empty line → compact block, no default <p> margins.
   s = s
-    .replace(/<\/p>\s*<p[^>]*>/gi, "<br>")   // between paragraphs → one line break
-    .replace(/<\/?p[^>]*>/gi, "")             // strip remaining <p>/</p>
-    .replace(/<\/?div[^>]*>/gi, "")           // (divs already became <p>, belt-and-suspenders)
-    .replace(/(?:\s*<br\s*\/?>\s*){3,}/gi, "<br><br>") // no runaway gaps
-    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, "")   // no leading break
-    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, "")   // no trailing break
+    .replace(/\r\n?/g, "\n")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, "\n")
+    .replace(/<\s*(p|div|h[1-6]|ul|ol|li|table|tbody|tr|td)[^>]*>/gi, "")
+    .replace(/\n{2,}/g, "\n")
     .trim();
-  return s;
+  return s.split("\n").map((l) => l.trim()).filter(Boolean).join("<br>");
 }
 
 function htmlToPlainText(html: string): string {
