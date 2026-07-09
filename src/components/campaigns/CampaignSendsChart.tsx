@@ -105,12 +105,12 @@ export default function CampaignSendsChart({ campaignId }: Props) {
                   );
                 }}
               />
-              <Bar dataKey="envios" name="Envíos" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={2}>
+              <Bar dataKey="envios" name="Envíos" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={(v: number) => (v > 0 ? 8 : 0)}>
                 {/* The exact number ON TOP of the bar — so a real count reads clearly
                     even when the bar looks short next to a much bigger day. */}
                 <LabelList dataKey="envios" position="top" style={{ fontSize: 9, fill: "hsl(var(--muted-foreground))", fontWeight: 600 }} formatter={(v: any) => (Number(v) > 0 ? v : "")} />
               </Bar>
-              <Bar dataKey="respuestas" name="Respuestas" fill="hsl(173 58% 39%)" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={2} />
+              <Bar dataKey="respuestas" name="Respuestas" fill="hsl(173 58% 39%)" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={(v: number) => (v > 0 ? 8 : 0)} />
             </BarChart>
           </ResponsiveContainer>
         )}
