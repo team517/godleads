@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, Workflow, Tv, ChevronLeft, ShieldCheck,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, Workflow, Tv, ChevronLeft, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ const mainNav = [
   { icon: Mail, label: "Cuentas Email", path: "/email-accounts" },
   { icon: Send, label: "Campañas", path: "/campaigns" },
   { icon: Users, label: "Leads", path: "/leads" },
+  { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
   { icon: Inbox, label: "Unibox", path: "/unibox" },
 ];
 
