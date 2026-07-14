@@ -1006,6 +1006,24 @@ serve(async (req) => {
 
       if (!accounts?.length) continue;
 
+      // ═══ SELF-HEALING DAILY RESET ═══
+      // The external 00:05 cron zeroes sent_today, but if that cron isn't running the
+      // engine would carry YESTERDAY's count → the slow-ramp appears "stuck" (it only
+      // sends the +increment delta instead of a full fresh batch each day). Guard here:
+      // if an account's last send was on a PREVIOUS day (campaign tz), zero it NOW.
+      // Idempotent — once it sends today, last_send_at becomes today and it won't reset.
+      const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+      const staleAccountIds: string[] = [];
+      for (const acc of accounts) {
+        if ((acc.sent_today || 0) <= 0) continue;
+        const lastStr = acc.last_send_at ? new Date(acc.last_send_at).toLocaleDateString("en-CA", { timeZone: tz }) : null;
+        if (lastStr !== todayStr) { acc.sent_today = 0; staleAccountIds.push(acc.id); }
+      }
+      if (staleAccountIds.length) {
+        await adminClient.from("email_accounts").update({ sent_today: 0 }).in("id", staleAccountIds);
+        console.log(`Daily self-reset: zeroed sent_today for ${staleAccountIds.length} account(s) (new day, cron backup).`);
+      }
+
       // ═══ Per-account effective daily limit (slow ramp aware) — computed ONCE
       // per campaign per tick, not per lead. This also drives the campaign's
       // OWN daily limit below, so it grows automatically as ramp progresses day
