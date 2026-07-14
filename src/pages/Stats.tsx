@@ -6,20 +6,35 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export default function Stats() {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ sent: 0, delivered: 0, opened: 0, replied: 0, bounced: 0 });
+  const [stats, setStats] = useState({ sent: 0, delivered: 0, opened: 0, replied: 0, bounced: 0, failed: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const { data } = await supabase.from("sent_emails").select("status, sent_at, opened_at, replied_at, bounced_at").eq("user_id", user.id);
+      const { data } = await supabase.from("sent_emails").select("status, sent_at, opened_at, replied_at, bounced_at, lead_id, to_email").eq("user_id", user.id);
       const emails = data || [];
+      // "Enviados" = emails that ACTUALLY went out (sent_at set, incl. bounced which were
+      // sent then bounced). Rows that never left (status 'failed'/'pending') are NOT sent.
+      const wentOut = emails.filter(e => e.sent_at || e.status === "sent" || e.status === "bounced");
+      const bouncedArr = emails.filter(e => e.bounced_at || e.status === "bounced");
+      // Failed = distinct recipients whose send failed and NEVER succeeded (no retry inflation).
+      const okEmails = new Set(wentOut.map(e => (e.to_email || "").toLowerCase()));
+      const failed = new Set(
+        emails.filter(e => e.status === "failed").map(e => (e.to_email || "").toLowerCase())
+          .filter(em => em && !okEmails.has(em))
+      );
+      // Replied = DISTINCT leads (a lead replying to 2 steps must count once, not twice).
+      const repliedLeads = new Set(
+        emails.filter(e => e.replied_at).map(e => e.lead_id || (e.to_email || "").toLowerCase()).filter(Boolean)
+      );
       setStats({
-        sent: emails.length,
-        delivered: emails.filter(e => e.status === "sent" || e.sent_at).length,
+        sent: wentOut.length,
+        delivered: wentOut.length - bouncedArr.length,
         opened: emails.filter(e => e.opened_at).length,
-        replied: emails.filter(e => e.replied_at).length,
-        bounced: emails.filter(e => e.bounced_at || e.status === "bounced").length,
+        replied: repliedLeads.size,
+        bounced: bouncedArr.length,
+        failed: failed.size,
       });
       setLoading(false);
     };
@@ -28,17 +43,17 @@ export default function Stats() {
 
   const pieData = [
     { name: "Entregados", value: stats.delivered || 1, color: "hsl(217, 91%, 60%)" },
-    { name: "Abiertos", value: stats.opened, color: "hsl(199, 89%, 48%)" },
     { name: "Respondidos", value: stats.replied, color: "hsl(142, 76%, 36%)" },
     { name: "Rebotados", value: stats.bounced, color: "hsl(0, 84%, 60%)" },
+    { name: "Fallidos", value: stats.failed, color: "hsl(38, 92%, 50%)" },
   ];
 
   const overviewStats = [
     { label: "Total enviados", value: stats.sent.toLocaleString() },
     { label: "Tasa de entrega", value: stats.sent > 0 ? `${((stats.delivered / stats.sent) * 100).toFixed(1)}%` : "0%" },
-    { label: "Tasa de apertura", value: stats.sent > 0 ? `${((stats.opened / stats.sent) * 100).toFixed(1)}%` : "0%" },
     { label: "Tasa de respuesta", value: stats.sent > 0 ? `${((stats.replied / stats.sent) * 100).toFixed(1)}%` : "0%" },
     { label: "Rebotes", value: stats.sent > 0 ? `${((stats.bounced / stats.sent) * 100).toFixed(1)}%` : "0%" },
+    { label: "Fallidos", value: stats.failed.toLocaleString() },
   ];
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
