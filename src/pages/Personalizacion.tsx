@@ -165,12 +165,18 @@ export default function Personalizacion() {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ prompt, provider, rows: [{ index: __idx, data }] }),
       });
+      if (resp.status === 404) throw new Error("La función 'personalize-batch' aún no está desplegada en el servidor.");
       const json = await resp.json();
       if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
       const r = json.results?.[0];
-      if (r?.error) toast.error(`Error: ${r.error}`);
+      if (r?.error) toast.error(`Error de la IA: ${r.error}`);
       setPreview(r?.message || "");
-    } catch (e: any) { toast.error(e.message || "Error en la preview"); }
+    } catch (e: any) {
+      const msg = /failed to fetch|networkerror|load failed/i.test(e?.message || "")
+        ? "La función IA no está desplegada aún (personalize-batch). Despliégala para usar la personalización."
+        : (e?.message || "Error en la preview");
+      toast.error(msg);
+    }
     setPreviewing(false);
   };
 
