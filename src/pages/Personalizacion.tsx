@@ -3,11 +3,12 @@ import Papa from "papaparse";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog } from "lucide-react";
+import { Upload, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -15,6 +16,15 @@ import { toast } from "sonner";
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
 type ResultsMap = Record<string, Result>;
+type SavedPrompt = { id: string; name: string; prompt: string };
+
+const PROMPTS_KEY = "op_personalization_prompts";
+function loadSavedPrompts(): SavedPrompt[] {
+  try { const v = JSON.parse(localStorage.getItem(PROMPTS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function persistPrompts(list: SavedPrompt[]) {
+  try { localStorage.setItem(PROMPTS_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* quota */ }
+}
 
 /** Flatten an HTML/multiline message into one CSV-safe cell (no raw newlines that
  *  would break Instantly/Smartlead importers). */
@@ -36,6 +46,11 @@ export default function Personalizacion() {
     "Menciona algo concreto de su empresa. Máximo 2 frases, natural y directo. Solo la línea, sin saludo.",
   );
   const [provider, setProvider] = useState<"deepseek" | "claude">("deepseek");
+
+  // Saved prompt library (stored in the browser).
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(() => loadSavedPrompts());
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const [newPromptName, setNewPromptName] = useState("");
 
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<string>("");
@@ -263,6 +278,18 @@ export default function Personalizacion() {
 
   const insertPlaceholder = (col: string) => setPrompt((p) => `${p}{${col}}`);
 
+  const saveCurrentPrompt = () => {
+    const name = newPromptName.trim();
+    if (!name) { toast.error("Ponle un nombre al prompt"); return; }
+    if (!prompt.trim()) { toast.error("El prompt está vacío"); return; }
+    const item: SavedPrompt = { id: `${Date.now()}`, name, prompt };
+    const next = [item, ...savedPrompts.filter((p) => p.name.toLowerCase() !== name.toLowerCase())].slice(0, 50);
+    setSavedPrompts(next); persistPrompts(next); setNewPromptName("");
+    toast.success(`Prompt "${name}" guardado`);
+  };
+  const applyPrompt = (p: SavedPrompt) => { setPrompt(p.prompt); setPromptsOpen(false); toast.success(`Cargado "${p.name}"`); };
+  const deletePrompt = (id: string) => { const next = savedPrompts.filter((p) => p.id !== id); setSavedPrompts(next); persistPrompts(next); };
+
   return (
     <div className="space-y-5">
       <div>
@@ -299,7 +326,12 @@ export default function Personalizacion() {
       {columns.length > 0 && (
         <Card>
           <CardContent className="p-4 sm:p-5 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold"><Wand2 className="h-4 w-4 text-primary" /> 2 · Prompt de personalización</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-semibold"><Wand2 className="h-4 w-4 text-primary" /> 2 · Prompt de personalización</div>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setPromptsOpen(true)}>
+                <BookMarked className="h-3.5 w-3.5" /> Prompts guardados{savedPrompts.length > 0 ? ` (${savedPrompts.length})` : ""}
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {columns.map((c) => (
                 <button key={c} type="button" onClick={() => insertPlaceholder(c)}
@@ -363,6 +395,41 @@ export default function Personalizacion() {
           </CardContent>
         </Card>
       )}
+
+      {/* Saved prompts dialog */}
+      <Dialog open={promptsOpen} onOpenChange={setPromptsOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display flex items-center gap-2"><BookMarked className="h-5 w-5 text-primary" /> Prompts guardados</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md border border-border/60 p-3 space-y-2">
+              <Label className="text-xs">Guardar el prompt actual</Label>
+              <div className="flex gap-2">
+                <Input value={newPromptName} onChange={(e) => setNewPromptName(e.target.value)} placeholder="Nombre (p.ej. Primera línea SaaS)" className="h-8 text-sm"
+                  onKeyDown={(e) => { if (e.key === "Enter") saveCurrentPrompt(); }} />
+                <Button size="sm" className="h-8 gap-1.5 shrink-0" onClick={saveCurrentPrompt}><Save className="h-3.5 w-3.5" /> Guardar</Button>
+              </div>
+            </div>
+            {savedPrompts.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">Aún no tienes prompts guardados.</p>
+            ) : (
+              <div className="space-y-2">
+                {savedPrompts.map((p) => (
+                  <div key={p.id} className="rounded-md border border-border/60 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium truncate">{p.name}</p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => applyPrompt(p)}>Usar</Button>
+                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive/70 hover:text-destructive" onClick={() => deletePrompt(p.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2">{p.prompt}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Send to campaign dialog */}
       <Dialog open={sendOpen} onOpenChange={setSendOpen}>
