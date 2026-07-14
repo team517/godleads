@@ -13,11 +13,14 @@ const DEFAULT_SYSTEM =
   "Devuelve SOLO el texto final: sin comillas, sin prefijos, sin explicaciones, sin markdown.";
 
 function applyMapping(prompt: string, data: Record<string, string>): string {
+  const norm = (s: string) => String(s).toLowerCase().replace(/[\s_.\-]/g, "");
+  const normMap: Record<string, string> = {};
+  for (const k of Object.keys(data)) normMap[norm(k)] = data[k];
   return prompt.replace(/\{\{?\s*([^{}]+?)\s*\}?\}/g, (_m, rawKey) => {
     const key = String(rawKey).trim();
     if (key in data) return data[key] ?? "";
-    const hit = Object.keys(data).find((k) => k.toLowerCase() === key.toLowerCase());
-    return hit ? (data[hit] ?? "") : "";
+    const nk = norm(key);
+    return nk in normMap ? (normMap[nk] ?? "") : "";
   });
 }
 function cleanOutput(t: string): string {

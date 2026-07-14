@@ -12,14 +12,17 @@ const DEFAULT_SYSTEM =
   "Frases cortas (<20 palabras), tono natural y directo, sin sonar a plantilla. " +
   "Devuelve SOLO el texto final: sin comillas, sin prefijos, sin explicaciones, sin markdown.";
 
-/** Replace {col} and {{col}} (with optional spaces) with the row's value; unknown → "". */
+/** Replace {col}/{{col}} with the row's value. Matching is tolerant: case + spaces +
+ *  underscores/hyphens are ignored, so {first_name} matches a column "First Name". */
 function applyMapping(prompt: string, data: Record<string, string>): string {
+  const norm = (s: string) => String(s).toLowerCase().replace(/[\s_.\-]/g, "");
+  const normMap: Record<string, string> = {};
+  for (const k of Object.keys(data)) normMap[norm(k)] = data[k];
   return prompt.replace(/\{\{?\s*([^{}]+?)\s*\}?\}/g, (_m, rawKey) => {
     const key = String(rawKey).trim();
     if (key in data) return data[key] ?? "";
-    // case-insensitive fallback
-    const hit = Object.keys(data).find((k) => k.toLowerCase() === key.toLowerCase());
-    return hit ? (data[hit] ?? "") : "";
+    const nk = norm(key);
+    return nk in normMap ? (normMap[nk] ?? "") : "";
   });
 }
 
