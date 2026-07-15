@@ -310,11 +310,19 @@ export default function EmailAccounts() {
 
   const loadAccounts = async () => {
     if (!user) return;
-    const { data } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id).order("created_at", { ascending: false });
-    const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
-    setAccounts(normalized);
-    cacheSet("accounts:list", normalized); // instant paint on next visit
-    setLoading(false);
+    try {
+      const { data, error } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+      // A transient query error / timeout (common on the NANO compute tier) must NOT wipe
+      // the list — keep whatever is on screen (cache) instead of showing zero accounts.
+      if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
+      const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
+      setAccounts(normalized);
+      cacheSet("accounts:list", normalized); // instant paint on next visit
+    } catch (e: any) {
+      console.warn("loadAccounts threw, keeping current list:", e?.message || e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loadSavedTags = async () => {
