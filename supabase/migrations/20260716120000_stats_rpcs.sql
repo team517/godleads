@@ -7,7 +7,7 @@
 create or replace function public.user_email_stats()
 returns json language sql security definer set search_path = public stable as $$
   with e as (
-    select sent_at, opened_at, replied_at, bounced_at, status, lead_id, lower(to_email) as em
+    select sent_at, opened_at, bounced_at, status, lower(to_email) as em
     from sent_emails where user_id = auth.uid()
   ),
   went as (select * from e where sent_at is not null or status in ('sent','bounced'))
@@ -15,7 +15,11 @@ returns json language sql security definer set search_path = public stable as $$
     'sent',    (select count(*) from went),
     'bounced', (select count(*) from e where bounced_at is not null or status='bounced'),
     'opened',  (select count(*) from e where opened_at is not null),
-    'replied', (select count(distinct coalesce(lead_id::text, em)) from e where replied_at is not null),
+    -- Replies = real inbound reply messages from the inbox (same source + base filter as the
+    -- Unibox "Todos": not archived, tied to a lead/campaign) so the number matches what the
+    -- user sees in the Unibox. (Was sent_emails.replied_at — a different table → didn't line up.)
+    'replied', (select count(*) from inbox_messages m where m.user_id = auth.uid()
+                  and m.is_archived = false and (m.lead_id is not null or m.campaign_id is not null)),
     'failed',  (select count(distinct em) from e where status='failed' and em is not null
                   and em not in (select em from went where em is not null))
   );
@@ -31,9 +35,9 @@ language sql security definer set search_path = public stable as $$
   select d.day,
     (select count(*) from sent_emails s where s.user_id=auth.uid() and s.sent_at is not null
        and (s.sent_at at time zone 'Europe/Madrid')::date = d.day) as sends,
-    (select count(distinct coalesce(s.lead_id::text, lower(s.to_email))) from sent_emails s
-       where s.user_id=auth.uid() and s.replied_at is not null
-         and (s.replied_at at time zone 'Europe/Madrid')::date = d.day) as replies
+    (select count(*) from inbox_messages m where m.user_id=auth.uid()
+       and m.is_archived=false and (m.lead_id is not null or m.campaign_id is not null)
+       and (m.received_at at time zone 'Europe/Madrid')::date = d.day) as replies
   from days d order by d.day;
 $$;
 grant execute on function public.user_daily_sends(int) to authenticated;
