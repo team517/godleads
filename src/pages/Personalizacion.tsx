@@ -272,6 +272,15 @@ export default function Personalizacion() {
     toast.success("Parado. Puedes descargar/enviar lo generado hasta ahora.");
   };
 
+  // Descartar el banner: borra el trabajo de la BD (para que no vuelva al refrescar) y
+  // limpia el estado del trabajo. Deja el CSV cargado por si quieres volver a generar.
+  const dismissJob = async () => {
+    const id = jobId;
+    setJobId(null); setJobStatus(""); setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 });
+    if (id) await (supabase as any).from("personalization_csv_jobs").delete().eq("id", id);
+    toast.success("Generación descartada");
+  };
+
   const ensureResults = async (): Promise<ResultsMap> => {
     if (Object.keys(results).length) return results;
     if (!jobId) return {};
@@ -393,7 +402,19 @@ export default function Personalizacion() {
                 {running ? "Generando mensajes en el servidor…" : jobStatus === "completed" ? "Generación completada" : jobStatus === "cancelled" ? "Generación parada" : "Generación"}
                 {filename && <span className="font-normal text-muted-foreground">· {filename}</span>}
               </div>
-              <span className="text-sm font-bold tabular-nums">{prog.done}/{prog.total} · {progressPct}%</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-sm font-bold tabular-nums">{prog.done}/{prog.total} · {progressPct}%</span>
+                {!running && (
+                  <button
+                    type="button"
+                    onClick={dismissJob}
+                    title="Descartar y borrar"
+                    className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
               <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progressPct}%` }} />
