@@ -34,6 +34,22 @@ function flattenCell(s: string): string {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Find the email column: first by header name (es/en/fr), else by SCANNING VALUES for
+ *  @-addresses — so a CSV whose email header is named oddly still works automatically. */
+function detectEmailColumn(cols: string[], rows: Array<Record<string, any>>): string {
+  const byName = cols.find((c) => /e-?mail|correo|courriel|\bmail\b|adresse/i.test(c));
+  if (byName) return byName;
+  let best = "", bestHits = 0;
+  const sample = rows.slice(0, 60);
+  for (const c of cols) {
+    let hits = 0;
+    for (const r of sample) if (EMAIL_RE.test(String(r[c] ?? "").trim().toLowerCase())) hits++;
+    if (hits > bestHits) { bestHits = hits; best = c; }
+  }
+  // Only trust content-detection if a good share of sampled rows look like emails.
+  return bestHits >= Math.max(1, Math.floor(sample.length * 0.3)) ? best : "";
+}
+
 export default function Personalizacion() {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -189,7 +205,7 @@ export default function Personalizacion() {
         const cols = (res.meta.fields || []).filter(Boolean);
         const data = (res.data || []).map((r, i) => ({ ...r, __idx: i } as Row))
           .filter((r) => cols.some((c) => (r[c] || "").toString().trim()));
-        const detected = cols.find((c) => /e-?mail|correo/i.test(c)) || "";
+        const detected = detectEmailColumn(cols, data);
         setColumns(cols); setRows(data);
         setResults({}); setPreview(""); setJobId(null); setJobStatus(""); setProg({ done: 0, ok: 0, failed: 0, total: 0 });
         setEmailColumn(detected);
@@ -317,9 +333,12 @@ export default function Personalizacion() {
   };
 
   const openSend = async () => {
-    if (!emailColumn) { toast.error("Elige la columna de email primero"); return; }
     if (okCount === 0) { toast.error("Genera los mensajes primero"); return; }
     if (!user) return;
+    // Auto-detect the email column if it wasn't set/detected, so the user rarely hits an error.
+    const col = emailColumn || detectEmailColumn(columns, rows);
+    if (!col) { toast.error("No encuentro la columna de email. Elígela arriba (paso 1) en el desplegable."); return; }
+    if (col !== emailColumn) setEmailColumn(col);
     await ensureResults(); // load results into state so sendableCount is exact in the dialog
     const { data } = await supabase.from("campaigns").select("id, name, status").eq("user_id", user.id).order("created_at", { ascending: false });
     const list = (data || []) as { id: string; name: string; status: string }[];
@@ -336,42 +355,61 @@ export default function Personalizacion() {
     setSending(true);
     try {
       const res = await ensureResults();
+      const col = emailColumn || detectEmailColumn(columns, rows);
+      if (!col) { toast.error("No encuentro la columna de email. Elígela en el paso 1."); setSending(false); return; }
       // Dedupe by email so the same address isn't added as two leads (→ emailed twice).
       const seenEmails = new Set<string>();
       let skippedDupes = 0;
       const usable = rows.filter((r) => {
-        const email = (r[emailColumn] || "").toLowerCase().trim();
+        const email = (r[col] || "").toLowerCase().trim();
         const rr = res[String(r.__idx)];
         if (!(email && EMAIL_RE.test(email) && rr?.message && !rr.error)) return false;
         if (seenEmails.has(email)) { skippedDupes++; return false; }
         seenEmails.add(email);
         return true;
       });
-      if (!usable.length) { toast.error("No hay filas con email válido + mensaje generado"); setSending(false); return; }
-      let added = 0;
+      if (!usable.length) {
+        // Say EXACTLY what's missing so "falla lo del email" is never a mystery.
+        const withEmail = rows.filter((r) => EMAIL_RE.test((r[col] || "").toLowerCase().trim())).length;
+        const withMsg = rows.filter((r) => { const rr = res[String(r.__idx)]; return rr?.message && !rr.error; }).length;
+        toast.error(
+          withEmail === 0 ? `Ninguna fila tiene un email válido en la columna "${col}". Elige la columna correcta en el paso 1.`
+          : withMsg === 0 ? "Aún no hay mensajes generados. Pulsa 'Generar todo' primero."
+          : "No hay filas que tengan email válido y mensaje a la vez.",
+        );
+        setSending(false); return;
+      }
+      let added = 0, lastError = "";
       const INSERT_BATCH = 300;
       for (let i = 0; i < usable.length; i += INSERT_BATCH) {
         const slice = usable.slice(i, i + INSERT_BATCH);
         const batch = slice.map((r) => {
           const custom_fields: Record<string, string> = {};
           columns.forEach((c) => {
-            if (c === emailColumn) return;
+            if (c === col) return;
             const v = (r[c] || "").toString().trim();
             if (v) custom_fields[c] = v;
           });
           custom_fields.personalized_message = res[String(r.__idx)].message;
-          return { user_id: user.id, email: (r[emailColumn] || "").toLowerCase().trim(), custom_fields, is_campaign_only: true };
+          return { user_id: user.id, email: (r[col] || "").toLowerCase().trim(), custom_fields, is_campaign_only: true };
         });
         const { data, error } = await supabase.from("leads").insert(batch).select("id");
         let ids: string[] = [];
         if (error) {
-          for (const row of batch) { const { data: one } = await supabase.from("leads").insert(row).select("id").maybeSingle(); if (one) ids.push((one as any).id); }
+          // Batch failed (one bad row rejects the whole batch) → retry row-by-row so the
+          // good ones still get in, and remember the reason in case ALL fail.
+          lastError = error.message;
+          for (const row of batch) {
+            const { data: one, error: e1 } = await supabase.from("leads").insert(row).select("id").maybeSingle();
+            if (one) ids.push((one as any).id); else if (e1) lastError = e1.message;
+          }
         } else ids = (data || []).map((d: any) => d.id);
         if (ids.length) {
-          await supabase.from("campaign_leads").upsert(ids.map((id) => ({ campaign_id: selectedCampaignId, lead_id: id })), { onConflict: "campaign_id,lead_id", ignoreDuplicates: true });
-          added += ids.length;
+          const { error: linkErr } = await supabase.from("campaign_leads").upsert(ids.map((id) => ({ campaign_id: selectedCampaignId, lead_id: id })), { onConflict: "campaign_id,lead_id", ignoreDuplicates: true });
+          if (linkErr) lastError = linkErr.message; else added += ids.length;
         }
       }
+      if (added === 0) { toast.error(`No se pudo añadir ningún lead${lastError ? `: ${lastError}` : "."}`); setSending(false); return; }
       toast.success(`${added} leads añadidos a la campaña con su mensaje personalizado${skippedDupes ? ` · ${skippedDupes} duplicados omitidos` : ""}`);
       setSendOpen(false);
     } catch (e: any) { toast.error(`Error: ${e.message}`); }
