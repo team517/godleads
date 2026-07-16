@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save } from "lucide-react";
+import { Upload, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -281,6 +281,16 @@ export default function Personalizacion() {
     toast.success("Generación descartada");
   };
 
+  // Reanudar un trabajo parado: lo devuelve a "pending" para que el procesador lo retome
+  // y CONTINÚE donde se quedó (solo genera las filas que faltan, no repite lo ya hecho).
+  const resumeJob = async () => {
+    if (!jobId) return;
+    setJobStatus("pending"); // reactiva el sondeo + el kick al procesador
+    await (supabase as any).from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", jobId);
+    kickProcessor();
+    toast.success("Reanudando generación en el servidor — sigue donde se quedó.");
+  };
+
   const ensureResults = async (): Promise<ResultsMap> => {
     if (Object.keys(results).length) return results;
     if (!jobId) return {};
@@ -404,6 +414,16 @@ export default function Personalizacion() {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="text-sm font-bold tabular-nums">{prog.done}/{prog.total} · {progressPct}%</span>
+                {!running && prog.total > 0 && prog.done < prog.total && (
+                  <button
+                    type="button"
+                    onClick={resumeJob}
+                    title="Reanudar donde se quedó"
+                    className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    <Play className="h-3.5 w-3.5" /> Reanudar
+                  </button>
+                )}
                 {!running && (
                   <button
                     type="button"
