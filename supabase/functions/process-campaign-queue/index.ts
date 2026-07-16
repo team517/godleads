@@ -1063,7 +1063,12 @@ serve(async (req) => {
           // to begin at 18/day and climb by `inc` each sending day up to `target`.
           const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
           const accRamp = Math.min(startBase + days * inc, target);
-          limit = Math.min(limit, accRamp);
+          // During warm-up the ramp value IS the day's cap: it climbs from startBase up to
+          // `target` (warmup_limit = the intended daily max). Do NOT floor it by daily_limit —
+          // if an account's daily_limit sits at/below the start (e.g. 18), Math.min(limit, ramp)
+          // would freeze the ramp at 18 forever and it never climbs ("no sube al día siguiente").
+          // accRamp is already capped at `target`, and HARD_DAILY_CAP still bounds it.
+          limit = Math.min(accRamp, HARD_DAILY_CAP);
         }
 
         // Campaign-level slow ramp — anchored to days of ACTUAL sending (rampDaysActive),

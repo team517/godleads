@@ -776,17 +776,25 @@ export default function EmailAccounts() {
   // Effective daily limit = min((day+1) * increment, target). Day computed from warmup_started_at.
   const rampInfo = (acc: any) => {
     if (!acc?.warmup_enabled || !acc?.warmup_started_at) return null;
-    const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
+    // Count WHOLE days since the start DATE using UTC-midnight boundaries — this mirrors the
+    // engine's countSendingDays (it zeroes to UTC midnight). The old elapsed-time floor
+    // undercounted by 1 whenever "now"'s time-of-day was earlier than the start's, so a card
+    // showed "Día 2 · hoy 18" while the engine was already on día 3 sending 22.
+    const s = new Date(acc.warmup_started_at);
+    const startUTC = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
+    const n = new Date();
+    const nowUTC = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
+    const days = Math.max(0, Math.round((nowUTC - startUTC) / 86400000));
     const inc = acc.warmup_increment || 2;
     const target = acc.warmup_limit || acc.daily_limit || 30;
-    // The account's daily_limit is a HARD ceiling the engine always applies
-    // (getEffectiveLimit = min(daily_limit, ramp, …)). Cap the shown value by it
-    // too, so setting the daily limit to 12 actually reads 12 — not the raw ramp.
-    const hardCap = acc.daily_limit && acc.daily_limit > 0 ? acc.daily_limit : 30;
     // warmup_day (repurposed) = the STARTING daily limit (day 1). If 0/absent, start
     // from `inc` (legacy: inc + days*inc = (days+1)*inc).
     const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
-    const eff = Math.min(startBase + days * inc, target, hardCap);
+    // During warm-up the ramp climbs from startBase up to `target` (the intended daily max).
+    // It is deliberately NOT capped by daily_limit — otherwise an account whose daily_limit
+    // equals the start (e.g. 18) would read "18" forever and never climb. This mirrors the
+    // engine's getEffectiveLimit, which during warm-up uses min(ramp, HARD_CAP), not daily_limit.
+    const eff = Math.min(startBase + days * inc, target);
     return { day: days + 1, eff, target };
   };
 
