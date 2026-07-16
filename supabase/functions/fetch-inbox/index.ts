@@ -339,6 +339,13 @@ function cleanBody(raw: string, defaultCharset = "utf-8"): string {
 
   let text = raw;
   text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
+  // Outlook/Exchange multipart preamble + the boundary token right after it (with or
+  // without its leading "--") — otherwise "This is a multi-part message in MIME format."
+  // and a bare boundary line leak into the stored body.
+  text = text.replace(
+    /^[ \t]*This is a multi-?part message in MIME format\.?[ \t]*\r?\n+(?:[ \t]*(?:--)?[A-Za-z0-9'()+_,./:=?-]{10,}[ \t]*\r?\n)?/gim,
+    "",
+  );
   text = text.replace(/----_[^\r\n]+/g, "");
   text = text.replace(/--[a-zA-Z0-9_=-]+--?\s*/g, "");
   text = text.replace(/Content-Type:[^\n]+/gi, "");

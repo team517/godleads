@@ -310,6 +310,14 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   // Remove IMAP artifacts
   text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
 
+  // Outlook/Exchange multipart preamble + the boundary token that follows it. That token
+  // sometimes reaches us with its leading "--" already stripped, so it dodged the "^--…"
+  // rule below and showed as a bare gibberish line under "This is a multi-part message…".
+  text = text.replace(
+    /^[ \t]*This is a multi-?part message in MIME format\.?[ \t]*\r?\n+(?:[ \t]*(?:--)?[A-Za-z0-9'()+_,./:=?-]{10,}[ \t]*\r?\n)?/gim,
+    "",
+  );
+
   // Remove MIME boundaries (all common formats)
   text = text.replace(/^--[a-zA-Z0-9_=.-]{10,}--?\s*$/gm, "");
   text = text.replace(/----_[^\r\n]+/g, "");
