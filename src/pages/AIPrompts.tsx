@@ -123,7 +123,7 @@ function PromptsTab() {
           <DialogTrigger asChild>
             <Button className="gap-2" onClick={openCreate}><Plus className="h-4 w-4" /> Crear prompt</Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" />{editing ? "Editar prompt" : "Nuevo prompt de IA"}</DialogTitle>
             </DialogHeader>
@@ -146,7 +146,7 @@ function PromptsTab() {
                   </div>
                 )}
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="sticky bottom-0 -mx-6 -mb-6 flex justify-end gap-2 border-t bg-background px-6 py-4">
                 <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>Cancelar</Button>
                 <Button onClick={handleSave} className="gap-2"><Sparkles className="h-4 w-4" />{editing ? "Guardar cambios" : "Crear prompt"}</Button>
               </div>
@@ -282,7 +282,7 @@ function AutoReplyTab() {
           <DialogTrigger asChild>
             <Button className="gap-2" onClick={openCreate}><Plus className="h-4 w-4" /> Crear regla</Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-primary" />{editing ? "Editar regla" : "Nueva regla de auto-respuesta"}</DialogTitle>
             </DialogHeader>
@@ -386,7 +386,7 @@ function AutoReplyTab() {
                 <Input type="number" min={1} max={60} value={delayMinutes} onChange={e => setDelayMinutes(parseInt(e.target.value) || 5)} className="w-32" />
                 <p className="text-xs text-muted-foreground mt-1">La IA esperará este tiempo antes de enviar la respuesta.</p>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="sticky bottom-0 -mx-6 -mb-6 flex justify-end gap-2 border-t bg-background px-6 py-4">
                 <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>Cancelar</Button>
                 <Button onClick={handleSave} className="gap-2"><Zap className="h-4 w-4" />{editing ? "Guardar cambios" : "Crear regla"}</Button>
               </div>
