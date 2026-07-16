@@ -18,50 +18,20 @@ export default function CampaignSendsChart({ campaignId }: Props) {
     let alive = true;
     (async () => {
       setLoading(true);
-      const since = new Date();
-      since.setDate(since.getDate() - (DAYS_SHOWN - 1));
-      since.setHours(0, 0, 0, 0);
-
-      const [sentRes, replyRes] = await Promise.all([
-        supabase.from("sent_emails")
-          .select("sent_at")
-          .eq("campaign_id", campaignId)
-          .not("sent_at", "is", null)
-          .gte("sent_at", since.toISOString())
-          .limit(10000),
-        supabase.from("inbox_messages")
-          .select("received_at")
-          .eq("campaign_id", campaignId)
-          .gte("received_at", since.toISOString())
-          .limit(10000),
-      ]);
+      // Count server-side (SQL RPC) so the bars are EXACT — the old `.select().limit()`
+      // was capped by PostgREST and undercounted busy days (showed ~367 instead of ~1900).
+      const { data: rows } = await (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: campaignId, p_days: DAYS_SHOWN });
       if (!alive) return;
-
-      // Bucket per LOCAL day so the chart matches what the user's clock says.
-      const sentByDay: Record<string, number> = {};
-      for (const r of sentRes.data || []) {
-        const k = new Date(r.sent_at).toLocaleDateString("sv"); // YYYY-MM-DD local
-        sentByDay[k] = (sentByDay[k] || 0) + 1;
-      }
-      const replyByDay: Record<string, number> = {};
-      for (const r of replyRes.data || []) {
-        const k = new Date(r.received_at).toLocaleDateString("sv");
-        replyByDay[k] = (replyByDay[k] || 0) + 1;
-      }
-
-      const points: DayPoint[] = [];
-      for (let i = 0; i < DAYS_SHOWN; i++) {
-        const d = new Date(since);
-        d.setDate(since.getDate() + i);
-        const k = d.toLocaleDateString("sv");
-        points.push({
-          day: k,
+      const points: DayPoint[] = ((rows || []) as Array<{ day: string; sends: number; replies: number }>).map((r) => {
+        const d = new Date(`${r.day}T00:00:00`);
+        return {
+          day: r.day,
           label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
           full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
-          envios: sentByDay[k] || 0,
-          respuestas: replyByDay[k] || 0,
-        });
-      }
+          envios: Number(r.sends || 0),
+          respuestas: Number(r.replies || 0),
+        };
+      });
       setData(points);
       setLoading(false);
     })();
