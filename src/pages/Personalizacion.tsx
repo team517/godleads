@@ -32,6 +32,8 @@ function flattenCell(s: string): string {
   return (s || "").replace(/>\s+</g, "><").replace(/\r?\n+/g, " ").trim();
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function Personalizacion() {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -65,13 +67,42 @@ export default function Personalizacion() {
   const running = jobStatus === "pending" || jobStatus === "running";
   const okCount = prog.ok || Object.values(results).filter((r) => r.message && !r.error).length;
 
-  const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; leadCount: number }[]>([]);
   const [sendOpen, setSendOpen] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [sending, setSending] = useState(false);
 
   const emailCandidates = useMemo(() => columns.filter((c) => /e-?mail|correo/i.test(c)), [columns]);
   const progressPct = prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+
+  // Distinct valid emails in the uploaded CSV — the real "cuántos emails hay". Also
+  // surfaces duplicates / rows sin email so nothing is silently double-imported/-sent.
+  const emailStats = useMemo(() => {
+    if (!emailColumn) return { valid: 0, dupes: 0, invalid: 0 };
+    const seen = new Set<string>();
+    let dupes = 0, invalid = 0;
+    for (const r of rows) {
+      const e = (r[emailColumn] || "").toString().toLowerCase().trim();
+      if (!e || !EMAIL_RE.test(e)) { invalid++; continue; }
+      if (seen.has(e)) { dupes++; continue; }
+      seen.add(e);
+    }
+    return { valid: seen.size, dupes, invalid };
+  }, [rows, emailColumn]);
+
+  // Leads that will ACTUALLY be added to a campaign: distinct valid email + a message
+  // generated OK (no error). This is the number shown/added — deduped, so no double-send.
+  const sendableCount = useMemo(() => {
+    if (!emailColumn) return 0;
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const e = (r[emailColumn] || "").toString().toLowerCase().trim();
+      if (!e || !EMAIL_RE.test(e) || seen.has(e)) continue;
+      const rr = results[String(r.__idx)];
+      if (rr?.message && !rr.error) seen.add(e);
+    }
+    return seen.size;
+  }, [rows, emailColumn, results]);
 
   const authToken = async () => (await supabase.auth.getSession()).data.session?.access_token;
 
@@ -82,30 +113,43 @@ export default function Personalizacion() {
     }).catch(() => {});
   };
 
-  // ── Restore the latest job on mount (so a job finished with the PC off is here) ──
+  // ── Restore the latest job on mount (so a job finished/running with the PC off is here) ──
+  // Two-step so the progress shows INSTANTLY even with 10k rows: first a light query
+  // (just the counters — no heavy rows/results JSON), then load rows/results after.
   useEffect(() => {
     if (!user) return;
+    let alive = true;
     (async () => {
-      const { data } = await (supabase as any)
+      // 1) Light: id + config + progress counters. Renders the progress banner at once.
+      const { data: light } = await (supabase as any)
         .from("personalization_csv_jobs")
-        .select("id, filename, prompt, provider, email_column, columns, rows, results, status, total, done, ok, failed")
+        .select("id, filename, prompt, provider, email_column, columns, status, total, done, ok, failed")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (!data) return;
-      const d = data as any;
+      if (!light || !alive) return;
+      const d = light as any;
       setJobId(d.id);
       setFilename(d.filename || "");
       setPrompt(d.prompt || "");
       setProvider(d.provider === "claude" ? "claude" : "deepseek");
       setEmailColumn(d.email_column || "");
       setColumns(Array.isArray(d.columns) ? d.columns : []);
-      setRows(Array.isArray(d.rows) ? d.rows : []);
-      setResults(d.results || {});
       setJobStatus(d.status || "");
       setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
+      // 2) Heavy: rows + results (for the download / send-to-campaign). Loaded after so the
+      // multi-MB payload never blocks the progress from appearing.
+      const { data: heavy } = await (supabase as any)
+        .from("personalization_csv_jobs")
+        .select("rows, results")
+        .eq("id", d.id)
+        .maybeSingle();
+      if (!heavy || !alive) return;
+      setRows(Array.isArray((heavy as any).rows) ? (heavy as any).rows : []);
+      setResults((heavy as any).results || {});
     })();
+    return () => { alive = false; };
   }, [user]);
 
   // ── Poll the running job for progress; nudge the processor so it doesn't wait for the cron ──
@@ -145,10 +189,23 @@ export default function Personalizacion() {
         const cols = (res.meta.fields || []).filter(Boolean);
         const data = (res.data || []).map((r, i) => ({ ...r, __idx: i } as Row))
           .filter((r) => cols.some((c) => (r[c] || "").toString().trim()));
+        const detected = cols.find((c) => /e-?mail|correo/i.test(c)) || "";
         setColumns(cols); setRows(data);
         setResults({}); setPreview(""); setJobId(null); setJobStatus(""); setProg({ done: 0, ok: 0, failed: 0, total: 0 });
-        setEmailColumn(cols.find((c) => /e-?mail|correo/i.test(c)) || "");
-        toast.success(`${data.length} filas · ${cols.length} columnas`);
+        setEmailColumn(detected);
+        // Count DISTINCT valid emails right away so the user sees the real number.
+        let emails = 0, dupes = 0;
+        if (detected) {
+          const seen = new Set<string>();
+          for (const r of data) {
+            const e = (r[detected] || "").toString().toLowerCase().trim();
+            if (!e || !EMAIL_RE.test(e)) continue;
+            if (seen.has(e)) { dupes++; continue; }
+            seen.add(e);
+          }
+          emails = seen.size;
+        }
+        toast.success(`${data.length} filas · ${emails} emails válidos${dupes ? ` · ${dupes} duplicados` : ""} · ${cols.length} columnas`);
       },
       error: (err) => toast.error(`No se pudo leer el CSV: ${err.message}`),
     });
@@ -201,10 +258,17 @@ export default function Personalizacion() {
 
   const handleStop = async () => {
     if (!jobId) return;
-    await (supabase as any).from("personalization_csv_jobs").update({ status: "cancelled" }).eq("id", jobId);
+    // Flip local status FIRST so the poll effect stops kicking the processor immediately,
+    // then persist "cancelled". The server now honours it (won't rewrite "running"), so a
+    // refresh reads "cancelled" and does not resume.
     setJobStatus("cancelled");
-    const { data } = await (supabase as any).from("personalization_csv_jobs").select("results").eq("id", jobId).maybeSingle();
-    if (data) setResults((data as any).results || {});
+    await (supabase as any).from("personalization_csv_jobs").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", jobId);
+    const { data } = await (supabase as any).from("personalization_csv_jobs").select("results, done, ok, failed, total").eq("id", jobId).maybeSingle();
+    if (data) {
+      const d = data as any;
+      setResults(d.results || {});
+      setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
+    }
     toast.success("Parado. Puedes descargar/enviar lo generado hasta ahora.");
   };
 
@@ -237,8 +301,15 @@ export default function Personalizacion() {
     if (!emailColumn) { toast.error("Elige la columna de email primero"); return; }
     if (okCount === 0) { toast.error("Genera los mensajes primero"); return; }
     if (!user) return;
+    await ensureResults(); // load results into state so sendableCount is exact in the dialog
     const { data } = await supabase.from("campaigns").select("id, name, status").eq("user_id", user.id).order("created_at", { ascending: false });
-    setCampaigns(data || []); setSelectedCampaignId(""); setSendOpen(true);
+    const list = (data || []) as { id: string; name: string; status: string }[];
+    // Count the leads each campaign ALREADY has, so you see it before/after adding.
+    const withCounts = await Promise.all(list.map(async (c) => {
+      const { count } = await supabase.from("campaign_leads").select("lead_id", { count: "exact", head: true }).eq("campaign_id", c.id);
+      return { ...c, leadCount: count || 0 };
+    }));
+    setCampaigns(withCounts); setSelectedCampaignId(""); setSendOpen(true);
   };
 
   const sendToCampaign = async () => {
@@ -246,10 +317,16 @@ export default function Personalizacion() {
     setSending(true);
     try {
       const res = await ensureResults();
+      // Dedupe by email so the same address isn't added as two leads (→ emailed twice).
+      const seenEmails = new Set<string>();
+      let skippedDupes = 0;
       const usable = rows.filter((r) => {
         const email = (r[emailColumn] || "").toLowerCase().trim();
         const rr = res[String(r.__idx)];
-        return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && rr?.message && !rr.error;
+        if (!(email && EMAIL_RE.test(email) && rr?.message && !rr.error)) return false;
+        if (seenEmails.has(email)) { skippedDupes++; return false; }
+        seenEmails.add(email);
+        return true;
       });
       if (!usable.length) { toast.error("No hay filas con email válido + mensaje generado"); setSending(false); return; }
       let added = 0;
@@ -276,7 +353,7 @@ export default function Personalizacion() {
           added += ids.length;
         }
       }
-      toast.success(`${added} leads enviados a la campaña con su mensaje personalizado`);
+      toast.success(`${added} leads añadidos a la campaña con su mensaje personalizado${skippedDupes ? ` · ${skippedDupes} duplicados omitidos` : ""}`);
       setSendOpen(false);
     } catch (e: any) { toast.error(`Error: ${e.message}`); }
     setSending(false);
@@ -305,6 +382,31 @@ export default function Personalizacion() {
         </p>
       </div>
 
+      {/* Prominent progress banner — appears the moment you enter while a job is generating,
+          so you always see how many messages llevan sin buscar nada. */}
+      {(running || (jobId && prog.total > 0)) && (
+        <Card className={`border-2 ${running ? "border-primary/40 bg-primary/5" : jobStatus === "completed" ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
+          <CardContent className="p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : jobStatus === "completed" ? <Check className="h-4 w-4 text-emerald-600" /> : <ServerCog className="h-4 w-4 text-amber-600" />}
+                {running ? "Generando mensajes en el servidor…" : jobStatus === "completed" ? "Generación completada" : jobStatus === "cancelled" ? "Generación parada" : "Generación"}
+                {filename && <span className="font-normal text-muted-foreground">· {filename}</span>}
+              </div>
+              <span className="text-sm font-bold tabular-nums">{prog.done}/{prog.total} · {progressPct}%</span>
+            </div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progressPct}%` }} />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span className="text-emerald-600 font-medium">✓ {prog.ok} generados</span>
+              {prog.failed > 0 && <span className="text-destructive font-medium">✗ {prog.failed} fallidos</span>}
+              {running && <span className="inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> puedes cerrar el PC, sigue solo</span>}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step 1 — CSV */}
       <Card>
         <CardContent className="p-4 sm:p-5 space-y-3">
@@ -314,7 +416,14 @@ export default function Personalizacion() {
             <Button variant="outline" size="sm" className="gap-2" onClick={() => fileRef.current?.click()}>
               <FileText className="h-4 w-4" /> {filename ? "Cambiar CSV" : "Elegir CSV"}
             </Button>
-            {filename && <span className="text-xs text-muted-foreground">{filename} · <b>{rows.length}</b> filas · {columns.length} columnas</span>}
+            {filename && (
+              <span className="text-xs text-muted-foreground">
+                {filename} · <b>{rows.length}</b> filas · <b className="text-foreground">{emailStats.valid}</b> emails válidos
+                {emailStats.dupes > 0 ? <span className="text-amber-600"> · {emailStats.dupes} duplicados</span> : null}
+                {emailStats.invalid > 0 ? <span className="text-destructive"> · {emailStats.invalid} sin email</span> : null}
+                {" · "}{columns.length} columnas
+              </span>
+            )}
           </div>
           {columns.length > 0 && (
             <div className="space-y-1.5">
@@ -449,11 +558,17 @@ export default function Personalizacion() {
                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Elige una campaña" /></SelectTrigger>
                 <SelectContent>
                   {campaigns.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No tienes campañas. Crea una primero.</div>}
-                  {campaigns.map((c) => <SelectItem key={c.id} value={c.id}><span className="flex items-center gap-2">{c.name} <Badge variant="secondary" className="text-[10px]">{c.status}</Badge></span></SelectItem>)}
+                  {campaigns.map((c) => <SelectItem key={c.id} value={c.id}><span className="flex items-center gap-2">{c.name} <Badge variant="secondary" className="text-[10px]">{c.leadCount} leads</Badge> <Badge variant="outline" className="text-[10px]">{c.status}</Badge></span></SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-[11px] text-muted-foreground">Se enviarán <b>{okCount}</b> leads con email válido + mensaje.</p>
+            <p className="text-[11px] text-muted-foreground">
+              Se añadirán <b className="text-foreground">{sendableCount}</b> leads (email válido + mensaje, sin duplicados).
+              {selectedCampaignId && (() => {
+                const c = campaigns.find((x) => x.id === selectedCampaignId);
+                return c ? <> Esta campaña tiene <b>{c.leadCount}</b> → quedará en <b className="text-foreground">{c.leadCount + sendableCount}</b>.</> : null;
+              })()}
+            </p>
             <Button className="w-full gap-2" onClick={sendToCampaign} disabled={sending || !selectedCampaignId}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Añadir a la campaña
             </Button>

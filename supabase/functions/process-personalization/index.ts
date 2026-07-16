@@ -71,8 +71,9 @@ serve(async (req) => {
     const job = jobs?.[0];
     if (!job) return new Response(JSON.stringify({ ok: true, idle: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // Claim it (bump updated_at so a concurrent tick skips it).
-    await db.from("personalization_csv_jobs").update({ status: "running", updated_at: new Date().toISOString() }).eq("id", job.id);
+    // Claim it (bump updated_at so a concurrent tick skips it). `.neq(cancelled)` so a Stop
+    // that landed between the SELECT and here is never overwritten back to running.
+    await db.from("personalization_csv_jobs").update({ status: "running", updated_at: new Date().toISOString() }).eq("id", job.id).neq("status", "cancelled");
 
     const provider = job.provider === "claude" && claudeKey ? "claude" : "deepseek";
     if (provider === "deepseek" && !deepseekKey) {
@@ -97,6 +98,19 @@ serve(async (req) => {
     let processed = 0;
 
     for (let i = 0; i < pending.length && processed < MAX_ROWS && (Date.now() - startMs) < MAX_MS; i += CONCURRENCY) {
+      // Respect a Stop pressed mid-run: re-read status each group (~5 rows apart) and, if the
+      // user cancelled, save whatever is done and BAIL — without ever writing "running" again.
+      // This clobber (progress write resurrecting a cancelled job) was why "Parar" no paraba.
+      const { data: cur } = await db.from("personalization_csv_jobs").select("status").eq("id", job.id).maybeSingle();
+      if ((cur as any)?.status === "cancelled") {
+        await db.from("personalization_csv_jobs").update({
+          results, done: Object.keys(results).length,
+          ok: Object.values(results).filter((x) => x.message && !x.error).length,
+          failed: Object.values(results).filter((x) => x.error).length,
+          updated_at: new Date().toISOString(),
+        }).eq("id", job.id).eq("status", "cancelled");
+        return new Response(JSON.stringify({ ok: true, cancelled: true, job_id: job.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const chunk = pending.slice(i, i + CONCURRENCY);
       const settled = await Promise.allSettled(chunk.map(async (r) => {
         const { __idx, ...data } = r;
@@ -113,16 +127,17 @@ serve(async (req) => {
       const done = Object.keys(results).length;
       const okN = Object.values(results).filter((x) => x.message && !x.error).length;
       const failN = Object.values(results).filter((x) => x.error).length;
+      // `.neq(cancelled)` so a Stop that lands during the await above is never overwritten.
       await db.from("personalization_csv_jobs").update({
         results, done, ok: okN, failed: failN, total,
         status: done >= total ? "completed" : "running",
         updated_at: new Date().toISOString(),
-      }).eq("id", job.id);
+      }).eq("id", job.id).neq("status", "cancelled");
     }
 
     const done = Object.keys(results).length;
     if (done >= total) {
-      await db.from("personalization_csv_jobs").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", job.id);
+      await db.from("personalization_csv_jobs").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", job.id).neq("status", "cancelled");
     }
     return new Response(JSON.stringify({ ok: true, job_id: job.id, processed, done, total }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
