@@ -845,6 +845,29 @@ serve(async (req) => {
           for (const l of leads || []) leadsMap.set(l.email.toLowerCase(), l.id);
         }
 
+        // Blocklist check — import blocked senders' mail but mark is_archived so it never
+        // shows in the Unibox (and never inflates reply stats). Only look up THIS batch's
+        // senders/domains, so it stays fast even with thousands of blocklist entries.
+        const fromDomains = [...new Set(fromEmails.map(e => e.split("@")[1]).filter(Boolean))];
+        const blockedEmailSet = new Set<string>();
+        const blockedDomainSet = new Set<string>();
+        {
+          const [emailBlk, domBlk] = await Promise.all([
+            adminClient.from("blocklist").select("value").eq("user_id", account.user_id).eq("entry_type", "email").in("value", fromEmails),
+            fromDomains.length > 0
+              ? adminClient.from("blocklist").select("value").eq("user_id", account.user_id).eq("entry_type", "domain").in("value", fromDomains)
+              : Promise.resolve({ data: [] as { value: string }[] }),
+          ]);
+          for (const r of emailBlk.data || []) blockedEmailSet.add(String(r.value).toLowerCase());
+          for (const r of (domBlk as { data?: { value: string }[] }).data || []) blockedDomainSet.add(String(r.value).toLowerCase());
+        }
+        const isBlockedSender = (email: string) => {
+          const e = email.toLowerCase();
+          if (blockedEmailSet.has(e)) return true;
+          const d = e.split("@")[1] || "";
+          return d ? blockedDomainSet.has(d) : false;
+        };
+
         // Batch campaign lookup. Prefer the campaign where this exact inbox account
         // is the assigned sender; otherwise fall back to the latest sent email from
         // this same account. This prevents replies from being attached to another
@@ -936,6 +959,9 @@ serve(async (req) => {
             body_text: msg.body_text,
             body_html: msg.body_html || null,
             received_at: parsedDate,
+            // Blocked sender → import (keeps threading/dedupe intact) but pre-archived so it
+            // never appears in the Unibox nor counts as a reply.
+            is_archived: isBlockedSender(msg.from_email),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),

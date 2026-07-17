@@ -2183,6 +2183,25 @@ export default function Unibox() {
     return dom ? blockedDomainSet.has(dom) : false;
   }, [blockedEmailSet, blockedDomainSet]);
 
+  // Self-heal: archive any loaded message from a blocked sender that is still un-archived
+  // (e.g. blocked back when the domain filter was broken, or synced before the backend fix).
+  // Bounded to the loaded window, runs once per session, uses the user's own session (RLS).
+  const blockCleanupRan = useRef(false);
+  useEffect(() => {
+    if (blockCleanupRan.current || !user || blockedLoading) return;
+    if (blockedDomainSet.size === 0 && blockedEmailSet.size === 0) return;
+    const leaked = messages.filter((m) => isBlockedSender(m.from_email)).map((m) => m.id);
+    if (leaked.length === 0) return;
+    blockCleanupRan.current = true;
+    (async () => {
+      for (let i = 0; i < leaked.length; i += 100) {
+        await supabase.from("inbox_messages").update({ is_archived: true }).in("id", leaked.slice(i, i + 100));
+      }
+      const leakedSet = new Set(leaked);
+      setMessages((prev) => prev.filter((m) => !leakedSet.has(m.id)));
+    })();
+  }, [user, blockedLoading, messages, isBlockedSender, blockedDomainSet, blockedEmailSet]);
+
   // Apply the unibox filters ALWAYS (Spanish/Catalan only, no warmup, no bounces,
   // only real replies). English/other languages never appear anywhere.
   const filtered = useMemo(() => {
@@ -2484,6 +2503,9 @@ export default function Unibox() {
     try {
       await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "domain", value }, { onConflict: "user_id,entry_type,value" });
       setBlockedEntries((prev) => (prev.some((e) => e.entry_type === "domain" && e.value === value) ? prev : [{ id: `tmp-${value}`, entry_type: "domain", value, created_at: new Date().toISOString() }, ...prev]));
+      // Archive EVERY message from this domain in the DB — not just the ones currently loaded
+      // in the window — so none linger unarchived (that was leaving hundreds still visible).
+      await supabase.from("inbox_messages").update({ is_archived: true }).eq("user_id", user.id).eq("is_archived", false).ilike("from_email", `%@${value}`);
       const n = await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase().endsWith(`@${value}`));
       const { data: leads } = await supabase.from("leads").select("id, email").eq("user_id", user.id);
       for (const lead of (leads || []).filter((l) => (l.email || "").toLowerCase().endsWith(`@${value}`))) {
@@ -2500,13 +2522,19 @@ export default function Unibox() {
   const loadBlockedEntries = async () => {
     if (!user) return;
     setBlockedLoading(true);
-    const { data, error } = await supabase
-      .from("blocklist")
-      .select("id, entry_type, value, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    if (error) toast.error(`No se pudo cargar la lista: ${error.message}`);
-    setBlockedEntries(data || []);
+    // Domains are FEW but CRITICAL for filtering — load them ALL. A plain select is capped
+    // at 1000 rows by PostgREST; with 5000+ blocked emails the (older) domain rows fell
+    // outside that window, so `blockedDomainSet` lost them and blocked domains (e.g. gmail.com)
+    // stopped being hidden. Loading domains in their own query guarantees they're always there.
+    // Emails: recent 1000 for the manager list — blocked-email messages are archived on block,
+    // so the visible inbox doesn't depend on having every email loaded.
+    const [domRes, mailRes] = await Promise.all([
+      supabase.from("blocklist").select("id, entry_type, value, created_at").eq("user_id", user.id).eq("entry_type", "domain"),
+      supabase.from("blocklist").select("id, entry_type, value, created_at").eq("user_id", user.id).eq("entry_type", "email").order("created_at", { ascending: false }),
+    ]);
+    const err = domRes.error || mailRes.error;
+    if (err) toast.error(`No se pudo cargar la lista: ${err.message}`);
+    setBlockedEntries([...(domRes.data || []), ...(mailRes.data || [])]);
     setBlockedLoading(false);
   };
 
