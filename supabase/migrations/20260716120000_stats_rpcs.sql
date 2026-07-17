@@ -12,7 +12,8 @@ returns json language sql security definer set search_path = public stable as $$
   ),
   went as (select * from e where sent_at is not null or status in ('sent','bounced'))
   select json_build_object(
-    'sent',    (select count(*) from went),
+    'sent',      (select count(*) from went),                                             -- correos (con follow-ups)
+    'contacted', (select count(distinct em) from went where em is not null and em <> ''),  -- personas/leads contactados
     'bounced', (select count(*) from e where bounced_at is not null or status='bounced'),
     'opened',  (select count(*) from e where opened_at is not null),
     -- Replies = real inbound reply messages from the inbox (same source + base filter as the

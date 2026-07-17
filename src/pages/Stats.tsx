@@ -8,7 +8,7 @@ type Daily = { day: string; label: string; full: string; envios: number; respues
 
 export default function Stats() {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ sent: 0, delivered: 0, opened: 0, replied: 0, bounced: 0, failed: 0 });
+  const [stats, setStats] = useState({ sent: 0, contacted: 0, delivered: 0, opened: 0, replied: 0, bounced: 0, failed: 0 });
   const [daily, setDaily] = useState<Daily[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -24,11 +24,12 @@ export default function Stats() {
         (supabase as any).rpc("user_daily_sends", { p_days: 14 }),
       ]);
       if (!alive) return;
-      const s = (statsRes?.data || {}) as { sent?: number; bounced?: number; opened?: number; replied?: number; failed?: number };
+      const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; bounced?: number; opened?: number; replied?: number; failed?: number };
       const sent = Number(s.sent || 0);
       const bounced = Number(s.bounced || 0);
       setStats({
         sent,
+        contacted: Number(s.contacted || 0),
         bounced,
         delivered: Math.max(0, sent - bounced),
         opened: Number(s.opened || 0),
@@ -58,11 +59,19 @@ export default function Stats() {
     { name: "Fallidos", value: stats.failed, color: "hsl(38, 92%, 50%)" },
   ];
 
-  const overviewStats = [
-    { label: "Total enviados", value: stats.sent.toLocaleString("es") },
-    { label: "Tasa de entrega", value: stats.sent > 0 ? `${((stats.delivered / stats.sent) * 100).toFixed(1)}%` : "0%" },
-    { label: "Tasa de respuesta", value: stats.sent > 0 ? `${((stats.replied / stats.sent) * 100).toFixed(1)}%` : "0%" },
-    { label: "Rebotes", value: stats.sent > 0 ? `${((stats.bounced / stats.sent) * 100).toFixed(1)}%` : "0%" },
+  const replyRate = stats.contacted > 0 ? (stats.replied / stats.contacted) * 100 : 0;
+
+  // Primary — the numbers that matter, each with a clarifying sub-label so "leads" (personas)
+  // is never confused with "correos" (con follow-ups) again.
+  const primaryStats = [
+    { label: "Leads contactados", value: stats.contacted.toLocaleString("es"), sub: "personas únicas", highlight: false },
+    { label: "Correos enviados", value: stats.sent.toLocaleString("es"), sub: "con follow-ups", highlight: false },
+    { label: "Respuestas", value: stats.replied.toLocaleString("es"), sub: "recibidas", highlight: false },
+    { label: "Tasa de respuesta", value: `${replyRate.toFixed(1)}%`, sub: "por lead contactado", highlight: true },
+  ];
+  const secondaryStats = [
+    { label: "Entregados", value: stats.delivered.toLocaleString("es") },
+    { label: "Rebotes", value: stats.bounced.toLocaleString("es") },
     { label: "Fallidos", value: stats.failed.toLocaleString("es") },
   ];
 
@@ -78,12 +87,26 @@ export default function Stats() {
         <p className="text-sm text-muted-foreground">Análisis detallado de rendimiento</p>
       </div>
 
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-5">
-        {overviewStats.map((stat, i) => (
-          <Card key={i}>
-            <CardContent className="p-4 text-center">
-              <p className="font-display text-xl font-bold">{stat.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
+      {/* Primary — leads vs correos claramente separados + la tasa que importa */}
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        {primaryStats.map((stat, i) => (
+          <Card key={i} className={stat.highlight ? "border-primary/40 bg-primary/5" : undefined}>
+            <CardContent className="p-4">
+              <p className="text-xs font-medium text-muted-foreground">{stat.label}</p>
+              <p className={`font-display text-2xl font-bold mt-1 ${stat.highlight ? "text-primary" : ""}`}>{stat.value}</p>
+              <p className="text-[11px] text-muted-foreground/70 mt-0.5">{stat.sub}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Secondary — números de apoyo, más discretos */}
+      <div className="grid gap-3 grid-cols-3">
+        {secondaryStats.map((stat, i) => (
+          <Card key={i} className="bg-muted/30">
+            <CardContent className="p-3 text-center">
+              <p className="font-display text-lg font-semibold">{stat.value}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{stat.label}</p>
             </CardContent>
           </Card>
         ))}
