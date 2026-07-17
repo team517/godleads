@@ -21,27 +21,33 @@ export default function Dashboard() {
     const load = async () => {
       // Enviados/contactados/respuestas salen de la MISMA RPC exacta que Estadísticas
       // (cuenta server-side, sin el tope de 1000 filas, respuestas del inbox). Así el
-      // Dashboard y Estadísticas siempre cuadran.
-      const [statsRes, accountsRes, leadsRes, campaignsRes] = await Promise.all([
-        (supabase as any).rpc("user_email_stats"),
-        supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
-      ]);
+      // Dashboard y Estadísticas siempre cuadran. try/finally → un fallo/lentitud nunca
+      // deja la pantalla en "cargando" (peor caso: enseña lo cacheado o ceros).
+      try {
+        const [statsRes, accountsRes, leadsRes, campaignsRes] = await Promise.all([
+          (supabase as any).rpc("user_email_stats"),
+          supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+          supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+          supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
+        ]);
 
-      const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; replied?: number };
-      const newStats = {
-        sent: Number(s.sent || 0),
-        contacted: Number(s.contacted || 0),
-        replied: Number(s.replied || 0),
-        leads: leadsRes.count || 0,
-        accounts: accountsRes.count || 0,
-      };
-      setStats(newStats);
-      setCampaigns(campaignsRes.data || []);
-      cacheSet("dash:stats", newStats);
-      cacheSet("dash:campaigns", campaignsRes.data || []);
-      setLoading(false);
+        const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; replied?: number };
+        const newStats = {
+          sent: Number(s.sent || 0),
+          contacted: Number(s.contacted || 0),
+          replied: Number(s.replied || 0),
+          leads: leadsRes.count || 0,
+          accounts: accountsRes.count || 0,
+        };
+        setStats(newStats);
+        setCampaigns(campaignsRes.data || []);
+        cacheSet("dash:stats", newStats);
+        cacheSet("dash:campaigns", campaignsRes.data || []);
+      } catch {
+        /* keep cached view — never hang the spinner */
+      } finally {
+        setLoading(false);
+      }
     };
     load();
   }, [user]);

@@ -19,35 +19,42 @@ export default function Stats() {
       setLoading(true);
       // Server-side aggregation (SQL RPCs). This is EXACT: counting 15k+ rows in the DB,
       // never the old `select()` that PostgREST capped at 1000 rows → the "990" undercount.
-      const [statsRes, dailyRes] = await Promise.all([
-        (supabase as any).rpc("user_email_stats"),
-        (supabase as any).rpc("user_daily_sends", { p_days: 14 }),
-      ]);
-      if (!alive) return;
-      const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; bounced?: number; opened?: number; replied?: number; failed?: number };
-      const sent = Number(s.sent || 0);
-      const bounced = Number(s.bounced || 0);
-      setStats({
-        sent,
-        contacted: Number(s.contacted || 0),
-        bounced,
-        delivered: Math.max(0, sent - bounced),
-        opened: Number(s.opened || 0),
-        replied: Number(s.replied || 0),
-        failed: Number(s.failed || 0),
-      });
-      const rows = (dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>;
-      setDaily(rows.map((r) => {
-        const d = new Date(`${r.day}T00:00:00`);
-        return {
-          day: r.day,
-          label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
-          full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
-          envios: Number(r.sends || 0),
-          respuestas: Number(r.replies || 0),
-        };
-      }));
-      setLoading(false);
+      // Wrapped in try/finally so a slow or failing RPC can NEVER leave the page stuck on the
+      // spinner ("no me carga") — worst case it shows zeros/empty, not an infinite loader.
+      try {
+        const [statsRes, dailyRes] = await Promise.all([
+          (supabase as any).rpc("user_email_stats"),
+          (supabase as any).rpc("user_daily_sends", { p_days: 14 }),
+        ]);
+        if (!alive) return;
+        const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; bounced?: number; opened?: number; replied?: number; failed?: number };
+        const sent = Number(s.sent || 0);
+        const bounced = Number(s.bounced || 0);
+        setStats({
+          sent,
+          contacted: Number(s.contacted || 0),
+          bounced,
+          delivered: Math.max(0, sent - bounced),
+          opened: Number(s.opened || 0),
+          replied: Number(s.replied || 0),
+          failed: Number(s.failed || 0),
+        });
+        const rows = (dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>;
+        setDaily(rows.map((r) => {
+          const d = new Date(`${r.day}T00:00:00`);
+          return {
+            day: r.day,
+            label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
+            full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
+            envios: Number(r.sends || 0),
+            respuestas: Number(r.replies || 0),
+          };
+        }));
+      } catch {
+        /* keep whatever we have — don't hang the spinner */
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
     return () => { alive = false; };
   }, [user]);
