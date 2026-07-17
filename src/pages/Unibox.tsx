@@ -2546,8 +2546,16 @@ export default function Unibox() {
     const { error } = await supabase.from("blocklist").delete().eq("id", entry.id).eq("user_id", user.id);
     if (error) { toast.error(`No se pudo desbloquear: ${error.message}`); setUnblockingId(null); return; }
     setBlockedEntries((prev) => prev.filter((e) => e.id !== entry.id));
-    toast.success(`${entry.entry_type === "domain" ? "@" + entry.value : entry.value} desbloqueado`);
+    // Un-archive that sender's/domain's messages so unblocking actually BRINGS THEM BACK.
+    // Blocking archives them (and the sync pre-archives new ones); without this they'd stay
+    // hidden after unblocking — that's exactly how the team@onepulso.online test got stuck.
+    const value = String(entry.value).toLowerCase();
+    let upd = supabase.from("inbox_messages").update({ is_archived: false }).eq("user_id", user.id).eq("is_archived", true);
+    upd = entry.entry_type === "domain" ? upd.ilike("from_email", `%@${value}`) : upd.ilike("from_email", value);
+    await upd;
+    toast.success(`${entry.entry_type === "domain" ? "@" + entry.value : entry.value} desbloqueado — sus mensajes vuelven a la bandeja`);
     setUnblockingId(null);
+    load(); // refrescar para que reaparezcan al momento
   };
 
   // Translate the reply the user typed INTO the language the lead wrote in, in
