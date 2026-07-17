@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Send, MessageCircle, Users, Mail, BarChart3 } from "lucide-react";
+import { Send, MessageCircle, Users, Mail, BarChart3, UserCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -12,26 +12,28 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   // Instant re-entry: paint cached stats immediately, refresh in background.
-  const [stats, setStats] = useState(() => cacheGet<any>("dash:stats") || { sent: 0, replied: 0, leads: 0, accounts: 0 });
+  const [stats, setStats] = useState(() => cacheGet<any>("dash:stats") || { sent: 0, contacted: 0, replied: 0, leads: 0, accounts: 0 });
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("dash:campaigns") || []);
   const [loading, setLoading] = useState(() => !cacheGet<any>("dash:stats"));
 
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      // COUNT-ONLY queries (head:true → zero rows over the wire). The old code
-      // downloaded EVERY sent_emails row just to count replies — slow + egress.
-      const [accountsRes, leadsRes, sentRes, repliedRes, campaignsRes] = await Promise.all([
+      // Enviados/contactados/respuestas salen de la MISMA RPC exacta que Estadísticas
+      // (cuenta server-side, sin el tope de 1000 filas, respuestas del inbox). Así el
+      // Dashboard y Estadísticas siempre cuadran.
+      const [statsRes, accountsRes, leadsRes, campaignsRes] = await Promise.all([
+        (supabase as any).rpc("user_email_stats"),
         supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
         supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("user_id", user.id).not("replied_at", "is", null),
         supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
       ]);
 
+      const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; replied?: number };
       const newStats = {
-        sent: sentRes.count || 0,
-        replied: repliedRes.count || 0,
+        sent: Number(s.sent || 0),
+        contacted: Number(s.contacted || 0),
+        replied: Number(s.replied || 0),
         leads: leadsRes.count || 0,
         accounts: accountsRes.count || 0,
       };
@@ -44,10 +46,12 @@ export default function Dashboard() {
     load();
   }, [user]);
 
-  const responseRate = stats.sent > 0 ? ((stats.replied / stats.sent) * 100).toFixed(1) : "0";
+  // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
+  const responseRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
 
   const statCards = [
     { label: "Correos enviados", value: stats.sent.toLocaleString(), icon: Send, color: "text-primary" },
+    { label: "Leads contactados", value: stats.contacted.toLocaleString(), icon: UserCheck, color: "text-info" },
     { label: "Tasa de respuesta", value: `${responseRate}%`, icon: MessageCircle, color: "text-success" },
     { label: "Leads totales", value: stats.leads.toLocaleString(), icon: Users, color: "text-info" },
     { label: "Cuentas activas", value: stats.accounts.toLocaleString(), icon: Mail, color: "text-warning" },
@@ -73,7 +77,7 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((stat, i) => (
           <Card key={i}>
             <CardContent className="p-4 sm:p-6">
