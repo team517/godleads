@@ -12,7 +12,11 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   // Instant re-entry: paint cached stats immediately, refresh in background.
-  const [stats, setStats] = useState(() => cacheGet<any>("dash:stats") || { sent: 0, contacted: 0, replied: 0, leads: 0, accounts: 0 });
+  // Merge the cached stats OVER the full default shape. Critical: an OLD cache from a previous
+  // build lacks `contacted`, and `stats.contacted.toLocaleString()` on undefined threw a
+  // TypeError that blanked the whole app (white screen) right after a redeploy. Spreading the
+  // cache last guarantees every field exists.
+  const [stats, setStats] = useState(() => ({ sent: 0, contacted: 0, replied: 0, leads: 0, accounts: 0, ...(cacheGet<any>("dash:stats") || {}) }));
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("dash:campaigns") || []);
   const [loading, setLoading] = useState(() => !cacheGet<any>("dash:stats"));
 
