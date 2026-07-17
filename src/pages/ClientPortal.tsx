@@ -144,7 +144,8 @@ function ClientRow({ c, onEdit, onDelete }: { c: Client; onEdit: () => void; onD
 
 export default function ClientPortal() {
   const { user } = useAuth();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [access, setAccess] = useState<"loading" | "yes" | "no">("loading");
+  const [isFullAdmin, setIsFullAdmin] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -164,8 +165,16 @@ export default function ClientPortal() {
 
   useEffect(() => {
     if (!user) return;
-    supabase.from("user_roles").select("role").eq("user_id", user.id).single()
-      .then(({ data }) => setIsAdmin(data?.role === "admin"));
+    (async () => {
+      const [{ data: r }, { data: p }] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
+        (supabase as any).from("profiles").select("is_client_manager").eq("user_id", user.id).single(),
+      ]);
+      const admin = r?.role === "admin";
+      setIsFullAdmin(admin);
+      // A full admin OR a limited "client manager" may use the portal.
+      setAccess(admin || (p as any)?.is_client_manager ? "yes" : "no");
+    })();
   }, [user]);
 
   const loadClients = useCallback(async () => {
@@ -176,7 +185,7 @@ export default function ClientPortal() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (isAdmin) loadClients(); }, [isAdmin, loadClients]);
+  useEffect(() => { if (access === "yes") loadClients(); }, [access, loadClients]);
 
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
 
@@ -207,8 +216,8 @@ export default function ClientPortal() {
     else { toast.success("Cliente eliminado"); loadClients(); }
   };
 
-  if (isAdmin === null) return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
+  if (access === "loading") return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  if (access === "no") return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -219,7 +228,7 @@ export default function ClientPortal() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">Crea cuentas de cliente con su propio acceso y branding.</p>
         </div>
-        <Button asChild variant="outline" size="sm" className="gap-2"><Link to="/admin"><ArrowLeft className="h-3.5 w-3.5" /> Admin</Link></Button>
+        {isFullAdmin && <Button asChild variant="outline" size="sm" className="gap-2"><Link to="/admin"><ArrowLeft className="h-3.5 w-3.5" /> Admin</Link></Button>}
       </div>
 
       {/* Create client */}

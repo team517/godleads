@@ -15,6 +15,7 @@ interface ProfileData {
   infiniteCoins: boolean;
   logo_url: string | null;
   brand_color: string | null;
+  is_client_manager: boolean;
 }
 
 interface ProfileContextType {
@@ -27,11 +28,11 @@ const ProfileContext = createContext<ProfileContextType | undefined>(undefined);
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [profile, setProfile] = useState<ProfileData>({ full_name: null, avatar_url: null, company_name: null, contact_email: null, allowed_routes: null, birthday: null, coins: 0, infiniteCoins: false, logo_url: null, brand_color: null });
+  const [profile, setProfile] = useState<ProfileData>({ full_name: null, avatar_url: null, company_name: null, contact_email: null, allowed_routes: null, birthday: null, coins: 0, infiniteCoins: false, logo_url: null, brand_color: null, is_client_manager: false });
 
   const refreshProfile = useCallback(async () => {
     if (!user) return;
-    const { data } = await (supabase as any).from("profiles").select("full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color").eq("user_id", user.id).single();
+    const { data } = await (supabase as any).from("profiles").select("full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager").eq("user_id", user.id).single();
     if (data) {
       const contactEmail = data.contact_email?.toLowerCase() ?? "";
       setProfile({
@@ -45,6 +46,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         infiniteCoins: INFINITE_COINS_EMAILS.includes(contactEmail),
         logo_url: (data as any).logo_url ?? null,
         brand_color: (data as any).brand_color ?? null,
+        is_client_manager: (data as any).is_client_manager ?? false,
       });
     }
   }, [user]);

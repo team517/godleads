@@ -26,16 +26,28 @@ serve(async (req) => {
     const caller = userData.user;
     if (!caller) throw new Error("Not authenticated");
 
-    // Verify admin role
+    // Verify access: full admin, OR a limited "client manager" (profiles.is_client_manager)
+    // who can ONLY manage clients — not the full admin panel (users list / Stripe / roles).
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", caller.id)
       .single();
-    if (roleData?.role !== "admin") throw new Error("Forbidden: admin only");
+    const isAdmin = roleData?.role === "admin";
+    const { data: callerProfile } = await supabase
+      .from("profiles")
+      .select("is_client_manager")
+      .eq("user_id", caller.id)
+      .single();
+    const isManager = !!callerProfile?.is_client_manager;
+    if (!isAdmin && !isManager) throw new Error("Forbidden: admin only");
 
     const body = await req.json().catch(() => ({}));
     const action = body.action || "list";
+
+    // A client manager is restricted to client CRUD — never the full-admin actions.
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete"]);
+    if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
       // Get all users from auth
@@ -119,7 +131,13 @@ serve(async (req) => {
       const targetUserId = body.user_id;
       if (!targetUserId) throw new Error("user_id required");
       if (targetUserId === caller.id) throw new Error("Cannot delete yourself");
-      
+      // A client manager may only delete CLIENT accounts (users with allowed_routes) — never
+      // an admin or a regular user.
+      if (!isAdmin) {
+        const { data: tgt } = await supabase.from("profiles").select("allowed_routes").eq("user_id", targetUserId).single();
+        if (!tgt?.allowed_routes || (tgt.allowed_routes as string[]).length === 0) throw new Error("Forbidden: managers can only delete clients");
+      }
+
       const { error: delErr } = await supabase.auth.admin.deleteUser(targetUserId);
       if (delErr) throw new Error(`Delete error: ${delErr.message}`);
       
@@ -180,12 +198,13 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
           const p: any = pMap.get(u.id);
           if (!p || !p.allowed_routes || p.allowed_routes.length === 0) return null;
+          if (p.is_client_manager) return null; // a client manager is staff, not a client
           return {
             id: u.id, email: u.email, created_at: u.created_at,
             full_name: p.full_name, company_name: p.company_name,

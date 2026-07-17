@@ -47,6 +47,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Counting raw unread rows here showed a fake "99+" of warm-up noise.
   const [unreadCount, setUnreadCount] = useState(readCachedUniboxUnread());
   const [isAdmin, setIsAdmin] = useState(false);
+  const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
 
   useEffect(() => {
@@ -178,10 +179,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         </div>
         )}
 
-        {/* Admin */}
-        {isAdmin && (
+        {/* Admin / client manager */}
+        {(isAdmin || isManager) && (
           <div className="space-y-0.5 mt-4 pt-4 border-t border-sidebar-border/60">
-            {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Admin</p>}
+            {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">{isAdmin ? "Admin" : "Gestión"}</p>}
+            {isAdmin && (
             <Link
               to="/admin"
               onClick={handleNavClick}
@@ -197,6 +199,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
               <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
               {!collapsed && "Panel Admin"}
             </Link>
+            )}
             <Link
               to="/admin/clients"
               onClick={handleNavClick}
