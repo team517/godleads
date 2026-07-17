@@ -618,12 +618,15 @@ async function sendSmtpEmail(
     const rawContent = headers.join('\r\n') + '\r\n' + body;
     const fullMessage = dotStuff(rawContent) + '\r\n.\r\n';
 
-    // Connect with 15s timeout (Instantly-style aggressive timeouts)
+    // Connect with a 25s timeout. Was 15s ("aggressive"), but slow-but-alive providers
+    // (notably IONOS on :465) routinely take 15-25s to complete the TLS handshake, which
+    // showed up as ~900 "Timeout: connect smtp.ionos.es" errors/day. 25s lets those succeed
+    // on the first try instead of failing + retrying. The 90s tick deadline still bounds it.
     let conn: Deno.Conn;
     if (endpoint.port === 465) {
-      conn = await withTimeout(Deno.connectTls({ hostname: endpoint.host, port: endpoint.port }), 15000, `connect ${endpoint.host}:${endpoint.port}`);
+      conn = await withTimeout(Deno.connectTls({ hostname: endpoint.host, port: endpoint.port }), 25000, `connect ${endpoint.host}:${endpoint.port}`);
     } else {
-      conn = await withTimeout(Deno.connect({ hostname: endpoint.host, port: endpoint.port }), 15000, `connect ${endpoint.host}:${endpoint.port}`);
+      conn = await withTimeout(Deno.connect({ hostname: endpoint.host, port: endpoint.port }), 25000, `connect ${endpoint.host}:${endpoint.port}`);
     }
 
     const encoder = new TextEncoder();
@@ -649,7 +652,7 @@ async function sendSmtpEmail(
       }
       return result;
     };
-    const readResponse = (): Promise<string> => withTimeout(readResponseRaw(), 12000, `SMTP read ${endpoint.host}:${endpoint.port}`);
+    const readResponse = (): Promise<string> => withTimeout(readResponseRaw(), 18000, `SMTP read ${endpoint.host}:${endpoint.port}`);
 
     const send = async (cmd: string): Promise<string> => {
       await conn.write(encoder.encode(cmd + "\r\n"));
@@ -705,7 +708,7 @@ async function sendSmtpEmail(
           }
           return result;
         };
-        const readTls = (): Promise<string> => withTimeout(readTlsRaw(), 12000, `SMTP read (TLS) ${endpoint.host}:${endpoint.port}`);
+        const readTls = (): Promise<string> => withTimeout(readTlsRaw(), 18000, `SMTP read (TLS) ${endpoint.host}:${endpoint.port}`);
 
         const sendTls = async (cmd: string): Promise<string> => {
           await conn.write(encoder.encode(cmd + "\r\n"));
