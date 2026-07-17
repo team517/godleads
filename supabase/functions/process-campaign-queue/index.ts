@@ -1538,6 +1538,19 @@ serve(async (req) => {
           ...variants.map((v: any) => ({ subject: v.subject || step.subject, body: v.body || step.body })),
         ];
 
+        // ── Variant TAG FILTER ──────────────────────────────────────────────────────
+        // A variant tagged "X" is ONLY sent by accounts that carry the tag "X"; the base
+        // (index 0) + variants with no tag are the fallback pool. If this account has a
+        // matching tag → it sends ONLY the matching variants (rotating among them). If not →
+        // it uses the untagged pool. Guarantees a tagged variant never leaks to the wrong
+        // account, whatever the account rotation does.
+        const acctTags = new Set<string>(((account.tags as string[]) || []).map((t) => String(t).toLowerCase().trim()));
+        const variantFilters: (string | null)[] = [null, ...variants.map((v: any) => (v && v.tag_filter ? String(v.tag_filter).toLowerCase().trim() : null))];
+        const matchedIdx: number[] = [];
+        const unfilteredIdx: number[] = [];
+        variantFilters.forEach((f, i) => { if (f) { if (acctTags.has(f)) matchedIdx.push(i); } else unfilteredIdx.push(i); });
+        const eligibleIdx = matchedIdx.length ? matchedIdx : (unfilteredIdx.length ? unfilteredIdx : allVariants.map((_, i) => i));
+
         if (currentStepIndex > 0) {
           // Look up the variant_index used in the FIRST email to this lead in this campaign
           const { data: firstSentVariant } = await adminClient
@@ -1554,9 +1567,12 @@ serve(async (req) => {
           }
           // Clamp to available range — if this step has fewer variants than the original, fall back to base (0)
           if (variantIndex >= allVariants.length) variantIndex = 0;
+          // If the reused variant isn't eligible for THIS account's tags, re-pick from the
+          // eligible pool so a tag-filtered variant never leaks to a non-matching account.
+          if (!eligibleIdx.includes(variantIndex)) variantIndex = eligibleIdx[Math.floor(Math.random() * eligibleIdx.length)];
         } else if (allVariants.length > 1) {
-          // First step: random pick across variants
-          variantIndex = Math.floor(Math.random() * allVariants.length);
+          // First step: random pick across the variants ELIGIBLE for this account's tags.
+          variantIndex = eligibleIdx[Math.floor(Math.random() * eligibleIdx.length)];
         }
 
         const picked = allVariants[variantIndex];

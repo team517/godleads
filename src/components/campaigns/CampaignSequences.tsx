@@ -11,10 +11,10 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag } from "lucide-react";
 
 interface Props { campaignId: string; }
-interface Variant { subject: string; body: string; }
+interface Variant { subject: string; body: string; tag_filter?: string }
 
 /* ── Variable auto-correction ───────────────────────────────────────
    Maps mistyped {{variables}} to the real lead fields by normalizing
@@ -78,6 +78,7 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [correcting, setCorrecting] = useState(false);
   const [dynamicVars, setDynamicVars] = useState<{ label: string; tag: string }[]>([]);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   // Test email state
   const [showTestEmail, setShowTestEmail] = useState(false);
   const [testTo, setTestTo] = useState("");
@@ -140,8 +141,12 @@ export default function CampaignSequences({ campaignId }: Props) {
 
   const loadAccounts = async () => {
     if (!user) return;
-    const { data } = await supabase.from("email_accounts").select("id, email").eq("user_id", user.id).eq("status", "connected");
+    const { data } = await supabase.from("email_accounts").select("id, email, tags").eq("user_id", user.id).eq("status", "connected");
     setEmailAccounts(data || []);
+    // All distinct tags across the user's accounts — the options for the per-variant filter.
+    const tags = new Set<string>();
+    (data || []).forEach((a: any) => (a.tags || []).forEach((t: string) => { const v = String(t).trim(); if (v) tags.add(v); }));
+    setAvailableTags([...tags].sort((a, b) => a.localeCompare(b)));
     if (data?.length) setTestAccountId(data[0].id);
   };
 
@@ -441,6 +446,15 @@ export default function CampaignSequences({ campaignId }: Props) {
     await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
   };
 
+  // Per-variant tag filter: only accounts with this tag send this variant. null = sin filtro.
+  const updateVariantTag = async (step: any, idx: number, tag: string | null) => {
+    const variants: Variant[] = [...(step.variants || [])];
+    variants[idx] = { ...variants[idx], tag_filter: tag || undefined };
+    const { error } = await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
+    if (error) { toast.error(`No se pudo guardar el filtro: ${error.message}`); return; }
+    load();
+  };
+
   const removeVariant = async (step: any, idx: number) => {
     const variants: Variant[] = [...(step.variants || [])];
     variants.splice(idx, 1);
@@ -719,19 +733,23 @@ export default function CampaignSequences({ campaignId }: Props) {
           {/* Variant tabs + actions */}
           <div className="border-b px-4 py-2 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              {variantLabels.map((label, i) => (
-                <button
-                  key={label}
-                  onClick={() => setActiveVariantIndex(i)}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
-                    activeVariantIndex === i
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+              {variantLabels.map((label, i) => {
+                const vTag = i > 0 ? variants[i - 1]?.tag_filter : undefined;
+                return (
+                  <button
+                    key={label}
+                    onClick={() => setActiveVariantIndex(i)}
+                    title={vTag ? `Solo cuentas con tag "${vTag}"` : undefined}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                      activeVariantIndex === i
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    {label}{vTag ? <span className="ml-1 opacity-80">· {vTag}</span> : ""}
+                  </button>
+                );
+              })}
               {variantLabels.length < 8 && (
                 <button
                   onClick={async () => {
@@ -794,6 +812,29 @@ export default function CampaignSequences({ campaignId }: Props) {
               </Button>
             </div>
           </div>
+
+          {/* Variant TAG FILTER — only when a variant (not the base A) is active */}
+          {activeVariantIndex > 0 && (
+            <div className="border-b bg-muted/20 px-4 py-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+                <Tag className="h-3 w-3" /> Filtro por cuenta:
+              </span>
+              <Select
+                value={variants[activeVariantIndex - 1]?.tag_filter || "__none__"}
+                onValueChange={(v) => updateVariantTag(selectedStep, activeVariantIndex - 1, v === "__none__" ? null : v)}
+              >
+                <SelectTrigger className="h-7 w-64 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sin filtro (cualquier cuenta)</SelectItem>
+                  {availableTags.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">No hay tags en tus cuentas de email.</div>}
+                  {availableTags.map((t) => <SelectItem key={t} value={t}>Solo cuentas con tag «{t}»</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {variants[activeVariantIndex - 1]?.tag_filter
+                ? <span className="text-[11px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
+                : <span className="text-[11px] text-muted-foreground/70">→ la envían todas las cuentas (rotación normal)</span>}
+            </div>
+          )}
 
           {/* Subject */}
           <div className="border-b p-4 space-y-2">
