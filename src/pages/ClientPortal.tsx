@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical } from "lucide-react";
+import ReportTestDialog from "@/components/reports/ReportTestDialog";
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -95,7 +96,7 @@ function LogoField({ value, onChange }: { value: string; onChange: (url: string)
   );
 }
 
-function ClientRow({ c, onEdit, onDelete }: { c: Client; onEdit: () => void; onDelete: () => void }) {
+function ClientRow({ c, onEdit, onDelete, onTest }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string, key: string) => {
@@ -135,6 +136,7 @@ function ClientRow({ c, onEdit, onDelete }: { c: Client; onEdit: () => void; onD
       </div>
       <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
         {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
+        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onTest} title="Generar un informe de prueba con tus campañas"><FlaskConical className="h-3.5 w-3.5 text-primary" /> Probar informe</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
       </div>
@@ -162,6 +164,8 @@ export default function ClientPortal() {
   // Edit dialog
   const [editing, setEditing] = useState<Client | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  // Report test-preview dialog
+  const [testing, setTesting] = useState<Client | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -280,12 +284,16 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} />
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} />
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {testing && (
+        <ReportTestDialog client={testing} open={!!testing} onClose={() => setTesting(null)} />
+      )}
 
       {editing && (
         <EditClientDialog
