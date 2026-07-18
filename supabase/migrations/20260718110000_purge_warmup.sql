@@ -8,14 +8,23 @@ create or replace function public.purge_old_warmup(p_days int default 7)
 returns integer language plpgsql security definer set search_path=public as $$
 declare v_deleted integer;
 begin
-  -- Delete ONLY warmup noise from the "Todos" view: not linked to a lead/campaign, old, and
-  -- NOT manually flagged "Importante". Protect specifically the manual star (labels contains
-  -- 'Importante') — NOT the auto-intent labels (Interesado/Pregunta/Fuera-Auto) which the
-  -- system also stamps on warmup. Real replies (lead_id/campaign_id) are never touched.
-  delete from public.inbox_messages
-  where lead_id is null and campaign_id is null
-    and received_at < now() - (p_days || ' days')::interval
-    and not coalesce(labels @> array['Importante']::text[], false);
+  -- Weekly cleanup. Deletes (old + NOT manually flagged "Importante"):
+  --   (a) warmup noise from "Todos": not linked to a lead/campaign, AND
+  --   (b) mail from a BLOCKED domain (e.g. @gmail once gmail.com is blocklisted).
+  -- Protects ONLY the manual "Importante" star (not the auto-intent labels
+  -- Interesado/Pregunta/Fuera-Auto, which the system also stamps on warmup). Real replies
+  -- from non-blocked domains (lead_id/campaign_id) are never touched.
+  delete from public.inbox_messages m
+  where m.received_at < now() - (p_days || ' days')::interval
+    and not coalesce(m.labels @> array['Importante']::text[], false)
+    and (
+      (m.lead_id is null and m.campaign_id is null)
+      or exists (
+        select 1 from public.blocklist b
+        where b.user_id = m.user_id and b.entry_type = 'domain'
+          and b.value = split_part(lower(m.from_email), '@', 2)
+      )
+    );
   get diagnostics v_deleted = row_count;
   return v_deleted;
 end; $$;
