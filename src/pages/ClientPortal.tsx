@@ -331,6 +331,9 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
   const [sendingKind, setSendingKind] = useState<string | null>(null);
+  const { user } = useAuth();
+  const [testEmail, setTestEmail] = useState(user?.email || "");
+  const [testing, setTesting] = useState(false);
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
 
   const loadReports = () => callAdmin({ action: "list_client_reports", user_id: client.id }).then((res) => { if (!res.error) setReports(res.reports || []); });
@@ -361,6 +364,26 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
       else toast.error(j.error || "No se pudo enviar el informe");
     } catch (e: any) { toast.error(String(e?.message || e)); }
     setSendingKind(null);
+  };
+
+  // Test the send to an address YOU choose (default: your own email) — same report,
+  // same sending account, but to you, so you can confirm it arrives before enabling.
+  const testSend = async () => {
+    if (!testEmail.trim()) { toast.error("Escribe un email para la prueba"); return; }
+    if (!fromAccount) { toast.error("Elige primero la cuenta de envío"); return; }
+    setTesting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ mode: "manual", client_user_id: client.id, kind: "48h", test_to: testEmail.trim(), from_account_id: fromAccount }),
+      });
+      const j = await resp.json();
+      if (j.ok) { toast.success(`Prueba enviada a ${testEmail}. Revisa tu correo (y spam).`); loadReports(); }
+      else toast.error(j.error || "No se pudo enviar la prueba");
+    } catch (e: any) { toast.error(String(e?.message || e)); }
+    setTesting(false);
   };
 
   return (
@@ -419,7 +442,18 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
                   <Input type="number" min={0} value={threshold} onChange={(e) => setThreshold(Number(e.target.value) || 0)} className="w-32" />
                 </div>
                 <div className="space-y-1.5 border-t border-border/50 pt-3">
-                  <Label className="text-xs">Enviar un informe real ahora (para probar)</Label>
+                  <Label className="text-xs">Probar envío (a tu email, no al cliente)</Label>
+                  <div className="flex gap-2">
+                    <Input type="email" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="tu@email.com" className="h-9 text-sm" />
+                    <Button size="sm" className="h-9 shrink-0 gap-1.5" disabled={!fromAccount || testing} onClick={testSend}>
+                      {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />} Probar envío
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Te envía el informe de este cliente a esa dirección para que compruebes que llega bien. No le llega al cliente.</p>
+                </div>
+
+                <div className="space-y-1.5 border-t border-border/50 pt-3">
+                  <Label className="text-xs">Enviar el informe REAL al cliente ahora</Label>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" className="gap-1.5" disabled={!fromAccount || !!sendingKind} onClick={() => sendNow("48h")}>
                       {sendingKind === "48h" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Enviar 48h ahora
