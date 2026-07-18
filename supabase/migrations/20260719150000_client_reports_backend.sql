@@ -19,7 +19,8 @@ security definer
 set search_path = public
 as $$
   with c as (
-    select id, name from public.campaigns where user_id = p_user_id and status <> 'draft'
+    -- Only the client's ACTIVE campaigns (running now) — not drafts/paused/finished.
+    select id, name from public.campaigns where user_id = p_user_id and status = 'active'
   ),
   se as (
     select s.campaign_id, lower(coalesce(s.to_email,'')) as email, s.status,

@@ -107,21 +107,28 @@ async function sendSmtp(
     await write("DATA");
     const boundary = `=_op_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`;
     const b64wrap = (s: string) => (s.replace(/[^A-Za-z0-9+/=]/g, "").match(/.{1,76}/g) || []).join("\r\n");
+    const fromDomain = from.split("@")[1] || "localhost";
+    // Date + Message-ID are REQUIRED for good deliverability — without them many
+    // filters quarantine or drop the message (this is why the first test never arrived).
+    const dateHeader = new Date().toUTCString().replace("GMT", "+0000");
+    const messageId = `<${Math.random().toString(36).slice(2)}${Date.now().toString(36)}@${fromDomain}>`;
     const parts: string[] = [
       [
         `From: ${fromHeader(fromName, from)}`,
         `To: ${to}`,
         `Subject: ${mimeWord(subject)}`,
         `Reply-To: <${from}>`,
+        `Date: ${dateHeader}`,
+        `Message-ID: ${messageId}`,
         `MIME-Version: 1.0`,
         `Content-Type: multipart/mixed; boundary="${boundary}"`,
       ].join("\r\n"),
       "",
       `--${boundary}`,
       `Content-Type: text/html; charset=utf-8`,
-      `Content-Transfer-Encoding: 8bit`,
+      `Content-Transfer-Encoding: base64`,
       "",
-      html,
+      b64wrap(b64utf8(html)),
     ];
     for (const att of attachments) {
       parts.push(
