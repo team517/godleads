@@ -974,9 +974,16 @@ serve(async (req) => {
         const chunkSize = 50;
         for (let i = 0; i < rows.length; i += chunkSize) {
           const chunk = rows.slice(i, i + chunkSize);
+          // UPSERT with ignoreDuplicates → duplicates (already-synced messages) are skipped
+          // SILENTLY (ON CONFLICT DO NOTHING) instead of erroring. Before this, every re-read
+          // duplicate raised a Postgres error + rollback — millions/day (the "10% success
+          // rate"). `.select()` returns ONLY the newly-inserted rows, so the reply-marking
+          // below still runs exactly for genuinely new messages. Needs the full unique index
+          // `inbox_messages_user_dedupe_full`; if that's missing the upsert errors and we fall
+          // back to the old per-row path (sync never breaks — just no improvement yet).
           const { data: inserted, error: insertError } = await adminClient
             .from("inbox_messages")
-            .insert(chunk)
+            .upsert(chunk, { onConflict: "user_id,dedupe_hash", ignoreDuplicates: true })
             .select("id, lead_id, campaign_id, received_at");
 
           if (insertError) {
