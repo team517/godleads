@@ -412,7 +412,11 @@ function drawTable(
       doc.setTextColor(col.key === "rate" ? brand[0] : ink[0], col.key === "rate" ? brand[1] : ink[1], col.key === "rate" ? brand[2] : ink[2]);
       const raw = vals[col.key];
       const tx = col.align === "right" ? cx + col.w - 2 : cx + 2.5;
-      const text = col.key === "name" ? (doc.splitTextToSize(raw, col.w - 4)[0] || raw) : raw;
+      let text = raw;
+      if (col.key === "name") {
+        const first = doc.splitTextToSize(raw, col.w - 4)[0] || raw;
+        text = first.length < raw.length ? first.slice(0, Math.max(0, first.length - 1)) + "…" : first;
+      }
       doc.text(text, tx, y + 5.4, { align: col.align } as any);
       cx += col.w;
     }

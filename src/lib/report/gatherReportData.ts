@@ -39,8 +39,19 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
     (supabase as any).rpc("campaign_report_period", { p_days: periodDays }),
   ]);
 
+  // Don't silently emit an all-zero report if the metrics RPC failed (not deployed,
+  // permissions, transient) — surface it so the caller shows an error instead of
+  // sending a plausible-but-wrong "0 respuestas" report to a client.
+  if (campRes.error) throw new Error(`No se pudieron cargar las campañas: ${campRes.error.message}`);
+  if (metricsRes.error) throw new Error(`No se pudieron cargar las métricas: ${metricsRes.error.message}`);
+
   const allCamps: { id: string; name: string; status: string }[] = campRes.data || [];
-  const wanted = new Set(opts.campaignIds && opts.campaignIds.length ? opts.campaignIds : allCamps.map((c) => c.id));
+  // Default (no explicit ids, e.g. the scheduled path) → all NON-draft campaigns.
+  const wanted = new Set(
+    opts.campaignIds && opts.campaignIds.length
+      ? opts.campaignIds
+      : allCamps.filter((c) => c.status !== "draft").map((c) => c.id),
+  );
   const selected = allCamps.filter((c) => wanted.has(c.id));
 
   const metricsById = new Map<string, any>();
@@ -60,14 +71,21 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
       const p = periodById.get(c.id) || {};
       const total = totalRes.count || 0;
       const contactedLeads = contactedRes.count || 0;
+      const replied = Number(m.replied) || 0;
+      // `contacted` (people emailed, from campaign_leads) is the reply-rate denominator.
+      // The numerator `replied` comes from a different source (sent_emails.replied_at),
+      // so if campaign_leads.last_sent_at is under-populated we could get replied >
+      // contacted → a nonsensical rate >100%. A person can't reply without being
+      // contacted, so the denominator is at least `replied`.
+      const contacted = Math.max(contactedLeads || Number(m.contacted) || 0, replied);
       const daily = ((dailyRes.data || []) as any[]).map((d) => ({
         day: String(d.day), sends: Number(d.sends) || 0, replies: Number(d.replies) || 0,
       }));
       return {
         name: c.name,
         sent: Number(m.sent) || 0,
-        contacted: contactedLeads || Number(m.contacted) || 0,
-        replied: Number(m.replied) || 0,
+        contacted,
+        replied,
         opened: Number(m.opened) || 0,
         bounced: Number(m.bounced) || 0,
         positive: Number(m.positive) || 0,

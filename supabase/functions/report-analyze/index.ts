@@ -27,7 +27,7 @@ async function callDeepSeek(apiKey: string, userPrompt: string): Promise<string>
     body: JSON.stringify({
       model: "deepseek-chat",
       messages: [{ role: "system", content: SYSTEM }, { role: "user", content: userPrompt }],
-      max_tokens: 1400,
+      max_tokens: 2000,
       temperature: 0.5,
       stream: false,
       response_format: { type: "json_object" },
@@ -44,7 +44,7 @@ async function callClaude(apiKey: string, userPrompt: string): Promise<string> {
     headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 1400,
+      max_tokens: 2000,
       temperature: 0.5,
       system: SYSTEM,
       messages: [{ role: "user", content: userPrompt }],
@@ -154,7 +154,14 @@ serve(async (req) => {
     }
 
     let parsed: any = {};
-    try { parsed = parseJson(raw); } catch { parsed = { summary: (raw || "").slice(0, 600) }; }
+    try {
+      parsed = parseJson(raw);
+    } catch {
+      // Never dump raw JSON braces into the client's "Resumen ejecutivo". Try to
+      // salvage just the summary string; otherwise leave a clean, honest fallback.
+      const m = /"summary"\s*:\s*"([^"]{0,600})/.exec(raw || "");
+      parsed = { summary: m ? m[1] : "El análisis automático no se pudo generar correctamente esta vez; las métricas del informe son correctas." };
+    }
 
     const narrative = {
       summary: String(parsed.summary || "").trim(),

@@ -30,6 +30,8 @@ export default function ReportTestDialog({ client, open, onClose }: {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [filename, setFilename] = useState("informe.pdf");
   const lastBlob = useRef<Blob | null>(null);
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
 
   const brandColor = client.brand_color || "#6E58F1";
   const company = client.company_name || client.full_name || client.email || "Cliente";
@@ -68,6 +70,9 @@ export default function ReportTestDialog({ client, open, onClose }: {
       const { blob, filename } = await renderReportPdfBlob(data, {
         company, brandColor, logoUrl: client.logo_url || undefined,
       });
+      // Dialog closed mid-generation → don't setState on an unmounted component
+      // (would leak the object URL, since the cleanup effect already captured the old one).
+      if (!aliveRef.current) return;
       lastBlob.current = blob;
       setFilename(filename);
       if (pdfUrl) URL.revokeObjectURL(pdfUrl);
