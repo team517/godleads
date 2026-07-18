@@ -222,10 +222,16 @@ async function fetchNarrative(data: ReportData, threshold: number) {
   return { summary: "", highlights: [], nextSteps: [], suggestions: [], alert: null };
 }
 
-function emailHtml(data: ReportData, brandColor: string): string {
+function emailHtml(data: ReportData, brandColor: string, pdfUrl: string | null): string {
   const t = data.totals;
   const periodTxt = data.kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
   const firstStep = (data.narrative.summary || "").slice(0, 400);
+  const button = pdfUrl
+    ? `<div style="text-align:center;margin:8px 0 18px">
+         <a href="${pdfUrl}" style="display:inline-block;background:${brandColor};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 26px;border-radius:10px">📄 Ver tu informe completo (PDF)</a>
+       </div>
+       <p style="color:#98a2b3;font-size:11px;text-align:center;margin:0 0 16px">o copia este enlace: <span style="color:#667085">${pdfUrl}</span></p>`
+    : "";
   return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e1e26">
     <div style="background:${brandColor};height:6px;border-radius:6px 6px 0 0"></div>
     <div style="padding:20px 4px">
@@ -244,7 +250,8 @@ function emailHtml(data: ReportData, brandColor: string): string {
             <div style="font-size:11px;color:#888">Respuestas</div></td>
         </tr>
       </table>
-      <p style="font-size:14px;margin:0 0 8px">📎 Te adjuntamos el <b>informe completo en PDF</b> con el análisis, el detalle por campaña y las mejoras que vamos a aplicar.</p>
+      <p style="font-size:14px;margin:0 0 12px">Aquí tienes el <b>análisis completo</b> con el detalle por campaña y las mejoras que vamos a aplicar:</p>
+      ${button}
       <p style="color:#98a2b3;font-size:11px;margin-top:20px">Informe automático generado por tu equipo de OnePulso.</p>
     </div>
   </div>`;
@@ -299,6 +306,13 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
     return { ok: true, pdfPath, dryUrl, bytes: pdfBytes.length, campaigns: data.campaigns.length };
   }
 
+  // A LINK to the PDF, not an attachment: cold-email sending domains (the only ones
+  // available) route attachments straight to spam, so nothing arrived. A signed link
+  // (valid 30 days) delivers reliably and the client still gets the PDF in one click.
+  const signedUrl = pdfPath
+    ? ((await admin.storage.from("client-reports").createSignedUrl(pdfPath, 60 * 60 * 24 * 30)).data?.signedUrl || null)
+    : null;
+
   const to = opts.testTo || client.email;
   if (!to) return { ok: false, error: "El cliente no tiene email." };
   const accountId = opts.fromAccountId || client.report_from_account_id;
@@ -310,12 +324,10 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
-  const slug = clientName.replace(/\s+/g, "-").toLowerCase().replace(/[^a-z0-9\-]/g, "");
-  const filename = `analisis-campana-${slug || "cliente"}.pdf`;
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-    acct.email, clientName, to, subject, emailHtml(data, branding.brandColor),
-    [{ filename, mime: "application/pdf", base64: bytesToB64(pdfBytes) }],
+    acct.email, clientName, to, subject, emailHtml(data, branding.brandColor, signedUrl),
+    [], // no attachment — the PDF is linked (attachments kill deliverability on cold domains)
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null));
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
