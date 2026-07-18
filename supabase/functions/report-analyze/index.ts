@@ -74,8 +74,8 @@ function buildPrompt(body: any): string {
   }).join("\n");
 
   const kindTxt = body.kind === "weekly"
-    ? "Es el REPASO SEMANAL (viernes). Incluye un análisis de cómo ha ido la semana y sugerencias concretas de mejora para la próxima semana."
-    : "Es el informe periódico (cada 48 horas). Céntrate en el rendimiento reciente y los próximos pasos.";
+    ? "Es el REPASO SEMANAL (viernes). Haz un análisis didáctico de cómo ha ido la semana, explicando QUÉ ESTAMOS VIENDO en las cifras y QUÉ VAMOS A MEJORAR, con sugerencias concretas para la próxima semana."
+    : "Es el informe periódico (cada 48 horas). Explica de forma clara y didáctica QUÉ ESTAMOS VIENDO (interpretación de las cifras, no solo repetirlas) y QUÉ ESTAMOS HACIENDO / VAMOS A MEJORAR en la campaña.";
 
   return [
     `Cliente: ${body.clientName || "Cliente"}. Periodo: ${body.periodLabel || ""}. ${kindTxt}`,
@@ -97,12 +97,10 @@ function buildPrompt(body: any): string {
     "",
     "Devuelve un JSON EXACTAMENTE con esta forma (sin nada más):",
     "{",
-    '  "summary": "2-4 frases de resumen ejecutivo, concretas y con las cifras clave",',
+    '  "summary": "3-5 frases de resumen ejecutivo que INTERPRETEN las cifras (qué significan, si vamos bien o mal y por qué), no solo las repitan; con las cifras clave incluidas",',
     '  "highlights": ["3-5 puntos de lo más destacado, con números"],',
-    '  "nextSteps": ["3-5 próximos pasos accionables y explicados"],',
-    body.kind === "weekly"
-      ? '  "suggestions": ["3-5 sugerencias concretas de mejora: p.ej. optimizar el asunto de X forma, reescribir el primer email más directo, añadir una variante con otro ángulo, activar seguimiento adicional, etc. Explica el porqué de cada una"],'
-      : '  "suggestions": [],',
+    '  "nextSteps": ["3-5 próximos pasos accionables y explicados: qué vamos a hacer ahora"],',
+    '  "suggestions": ["3-5 mejoras CONCRETAS que vamos a aplicar y por qué: p.ej. optimizar el asunto de X forma, reescribir el primer email más directo, añadir una variante con otro ángulo, activar seguimiento adicional, subir más leads, etc. Explica el motivo de cada una en 1 frase"],',
     '  "alert": "texto del aviso o null"',
     "}",
     "",
@@ -167,7 +165,7 @@ serve(async (req) => {
       summary: String(parsed.summary || "").trim(),
       highlights: asList(parsed.highlights, 6),
       nextSteps: asList(parsed.nextSteps, 6),
-      suggestions: body.kind === "weekly" ? asList(parsed.suggestions, 6) : [],
+      suggestions: asList(parsed.suggestions, 6),
       alert: parsed.alert && String(parsed.alert).trim() && String(parsed.alert).toLowerCase() !== "null"
         ? String(parsed.alert).trim() : null,
     };

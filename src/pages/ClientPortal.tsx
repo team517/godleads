@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 
 const SECTIONS = [
@@ -29,6 +29,7 @@ type Client = {
   id: string; email: string; full_name: string | null; company_name: string | null;
   allowed_routes: string[] | null; logo_url: string | null; brand_color: string | null;
   client_password: string | null; created_at: string;
+  report_enabled?: boolean; report_from_account_id?: string | null; report_low_contacts_threshold?: number | null;
 };
 
 async function callAdmin(payload: Record<string, unknown>) {
@@ -322,11 +323,26 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [brandColor, setBrandColor] = useState(client.brand_color || "#6E58F1");
   const [routes, setRoutes] = useState<string[]>(client.allowed_routes || []);
   const [newPassword, setNewPassword] = useState("");
+  // Report config
+  const [reportEnabled, setReportEnabled] = useState(!!client.report_enabled);
+  const [fromAccount, setFromAccount] = useState<string>(client.report_from_account_id || "");
+  const [threshold, setThreshold] = useState<number>(client.report_low_contacts_threshold ?? 200);
+  const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
+
+  // Load the client's own email accounts (to pick which one reports are sent from).
+  useEffect(() => {
+    setLoadingAccounts(true);
+    callAdmin({ action: "list_client_accounts", user_id: client.id }).then((res) => {
+      if (!res.error) setAccounts(res.accounts || []);
+      setLoadingAccounts(false);
+    });
+  }, [client.id]);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader><DialogTitle className="font-display">Editar · {client.email}</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -344,12 +360,53 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
             <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Secciones con acceso</Label>
             <SectionPicker selected={routes} onToggle={toggle} />
           </div>
+
+          {/* Automated reports */}
+          <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+            <label className="flex cursor-pointer items-center justify-between gap-2">
+              <span>
+                <span className="flex items-center gap-1.5 text-sm font-semibold"><FileBarChart className="h-4 w-4 text-primary" /> Informes automáticos</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">PDF cada 48h (10:30) + repaso los viernes + aviso de pocos contactos.</span>
+              </span>
+              <Checkbox checked={reportEnabled} onCheckedChange={(v) => setReportEnabled(!!v)} />
+            </label>
+            {reportEnabled && (
+              <div className="space-y-3 border-t border-border/50 pt-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Enviar desde la cuenta</Label>
+                  {loadingAccounts ? (
+                    <p className="text-[11px] text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> Cargando cuentas…</p>
+                  ) : accounts.length === 0 ? (
+                    <p className="text-[11px] text-amber-600">Este cliente no tiene cuentas de email conectadas todavía. Conecta una para poder enviar los informes.</p>
+                  ) : (
+                    <select
+                      value={fromAccount}
+                      onChange={(e) => setFromAccount(e.target.value)}
+                      className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="">— Elige una cuenta —</option>
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>{a.email}{a.status !== "connected" ? ` (${a.status})` : ""}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Avisar cuando queden menos de … contactos</Label>
+                  <Input type="number" min={0} value={threshold} onChange={(e) => setThreshold(Number(e.target.value) || 0)} className="w-32" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button disabled={saving || routes.length === 0} onClick={() => onSave({
             company_name: company.trim() || null, logo_url: logoUrl.trim() || null,
             brand_color: brandColor || null, allowed_routes: routes,
+            report_enabled: reportEnabled,
+            report_from_account_id: reportEnabled ? (fromAccount || null) : null,
+            report_low_contacts_threshold: threshold,
             ...(newPassword ? { password: newPassword } : {}),
           })}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Guardar

@@ -46,7 +46,7 @@ serve(async (req) => {
     const action = body.action || "list";
 
     // A client manager is restricted to client CRUD — never the full-admin actions.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete"]);
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
@@ -165,7 +165,8 @@ serve(async (req) => {
     }
 
     if (action === "create_user") {
-      const { email, password, full_name, company_name, allowed_routes, logo_url, brand_color } = body;
+      const { email, password, full_name, company_name, allowed_routes, logo_url, brand_color,
+        report_enabled, report_from_account_id, report_low_contacts_threshold } = body;
       if (!email || !password) throw new Error("email and password required");
 
       const { data: newUser, error: createErr } = await supabase.auth.admin.createUser({
@@ -176,7 +177,7 @@ serve(async (req) => {
       });
       if (createErr) throw new Error(`Create user error: ${createErr.message}`);
 
-      // Set the client's profile: access (allowed_routes) + branding.
+      // Set the client's profile: access (allowed_routes) + branding + report config.
       if (newUser?.user) {
         const upd: Record<string, unknown> = { client_password: password };
         if (full_name) upd.full_name = full_name;
@@ -184,6 +185,9 @@ serve(async (req) => {
         if (allowed_routes && allowed_routes.length > 0) upd.allowed_routes = allowed_routes;
         if (logo_url !== undefined) upd.logo_url = logo_url || null;
         if (brand_color !== undefined) upd.brand_color = brand_color || null;
+        if (report_enabled !== undefined) upd.report_enabled = !!report_enabled;
+        if (report_from_account_id !== undefined) upd.report_from_account_id = report_from_account_id || null;
+        if (report_low_contacts_threshold !== undefined) upd.report_low_contacts_threshold = Number(report_low_contacts_threshold) || 200;
         if (Object.keys(upd).length > 0) {
           await supabase.from("profiles").update(upd).eq("user_id", newUser.user.id);
         }
@@ -198,7 +202,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -210,6 +214,9 @@ serve(async (req) => {
             full_name: p.full_name, company_name: p.company_name,
             allowed_routes: p.allowed_routes, logo_url: p.logo_url, brand_color: p.brand_color,
             client_password: p.client_password,
+            report_enabled: !!p.report_enabled,
+            report_from_account_id: p.report_from_account_id || null,
+            report_low_contacts_threshold: p.report_low_contacts_threshold ?? 200,
           };
         })
         .filter(Boolean);
@@ -219,7 +226,8 @@ serve(async (req) => {
     }
 
     if (action === "update_client") {
-      const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password } = body;
+      const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password,
+        report_enabled, report_from_account_id, report_low_contacts_threshold } = body;
       if (!user_id) throw new Error("user_id required");
       const upd: Record<string, unknown> = {};
       if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
@@ -227,6 +235,9 @@ serve(async (req) => {
       if (full_name !== undefined) upd.full_name = full_name || null;
       if (logo_url !== undefined) upd.logo_url = logo_url || null;
       if (brand_color !== undefined) upd.brand_color = brand_color || null;
+      if (report_enabled !== undefined) upd.report_enabled = !!report_enabled;
+      if (report_from_account_id !== undefined) upd.report_from_account_id = report_from_account_id || null;
+      if (report_low_contacts_threshold !== undefined) upd.report_low_contacts_threshold = Number(report_low_contacts_threshold) || 200;
       if (password) upd.client_password = password;
       if (Object.keys(upd).length > 0) {
         const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);
@@ -237,6 +248,25 @@ serve(async (req) => {
         if (error) throw new Error(`Password error: ${error.message}`);
       }
       return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "list_client_accounts") {
+      // The email accounts a client can send its report FROM. Restricted to actual
+      // clients (has allowed_routes), same as the other manager actions.
+      const { user_id } = body;
+      if (!user_id) throw new Error("user_id required");
+      if (!isAdmin) {
+        const { data: p } = await supabase.from("profiles").select("allowed_routes").eq("user_id", user_id).single();
+        if (!p?.allowed_routes || (p.allowed_routes as string[]).length === 0) throw new Error("Forbidden: not a client");
+      }
+      const { data: accounts } = await supabase
+        .from("email_accounts")
+        .select("id, email, status")
+        .eq("user_id", user_id)
+        .order("email");
+      return new Response(JSON.stringify({ accounts: accounts || [] }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

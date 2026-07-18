@@ -286,9 +286,9 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
     y = Math.max(y, boxTop + boxH) + 8;
   }
 
-  // ── Sugerencias (weekly only) ────────────────────────────────────────────
-  if (data.kind === "weekly" && data.narrative.suggestions?.length) {
-    section("Sugerencias para la próxima semana");
+  // ── Qué vamos a mejorar (both 48h and weekly) ────────────────────────────
+  if (data.narrative.suggestions?.length) {
+    section(data.kind === "weekly" ? "Sugerencias para la próxima semana" : "Qué vamos a mejorar");
     bullets(data.narrative.suggestions);
     y += 3;
   }
