@@ -138,7 +138,7 @@ export default function EmailAccounts() {
 
   // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
   type AuthStatus = "pass" | "warn" | "fail";
-  type DomainAuth = { loading: boolean; spf?: AuthStatus; dkim?: AuthStatus; dmarc?: AuthStatus; error?: boolean };
+  type DomainAuth = { loading: boolean; spf?: AuthStatus; dkim?: AuthStatus; dmarc?: AuthStatus; error?: boolean; reverifying?: boolean };
   const [domainAuth, setDomainAuth] = useState<Record<string, DomainAuth>>(() => cacheGet<Record<string, DomainAuth>>("accounts:domainAuth") || {});
   const requestedDomainsRef = useRef<Set<string>>(new Set());
   // Broad DKIM selector list so we detect a key whatever the provider (Google,
@@ -149,9 +149,10 @@ export default function EmailAccounts() {
     const d = (domain || "").trim().toLowerCase();
     if (!d) return;
     // Show "cargando" only on the FIRST check. If we already have a (cached) result, refresh
-    // it silently — the badges stay visible instead of flashing back to a spinner.
+    // it LIVE in the background — the badges stay visible and a tiny pulse (`reverifying`)
+    // shows the DNS is being confirmed for real, instead of flashing back to a spinner.
     setDomainAuth(prev => (prev[d] && !prev[d].loading
-      ? prev
+      ? { ...prev, [d]: { ...prev[d], reverifying: true } }
       : { ...prev, [d]: { ...(prev[d] || {}), loading: true, error: false } }));
     try {
       const { data, error } = await supabase.functions.invoke("check-email-domain-auth", {
@@ -249,26 +250,27 @@ export default function EmailAccounts() {
   };
 
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
-  type ImapCheck = { loading: boolean; ok?: boolean; error?: string };
+  type ImapCheck = { loading: boolean; ok?: boolean; error?: string; reverifying?: boolean };
   const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>(() => cacheGet<Record<string, ImapCheck>>("accounts:imapChecks") || {});
 
   // Persist the SETTLED IMAP/DNS results so the next visit paints them instantly (no spinner).
   useEffect(() => {
-    const settled = Object.fromEntries(Object.entries(imapChecks).filter(([, v]) => !v.loading));
+    const settled = Object.fromEntries(Object.entries(imapChecks).filter(([, v]) => !v.loading).map(([k, v]) => [k, { ...v, reverifying: false }]));
     if (Object.keys(settled).length) cacheSet("accounts:imapChecks", settled);
   }, [imapChecks]);
   useEffect(() => {
-    const settled = Object.fromEntries(Object.entries(domainAuth).filter(([, v]) => !(v as { loading?: boolean }).loading));
+    const settled = Object.fromEntries(Object.entries(domainAuth).filter(([, v]) => !(v as { loading?: boolean }).loading).map(([k, v]) => [k, { ...v, reverifying: false }]));
     if (Object.keys(settled).length) cacheSet("accounts:domainAuth", settled);
   }, [domainAuth]);
   const requestedImapRef = useRef<Set<string>>(new Set());
 
   const checkImap = useCallback(async (accountId: string) => {
     // Only show the "conectando" spinner if we have NOTHING to show yet. If a status is
-    // already known (seeded from the stored `status` or the cache), re-verify SILENTLY in the
-    // background — keep the green badge and only flip it if the check actually fails.
+    // already known (seeded from the stored `status` or the cache), re-verify LIVE in the
+    // background — keep the badge and mark it `reverifying` so a tiny pulse shows the status
+    // is being confirmed for real (not a fake cache). Only flip it if the check actually fails.
     setImapChecks(prev => (prev[accountId] && !prev[accountId].loading
-      ? prev
+      ? { ...prev, [accountId]: { ...prev[accountId], reverifying: true } }
       : { ...prev, [accountId]: { ...(prev[accountId] || {}), loading: true } }));
     try {
       const { data, error } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
@@ -1620,7 +1622,12 @@ export default function EmailAccounts() {
                         return <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> IMAP…</span>;
                       }
                       if (ic.ok) {
-                        return <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600"><CheckCircle className="h-3 w-3" /> IMAP conectado</span>;
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
+                            <CheckCircle className="h-3 w-3" /> IMAP conectado
+                            {ic.reverifying && <Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" title="Verificando la conexión en vivo…" />}
+                          </span>
+                        );
                       }
                       return (
                         <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600" title={ic.error || "Fallo de conexión IMAP"}>
@@ -1673,7 +1680,14 @@ export default function EmailAccounts() {
                   return (
                     <div className="mt-3 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-medium text-muted-foreground">Autenticación del dominio</span>
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                          Autenticación del dominio
+                          {auth?.reverifying && !auth?.loading && (
+                            <span className="inline-flex items-center gap-1 text-[9px] font-normal text-emerald-600/70" title="Comprobando los registros DNS en vivo…">
+                              <Loader2 className="h-2.5 w-2.5 animate-spin" /> en vivo
+                            </span>
+                          )}
+                        </span>
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => configureDns(dom)}
