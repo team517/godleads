@@ -7,20 +7,39 @@ import type { ReportData, ReportBranding } from "./types";
 
 async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; h: number } | null> {
   if (!src) return null;
+  let objectUrl: string | null = null;
   try {
+    // Client logos live in a PUBLIC Supabase bucket (cross-origin). Loading them
+    // straight into an <img> and drawing to a canvas can "taint" the canvas so
+    // toDataURL() throws and the logo silently disappears. Fetching the bytes first
+    // and loading them from a same-origin blob: URL avoids the taint entirely — the
+    // logo then reliably renders in the PDF regardless of the storage host's CORS.
+    let loadSrc = src;
+    if (/^https?:/i.test(src)) {
+      try {
+        const resp = await fetch(src, { mode: "cors" });
+        if (resp.ok) { objectUrl = URL.createObjectURL(await resp.blob()); loadSrc = objectUrl; }
+      } catch { /* fall back to direct <img> load below */ }
+    }
     const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = src;
+    if (!objectUrl) img.crossOrigin = "anonymous";
+    img.src = loadSrc;
     await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("load")); });
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
     const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0);
-    return { data: canvas.toDataURL("image/png"), w: canvas.width, h: canvas.height };
+    let data: string | null = null;
+    try { data = canvas.toDataURL("image/png"); } catch { data = null; }
+    if (!data) return null;
+    return { data, w, h };
   } catch {
     return null;
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
   }
 }
 
