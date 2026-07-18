@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SavedSignatures } from "@/components/SavedSignatures";
 import DOMPurify from "dompurify";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -1541,6 +1542,8 @@ export default function EmailAccounts() {
               </div>
               <p className="text-[11px] text-muted-foreground">Deja el HTML <b>vacío</b> y pulsa Aplicar para <b>quitar</b> la firma de las cuentas elegidas.</p>
             </div>
+
+            <SavedSignatures currentHtml={sigHtml} onLoad={setSigHtml} />
           </div>
           <Button onClick={applySignature} className="w-full" disabled={sigSaving || signatureTargetIds.length === 0}>
             {sigSaving ? "Aplicando…" : (sigHtml.trim() ? `Aplicar firma a ${signatureTargetIds.length} cuenta(s)` : `Quitar firma de ${signatureTargetIds.length} cuenta(s)`)}

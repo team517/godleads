@@ -5,6 +5,7 @@ import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SavedSignatures } from "@/components/SavedSignatures";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -3843,6 +3844,8 @@ export default function Unibox() {
               </div>
               <p className="text-[11px] text-muted-foreground">Deja el HTML <b>vacío</b> y pulsa Aplicar para <b>quitar</b> la firma.</p>
             </div>
+
+            <SavedSignatures currentHtml={sigHtml} onLoad={setSigHtml} />
           </div>
           <Button onClick={applyUniboxSignature} className="w-full" disabled={sigSaving || sigTargetIds.length === 0}>
             {sigSaving ? "Aplicando…" : (sigHtml.trim() ? `Aplicar firma a ${sigTargetIds.length} cuenta(s)` : `Quitar firma de ${sigTargetIds.length} cuenta(s)`)}
