@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 
 const SECTIONS = [
@@ -329,16 +329,39 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [threshold, setThreshold] = useState<number>(client.report_low_contacts_threshold ?? 200);
   const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [reports, setReports] = useState<any[]>([]);
+  const [sendingKind, setSendingKind] = useState<string | null>(null);
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
 
-  // Load the client's own email accounts (to pick which one reports are sent from).
+  const loadReports = () => callAdmin({ action: "list_client_reports", user_id: client.id }).then((res) => { if (!res.error) setReports(res.reports || []); });
+
+  // Load the client's own email accounts (to pick which one reports are sent from) + history.
   useEffect(() => {
     setLoadingAccounts(true);
     callAdmin({ action: "list_client_accounts", user_id: client.id }).then((res) => {
       if (!res.error) setAccounts(res.accounts || []);
       setLoadingAccounts(false);
     });
+    loadReports();
   }, [client.id]);
+
+  // Send a REAL report to the client right now (to test the automated pipeline).
+  const sendNow = async (kind: "48h" | "weekly") => {
+    if (!confirm(`¿Enviar ahora el informe ${kind === "weekly" ? "semanal" : "de 48h"} a ${client.email}? Se enviará un email real al cliente.`)) return;
+    setSendingKind(kind);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ mode: "manual", client_user_id: client.id, kind }),
+      });
+      const j = await resp.json();
+      if (j.ok) { toast.success("Informe enviado al cliente"); loadReports(); }
+      else toast.error(j.error || "No se pudo enviar el informe");
+    } catch (e: any) { toast.error(String(e?.message || e)); }
+    setSendingKind(null);
+  };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -395,9 +418,42 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
                   <Label className="text-xs">Avisar cuando queden menos de … contactos</Label>
                   <Input type="number" min={0} value={threshold} onChange={(e) => setThreshold(Number(e.target.value) || 0)} className="w-32" />
                 </div>
+                <div className="space-y-1.5 border-t border-border/50 pt-3">
+                  <Label className="text-xs">Enviar un informe real ahora (para probar)</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="gap-1.5" disabled={!fromAccount || !!sendingKind} onClick={() => sendNow("48h")}>
+                      {sendingKind === "48h" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Enviar 48h ahora
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5" disabled={!fromAccount || !!sendingKind} onClick={() => sendNow("weekly")}>
+                      {sendingKind === "weekly" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Enviar semanal ahora
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Guarda antes si has cambiado la cuenta de envío. El informe se enviará al email del cliente ({client.email}).</p>
+                </div>
               </div>
             )}
           </div>
+
+          {/* Report history */}
+          {reports.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Historial de informes</Label>
+              <div className="max-h-36 space-y-1 overflow-y-auto">
+                {reports.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded border border-border/50 px-2 py-1 text-xs">
+                    <span className="text-muted-foreground">
+                      <span className="font-medium text-foreground">{r.kind === "weekly" ? "Semanal" : "48h"}</span>
+                      {" · "}{new Date(r.created_at).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      {r.sent_ok ? <span className="text-emerald-600">enviado</span> : <span className="text-muted-foreground" title={r.error || ""}>{r.error ? "error" : "prueba"}</span>}
+                      {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Ver PDF</a>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>

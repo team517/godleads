@@ -1,0 +1,29 @@
+-- Cron jobs for the automated client reports. The real jobs were scheduled via the
+-- Management API so the shared secret is NOT committed here — this file is the record.
+-- To (re)schedule, replace <REPORTS_CRON_SECRET> with the value of the function secret
+-- of the same name and run in the SQL editor.
+--
+--   reports-48h    → every day EXCEPT Friday at 08:30 UTC (~10:30 Europe/Madrid). The
+--                    function debounces per client to ~every 48h via report_last_48h_at.
+--   reports-weekly → Fridays 08:30 UTC. The richer weekly report + AI suggestions.
+--
+-- Both only send to clients with profiles.report_enabled = true (default false), so
+-- nothing goes out until a client is explicitly switched on in the Client Portal.
+
+-- do $$ begin perform cron.unschedule('reports-48h'); exception when others then null; end $$;
+-- select cron.schedule('reports-48h', '30 8 * * 0,1,2,3,4,6', $CRON$
+--   select net.http_post(
+--     url:='https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/send-report',
+--     headers:='{"Content-Type":"application/json"}'::jsonb,
+--     body:='{"mode":"cron","kind":"48h","secret":"<REPORTS_CRON_SECRET>"}'::jsonb
+--   );
+-- $CRON$);
+
+-- do $$ begin perform cron.unschedule('reports-weekly'); exception when others then null; end $$;
+-- select cron.schedule('reports-weekly', '30 8 * * 5', $CRON$
+--   select net.http_post(
+--     url:='https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/send-report',
+--     headers:='{"Content-Type":"application/json"}'::jsonb,
+--     body:='{"mode":"cron","kind":"weekly","secret":"<REPORTS_CRON_SECRET>"}'::jsonb
+--   );
+-- $CRON$);

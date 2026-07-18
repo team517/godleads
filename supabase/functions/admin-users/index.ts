@@ -46,7 +46,7 @@ serve(async (req) => {
     const action = body.action || "list";
 
     // A client manager is restricted to client CRUD — never the full-admin actions.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts"]);
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
@@ -267,6 +267,30 @@ serve(async (req) => {
         .eq("user_id", user_id)
         .order("email");
       return new Response(JSON.stringify({ accounts: accounts || [] }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "list_client_reports") {
+      // Report history for the agency owner, with short-lived signed URLs to the PDFs
+      // (the bucket is private; only the service role can mint these).
+      const { user_id } = body;
+      if (!user_id) throw new Error("user_id required");
+      const { data: rows } = await supabase
+        .from("client_reports")
+        .select("id, kind, period_label, pdf_path, sent_to, sent_ok, error, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      const reports = await Promise.all((rows || []).map(async (r: any) => {
+        let url: string | null = null;
+        if (r.pdf_path) {
+          const { data: s } = await supabase.storage.from("client-reports").createSignedUrl(r.pdf_path, 3600);
+          url = s?.signedUrl || null;
+        }
+        return { ...r, url };
+      }));
+      return new Response(JSON.stringify({ reports }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
