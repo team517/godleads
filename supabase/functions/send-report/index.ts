@@ -85,31 +85,56 @@ async function sendSmtp(
   host: string, port: number, username: string, password: string,
   from: string, fromName: string, to: string, subject: string, html: string,
   attachments: { filename: string; mime: string; base64: string }[],
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; transcript?: string[] }> {
+  const log: string[] = [];
   try {
     let conn: Deno.Conn = port === 465
       ? await Deno.connectTls({ hostname: host, port })
       : await Deno.connect({ hostname: host, port });
     const enc = new TextEncoder();
     const dec = new TextDecoder();
-    const read = async () => { const b = new Uint8Array(8192); const n = await conn.read(b); return dec.decode(b.subarray(0, n || 0)); };
-    const write = async (cmd: string) => { await conn.write(enc.encode(cmd + "\r\n")); return await read(); };
-    await read(); // greeting
+    // Robust multi-line SMTP read: keep reading until the final "NNN <text>" line
+    // (a space after the code) — a single read() can return partial or multiple
+    // responses, which silently desynced the old sender.
+    const readResponse = async (): Promise<string> => {
+      let result = "";
+      while (true) {
+        const b = new Uint8Array(4096);
+        const n = await conn.read(b);
+        if (!n) break;
+        result += dec.decode(b.subarray(0, n));
+        const lines = result.split("\r\n").filter((l) => l.length > 0);
+        const last = lines[lines.length - 1] || "";
+        if (/^\d{3} /.test(last)) break;
+      }
+      return result;
+    };
+    const cmd = async (c: string, label?: string) => {
+      await conn.write(enc.encode(c + "\r\n"));
+      const r = await readResponse();
+      log.push(`${label || c.split(" ")[0]} => ${r.trim().slice(0, 100)}`);
+      return r.trim();
+    };
+    const code2 = (r: string) => /^2\d\d/.test(r);
+    const greet = await readResponse();
+    log.push(`GREETING => ${greet.trim().slice(0, 80)}`);
     if (port !== 465) {
-      const ehlo = await write("EHLO onepulso");
-      if (ehlo.includes("STARTTLS")) { await conn.write(enc.encode("STARTTLS\r\n")); await read(); conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host }); }
+      const ehlo = await cmd("EHLO onepulso", "EHLO");
+      if (/STARTTLS/i.test(ehlo)) { await conn.write(enc.encode("STARTTLS\r\n")); await readResponse(); conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host }); log.push("STARTTLS => upgraded"); }
     }
-    await write("EHLO onepulso");
-    const auth = await write(`AUTH PLAIN ${btoa(`\0${username}\0${password}`)}`);
-    if (!auth.startsWith("235")) { try { conn.close(); } catch { /* */ } return { ok: false, error: `Auth: ${auth.trim()}` }; }
-    await write(`MAIL FROM:<${from}>`);
-    await write(`RCPT TO:<${to}>`);
-    await write("DATA");
+    await cmd("EHLO onepulso", "EHLO2");
+    const auth = await cmd(`AUTH PLAIN ${btoa(`\0${username}\0${password}`)}`, "AUTH");
+    if (!auth.startsWith("235")) { try { conn.close(); } catch { /* */ } return { ok: false, error: `Auth: ${auth}`, transcript: log }; }
+    const mf = await cmd(`MAIL FROM:<${from}>`, "MAIL");
+    if (!code2(mf)) { try { conn.close(); } catch { /* */ } return { ok: false, error: `MAIL FROM rechazado: ${mf}`, transcript: log }; }
+    const rc = await cmd(`RCPT TO:<${to}>`, "RCPT");
+    if (!code2(rc)) { try { conn.close(); } catch { /* */ } return { ok: false, error: `RCPT rechazado: ${rc}`, transcript: log }; }
+    const dt = await cmd("DATA", "DATA");
+    if (!/^3\d\d/.test(dt)) { try { conn.close(); } catch { /* */ } return { ok: false, error: `DATA rechazado: ${dt}`, transcript: log }; }
+
     const boundary = `=_op_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`;
     const b64wrap = (s: string) => (s.replace(/[^A-Za-z0-9+/=]/g, "").match(/.{1,76}/g) || []).join("\r\n");
     const fromDomain = from.split("@")[1] || "localhost";
-    // Date + Message-ID are REQUIRED for good deliverability — without them many
-    // filters quarantine or drop the message (this is why the first test never arrived).
     const dateHeader = new Date().toUTCString().replace("GMT", "+0000");
     const messageId = `<${Math.random().toString(36).slice(2)}${Date.now().toString(36)}@${fromDomain}>`;
     const parts: string[] = [
@@ -141,13 +166,16 @@ async function sendSmtp(
       );
     }
     parts.push(`--${boundary}--`);
-    let msg = parts.join("\r\n");
-    msg = msg.replace(/\r\n\./g, "\r\n.."); // dot-stuffing (never on the terminator)
-    const resp = await write(msg + "\r\n.\r\n");
-    try { await write("QUIT"); } catch { /* */ }
+    const msg = parts.join("\r\n");
+    // Write the DATA payload, then the terminator on its own line, then read the result.
+    await conn.write(enc.encode(msg + "\r\n.\r\n"));
+    const fin = (await readResponse()).trim();
+    log.push(`DATA-END => ${fin.slice(0, 100)}`);
+    try { await cmd("QUIT", "QUIT"); } catch { /* */ }
     try { conn.close(); } catch { /* */ }
-    return resp.includes("250") ? { ok: true } : { ok: false, error: `Send: ${resp.trim()}` };
-  } catch (e) { return { ok: false, error: String((e as any)?.message || e) }; }
+    if (code2(fin)) return { ok: true, transcript: log };
+    return { ok: false, error: `Envío rechazado: ${fin}`, transcript: log };
+  } catch (e) { return { ok: false, error: String((e as any)?.message || e), transcript: log }; }
 }
 
 function toReportData(kind: "48h" | "weekly", clientName: string, bundle: any): ReportData {
@@ -196,13 +224,13 @@ async function fetchNarrative(data: ReportData, threshold: number) {
 
 function emailHtml(data: ReportData, brandColor: string): string {
   const t = data.totals;
-  const kindTxt = data.kind === "weekly" ? "el repaso de esta semana" : "el informe de las últimas 48 horas";
+  const periodTxt = data.kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
   const firstStep = (data.narrative.summary || "").slice(0, 400);
   return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e1e26">
     <div style="background:${brandColor};height:6px;border-radius:6px 6px 0 0"></div>
     <div style="padding:20px 4px">
-      <h2 style="margin:0 0 6px;font-size:18px">Hola, aquí tienes ${kindTxt}</h2>
-      <p style="color:#667085;font-size:14px;margin:0 0 16px">${firstStep}</p>
+      <h2 style="margin:0 0 6px;font-size:18px">Hola 👋 Este es el análisis ${periodTxt} de tu campaña</h2>
+      <p style="color:#667085;font-size:14px;margin:0 0 16px">${firstStep || "Te compartimos cómo va tu campaña, con las métricas clave y las mejoras que vamos a aplicar."}</p>
       <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
         <tr>
           <td style="text-align:center;padding:10px;border:1px solid #eef">
@@ -281,16 +309,16 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
     .eq("id", accountId).eq("user_id", client.user_id).maybeSingle();
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
-  const subject = kind === "weekly" ? `Informe semanal — ${clientName}` : `Informe de campaña — ${clientName}`;
+  const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
   const slug = clientName.replace(/\s+/g, "-").toLowerCase().replace(/[^a-z0-9\-]/g, "");
-  const filename = `informe-${kind}-${slug || "cliente"}.pdf`;
+  const filename = `analisis-campana-${slug || "cliente"}.pdf`;
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
     acct.email, clientName, to, subject, emailHtml(data, branding.brandColor),
     [{ filename, mime: "application/pdf", base64: bytesToB64(pdfBytes) }],
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null));
-  return { ok: r.ok, pdfPath, error: r.error };
+  return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
 }
 
 const PROFILE_COLS = "user_id, full_name, company_name, logo_url, brand_color, report_enabled, report_from_account_id, report_low_contacts_threshold, report_last_48h_at, report_last_weekly_at";
