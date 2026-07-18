@@ -139,7 +139,7 @@ export default function EmailAccounts() {
   // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
   type AuthStatus = "pass" | "warn" | "fail";
   type DomainAuth = { loading: boolean; spf?: AuthStatus; dkim?: AuthStatus; dmarc?: AuthStatus; error?: boolean };
-  const [domainAuth, setDomainAuth] = useState<Record<string, DomainAuth>>({});
+  const [domainAuth, setDomainAuth] = useState<Record<string, DomainAuth>>(() => cacheGet<Record<string, DomainAuth>>("accounts:domainAuth") || {});
   const requestedDomainsRef = useRef<Set<string>>(new Set());
   // Broad DKIM selector list so we detect a key whatever the provider (Google,
   // Microsoft, IONOS, Zoho…). If none resolve, DKIM is reported as missing.
@@ -148,7 +148,11 @@ export default function EmailAccounts() {
   const checkDomainAuth = useCallback(async (domain: string) => {
     const d = (domain || "").trim().toLowerCase();
     if (!d) return;
-    setDomainAuth(prev => ({ ...prev, [d]: { ...(prev[d] || {}), loading: true, error: false } }));
+    // Show "cargando" only on the FIRST check. If we already have a (cached) result, refresh
+    // it silently — the badges stay visible instead of flashing back to a spinner.
+    setDomainAuth(prev => (prev[d] && !prev[d].loading
+      ? prev
+      : { ...prev, [d]: { ...(prev[d] || {}), loading: true, error: false } }));
     try {
       const { data, error } = await supabase.functions.invoke("check-email-domain-auth", {
         body: { domain: d, selectors: DKIM_SELECTORS },
@@ -174,9 +178,9 @@ export default function EmailAccounts() {
     toCheck.forEach(d => requestedDomainsRef.current.add(d));
     let cancelled = false;
     (async () => {
-      for (const d of toCheck) {
-        if (cancelled) break;
-        await checkDomainAuth(d);
+      const CONC = 4; // check domains in parallel waves → much faster first load
+      for (let i = 0; i < toCheck.length && !cancelled; i += CONC) {
+        await Promise.all(toCheck.slice(i, i + CONC).map(d => checkDomainAuth(d)));
       }
     })();
     return () => { cancelled = true; };
@@ -246,11 +250,26 @@ export default function EmailAccounts() {
 
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
   type ImapCheck = { loading: boolean; ok?: boolean; error?: string };
-  const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>({});
+  const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>(() => cacheGet<Record<string, ImapCheck>>("accounts:imapChecks") || {});
+
+  // Persist the SETTLED IMAP/DNS results so the next visit paints them instantly (no spinner).
+  useEffect(() => {
+    const settled = Object.fromEntries(Object.entries(imapChecks).filter(([, v]) => !v.loading));
+    if (Object.keys(settled).length) cacheSet("accounts:imapChecks", settled);
+  }, [imapChecks]);
+  useEffect(() => {
+    const settled = Object.fromEntries(Object.entries(domainAuth).filter(([, v]) => !(v as { loading?: boolean }).loading));
+    if (Object.keys(settled).length) cacheSet("accounts:domainAuth", settled);
+  }, [domainAuth]);
   const requestedImapRef = useRef<Set<string>>(new Set());
 
   const checkImap = useCallback(async (accountId: string) => {
-    setImapChecks(prev => ({ ...prev, [accountId]: { ...(prev[accountId] || {}), loading: true } }));
+    // Only show the "conectando" spinner if we have NOTHING to show yet. If a status is
+    // already known (seeded from the stored `status` or the cache), re-verify SILENTLY in the
+    // background — keep the green badge and only flip it if the check actually fails.
+    setImapChecks(prev => (prev[accountId] && !prev[accountId].loading
+      ? prev
+      : { ...prev, [accountId]: { ...(prev[accountId] || {}), loading: true } }));
     try {
       const { data, error } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
       const r = data as any;
@@ -275,8 +294,11 @@ export default function EmailAccounts() {
       if (requestedImapRef.current.has(a.id)) continue;
       requestedImapRef.current.add(a.id);
       const lhc = a.last_health_check ? new Date(a.last_health_check).getTime() : 0;
-      if (a.status === "connected" && lhc && now - lhc < RECENT) seed[a.id] = { loading: false, ok: true };
-      else toVerify.push(a.id);
+      const recent = lhc && now - lhc < RECENT;
+      // Paint the STORED status immediately: a connected account shows green on entry, no
+      // "conectando" spinner. Re-verify in the background (silently) only if stale.
+      if (a.status === "connected") seed[a.id] = { loading: false, ok: true };
+      if (a.status !== "connected" || !recent) toVerify.push(a.id);
     }
     if (Object.keys(seed).length) setImapChecks(prev => ({ ...prev, ...seed }));
     if (toVerify.length === 0) return;
