@@ -776,15 +776,30 @@ export default function EmailAccounts() {
   // Effective daily limit = min((day+1) * increment, target). Day computed from warmup_started_at.
   const rampInfo = (acc: any) => {
     if (!acc?.warmup_enabled || !acc?.warmup_started_at) return null;
-    // Count WHOLE days since the start DATE using UTC-midnight boundaries — this mirrors the
-    // engine's countSendingDays (it zeroes to UTC midnight). The old elapsed-time floor
-    // undercounted by 1 whenever "now"'s time-of-day was earlier than the start's, so a card
-    // showed "Día 2 · hoy 18" while the engine was already on día 3 sending 22.
+    // Count only SENDING days (Mon–Fri) since the start date, mirroring the engine's
+    // countSendingDays. The ramp advances ONE step per day emails actually go out, so it
+    // does NOT climb on weekends (Sat/Sun) — the card stays flat Fri→Sat→Sun→Mon instead of
+    // ticking up on days nothing is sent. (Uses the standard Mon–Fri window; matches the
+    // engine for the default send_days.)
     const s = new Date(acc.warmup_started_at);
     const startUTC = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
     const n = new Date();
     const nowUTC = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
-    const days = Math.max(0, Math.round((nowUTC - startUTC) / 86400000));
+    // Reference = the most recent SEND day: today if it's a weekday, else step back to Friday.
+    // So on Sat/Sun the card shows the last day that actually sent — the number does NOT tick
+    // up on non-send days; it climbs again on Monday when sending resumes.
+    let refUTC = nowUTC;
+    for (let g = 0; g < 7; g++) {
+      const dow = new Date(refUTC).getUTCDay(); // 0 = Sun … 6 = Sat
+      if (dow !== 0 && dow !== 6) break;
+      refUTC -= 86400000;
+    }
+    // Count weekdays STRICTLY BEFORE that send day (mirrors the engine's countSendingDays).
+    let days = 0;
+    for (let t = startUTC; t < refUTC; t += 86400000) {
+      const dow = new Date(t).getUTCDay();
+      if (dow !== 0 && dow !== 6) days++;
+    }
     const inc = acc.warmup_increment || 2;
     const target = acc.warmup_limit || acc.daily_limit || 30;
     // warmup_day (repurposed) = the STARTING daily limit (day 1). If 0/absent, start
