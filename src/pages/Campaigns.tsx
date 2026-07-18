@@ -123,6 +123,18 @@ export default function Campaigns() {
 
   useEffect(() => { load(); }, [user]);
 
+  // The reply rate must be over PEOPLE CONTACTED, not total emails (which include
+  // follow-ups). `progressMap[id].sent` = campaign_leads already emailed = contacted
+  // people — already computed (count-only), so we feed it as `contacted` with no extra
+  // query and no SQL change needed. Falls back to the RPC's own contacted if progress
+  // hasn't loaded yet.
+  const metricsFor = (id: string) => {
+    const mm = metricsMap[id];
+    if (!mm) return mm; // not loaded → component self-loads and computes contacted itself
+    const c = progressMap[id]?.sent;
+    return c != null ? { ...mm, contacted: c } : mm;
+  };
+
   const handleCreate = async () => {
     if (!user || !form.name) return;
     const { error } = await supabase.from("campaigns").insert({
@@ -359,7 +371,7 @@ export default function Campaigns() {
             {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pause</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Launch" : "Resume"}</>}
           </Button>
         </div>
-        <CampaignReportBar campaign={selectedCampaign} metrics={metricsMap[selectedCampaign.id]} />
+        <CampaignReportBar campaign={selectedCampaign} metrics={metricsFor(selectedCampaign.id)} />
         <CampaignSendsChart campaignId={selectedCampaign.id} />
         <CampaignDetail campaignId={selectedCampaign.id} />
       </div>
@@ -434,7 +446,7 @@ export default function Campaigns() {
                   </div>
                   {/* Inline metrics */}
                   <div className="mt-3 border-t border-border/40 pt-3">
-                    <CampaignMetricsInline campaignId={campaign.id} metrics={metricsMap[campaign.id]} />
+                    <CampaignMetricsInline campaignId={campaign.id} metrics={metricsFor(campaign.id)} />
                   </div>
                 </CardContent>
               </Card>
