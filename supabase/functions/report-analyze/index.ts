@@ -84,7 +84,7 @@ function buildPrompt(body: any): string {
     `- Personas contactadas (únicas): ${t.contacted || 0}`,
     `- Correos enviados (con follow-ups): ${t.sent || 0}`,
     `- Respuestas (leads que respondieron): ${t.replied || 0}`,
-    `- Tasa de respuesta sobre contactados: ${(body.replyRate ?? 0).toFixed ? body.replyRate.toFixed(1) : body.replyRate}%`,
+    `- Tasa de respuesta sobre contactados: ${Number(body.replyRate ?? 0).toFixed(1)}%`,
     `- Interesados detectados: ${t.positive || 0}`,
     `- Rebotes: ${t.bounced || 0}`,
     `- Contactos restantes por enviar: ${t.remaining || 0}`,

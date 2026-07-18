@@ -245,11 +245,11 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
     ? mergeDaily(data.campaigns)
     : [];
   if (daily.length) {
+    ensure(14 + 44 + 15); // keep section header + chart + legend together on one page
     section("Actividad diaria");
-    drawBarChart(doc, MARGIN, y, CONTENT_W, 44, daily, brand, muted, line, ensure);
+    drawBarChart(doc, MARGIN, y, CONTENT_W, 44, daily, brand, muted, line);
     y += 44 + 6;
     // legend
-    ensure(6);
     setFill(brand); doc.rect(MARGIN, y - 2.6, 3, 3, "F");
     setText(muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
     doc.text("Enviados", MARGIN + 5, y);
@@ -261,8 +261,9 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
 
   // ── Per-campaign table ───────────────────────────────────────────────────
   if (data.campaigns.length) {
+    ensure(14 + 8 * 3); // header + a few rows before allowing a page break
     section("Detalle por campaña");
-    drawTable(doc, y, data, brand, ink, muted, line, ensure, (ny) => { y = ny; });
+    y = drawTable(doc, y, data, brand, ink, muted, line);
     y += 4;
   }
 
@@ -276,7 +277,7 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
       .map((s) => doc.splitTextToSize(s, CONTENT_W - 22).length)
       .reduce((a, b) => a + b, 0);
     const boxH = measure * 5.2 + data.narrative.nextSteps.length * 2 + 8;
-    ensure(Math.min(boxH, 60) + 2);
+    ensure(boxH + 2); // reserve the full box so the bullets never spill past it
     const boxTop = y;
     setFill(softBrand);
     doc.roundedRect(MARGIN, y, CONTENT_W, boxH, 3, 3, "F");
@@ -326,9 +327,8 @@ function mergeDaily(campaigns: ReportData["campaigns"]): { day: string; sends: n
 function drawBarChart(
   doc: any, x: number, top: number, w: number, h: number,
   daily: { day: string; sends: number; replies: number }[],
-  brand: Rgb, muted: Rgb, line: Rgb, ensure: (h: number) => void,
+  brand: Rgb, muted: Rgb, line: Rgb,
 ) {
-  ensure(h + 4);
   const teal: Rgb = [20, 160, 133];
   const axisY = top + h - 8; // baseline
   const chartTop = top + 2;
@@ -366,8 +366,7 @@ function shortDay(iso: string): string {
 function drawTable(
   doc: any, top: number, data: ReportData,
   brand: Rgb, ink: Rgb, muted: Rgb, line: Rgb,
-  ensure: (h: number) => void, setY: (y: number) => void,
-) {
+): number {
   let y = top;
   const cols = [
     { key: "name", label: "Campaña", w: 62, align: "left" as const },
@@ -393,10 +392,9 @@ function drawTable(
     }
     y += rowH;
   };
-  ensure(rowH * 2);
   drawHeader();
   data.campaigns.forEach((c, i) => {
-    if (y + rowH > PAGE_H - FOOTER_H) { ensure(rowH * 2); drawHeader(); }
+    if (y + rowH > PAGE_H - FOOTER_H) { doc.addPage(); y = MARGIN + 4; drawHeader(); }
     if (i % 2 === 1) { doc.setFillColor(247, 247, 250); doc.rect(MARGIN, y, CONTENT_W, rowH, "F"); }
     const rate = c.contacted > 0 ? `${((c.replied / c.contacted) * 100).toFixed(1)}%` : "0%";
     const vals: Record<string, string> = {
@@ -423,5 +421,5 @@ function drawTable(
     doc.line(MARGIN, y + rowH, MARGIN + CONTENT_W, y + rowH);
     y += rowH;
   });
-  setY(y + 2);
+  return y + 2;
 }

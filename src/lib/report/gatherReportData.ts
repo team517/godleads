@@ -28,6 +28,9 @@ function periodLabel(kind: ReportKind, days: number): string {
 
 export async function gatherReportData(opts: GatherOptions): Promise<ReportData> {
   const periodDays = opts.periodDays;
+  // The daily chart always shows at least a week of context (a 48h window is only
+  // 2 bars — too sparse to read a trend). Period totals still use `periodDays`.
+  const chartDays = Math.max(7, periodDays);
 
   // 1) Campaign list (id + name), lifetime metrics, and window metrics — in parallel.
   const [campRes, metricsRes, periodRes] = await Promise.all([
@@ -49,7 +52,7 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
   const blocks: CampaignReportBlock[] = await Promise.all(
     selected.map(async (c) => {
       const [dailyRes, totalRes, contactedRes] = await Promise.all([
-        (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: c.id, p_days: periodDays }),
+        (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: c.id, p_days: chartDays }),
         supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id),
         supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).not("last_sent_at", "is", null),
       ]);
