@@ -8,10 +8,14 @@ create or replace function public.purge_old_warmup(p_days int default 7)
 returns integer language plpgsql security definer set search_path=public as $$
 declare v_deleted integer;
 begin
+  -- Delete ONLY warmup noise from the "Todos" view: not linked to a lead/campaign, old, and
+  -- NOT manually flagged "Importante". Protect specifically the manual star (labels contains
+  -- 'Importante') — NOT the auto-intent labels (Interesado/Pregunta/Fuera-Auto) which the
+  -- system also stamps on warmup. Real replies (lead_id/campaign_id) are never touched.
   delete from public.inbox_messages
   where lead_id is null and campaign_id is null
     and received_at < now() - (p_days || ' days')::interval
-    and (labels is null or array_length(labels, 1) is null);
+    and not coalesce(labels @> array['Importante']::text[], false);
   get diagnostics v_deleted = row_count;
   return v_deleted;
 end; $$;
