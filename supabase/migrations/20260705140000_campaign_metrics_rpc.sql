@@ -12,6 +12,7 @@ create or replace function public.campaign_metrics_for_user(p_user_id uuid)
 returns table (
   campaign_id    uuid,
   sent           bigint,
+  contacted      bigint,
   opened         bigint,
   bounced        bigint,
   replied        bigint,
@@ -53,6 +54,12 @@ as $$
   agg as (
     select campaign_id,
       count(*) filter (where sent_at is not null or status = 'sent')   as sent,
+      -- Contacted = DISTINCT people we actually emailed (not raw send rows,
+      -- which include every follow-up). This is the correct denominator for the
+      -- reply rate — replied/sent counts each lead's 3-4 follow-ups as separate
+      -- "chances", so it makes the % look ~3-4x lower than it really is.
+      count(distinct coalesce(lead_id::text, email))
+        filter (where sent_at is not null or status = 'sent')          as contacted,
       count(*) filter (where opened_at is not null)                    as opened,
       count(*) filter (where bounced_at is not null)                   as bounced,
       count(distinct coalesce(lead_id::text, email))
@@ -74,6 +81,7 @@ as $$
   )
   select c.id,
     coalesce(agg.sent, 0),
+    coalesce(agg.contacted, 0),
     coalesce(agg.opened, 0),
     coalesce(agg.bounced, 0),
     coalesce(agg.replied, 0),

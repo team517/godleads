@@ -94,6 +94,7 @@ export default function Campaigns() {
       for (const r of rows as any[]) {
         map[r.campaign_id] = {
           sent: Number(r.sent) || 0,
+          contacted: Number(r.contacted) || 0,
           opened: Number(r.opened) || 0,
           replied: Number(r.replied) || 0,
           positive: Number(r.positive) || 0,

@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Send, MailOpen, MessageSquareReply, AlertTriangle, MailX,
+  Send, Users, MailOpen, MessageSquareReply, AlertTriangle, MailX,
   Play, Pause, FileEdit, ExternalLink, DollarSign,
 } from "lucide-react";
 
-type Metrics = { sent: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number; sequences: number };
+type Metrics = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number; sequences: number };
 interface Props { campaign: any; metrics?: Metrics | null; }
 
 const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play }> = {
@@ -19,7 +19,7 @@ const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play
 /** Instantly-style report bar: campaign details on the left, key metrics on the right. */
 export default function CampaignReportBar({ campaign, metrics: metricsProp }: Props) {
   const navigate = useNavigate();
-  const [m, setM] = useState(metricsProp ?? { sent: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 });
+  const [m, setM] = useState(metricsProp ?? { sent: 0, contacted: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 });
   const [loading, setLoading] = useState(!metricsProp);
 
   useEffect(() => {
@@ -60,8 +60,13 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
       const repliedLeads = new Set(
         e.filter((x: any) => x.replied_at).map((x: any) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)
       );
+      // Contacted = DISTINCT people emailed → correct denominator for the reply rate.
+      const contactedLeads = new Set(
+        e.filter((x: any) => x.status === "sent" || x.sent_at).map((x: any) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)
+      );
       setM({
         sent,
+        contacted: contactedLeads.size,
         opened: e.filter((x: any) => x.opened_at).length,
         replied: repliedLeads.size,
         bounced: e.filter((x: any) => x.bounced_at).length,
@@ -77,13 +82,18 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
   }, [campaign.id, metricsProp]);
 
   const pct = (n: number) => (m.sent > 0 ? `${((n / m.sent) * 100).toFixed(2)}%` : "0%");
+  // Reply rate over CONTACTED leads (people), not emails sent (which include
+  // follow-ups). Fall back to sent for old cached metrics with no `contacted`.
+  const denom = (m.contacted || 0) || m.sent;
+  const replyPct = denom > 0 ? `${((m.replied / denom) * 100).toFixed(2)}%` : "0%";
   const meta = statusMeta[campaign.status] || statusMeta.draft;
   const StatusIcon = meta.icon;
 
   const metrics = [
     { key: "sent",     label: "Sent",          value: m.sent,          sub: null,            icon: Send,               color: "text-indigo-600" },
+    { key: "contacted",label: "Contacted",     value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600" },
     { key: "opened",   label: "Opened",        value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600" },
-    { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: pct(m.replied),  icon: MessageSquareReply, color: "text-teal-600" },
+    { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600" },
     { key: "positive", label: "Positive Reply", value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600", link: true },
     { key: "bounced",  label: "Bounced",       value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500" },
     { key: "sbounced", label: "Sender Bounced", value: m.senderBounced, sub: pct(m.senderBounced), icon: MailX,         color: "text-red-600" },
@@ -115,7 +125,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
         {/* Right — Report */}
         <div className="min-w-0 flex-1">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Report</p>
-          <div className="grid grid-cols-3 gap-x-1 gap-y-3 sm:grid-cols-6">
+          <div className="grid grid-cols-3 gap-x-1 gap-y-3 sm:grid-cols-4 lg:grid-cols-7">
             {metrics.map((mt) => (
               <div key={mt.key} className="min-w-[60px] px-1 text-center sm:min-w-[80px]">
                 <p className={`text-xl font-bold leading-none ${mt.color}`}>
