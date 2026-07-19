@@ -38,7 +38,7 @@ async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; 
 export default function CampaignAnalytics({ campaignId }: Props) {
   const { user } = useAuth();
   const { profile } = useProfile();
-  const [stats, setStats] = useState({ started: 0, sent: 0, replied: 0, failed: 0 });
+  const [stats, setStats] = useState({ started: 0, contacted: 0, sent: 0, replied: 0, failed: 0 });
   const [stepStats, setStepStats] = useState<any[]>([]);
   const [campaignName, setCampaignName] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -93,36 +93,72 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
   useEffect(() => {
     const load = async () => {
-      const [leadsRes, sentRes, stepsRes, campaignRes] = await Promise.all([
-        supabase.from("campaign_leads").select("id, status").eq("campaign_id", campaignId),
-        supabase.from("sent_emails").select("id, status, campaign_step_id, replied_at").eq("campaign_id", campaignId),
+      // Steps + name are tiny tables (never near the 1000-row cap); the RPC
+      // returns server-side aggregates (distinct contacted/replied) for ALL of
+      // the caller's campaigns in one call — accurate and NOT capped at 1000.
+      const [stepsRes, campaignRes, metricsRes] = await Promise.all([
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         supabase.from("campaigns").select("name").eq("id", campaignId).single(),
+        user
+          ? supabase.rpc("campaign_metrics_for_user", { p_user_id: user.id })
+          : Promise.resolve({ data: [] as any[] }),
       ]);
-      const leads = leadsRes.data || [];
-      const emails = sentRes.data || [];
       const steps = stepsRes.data || [];
       setCampaignName(campaignRes.data?.name || "Campaña");
 
+      const m: any = (metricsRes.data || []).find((r: any) => r.campaign_id === campaignId) || {};
+
+      // count-only queries (head:true) return the TRUE total — PostgREST does NOT
+      // apply the 1000-row limit to a count. This is why the old code (download
+      // rows + count in JS) was stuck at 1000 and never matched reality.
+      const [startedRes, failedRes] = await Promise.all([
+        supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId),
+        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("status", "failed"),
+      ]);
+
+      const totalSent = Number(m.sent || 0);
+      const totalReplied = Number(m.replied || 0);
+      const totalFailed = failedRes.count || 0;
+
       setStats({
-        started: leads.length,
-        sent: emails.filter(e => e.status === "sent").length,
-        replied: emails.filter(e => e.replied_at).length,
-        failed: emails.filter(e => e.status === "failed").length,
+        started: startedRes.count || 0,
+        // A replier was necessarily contacted, so contacted can never be < replied
+        // (guards the reply rate from ever exceeding 100% on odd data).
+        contacted: Math.max(Number(m.contacted || 0), totalReplied),
+        sent: totalSent,
+        replied: totalReplied,
+        failed: totalFailed,
       });
 
-      setStepStats(steps.map(s => {
-        const stepEmails = emails.filter(e => e.campaign_step_id === s.id);
-        return {
-          ...s,
-          sent: stepEmails.filter(e => e.status === "sent").length,
-          replied: stepEmails.filter(e => e.replied_at).length,
-          failed: stepEmails.filter(e => e.status === "failed").length,
-        };
-      }));
+      // Per-step breakdown — also server-side counts, same predicate as the RPC
+      // (sent = sent_at set OR status 'sent') so the steps sum to the totals.
+      const perStep: any[] = await Promise.all(
+        steps.map(async (s: any) => {
+          const base = () =>
+            supabase.from("sent_emails").select("id", { count: "exact", head: true })
+              .eq("campaign_id", campaignId).eq("campaign_step_id", s.id);
+          const [sSent, sReplied, sFailed] = await Promise.all([
+            base().or("sent_at.not.is.null,status.eq.sent"),
+            base().not("replied_at", "is", null),
+            base().eq("status", "failed"),
+          ]);
+          return { ...s, sent: sSent.count || 0, replied: sReplied.count || 0, failed: sFailed.count || 0 };
+        })
+      );
+
+      // Reconcile: any sends/fails not tied to a listed step (null or deleted
+      // step_id) go into an "Other" row so the breakdown adds up to the totals.
+      const sum = (k: string) => perStep.reduce((a, r: any) => a + (Number(r[k]) || 0), 0);
+      const otherSent = Math.max(0, totalSent - sum("sent"));
+      const otherReplied = Math.max(0, totalReplied - sum("replied"));
+      const otherFailed = Math.max(0, totalFailed - sum("failed"));
+      if (otherSent + otherFailed > 0) {
+        perStep.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, failed: otherFailed, _other: true });
+      }
+      setStepStats(perStep);
     };
     load();
-  }, [campaignId]);
+  }, [campaignId, user]);
 
   const captureAnalytics = async (): Promise<string> => {
     if (!analyticsRef.current) throw new Error("No analytics to capture");
@@ -207,7 +243,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
         return;
       }
 
-      const replyRate = stats.sent > 0 ? ((stats.replied / stats.sent) * 100).toFixed(1) : "0";
+      const replyRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
 
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -291,16 +327,20 @@ export default function CampaignAnalytics({ campaignId }: Props) {
     { label: "Failed", value: stats.failed, icon: Mail, color: "text-destructive" },
   ];
 
-  const replyRate = stats.sent > 0 ? ((stats.replied / stats.sent) * 100).toFixed(1) : "0";
+  // Reply rate over CONTACTED people (not emails sent) — the correct denominator.
+  const replyRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
 
   return (
     <div className="space-y-6">
       {/* Share / Download actions */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col">
           <h3 className="text-sm font-semibold text-muted-foreground">
             Reply rate: <span className="text-foreground text-base font-bold">{replyRate}%</span>
           </h3>
+          <span className="text-[11px] text-muted-foreground">
+            {stats.replied} respuestas de {stats.contacted} contactados
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <Popover open={brandOpen} onOpenChange={setBrandOpen}>
@@ -408,15 +448,30 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           <div className="mt-6">
             <h4 className="text-sm font-semibold mb-3">Step Analytics</h4>
             <div className="space-y-2">
-              {stepStats.map(s => (
-                <div key={s.id} className="flex items-center gap-4 rounded-lg border p-3 text-sm">
-                  <span className="font-medium text-primary">Step {s.step_order}</span>
-                  <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
-                  <span className="text-success">{s.sent} sent</span>
-                  <span className="text-info">{s.replied} replies</span>
-                  <span className="text-destructive">{s.failed} failed</span>
-                </div>
-              ))}
+              {(() => {
+                const maxSent = Math.max(1, ...stepStats.map((s: any) => Number(s.sent) || 0));
+                return stepStats.map((s: any) => (
+                  <div key={s.id} className={`rounded-lg border p-3 ${s._other ? "bg-muted/40" : ""}`}>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="font-medium text-primary whitespace-nowrap">
+                        {s._other ? "Other" : `Step ${s.step_order}`}
+                      </span>
+                      <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
+                      <span className="text-success whitespace-nowrap">{s.sent} sent</span>
+                      <span className="text-info whitespace-nowrap">{s.replied} replies</span>
+                      <span className="text-destructive whitespace-nowrap">{s.failed} failed</span>
+                    </div>
+                    {!s._other && (
+                      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted" title={`${s.sent} enviados`}>
+                        <div
+                          className="h-full rounded-full bg-primary/70"
+                          style={{ width: `${Math.round(((Number(s.sent) || 0) / maxSent) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ));
+              })()}
             </div>
           </div>
         )}
