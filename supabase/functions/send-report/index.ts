@@ -222,23 +222,17 @@ async function fetchNarrative(data: ReportData, threshold: number) {
   return { summary: "", highlights: [], nextSteps: [], suggestions: [], alert: null };
 }
 
-// A plain, human-written email (text/plain) — reads like a real person wrote it,
-// with the PDF attached. A discreet link at the end is a fallback in case a mail
-// client strips the attachment.
+// A plain, human-written email (text/plain) that shares a LINK to the report — no
+// attachment (attachments are heavier and the client just clicks the link).
 function emailText(data: ReportData, company: string, pdfUrl: string | null): string {
-  const t = data.totals;
   const periodTxt = data.kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
-  const summary = (data.narrative.summary || "").trim();
-  const fallback = `Hemos contactado a ${t.periodNewContacts.toLocaleString("es")} personas nuevas y llevamos una tasa de respuesta del ${data.replyRate.toFixed(1)}% (${t.replied.toLocaleString("es")} respuestas de ${t.contacted.toLocaleString("es")} contactados).`;
   const lines = [
     `Hola,`,
     ``,
-    `Te paso el análisis ${periodTxt} de tu campaña.`,
+    `Te paso el link para que veas el estudio que hemos hecho de tu campaña ${periodTxt}:`,
+    ...(pdfUrl ? ["", pdfUrl] : []),
     ``,
-    summary || fallback,
-    ``,
-    `Adjunto el PDF con el detalle completo por campaña y las mejoras que vamos a aplicar.`,
-    ...(pdfUrl ? ["", `(Si no ves el adjunto, también puedes abrirlo aquí: ${pdfUrl})`] : []),
+    `Ahí tienes el análisis completo con el detalle por campaña y las mejoras que vamos a aplicar.`,
     ``,
     `Un saludo,`,
     company,
@@ -313,12 +307,10 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
-  const slug = clientName.replace(/\s+/g, "-").toLowerCase().replace(/[^a-z0-9\-]/g, "");
-  const filename = `analisis-campana-${slug || "cliente"}.pdf`;
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
     acct.email, clientName, to, subject, emailText(data, clientName, signedUrl),
-    [{ filename, mime: "application/pdf", base64: bytesToB64(pdfBytes) }],
+    [], // solo el link, sin adjunto
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null));
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
@@ -387,9 +379,9 @@ serve(async (req) => {
     }
 
     if (mode === "email_pdf") {
-      // Send an ALREADY-GENERATED PDF (the exact one from the browser preview) as an
-      // attachment, so the test email matches the preview exactly. Admin/manager JWT
-      // or secret required.
+      // Upload an ALREADY-GENERATED PDF (the exact one from the browser preview) and
+      // email a LINK to it (no attachment) — so the test matches the preview exactly.
+      // Admin/manager JWT or secret required.
       let authorized = false;
       if (body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET")) authorized = true;
       else {
@@ -407,12 +399,12 @@ serve(async (req) => {
       }
       if (!authorized) return json({ error: "Forbidden" }, 403);
 
-      const { to, from_account_id, pdf_base64, filename, subject, company, body_text } = body;
+      const { to, from_account_id, pdf_base64, subject, company } = body;
       if (!to || !from_account_id || !pdf_base64) return json({ error: "Faltan datos (to, from_account_id, pdf_base64)" }, 400);
       const { data: acct } = await admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id).maybeSingle();
       if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe o no tiene SMTP" }, 400);
 
-      // Upload a copy for a link fallback (in case a client strips the attachment).
+      // Upload the previewed PDF and email a link to it (no attachment).
       let signed: string | null = null;
       try {
         const bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
@@ -420,13 +412,19 @@ serve(async (req) => {
         const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
         if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 7)).data?.signedUrl || null;
       } catch { /* ignore */ }
+      if (!signed) return json({ ok: false, error: "No se pudo subir el PDF para generar el link" }, 500);
 
-      const text = (String(body_text || "Hola,\n\nTe paso el análisis de tu campaña. Adjunto el PDF con el detalle.\n\nUn saludo").trim())
-        + (signed ? `\n\n(Si no ves el adjunto, también puedes abrirlo aquí: ${signed})` : "") + "\n";
+      const text = [
+        "Hola,", "",
+        "Te paso el link para que veas el estudio que hemos hecho de tu campaña:", "",
+        signed, "",
+        "Ahí tienes el análisis completo con el detalle por campaña y las mejoras que vamos a aplicar.", "",
+        "Un saludo,", (company || ""),
+      ].join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
         acct.email, company || acct.email, to, subject || "Análisis de tu campaña", text,
-        [{ filename: filename || "analisis-campana.pdf", mime: "application/pdf", base64: pdf_base64 }],
+        [], // solo el link, sin adjunto
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript });
     }
