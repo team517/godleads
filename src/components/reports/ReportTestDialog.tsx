@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +32,7 @@ export default function ReportTestDialog({ client, open, onClose }: {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [filename, setFilename] = useState("informe.pdf");
   const lastBlob = useRef<Blob | null>(null);
+  const lastData = useRef<any>(null);
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -77,6 +77,7 @@ export default function ReportTestDialog({ client, open, onClose }: {
       const { blob, filename } = await renderReportPdfBlob(data, { company, brandColor, logoUrl: client.logo_url || undefined });
       if (!aliveRef.current) return;
       lastBlob.current = blob;
+      lastData.current = data;
       setFilename(filename);
       if (pdfUrl) URL.revokeObjectURL(pdfUrl);
       setPdfUrl(URL.createObjectURL(blob));
@@ -96,21 +97,44 @@ export default function ReportTestDialog({ client, open, onClose }: {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
 
-  // Email a test copy (via the deliverable server path: report + link to the PDF).
+  const blobToB64 = async (blob: Blob): Promise<string> => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = ""; const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as any);
+    return btoa(bin);
+  };
+
+  // Email the EXACT PDF you're previewing (same branding + data), as a plain written
+  // email with the PDF attached — so the test matches what you see.
   const sendTest = async () => {
     if (!sendTo.trim()) { toast.error("Escribe un email"); return; }
     if (!ownerAccount) { toast.error("No tienes ninguna cuenta de email conectada para enviar"); return; }
-    if (!user?.id) { toast.error("Sesión no disponible"); return; }
+    if (!lastBlob.current || !lastData.current) { toast.error("Genera primero la prueba — así te llega exactamente lo que ves"); return; }
     setSending(true);
     try {
+      const pdf_base64 = await blobToB64(lastBlob.current);
+      const d = lastData.current;
+      const periodTxt = kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
+      const summary = (d.narrative?.summary || "").trim();
+      const body_text = [
+        "Hola,", "",
+        `Te paso el análisis ${periodTxt} de tu campaña.`, "",
+        summary || `Llevamos una tasa de respuesta del ${d.replyRate.toFixed(1)}% (${d.totals.replied} respuestas de ${d.totals.contacted} contactados).`, "",
+        "Adjunto el PDF con el detalle completo por campaña y las mejoras que vamos a aplicar.", "",
+        "Un saludo,", company,
+      ].join("\n");
       const { data: { session } } = await supabase.auth.getSession();
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ mode: "manual", client_user_id: user.id, kind, test_to: sendTo.trim(), from_account_id: ownerAccount }),
+        body: JSON.stringify({
+          mode: "email_pdf", to: sendTo.trim(), from_account_id: ownerAccount,
+          pdf_base64, filename, company, body_text,
+          subject: kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña",
+        }),
       });
       const j = await resp.json();
-      if (j.ok) toast.success(`Prueba enviada a ${sendTo}. Revísalo (Unibox → Importantes si te lo mandas a ti).`);
+      if (j.ok) toast.success(`Prueba enviada a ${sendTo} con el PDF adjunto. Revísalo.`);
       else toast.error(j.error || "No se pudo enviar la prueba");
     } catch (e: any) { toast.error(String(e?.message || e)); }
     setSending(false);
@@ -179,13 +203,14 @@ export default function ReportTestDialog({ client, open, onClose }: {
           {/* Test send */}
           <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
             <div className="flex-1 space-y-1">
-              <label className="text-[11px] font-medium text-muted-foreground">Enviar una prueba por email a</label>
+              <label className="text-[11px] font-medium text-muted-foreground">Enviar una prueba (con el PDF adjunto) a</label>
               <Input type="email" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="hello@onepulso.blog" className="h-9 text-sm" />
             </div>
-            <Button onClick={sendTest} disabled={sending || !ownerAccount} className="h-9 shrink-0 gap-2">
+            <Button onClick={sendTest} disabled={sending || !ownerAccount || !pdfUrl} className="h-9 shrink-0 gap-2" title={!pdfUrl ? "Genera la prueba primero" : ""}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar prueba
             </Button>
             {!ownerAccount && !loadingCamps && <p className="w-full text-[10px] text-amber-600">No tienes ninguna cuenta de email conectada para enviar.</p>}
+            {ownerAccount && !pdfUrl && <p className="w-full text-[10px] text-muted-foreground">Pulsa "Generar prueba" primero — se envía exactamente ese PDF.</p>}
           </div>
 
           {/* Preview */}

@@ -83,7 +83,7 @@ async function fetchLogo(url: string | null | undefined): Promise<{ dataUrl: str
 // ── Minimal SMTP sender with a PDF attachment (implicit TLS 465 / STARTTLS 587) ──
 async function sendSmtp(
   host: string, port: number, username: string, password: string,
-  from: string, fromName: string, to: string, subject: string, html: string,
+  from: string, fromName: string, to: string, subject: string, body: string,
   attachments: { filename: string; mime: string; base64: string }[],
 ): Promise<{ ok: boolean; error?: string; transcript?: string[] }> {
   const log: string[] = [];
@@ -150,10 +150,10 @@ async function sendSmtp(
       ].join("\r\n"),
       "",
       `--${boundary}`,
-      `Content-Type: text/html; charset=utf-8`,
+      `Content-Type: text/plain; charset=utf-8`,
       `Content-Transfer-Encoding: base64`,
       "",
-      b64wrap(b64utf8(html)),
+      b64wrap(b64utf8(body)),
     ];
     for (const att of attachments) {
       parts.push(
@@ -222,39 +222,28 @@ async function fetchNarrative(data: ReportData, threshold: number) {
   return { summary: "", highlights: [], nextSteps: [], suggestions: [], alert: null };
 }
 
-function emailHtml(data: ReportData, brandColor: string, pdfUrl: string | null): string {
+// A plain, human-written email (text/plain) — reads like a real person wrote it,
+// with the PDF attached. A discreet link at the end is a fallback in case a mail
+// client strips the attachment.
+function emailText(data: ReportData, company: string, pdfUrl: string | null): string {
   const t = data.totals;
   const periodTxt = data.kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
-  const firstStep = (data.narrative.summary || "").slice(0, 400);
-  const button = pdfUrl
-    ? `<div style="text-align:center;margin:8px 0 18px">
-         <a href="${pdfUrl}" style="display:inline-block;background:${brandColor};color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:13px 26px;border-radius:10px">📄 Ver tu informe completo (PDF)</a>
-       </div>
-       <p style="color:#98a2b3;font-size:11px;text-align:center;margin:0 0 16px">o copia este enlace: <span style="color:#667085">${pdfUrl}</span></p>`
-    : "";
-  return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1e1e26">
-    <div style="background:${brandColor};height:6px;border-radius:6px 6px 0 0"></div>
-    <div style="padding:20px 4px">
-      <h2 style="margin:0 0 6px;font-size:18px">Hola 👋 Este es el análisis ${periodTxt} de tu campaña</h2>
-      <p style="color:#667085;font-size:14px;margin:0 0 16px">${firstStep || "Te compartimos cómo va tu campaña, con las métricas clave y las mejoras que vamos a aplicar."}</p>
-      <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
-        <tr>
-          <td style="text-align:center;padding:10px;border:1px solid #eef">
-            <div style="font-size:22px;font-weight:700;color:${brandColor}">${data.replyRate.toFixed(1)}%</div>
-            <div style="font-size:11px;color:#888">Tasa de respuesta</div></td>
-          <td style="text-align:center;padding:10px;border:1px solid #eef">
-            <div style="font-size:22px;font-weight:700">${t.contacted.toLocaleString("es")}</div>
-            <div style="font-size:11px;color:#888">Contactados</div></td>
-          <td style="text-align:center;padding:10px;border:1px solid #eef">
-            <div style="font-size:22px;font-weight:700">${t.replied.toLocaleString("es")}</div>
-            <div style="font-size:11px;color:#888">Respuestas</div></td>
-        </tr>
-      </table>
-      <p style="font-size:14px;margin:0 0 12px">Aquí tienes el <b>análisis completo</b> con el detalle por campaña y las mejoras que vamos a aplicar:</p>
-      ${button}
-      <p style="color:#98a2b3;font-size:11px;margin-top:20px">Informe automático generado por tu equipo de OnePulso.</p>
-    </div>
-  </div>`;
+  const summary = (data.narrative.summary || "").trim();
+  const fallback = `Hemos contactado a ${t.periodNewContacts.toLocaleString("es")} personas nuevas y llevamos una tasa de respuesta del ${data.replyRate.toFixed(1)}% (${t.replied.toLocaleString("es")} respuestas de ${t.contacted.toLocaleString("es")} contactados).`;
+  const lines = [
+    `Hola,`,
+    ``,
+    `Te paso el análisis ${periodTxt} de tu campaña.`,
+    ``,
+    summary || fallback,
+    ``,
+    `Adjunto el PDF con el detalle completo por campaña y las mejoras que vamos a aplicar.`,
+    ...(pdfUrl ? ["", `(Si no ves el adjunto, también puedes abrirlo aquí: ${pdfUrl})`] : []),
+    ``,
+    `Un saludo,`,
+    company,
+  ];
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
 async function logReport(admin: any, userId: string, kind: string, data: ReportData, pdfPath: string | null, sentTo: string | null, ok: boolean, error: string | null) {
@@ -324,10 +313,12 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
+  const slug = clientName.replace(/\s+/g, "-").toLowerCase().replace(/[^a-z0-9\-]/g, "");
+  const filename = `analisis-campana-${slug || "cliente"}.pdf`;
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-    acct.email, clientName, to, subject, emailHtml(data, branding.brandColor, signedUrl),
-    [], // no attachment — the PDF is linked (attachments kill deliverability on cold domains)
+    acct.email, clientName, to, subject, emailText(data, clientName, signedUrl),
+    [{ filename, mime: "application/pdf", base64: bytesToB64(pdfBytes) }],
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null));
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
@@ -393,6 +384,51 @@ serve(async (req) => {
       const client: ClientCtx = { ...((p as any) || {}), user_id: clientUserId, email: u.user.email || null };
       const r = await generateReport(admin, client, kind, { dryRun: !!body.dry_run, testTo: body.test_to, fromAccountId: body.from_account_id });
       return json(r);
+    }
+
+    if (mode === "email_pdf") {
+      // Send an ALREADY-GENERATED PDF (the exact one from the browser preview) as an
+      // attachment, so the test email matches the preview exactly. Admin/manager JWT
+      // or secret required.
+      let authorized = false;
+      if (body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET")) authorized = true;
+      else {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (token) {
+          const { data: ures } = await admin.auth.getUser(token);
+          const caller = ures?.user;
+          if (caller) {
+            const { data: role } = await admin.from("user_roles").select("role").eq("user_id", caller.id).single();
+            const { data: cprof } = await admin.from("profiles").select("is_client_manager").eq("user_id", caller.id).single();
+            authorized = role?.role === "admin" || !!cprof?.is_client_manager;
+          }
+        }
+      }
+      if (!authorized) return json({ error: "Forbidden" }, 403);
+
+      const { to, from_account_id, pdf_base64, filename, subject, company, body_text } = body;
+      if (!to || !from_account_id || !pdf_base64) return json({ error: "Faltan datos (to, from_account_id, pdf_base64)" }, 400);
+      const { data: acct } = await admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id).maybeSingle();
+      if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe o no tiene SMTP" }, 400);
+
+      // Upload a copy for a link fallback (in case a client strips the attachment).
+      let signed: string | null = null;
+      try {
+        const bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
+        const path = `test/${Date.now()}.pdf`;
+        const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
+        if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 7)).data?.signedUrl || null;
+      } catch { /* ignore */ }
+
+      const text = (String(body_text || "Hola,\n\nTe paso el análisis de tu campaña. Adjunto el PDF con el detalle.\n\nUn saludo").trim())
+        + (signed ? `\n\n(Si no ves el adjunto, también puedes abrirlo aquí: ${signed})` : "") + "\n";
+      const r = await sendSmtp(
+        acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
+        acct.email, company || acct.email, to, subject || "Análisis de tu campaña", text,
+        [{ filename: filename || "analisis-campana.pdf", mime: "application/pdf", base64: pdf_base64 }],
+      );
+      return json({ ok: r.ok, error: r.error, smtp: r.transcript });
     }
 
     return json({ error: "unknown mode" }, 400);
