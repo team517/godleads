@@ -114,7 +114,24 @@ function ClientRow({ c, onEdit, onDelete, onTest }: { c: Client; onEdit: () => v
           ? <img src={c.logo_url} alt="" className="h-9 w-9 rounded border object-contain" />
           : <span className="flex h-9 w-9 items-center justify-center rounded bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>}
         <div className="min-w-0 space-y-1">
-          <p className="truncate text-sm font-medium">{c.company_name || c.full_name || c.email}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-sm font-medium">{c.company_name || c.full_name || c.email}</p>
+            {c.report_enabled ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+                title="Seguimiento activo: recibe informes automáticos de sus campañas"
+              >
+                <Check className="h-3 w-3" /> Seguimiento activo
+              </span>
+            ) : (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                title="Seguimiento desactivado: no se le envían informes automáticos"
+              >
+                Seguimiento off
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <span className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="font-mono text-foreground">{c.email}</span>
