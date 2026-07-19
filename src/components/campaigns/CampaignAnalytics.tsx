@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
-import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
+import { BarChart3, Send, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
@@ -43,7 +43,7 @@ async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; 
 export default function CampaignAnalytics({ campaignId }: Props) {
   const { user } = useAuth();
   const { profile } = useProfile();
-  const [stats, setStats] = useState({ started: 0, contacted: 0, sent: 0, replied: 0, failed: 0 });
+  const [stats, setStats] = useState({ contacted: 0, sent: 0, replied: 0 });
   const [daily, setDaily] = useState<DayPoint[]>([]);
   const [stepStats, setStepStats] = useState<any[]>([]);
   const [campaignName, setCampaignName] = useState("");
@@ -130,26 +130,17 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
       const m: any = (metricsRes.data || []).find((r: any) => r.campaign_id === campaignId) || {};
 
-      // count-only queries (head:true) return the TRUE total — PostgREST does NOT
-      // apply the 1000-row limit to a count. This is why the old code (download
-      // rows + count in JS) was stuck at 1000 and never matched reality.
-      const [startedRes, failedRes] = await Promise.all([
-        supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId),
-        supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("status", "failed"),
-      ]);
-
+      // All totals come from the server-side RPC (distinct contacted/replied,
+      // raw sent) — accurate and never capped at PostgREST's 1000-row limit.
       const totalSent = Number(m.sent || 0);
       const totalReplied = Number(m.replied || 0);
-      const totalFailed = failedRes.count || 0;
 
       setStats({
-        started: startedRes.count || 0,
         // A replier was necessarily contacted, so contacted can never be < replied
         // (guards the reply rate from ever exceeding 100% on odd data).
         contacted: Math.max(Number(m.contacted || 0), totalReplied),
         sent: totalSent,
         replied: totalReplied,
-        failed: totalFailed,
       });
 
       // Per-step breakdown — also server-side counts, same predicate as the RPC
@@ -159,23 +150,21 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           const base = () =>
             supabase.from("sent_emails").select("id", { count: "exact", head: true })
               .eq("campaign_id", campaignId).eq("campaign_step_id", s.id);
-          const [sSent, sReplied, sFailed] = await Promise.all([
+          const [sSent, sReplied] = await Promise.all([
             base().or("sent_at.not.is.null,status.eq.sent"),
             base().not("replied_at", "is", null),
-            base().eq("status", "failed"),
           ]);
-          return { ...s, sent: sSent.count || 0, replied: sReplied.count || 0, failed: sFailed.count || 0 };
+          return { ...s, sent: sSent.count || 0, replied: sReplied.count || 0 };
         })
       );
 
-      // Reconcile: any sends/fails not tied to a listed step (null or deleted
-      // step_id) go into an "Other" row so the breakdown adds up to the totals.
+      // Reconcile: sends not tied to a listed step (null or deleted step_id) go
+      // into an "Other" row so the per-step breakdown adds up to the total sent.
       const sum = (k: string) => perStep.reduce((a, r: any) => a + (Number(r[k]) || 0), 0);
       const otherSent = Math.max(0, totalSent - sum("sent"));
       const otherReplied = Math.max(0, totalReplied - sum("replied"));
-      const otherFailed = Math.max(0, totalFailed - sum("failed"));
-      if (otherSent + otherFailed > 0) {
-        perStep.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, failed: otherFailed, _other: true });
+      if (otherSent > 0) {
+        perStep.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, _other: true });
       }
       setStepStats(perStep);
     };
@@ -275,20 +264,16 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr>
               <td style="padding: 12px; text-align: center; border: 1px solid #eee;">
-                <div style="font-size: 24px; font-weight: bold; color: #7c3aed;">${stats.started}</div>
-                <div style="font-size: 12px; color: #888;">Sequences started</div>
+                <div style="font-size: 24px; font-weight: bold; color: #7c3aed;">${stats.contacted}</div>
+                <div style="font-size: 12px; color: #888;">Contactados</div>
               </td>
               <td style="padding: 12px; text-align: center; border: 1px solid #eee;">
                 <div style="font-size: 24px; font-weight: bold; color: #22c55e;">${stats.sent}</div>
-                <div style="font-size: 12px; color: #888;">Emails sent</div>
+                <div style="font-size: 12px; color: #888;">Emails enviados</div>
               </td>
               <td style="padding: 12px; text-align: center; border: 1px solid #eee;">
                 <div style="font-size: 24px; font-weight: bold; color: #3b82f6;">${stats.replied}</div>
-                <div style="font-size: 12px; color: #888;">Replies (${replyRate}%)</div>
-              </td>
-              <td style="padding: 12px; text-align: center; border: 1px solid #eee;">
-                <div style="font-size: 24px; font-weight: bold; color: #ef4444;">${stats.failed}</div>
-                <div style="font-size: 12px; color: #888;">Failed</div>
+                <div style="font-size: 12px; color: #888;">Respuestas (${replyRate}%)</div>
               </td>
             </tr>
           </table>
@@ -301,15 +286,13 @@ export default function CampaignAnalytics({ campaignId }: Props) {
                 <th style="padding: 8px; text-align: left; font-size: 12px;">Subject</th>
                 <th style="padding: 8px; text-align: center; font-size: 12px;">Sent</th>
                 <th style="padding: 8px; text-align: center; font-size: 12px;">Replies</th>
-                <th style="padding: 8px; text-align: center; font-size: 12px;">Failed</th>
               </tr>
               ${stepStats.map(s => `
                 <tr>
-                  <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee;">Step ${s.step_order}</td>
+                  <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee;">${s._other ? "Other" : `Step ${s.step_order}`}</td>
                   <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee; color: #666;">${s.subject}</td>
                   <td style="padding: 8px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; color: #22c55e;">${s.sent}</td>
                   <td style="padding: 8px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; color: #3b82f6;">${s.replied}</td>
-                  <td style="padding: 8px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; color: #ef4444;">${s.failed}</td>
                 </tr>
               `).join("")}
             </table>
@@ -343,10 +326,9 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   };
 
   const metricCards = [
-    { label: "Sequences started", value: stats.started, icon: BarChart3, color: "text-primary" },
-    { label: "Emails sent", value: stats.sent, icon: Send, color: "text-success" },
-    { label: "Replies", value: stats.replied, icon: MessageSquare, color: "text-info" },
-    { label: "Failed", value: stats.failed, icon: Mail, color: "text-destructive" },
+    { label: "Contactados", value: stats.contacted, icon: BarChart3, color: "text-primary" },
+    { label: "Emails enviados", value: stats.sent, icon: Send, color: "text-success" },
+    { label: "Respuestas", value: stats.replied, icon: MessageSquare, color: "text-info" },
   ];
 
   // Reply rate over CONTACTED people (not emails sent) — the correct denominator.
@@ -454,7 +436,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
       {/* Analytics content - captured for PDF */}
       <div ref={analyticsRef}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {metricCards.map(m => (
             <Card key={m.label}>
               <CardContent className="p-4 text-center">
@@ -528,7 +510,6 @@ export default function CampaignAnalytics({ campaignId }: Props) {
                   <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
                   <span className="text-success whitespace-nowrap">{s.sent} sent</span>
                   <span className="text-info whitespace-nowrap">{s.replied} replies</span>
-                  <span className="text-destructive whitespace-nowrap">{s.failed} failed</span>
                 </div>
               ))}
             </div>
