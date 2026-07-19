@@ -7,11 +7,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { BarChart3, Send, Mail, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 // jsPDF (~350KB) is loaded on demand inside handleDownloadPDF — not at page load.
 
 interface Props { campaignId: string; }
+
+// One day on the sends/replies area chart (same shape as the Estadísticas page).
+type DayPoint = { day: string; label: string; full: string; envios: number; respuestas: number };
+const CHART_DAYS = 14;
 
 // Loads any image (data: URL or remote https URL) and re-encodes it as a PNG
 // data URL via canvas, so jsPDF can embed it reliably regardless of source
@@ -39,6 +44,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   const { user } = useAuth();
   const { profile } = useProfile();
   const [stats, setStats] = useState({ started: 0, contacted: 0, sent: 0, replied: 0, failed: 0 });
+  const [daily, setDaily] = useState<DayPoint[]>([]);
   const [stepStats, setStepStats] = useState<any[]>([]);
   const [campaignName, setCampaignName] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -96,15 +102,31 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       // Steps + name are tiny tables (never near the 1000-row cap); the RPC
       // returns server-side aggregates (distinct contacted/replied) for ALL of
       // the caller's campaigns in one call — accurate and NOT capped at 1000.
-      const [stepsRes, campaignRes, metricsRes] = await Promise.all([
+      const [stepsRes, campaignRes, metricsRes, dailyRes] = await Promise.all([
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         supabase.from("campaigns").select("name").eq("id", campaignId).single(),
         user
           ? supabase.rpc("campaign_metrics_for_user", { p_user_id: user.id })
           : Promise.resolve({ data: [] as any[] }),
+        // Per-day sends + replies, counted server-side (exact, not capped) — same
+        // RPC the CampaignSendsChart uses. Powers the Estadísticas-style area chart.
+        (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: campaignId, p_days: CHART_DAYS }),
       ]);
       const steps = stepsRes.data || [];
       setCampaignName(campaignRes.data?.name || "Campaña");
+
+      setDaily(
+        ((dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>).map((r) => {
+          const d = new Date(`${r.day}T00:00:00`);
+          return {
+            day: r.day,
+            label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
+            full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
+            envios: Number(r.sends || 0),
+            respuestas: Number(r.replies || 0),
+          };
+        })
+      );
 
       const m: any = (metricsRes.data || []).find((r: any) => r.campaign_id === campaignId) || {};
 
@@ -444,34 +466,71 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           ))}
         </div>
 
+        {/* Envíos + respuestas por día — mismo gráfico que la página de Estadísticas */}
+        <Card className="mt-6">
+          <CardContent className="p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold">Envíos por día · últimos {CHART_DAYS} días</p>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(217, 91%, 60%)" }} /> {daily.reduce((s, p) => s + p.envios, 0).toLocaleString("es")} envíos</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(142, 76%, 36%)" }} /> {daily.reduce((s, p) => s + p.respuestas, 0).toLocaleString("es")} respuestas</span>
+              </div>
+            </div>
+            {daily.length === 0 ? (
+              <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">Aún no hay envíos en este periodo.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={daily} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                  <defs>
+                    <linearGradient id="caSent" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="caReply" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={16} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={44} />
+                  <Tooltip
+                    cursor={{ stroke: "hsl(var(--border))" }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const p = payload[0].payload as DayPoint;
+                      return (
+                        <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
+                          <p className="mb-1 font-medium capitalize">{p.full}</p>
+                          <p className="font-semibold" style={{ color: "hsl(217, 91%, 60%)" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
+                          {p.respuestas > 0 && <p style={{ color: "hsl(142, 76%, 36%)" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
+                        </div>
+                      );
+                    }}
+                  />
+                  <Area type="monotone" dataKey="envios" stroke="hsl(217, 91%, 60%)" strokeWidth={2} fill="url(#caSent)" />
+                  <Area type="monotone" dataKey="respuestas" stroke="hsl(142, 76%, 36%)" strokeWidth={2} fill="url(#caReply)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
         {stepStats.length > 0 && (
           <div className="mt-6">
             <h4 className="text-sm font-semibold mb-3">Step Analytics</h4>
             <div className="space-y-2">
-              {(() => {
-                const maxSent = Math.max(1, ...stepStats.map((s: any) => Number(s.sent) || 0));
-                return stepStats.map((s: any) => (
-                  <div key={s.id} className={`rounded-lg border p-3 ${s._other ? "bg-muted/40" : ""}`}>
-                    <div className="flex items-center gap-4 text-sm">
-                      <span className="font-medium text-primary whitespace-nowrap">
-                        {s._other ? "Other" : `Step ${s.step_order}`}
-                      </span>
-                      <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
-                      <span className="text-success whitespace-nowrap">{s.sent} sent</span>
-                      <span className="text-info whitespace-nowrap">{s.replied} replies</span>
-                      <span className="text-destructive whitespace-nowrap">{s.failed} failed</span>
-                    </div>
-                    {!s._other && (
-                      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted" title={`${s.sent} enviados`}>
-                        <div
-                          className="h-full rounded-full bg-primary/70"
-                          style={{ width: `${Math.round(((Number(s.sent) || 0) / maxSent) * 100)}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                ));
-              })()}
+              {stepStats.map((s: any) => (
+                <div key={s.id} className={`flex items-center gap-4 rounded-lg border p-3 text-sm ${s._other ? "bg-muted/40" : ""}`}>
+                  <span className="font-medium text-primary whitespace-nowrap">
+                    {s._other ? "Other" : `Step ${s.step_order}`}
+                  </span>
+                  <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
+                  <span className="text-success whitespace-nowrap">{s.sent} sent</span>
+                  <span className="text-info whitespace-nowrap">{s.replied} replies</span>
+                  <span className="text-destructive whitespace-nowrap">{s.failed} failed</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
