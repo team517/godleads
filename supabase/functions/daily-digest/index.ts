@@ -9,11 +9,10 @@ const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const esc = (s: string) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 const b64utf8 = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const mimeWord = (s: string) => (/^[\x20-\x7E]*$/.test(s) ? s : `=?UTF-8?B?${b64utf8(s)}?=`);
 
-async function sendHtml(acct: any, to: string, subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
+async function sendMail(acct: any, to: string, subject: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const host = acct.smtp_host, port = acct.smtp_port || 465, user = acct.smtp_username, pass = acct.smtp_password, from = acct.email;
   try {
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
@@ -46,8 +45,8 @@ async function sendHtml(acct: any, to: string, subject: string, html: string): P
       `From: OnePulso <${from}>`, `To: ${to}`, `Subject: ${mimeWord(subject)}`,
       `Date: ${new Date().toUTCString().replace("GMT", "+0000")}`,
       `Message-ID: <${Math.random().toString(36).slice(2)}${Date.now().toString(36)}@${dom}>`,
-      `MIME-Version: 1.0`, `Content-Type: text/html; charset=utf-8`, `Content-Transfer-Encoding: base64`, "",
-      wrap(b64utf8(html)),
+      `MIME-Version: 1.0`, `Content-Type: text/plain; charset=utf-8`, `Content-Transfer-Encoding: base64`, "",
+      wrap(b64utf8(text)),
     ].join("\r\n");
     await conn.write(enc.encode(msg + "\r\n.\r\n"));
     const fin = (await readResponse()).trim();
@@ -57,21 +56,27 @@ async function sendHtml(acct: any, to: string, subject: string, html: string): P
   } catch (e) { return { ok: false, error: String((e as any)?.message || e) }; }
 }
 
-function digestHtml(rows: any[]): string {
+// Plain, human-written text (no emojis, no HTML) — reads like a person wrote it.
+function digestText(rows: any[]): string {
   const interesados = rows.filter((r) => r.interesado);
   const preguntas = rows.filter((r) => r.pregunta && !r.interesado);
-  const item = (r: any) => `<li style="margin:8px 0;padding:9px 11px;border:1px solid #eef;border-radius:8px;list-style:none">
-    <b>${esc(r.from_email || "—")}</b>${r.campaign ? ` · <span style="color:#667085">${esc(r.campaign)}</span>` : ""}
-    ${r.subject ? `<div style="font-size:13px;color:#333;margin-top:2px">${esc(r.subject)}</div>` : ""}
-    ${r.snippet ? `<div style="font-size:12px;color:#999;margin-top:2px">${esc(r.snippet)}</div>` : ""}
-  </li>`;
-  return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:620px;margin:0 auto;color:#1e1e26">
-    <h2 style="margin:0 0 4px">🔥 Resumen de hoy — leads calientes</h2>
-    <p style="color:#667085;font-size:14px;margin:0 0 14px">Hoy has tenido <b>${interesados.length}</b> interesado(s) y <b>${preguntas.length}</b> con preguntas. Échales un ojo cuanto antes:</p>
-    ${interesados.length ? `<h3 style="color:#16a34a;font-size:15px;margin:14px 0 4px">✅ Interesados (${interesados.length})</h3><ul style="padding:0;margin:0">${interesados.map(item).join("")}</ul>` : ""}
-    ${preguntas.length ? `<h3 style="color:#2563eb;font-size:15px;margin:16px 0 4px">❓ Con preguntas / dudas (${preguntas.length})</h3><ul style="padding:0;margin:0">${preguntas.map(item).join("")}</ul>` : ""}
-    <p style="color:#98a2b3;font-size:11px;margin-top:22px">Resumen automático de OnePulso · cada día laborable a las 18:00 · solo se envía cuando hay leads calientes.</p>
-  </div>`;
+  const line = (r: any) => {
+    const who = r.from_email || "alguien";
+    const camp = r.campaign ? ` (de la campaña ${r.campaign})` : "";
+    return `- ${who}${camp}`;
+  };
+  const bits: string[] = [];
+  if (interesados.length) bits.push(`${interesados.length} ${interesados.length === 1 ? "persona interesada" : "personas interesadas"}`);
+  if (preguntas.length) bits.push(`${preguntas.length} ${preguntas.length === 1 ? "con una pregunta" : "con preguntas"}`);
+  const out: string[] = [
+    "Hola,",
+    "",
+    `Hoy hemos tenido ${bits.join(" y ")} en las campañas. Te las dejo por aquí para que les eches un ojo cuando puedas:`,
+  ];
+  if (interesados.length) { out.push("", "Interesados:"); interesados.forEach((r) => out.push(line(r))); }
+  if (preguntas.length) { out.push("", "Con preguntas:"); preguntas.forEach((r) => out.push(line(r))); }
+  out.push("", "Los tienes en el Unibox para contestarles cuando quieras.", "", "Un saludo,", "OnePulso Team");
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
 serve(async (req) => {
@@ -98,9 +103,13 @@ serve(async (req) => {
 
     const nInteres = list.filter((r) => r.interesado).length;
     const nPreg = list.filter((r) => r.pregunta && !r.interesado).length;
-    const subject = `🔥 Hoy: ${nInteres} interesado(s)${nPreg ? ` y ${nPreg} con preguntas` : ""}`;
-    const r = await sendHtml(acct, to, subject, digestHtml(list));
-    return json({ ok: r.ok, sent: r.ok, count: list.length, interesados: nInteres, preguntas: nPreg, error: r.error });
+    const sb: string[] = [];
+    if (nInteres) sb.push(`${nInteres} interesado${nInteres === 1 ? "" : "s"}`);
+    if (nPreg) sb.push(`${nPreg} con preguntas`);
+    const subject = `Resumen de hoy: ${sb.join(" y ")}`;
+    const text = digestText(list);
+    const r = await sendMail(acct, to, subject, text);
+    return json({ ok: r.ok, sent: r.ok, count: list.length, interesados: nInteres, preguntas: nPreg, error: r.error, preview: body.test_days ? { subject, text } : undefined });
   } catch (e: any) {
     return json({ error: e?.message || String(e) }, 500);
   }

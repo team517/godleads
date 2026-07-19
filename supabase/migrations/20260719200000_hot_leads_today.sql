@@ -35,6 +35,10 @@ as $$
   left join public.campaigns c on c.id = m.campaign_id
   where m.is_archived = false
     and (m.lead_id is not null or m.campaign_id is not null)
+    -- Exclude obvious auto-replies / out-of-office / "no longer here" that the intent
+    -- classifier sometimes mislabels as Interesado — they aren't real hot leads.
+    and not ((coalesce(m.subject, '') || ' ' || coalesce(m.body_text, '')) ~*
+      '(out of office|automatic reply|auto.?reply|no longer (available|with|here)|on (annual |sick )?leave|will be (out|away|back)|de vacaciones|fuera de la oficina|respuesta autom|ausencia|estar[ée] fuera|r[ée]ponse automatique|absent du bureau|en cong[ée]|de retour le|risposta automatica|fuori sede|in ferie|assenz|abwesen|nicht im b[üu]ro|automatische antwort)')
     and m.received_at >= (case when p_days > 0
         then now() - make_interval(days => p_days)                                      -- test lookback
         else (((now() at time zone 'Europe/Madrid')::date)::timestamp at time zone 'Europe/Madrid') -- today (Madrid)
