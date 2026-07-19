@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
+import MyReportsCard from "@/components/reports/MyReportsCard";
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -236,6 +237,9 @@ export default function ClientPortal() {
         </div>
         {isFullAdmin && <Button asChild variant="outline" size="sm" className="gap-2"><Link to="/admin"><ArrowLeft className="h-3.5 w-3.5" /> Admin</Link></Button>}
       </div>
+
+      {/* Reports for the owner's OWN account */}
+      <MyReportsCard />
 
       {/* Create client */}
       <Card>
