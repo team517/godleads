@@ -44,13 +44,15 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
   // sending a plausible-but-wrong "0 respuestas" report to a client.
   if (campRes.error) throw new Error(`No se pudieron cargar las campañas: ${campRes.error.message}`);
   if (metricsRes.error) throw new Error(`No se pudieron cargar las métricas: ${metricsRes.error.message}`);
+  if (periodRes.error) throw new Error(`No se pudieron cargar las métricas del periodo: ${periodRes.error.message}`);
 
   const allCamps: { id: string; name: string; status: string }[] = campRes.data || [];
-  // Default (no explicit ids, e.g. the scheduled path) → all NON-draft campaigns.
+  // Default (no explicit ids) → only ACTIVE campaigns, matching the real/scheduled send
+  // (report_bundle_admin uses status='active'), so the preview equals what's delivered.
   const wanted = new Set(
     opts.campaignIds && opts.campaignIds.length
       ? opts.campaignIds
-      : allCamps.filter((c) => c.status !== "draft").map((c) => c.id),
+      : allCamps.filter((c) => c.status === "active").map((c) => c.id),
   );
   const selected = allCamps.filter((c) => wanted.has(c.id));
 

@@ -134,10 +134,10 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
   const gap = 5;
   const cardW = (CONTENT_W - gap * 2) / 3;
   const cardH = 26;
+  ensure(cardH * 2 + gap + 2); // reserve the whole 2-row KPI block up front (fixed 6 cards)
   cards.forEach((c, i) => {
     const col = i % 3;
     const row = Math.floor(i / 3);
-    if (col === 0) ensure(cardH + (row === 0 ? 0 : gap));
     const cx = MARGIN + col * (cardW + gap);
     const cy = y + row * (cardH + gap);
     setFill([250, 250, 252]);

@@ -121,6 +121,7 @@ async function sendSmtp(
     if (port !== 465) {
       const ehlo = await cmd("EHLO onepulso", "EHLO");
       if (/STARTTLS/i.test(ehlo)) { await conn.write(enc.encode("STARTTLS\r\n")); await readResponse(); conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host }); log.push("STARTTLS => upgraded"); }
+      else { try { conn.close(); } catch { /* */ } return { ok: false, error: "El servidor SMTP no ofrece STARTTLS; no se envían credenciales sin cifrar.", transcript: log }; }
     }
     await cmd("EHLO onepulso", "EHLO2");
     const auth = await cmd(`AUTH PLAIN ${btoa(`\0${username}\0${password}`)}`, "AUTH");
@@ -270,7 +271,7 @@ interface ClientCtx {
   report_low_contacts_threshold: number | null; report_to_email: string | null;
 }
 
-async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "weekly", opts: { dryRun?: boolean; testTo?: string; fromAccountId?: string }) {
+async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "weekly", opts: { dryRun?: boolean; testTo?: string; fromAccountId?: string; ownerUserId?: string }) {
   const days = kind === "weekly" ? 7 : 2;
   const chartDays = Math.max(7, days);
   const { data: bundle, error: bErr } = await admin.rpc("report_bundle_admin", { p_user_id: client.user_id, p_days: days, p_chart_days: chartDays });
@@ -280,8 +281,26 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   const data = toReportData(kind, clientName, bundle || {});
   if (data.campaigns.length === 0) return { ok: false, error: "El cliente no tiene campañas activas que reportar." };
 
-  data.narrative = await fetchNarrative(data, client.report_low_contacts_threshold ?? 200);
+  // For a REAL send, validate recipient + sending account UP FRONT (before the paid AI
+  // call and PDF build), and — when a caller is known (JWT path) — scope the account to
+  // that caller so nobody can send from another user's connected account.
+  let acct: any = null;
+  let to: string | null = null;
+  if (!opts.dryRun) {
+    to = opts.testTo || client.report_to_email || client.email;
+    if (!to) return { ok: false, error: "No hay email de destino configurado (Enviar a)." };
+    const accountId = opts.fromAccountId || client.report_from_account_id;
+    if (!accountId) return { ok: false, error: "Sin cuenta de envío configurada." };
+    let acctQ = admin.from("email_accounts")
+      .select("email, smtp_host, smtp_port, smtp_username, smtp_password, status")
+      .eq("id", accountId);
+    if (opts.ownerUserId) acctQ = acctQ.eq("user_id", opts.ownerUserId);
+    const { data: a } = await acctQ.maybeSingle();
+    if (!a?.smtp_host) return { ok: false, error: "La cuenta de envío no existe, no es tuya o no tiene SMTP." };
+    acct = a;
+  }
 
+  data.narrative = await fetchNarrative(data, client.report_low_contacts_threshold ?? 200);
   const logo = await fetchLogo(client.logo_url);
   const branding = { company: clientName, brandColor: client.brand_color || "#6E58F1", logoPngDataUrl: logo?.dataUrl || null, logoW: logo?.w, logoH: logo?.h };
 
@@ -304,29 +323,18 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
     return { ok: true, pdfPath, dryUrl, bytes: pdfBytes.length, campaigns: data.campaigns.length };
   }
 
-  // A LINK to the PDF, not an attachment: cold-email sending domains (the only ones
-  // available) route attachments straight to spam, so nothing arrived. A signed link
-  // (valid 30 days) delivers reliably and the client still gets the PDF in one click.
+  // A LINK to the PDF (no attachment — attachments hit spam on cold sending domains).
   const signedUrl = pdfPath
     ? ((await admin.storage.from("client-reports").createSignedUrl(pdfPath, 60 * 60 * 24 * 10)).data?.signedUrl || null)
     : null;
-
-  const to = opts.testTo || client.report_to_email || client.email;
-  if (!to) return { ok: false, error: "No hay email de destino configurado (Enviar a)." };
-  const accountId = opts.fromAccountId || client.report_from_account_id;
-  if (!accountId) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "Sin cuenta de envío configurada"); return { ok: false, error: "Sin cuenta de envío configurada" }; }
-
-  // The sending account belongs to the AGENCY (whoever set it), not the client — fetch by id.
-  const { data: acct } = await admin.from("email_accounts")
-    .select("email, smtp_host, smtp_port, smtp_username, smtp_password, status")
-    .eq("id", accountId).maybeSingle();
-  if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
+  // The email IS the link — never send a "te paso el link" message with no link.
+  if (!signedUrl) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "No se pudo generar el enlace del informe"); return { ok: false, error: "No se pudo generar el enlace del informe" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
   const emailBody = buildEmailBody(signedUrl, kind);
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-    acct.email, "OnePulso", to, subject, emailBody,
+    acct.email, "OnePulso", to!, subject, emailBody,
     [], // solo el link, sin adjunto
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null), emailBody);
@@ -365,11 +373,11 @@ serve(async (req) => {
     }
 
     if (mode === "manual") {
-      // Auth: an admin/manager JWT, OR the cron secret (used for dry-run verification).
-      let authorized = false;
-      if (body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET")) {
-        authorized = true;
-      } else {
+      // Auth: an admin/manager JWT, OR the cron secret (internal/dry-run verification).
+      const viaSecret = !!(body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET"));
+      let callerId: string | null = null;
+      let isFullAdmin = false;
+      if (!viaSecret) {
         const authHeader = req.headers.get("Authorization") || "";
         const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
         if (token) {
@@ -378,20 +386,27 @@ serve(async (req) => {
           if (caller) {
             const { data: role } = await admin.from("user_roles").select("role").eq("user_id", caller.id).single();
             const { data: cprof } = await admin.from("profiles").select("is_client_manager").eq("user_id", caller.id).single();
-            authorized = role?.role === "admin" || !!cprof?.is_client_manager;
+            isFullAdmin = role?.role === "admin";
+            if (isFullAdmin || cprof?.is_client_manager) callerId = caller.id;
           }
         }
       }
-      if (!authorized) return json({ error: "Forbidden" }, 403);
+      if (!viaSecret && !callerId) return json({ error: "Forbidden" }, 403);
 
       const clientUserId = body.client_user_id;
       if (!clientUserId) return json({ error: "client_user_id required" }, 400);
       const kind: "48h" | "weekly" = body.kind === "weekly" ? "weekly" : "48h";
-      const { data: p } = await admin.from("profiles").select(PROFILE_COLS).eq("user_id", clientUserId).maybeSingle();
+      const { data: p } = await admin.from("profiles").select(PROFILE_COLS + ", allowed_routes").eq("user_id", clientUserId).maybeSingle();
+      // A non-admin caller (client-manager) may only generate for real CLIENTS
+      // (profiles with allowed_routes) or for themselves — never for an arbitrary user.
+      if (callerId && !isFullAdmin) {
+        const isClient = Array.isArray((p as any)?.allowed_routes) && (p as any).allowed_routes.length > 0;
+        if (!isClient && clientUserId !== callerId) return json({ error: "Forbidden" }, 403);
+      }
       const { data: u } = await admin.auth.admin.getUserById(clientUserId);
       if (!u?.user) return json({ error: "Usuario no encontrado" }, 404);
       const client: ClientCtx = { ...((p as any) || {}), user_id: clientUserId, email: u.user.email || null };
-      const r = await generateReport(admin, client, kind, { dryRun: !!body.dry_run, testTo: body.test_to, fromAccountId: body.from_account_id });
+      const r = await generateReport(admin, client, kind, { dryRun: !!body.dry_run, testTo: body.test_to, fromAccountId: body.from_account_id, ownerUserId: callerId || undefined });
       return json(r);
     }
 
@@ -399,9 +414,9 @@ serve(async (req) => {
       // Upload an ALREADY-GENERATED PDF (the exact one from the browser preview) and
       // email a LINK to it (no attachment) — so the test matches the preview exactly.
       // Admin/manager JWT or secret required.
-      let authorized = false;
-      if (body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET")) authorized = true;
-      else {
+      const viaSecret = !!(body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET"));
+      let callerId: string | null = null;
+      if (!viaSecret) {
         const authHeader = req.headers.get("Authorization") || "";
         const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
         if (token) {
@@ -410,16 +425,20 @@ serve(async (req) => {
           if (caller) {
             const { data: role } = await admin.from("user_roles").select("role").eq("user_id", caller.id).single();
             const { data: cprof } = await admin.from("profiles").select("is_client_manager").eq("user_id", caller.id).single();
-            authorized = role?.role === "admin" || !!cprof?.is_client_manager;
+            if (role?.role === "admin" || cprof?.is_client_manager) callerId = caller.id;
           }
         }
       }
-      if (!authorized) return json({ error: "Forbidden" }, 403);
+      if (!viaSecret && !callerId) return json({ error: "Forbidden" }, 403);
 
-      const { to, from_account_id, pdf_base64, subject, company } = body;
+      const { to, from_account_id, pdf_base64, subject } = body;
       if (!to || !from_account_id || !pdf_base64) return json({ error: "Faltan datos (to, from_account_id, pdf_base64)" }, 400);
-      const { data: acct } = await admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id).maybeSingle();
-      if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe o no tiene SMTP" }, 400);
+      // Scope the sending account to the caller (JWT path) so nobody sends from another
+      // user's account. The cron/secret path is internal and unscoped.
+      let acctQ = admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id);
+      if (callerId) acctQ = acctQ.eq("user_id", callerId);
+      const { data: acct } = await acctQ.maybeSingle();
+      if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe, no es tuya o no tiene SMTP" }, 400);
 
       // Upload the previewed PDF and email a link to it (no attachment).
       let signed: string | null = null;
