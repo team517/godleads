@@ -1,0 +1,13 @@
+-- Cron for the daily "hot leads" digest. Scheduled via the Management API so the shared
+-- secret is not committed — this file is the record. 16:00 UTC ≈ 18:00 Europe/Madrid,
+-- WEEKDAYS ONLY. The daily-digest function only sends an email if there are Interesado /
+-- Pregunta replies today; otherwise it sends nothing.
+--
+-- do $$ begin perform cron.unschedule('daily-digest'); exception when others then null; end $$;
+-- select cron.schedule('daily-digest', '0 16 * * 1,2,3,4,5', $CRON$
+--   select net.http_post(
+--     url:='https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/daily-digest',
+--     headers:='{"Content-Type":"application/json"}'::jsonb,
+--     body:='{"secret":"<REPORTS_CRON_SECRET>"}'::jsonb
+--   );
+-- $CRON$);
