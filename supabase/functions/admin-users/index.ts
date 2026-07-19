@@ -166,7 +166,7 @@ serve(async (req) => {
 
     if (action === "create_user") {
       const { email, password, full_name, company_name, allowed_routes, logo_url, brand_color,
-        report_enabled, report_from_account_id, report_low_contacts_threshold } = body;
+        report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email } = body;
       if (!email || !password) throw new Error("email and password required");
 
       const { data: newUser, error: createErr } = await supabase.auth.admin.createUser({
@@ -188,6 +188,7 @@ serve(async (req) => {
         if (report_enabled !== undefined) upd.report_enabled = !!report_enabled;
         if (report_from_account_id !== undefined) upd.report_from_account_id = report_from_account_id || null;
         if (report_low_contacts_threshold !== undefined) upd.report_low_contacts_threshold = Number(report_low_contacts_threshold) || 200;
+        if (report_to_email !== undefined) upd.report_to_email = report_to_email || null;
         if (Object.keys(upd).length > 0) {
           await supabase.from("profiles").update(upd).eq("user_id", newUser.user.id);
         }
@@ -202,7 +203,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -217,6 +218,7 @@ serve(async (req) => {
             report_enabled: !!p.report_enabled,
             report_from_account_id: p.report_from_account_id || null,
             report_low_contacts_threshold: p.report_low_contacts_threshold ?? 200,
+            report_to_email: p.report_to_email || null,
           };
         })
         .filter(Boolean);
@@ -227,7 +229,7 @@ serve(async (req) => {
 
     if (action === "update_client") {
       const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password,
-        report_enabled, report_from_account_id, report_low_contacts_threshold } = body;
+        report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email } = body;
       if (!user_id) throw new Error("user_id required");
       const upd: Record<string, unknown> = {};
       if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
@@ -238,6 +240,7 @@ serve(async (req) => {
       if (report_enabled !== undefined) upd.report_enabled = !!report_enabled;
       if (report_from_account_id !== undefined) upd.report_from_account_id = report_from_account_id || null;
       if (report_low_contacts_threshold !== undefined) upd.report_low_contacts_threshold = Number(report_low_contacts_threshold) || 200;
+      if (report_to_email !== undefined) upd.report_to_email = report_to_email || null;
       if (password) upd.client_password = password;
       if (Object.keys(upd).length > 0) {
         const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);

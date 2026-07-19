@@ -252,7 +252,7 @@ async function logReport(admin: any, userId: string, kind: string, data: ReportD
 interface ClientCtx {
   user_id: string; email: string | null; full_name: string | null; company_name: string | null;
   logo_url: string | null; brand_color: string | null; report_from_account_id: string | null;
-  report_low_contacts_threshold: number | null;
+  report_low_contacts_threshold: number | null; report_to_email: string | null;
 }
 
 async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "weekly", opts: { dryRun?: boolean; testTo?: string; fromAccountId?: string }) {
@@ -296,14 +296,15 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
     ? ((await admin.storage.from("client-reports").createSignedUrl(pdfPath, 60 * 60 * 24 * 30)).data?.signedUrl || null)
     : null;
 
-  const to = opts.testTo || client.email;
-  if (!to) return { ok: false, error: "El cliente no tiene email." };
+  const to = opts.testTo || client.report_to_email || client.email;
+  if (!to) return { ok: false, error: "No hay email de destino configurado (Enviar a)." };
   const accountId = opts.fromAccountId || client.report_from_account_id;
   if (!accountId) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "Sin cuenta de envío configurada"); return { ok: false, error: "Sin cuenta de envío configurada" }; }
 
+  // The sending account belongs to the AGENCY (whoever set it), not the client — fetch by id.
   const { data: acct } = await admin.from("email_accounts")
     .select("email, smtp_host, smtp_port, smtp_username, smtp_password, status")
-    .eq("id", accountId).eq("user_id", client.user_id).maybeSingle();
+    .eq("id", accountId).maybeSingle();
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
@@ -316,7 +317,7 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
 }
 
-const PROFILE_COLS = "user_id, full_name, company_name, logo_url, brand_color, report_enabled, report_from_account_id, report_low_contacts_threshold, report_last_48h_at, report_last_weekly_at";
+const PROFILE_COLS = "user_id, full_name, company_name, logo_url, brand_color, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, report_last_48h_at, report_last_weekly_at";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });

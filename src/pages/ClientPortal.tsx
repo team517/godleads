@@ -30,6 +30,7 @@ type Client = {
   allowed_routes: string[] | null; logo_url: string | null; brand_color: string | null;
   client_password: string | null; created_at: string;
   report_enabled?: boolean; report_from_account_id?: string | null; report_low_contacts_threshold?: number | null;
+  report_to_email?: string | null;
 };
 
 async function callAdmin(payload: Record<string, unknown>) {
@@ -327,6 +328,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [reportEnabled, setReportEnabled] = useState(!!client.report_enabled);
   const [fromAccount, setFromAccount] = useState<string>(client.report_from_account_id || "");
   const [threshold, setThreshold] = useState<number>(client.report_low_contacts_threshold ?? 200);
+  const [toEmail, setToEmail] = useState<string>(client.report_to_email || "");
   const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
@@ -338,13 +340,12 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
 
   const loadReports = () => callAdmin({ action: "list_client_reports", user_id: client.id }).then((res) => { if (!res.error) setReports(res.reports || []); });
 
-  // Load the client's own email accounts (to pick which one reports are sent from) + history.
+  // Load YOUR OWN (the agency's) connected accounts — reports are sent FROM one of them.
+  // RLS scopes this to the logged-in agency user, so it's your accounts, not the client's.
   useEffect(() => {
     setLoadingAccounts(true);
-    callAdmin({ action: "list_client_accounts", user_id: client.id }).then((res) => {
-      if (!res.error) setAccounts(res.accounts || []);
-      setLoadingAccounts(false);
-    });
+    supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
+      .then(({ data }) => { setAccounts((data as any) || []); setLoadingAccounts(false); });
     loadReports();
   }, [client.id]);
 
@@ -419,11 +420,11 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
             {reportEnabled && (
               <div className="space-y-3 border-t border-border/50 pt-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Enviar desde la cuenta</Label>
+                  <Label className="text-xs">Enviar desde la cuenta (una tuya)</Label>
                   {loadingAccounts ? (
                     <p className="text-[11px] text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> Cargando cuentas…</p>
                   ) : accounts.length === 0 ? (
-                    <p className="text-[11px] text-amber-600">Este cliente no tiene cuentas de email conectadas todavía. Conecta una para poder enviar los informes.</p>
+                    <p className="text-[11px] text-amber-600">No tienes ninguna cuenta de email conectada. Conéctala en "Cuentas Email".</p>
                   ) : (
                     <select
                       value={fromAccount}
@@ -436,6 +437,11 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
                       ))}
                     </select>
                   )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Enviar a (el email del cliente)</Label>
+                  <Input type="email" value={toEmail} onChange={(e) => setToEmail(e.target.value)} placeholder="cliente@empresa.com" className="h-9 text-sm" />
+                  <p className="text-[10px] text-muted-foreground">Escribe aquí el correo del cliente — no hace falta que esté registrado en la plataforma. El informe se le enviará ahí.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Avisar cuando queden menos de … contactos</Label>
@@ -496,6 +502,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
             brand_color: brandColor || null, allowed_routes: routes,
             report_enabled: reportEnabled,
             report_from_account_id: reportEnabled ? (fromAccount || null) : null,
+            report_to_email: reportEnabled ? (toEmail.trim() || null) : null,
             report_low_contacts_threshold: threshold,
             ...(newPassword ? { password: newPassword } : {}),
           })}>
