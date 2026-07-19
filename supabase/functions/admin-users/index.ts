@@ -281,7 +281,7 @@ serve(async (req) => {
       if (!user_id) throw new Error("user_id required");
       const { data: rows } = await supabase
         .from("client_reports")
-        .select("id, kind, period_label, pdf_path, sent_to, sent_ok, error, created_at")
+        .select("id, kind, period_label, pdf_path, sent_to, sent_ok, error, created_at, message")
         .eq("user_id", user_id)
         .order("created_at", { ascending: false })
         .limit(30);

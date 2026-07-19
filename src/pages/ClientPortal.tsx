@@ -417,7 +417,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
             <label className="flex cursor-pointer items-center justify-between gap-2">
               <span>
                 <span className="flex items-center gap-1.5 text-sm font-semibold"><FileBarChart className="h-4 w-4 text-primary" /> Informes automáticos</span>
-                <span className="mt-0.5 block text-[11px] text-muted-foreground">PDF cada 48h (10:30) + repaso los viernes + aviso de pocos contactos.</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">Informe cada 48h a las 10:00 (lun–jue) + repaso los viernes a las 10:00 + aviso de pocos contactos. Solo entre semana.</span>
               </span>
               <Checkbox checked={reportEnabled} onCheckedChange={(v) => setReportEnabled(!!v)} />
             </label>
@@ -482,17 +482,25 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
           {reports.length > 0 && (
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Historial de informes</Label>
-              <div className="max-h-36 space-y-1 overflow-y-auto">
+              <div className="max-h-48 space-y-1.5 overflow-y-auto">
                 {reports.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between gap-2 rounded border border-border/50 px-2 py-1 text-xs">
-                    <span className="text-muted-foreground">
-                      <span className="font-medium text-foreground">{r.kind === "weekly" ? "Semanal" : "48h"}</span>
-                      {" · "}{new Date(r.created_at).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      {r.sent_ok ? <span className="text-emerald-600">enviado</span> : <span className="text-muted-foreground" title={r.error || ""}>{r.error ? "error" : "prueba"}</span>}
-                      {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Ver PDF</a>}
-                    </span>
+                  <div key={r.id} className="rounded border border-border/50 px-2 py-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        <span className="font-medium text-foreground">{r.kind === "weekly" ? "Semanal" : "48h"}</span>
+                        {" · "}{new Date(r.created_at).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        {r.sent_to ? <> · <span className="text-foreground">{r.sent_to}</span></> : null}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {r.sent_ok ? <span className="text-emerald-600">enviado</span> : <span className="text-muted-foreground" title={r.error || ""}>{r.error ? "error" : "—"}</span>}
+                        {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">Ver PDF</a>}
+                      </span>
+                    </div>
+                    {r.message && (
+                      <p className="mt-1 whitespace-pre-line border-t border-border/40 pt-1 text-[10px] leading-snug text-muted-foreground" title={r.message}>
+                        {r.message.length > 220 ? r.message.slice(0, 220) + "…" : r.message}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>

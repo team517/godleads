@@ -222,17 +222,31 @@ async function fetchNarrative(data: ReportData, threshold: number) {
   return { summary: "", highlights: [], nextSteps: [], suggestions: [], alert: null };
 }
 
-// A plain, human-written email (text/plain) that shares a LINK to the report — no
-// attachment (attachments are heavier and the client just clicks the link).
-function emailText(data: ReportData, company: string, pdfUrl: string | null): string {
-  const periodTxt = data.kind === "weekly" ? "de esta semana" : "de las últimas 48 horas";
+// A short, human-written email (text/plain) that shares a LINK to the report — no
+// attachment. Rotates the wording so it is NOT identical every time.
+function buildEmailBody(company: string, pdfUrl: string | null, kind: "48h" | "weekly"): string {
+  const periodTxt = kind === "weekly" ? "de esta semana" : "de estos días";
+  const openers = [
+    `Te paso el link para que veas el estudio que hemos hecho de tu campaña ${periodTxt}:`,
+    `Aquí tienes el análisis que hemos preparado de tu campaña ${periodTxt}, échale un vistazo:`,
+    `Te comparto cómo va tu campaña ${periodTxt} — el estudio completo lo tienes aquí:`,
+    `Hemos revisado tu campaña y te dejo el informe con los resultados ${periodTxt}:`,
+    `Te paso el análisis actualizado de tu campaña ${periodTxt} para que lo veas:`,
+  ];
+  const closers = [
+    `Dentro tienes el detalle por campaña y las mejoras que vamos a aplicar.`,
+    `Ahí verás el detalle completo y los próximos pasos que vamos a dar.`,
+    `Encontrarás el desglose por campaña y lo que vamos a optimizar.`,
+    `Cualquier duda con el informe, aquí estamos.`,
+  ];
+  const pick = (a: string[]) => a[Math.floor(Math.random() * a.length)];
   const lines = [
     `Hola,`,
     ``,
-    `Te paso el link para que veas el estudio que hemos hecho de tu campaña ${periodTxt}:`,
+    pick(openers),
     ...(pdfUrl ? ["", pdfUrl] : []),
     ``,
-    `Ahí tienes el análisis completo con el detalle por campaña y las mejoras que vamos a aplicar.`,
+    pick(closers),
     ``,
     `Un saludo,`,
     company,
@@ -240,11 +254,11 @@ function emailText(data: ReportData, company: string, pdfUrl: string | null): st
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
-async function logReport(admin: any, userId: string, kind: string, data: ReportData, pdfPath: string | null, sentTo: string | null, ok: boolean, error: string | null) {
+async function logReport(admin: any, userId: string, kind: string, data: ReportData, pdfPath: string | null, sentTo: string | null, ok: boolean, error: string | null, message?: string | null) {
   try {
     await admin.from("client_reports").insert({
       user_id: userId, kind, period_label: data.periodLabel, pdf_path: pdfPath,
-      sent_to: sentTo, sent_ok: ok, error, totals: data.totals,
+      sent_to: sentTo, sent_ok: ok, error, totals: data.totals, message: message || null,
     });
   } catch { /* logging must never break the send */ }
 }
@@ -293,7 +307,7 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   // available) route attachments straight to spam, so nothing arrived. A signed link
   // (valid 30 days) delivers reliably and the client still gets the PDF in one click.
   const signedUrl = pdfPath
-    ? ((await admin.storage.from("client-reports").createSignedUrl(pdfPath, 60 * 60 * 24 * 30)).data?.signedUrl || null)
+    ? ((await admin.storage.from("client-reports").createSignedUrl(pdfPath, 60 * 60 * 24 * 10)).data?.signedUrl || null)
     : null;
 
   const to = opts.testTo || client.report_to_email || client.email;
@@ -308,12 +322,13 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
+  const emailBody = buildEmailBody(clientName, signedUrl, kind);
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-    acct.email, clientName, to, subject, emailText(data, clientName, signedUrl),
+    acct.email, clientName, to, subject, emailBody,
     [], // solo el link, sin adjunto
   );
-  await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null));
+  await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null), emailBody);
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
 }
 
@@ -411,23 +426,34 @@ serve(async (req) => {
         const bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
         const path = `test/${Date.now()}.pdf`;
         const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
-        if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 7)).data?.signedUrl || null;
+        if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 10)).data?.signedUrl || null;
       } catch { /* ignore */ }
       if (!signed) return json({ ok: false, error: "No se pudo subir el PDF para generar el link" }, 500);
 
-      const text = [
-        "Hola,", "",
-        "Te paso el link para que veas el estudio que hemos hecho de tu campaña:", "",
-        signed, "",
-        "Ahí tienes el análisis completo con el detalle por campaña y las mejoras que vamos a aplicar.", "",
-        "Un saludo,", (company || ""),
-      ].join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+      const text = buildEmailBody(company || acct.email, signed, /semanal/i.test(String(subject || "")) ? "weekly" : "48h");
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
         acct.email, company || acct.email, to, subject || "Análisis de tu campaña", text,
         [], // solo el link, sin adjunto
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript });
+    }
+
+    if (mode === "purge_pdfs") {
+      // Delete report PDFs older than N days from storage (keeps the platform lean).
+      // Secret-gated (called by cron). The client_reports LOG rows stay — only the
+      // files are removed.
+      if (!body.secret || body.secret !== Deno.env.get("REPORTS_CRON_SECRET")) return json({ error: "Unauthorized" }, 401);
+      const days = Number(body.days) || 10;
+      const { data: names } = await admin.rpc("list_old_report_pdfs", { p_days: days });
+      const paths = (Array.isArray(names) ? names : []).map((n: any) => (typeof n === "string" ? n : (n?.name || n?.list_old_report_pdfs))).filter(Boolean);
+      let removed = 0;
+      for (let i = 0; i < paths.length; i += 100) {
+        const chunk = paths.slice(i, i + 100);
+        const { error } = await admin.storage.from("client-reports").remove(chunk);
+        if (!error) removed += chunk.length;
+      }
+      return json({ ok: true, removed, checked: paths.length });
     }
 
     return json({ error: "unknown mode" }, 400);
