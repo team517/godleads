@@ -196,7 +196,7 @@ function toReportData(kind: "48h" | "weekly", clientName: string, bundle: any): 
   return {
     kind, clientName,
     periodLabel: kind === "weekly" ? "Repaso de la última semana" : "Últimas 48 horas",
-    generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+    generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
     totals, replyRate, campaigns,
     narrative: { summary: "", highlights: [], nextSteps: [], suggestions: [], alert: null },
   };
@@ -209,6 +209,7 @@ async function fetchNarrative(data: ReportData, threshold: number) {
       headers: { Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         kind: data.kind, clientName: data.clientName, periodLabel: data.periodLabel,
+        month: new Date().getMonth() + 1,
         totals: data.totals, replyRate: data.replyRate, lowContacts: data.totals.remaining < threshold,
         campaigns: data.campaigns.map((b) => ({
           name: b.name, contacted: b.contacted, sent: b.sent, replied: b.replied, positive: b.positive,
@@ -224,7 +225,7 @@ async function fetchNarrative(data: ReportData, threshold: number) {
 
 // A short, human-written email (text/plain) that shares a LINK to the report — no
 // attachment. Rotates the wording so it is NOT identical every time.
-function buildEmailBody(company: string, pdfUrl: string | null, kind: "48h" | "weekly"): string {
+function buildEmailBody(pdfUrl: string | null, kind: "48h" | "weekly"): string {
   const periodTxt = kind === "weekly" ? "de esta semana" : "de estos días";
   const openers = [
     `Te paso el link para que veas el estudio que hemos hecho de tu campaña ${periodTxt}:`,
@@ -249,7 +250,7 @@ function buildEmailBody(company: string, pdfUrl: string | null, kind: "48h" | "w
     pick(closers),
     ``,
     `Un saludo,`,
-    company,
+    `OnePulso Team`,
   ];
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
@@ -322,10 +323,10 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
   if (!acct?.smtp_host) { await logReport(admin, client.user_id, kind, data, pdfPath, to, false, "La cuenta de envío no existe o no tiene SMTP"); return { ok: false, error: "La cuenta de envío no existe o no tiene SMTP" }; }
 
   const subject = kind === "weekly" ? "Análisis semanal de tu campaña" : "Análisis de tu campaña";
-  const emailBody = buildEmailBody(clientName, signedUrl, kind);
+  const emailBody = buildEmailBody(signedUrl, kind);
   const r = await sendSmtp(
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-    acct.email, clientName, to, subject, emailBody,
+    acct.email, "OnePulso", to, subject, emailBody,
     [], // solo el link, sin adjunto
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null), emailBody);
@@ -430,10 +431,10 @@ serve(async (req) => {
       } catch { /* ignore */ }
       if (!signed) return json({ ok: false, error: "No se pudo subir el PDF para generar el link" }, 500);
 
-      const text = buildEmailBody(company || acct.email, signed, /semanal/i.test(String(subject || "")) ? "weekly" : "48h");
+      const text = buildEmailBody(signed, /semanal/i.test(String(subject || "")) ? "weekly" : "48h");
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-        acct.email, company || acct.email, to, subject || "Análisis de tu campaña", text,
+        acct.email, "OnePulso", to, subject || "Análisis de tu campaña", text,
         [], // solo el link, sin adjunto
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript });

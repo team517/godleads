@@ -15,7 +15,8 @@ const corsHeaders = {
 
 const SYSTEM =
   "Eres un analista senior de cold email B2B que escribe informes para clientes de una agencia, en español de España. " +
-  "Tu tono es profesional, claro y honesto: explicas qué está pasando en la campaña y qué hacer a continuación, sin humo ni promesas vacías. " +
+  "Tu tono es SIEMPRE POSITIVO, cercano y motivador: destacas lo bueno, enmarcas los retos como oportunidades, y transmites que la campaña va por buen camino y que estamos encima optimizándola. NUNCA suenas negativo, alarmista ni derrotista. " +
+  "Eres honesto con las cifras (no te las inventas), pero las cuentas siempre con optimismo y enfoque de mejora. " +
   "Hablas SIEMPRE en primera persona del plural ('hemos contactado', 'estamos recibiendo'), como la agencia que gestiona la campaña para el cliente. " +
   "La tasa de respuesta se mide SOBRE personas contactadas, no sobre correos enviados. " +
   "Devuelves EXCLUSIVAMENTE un objeto JSON válido, sin markdown ni texto alrededor.";
@@ -77,8 +78,15 @@ function buildPrompt(body: any): string {
     ? "Es el REPASO SEMANAL (viernes). Haz un análisis didáctico de cómo ha ido la semana, explicando QUÉ ESTAMOS VIENDO en las cifras y QUÉ VAMOS A MEJORAR, con sugerencias concretas para la próxima semana."
     : "Es el informe periódico (cada 48 horas). Explica de forma clara y didáctica QUÉ ESTAMOS VIENDO (interpretación de las cifras, no solo repetirlas) y QUÉ ESTAMOS HACIENDO / VAMOS A MEJORAR en la campaña.";
 
+  const month = Number(body.month) || 0;
+  const monthNames = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const seasonal = (month === 12 || month === 7 || month === 8)
+    ? `NOTA DE TEMPORADA (IMPORTANTE, tenla en cuenta en el resumen): estamos en ${monthNames[month]}, época de ${month === 12 ? "Navidad y festivos" : "vacaciones de verano"}. Es NORMAL y ESPERABLE que estos días los resultados sean algo más flojos y que haya MÁS respuestas automáticas de "fuera de la oficina" (out of office), porque mucha gente no está en su puesto. Explícalo en positivo: NO es un problema de la campaña, es la época del año; en cuanto pase, el ritmo se recupera. No lo pintes como algo negativo.`
+    : "";
+
   return [
     `Cliente: ${body.clientName || "Cliente"}. Periodo: ${body.periodLabel || ""}. ${kindTxt}`,
+    seasonal ? "\n" + seasonal : "",
     "",
     "MÉTRICAS GLOBALES:",
     `- Personas contactadas (únicas): ${t.contacted || 0}`,

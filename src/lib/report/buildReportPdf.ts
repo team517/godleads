@@ -94,7 +94,7 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
   setText(sub);
   doc.text(branding.company || data.clientName, textX, 26.5);
   doc.setFontSize(9);
-  doc.text(`${data.periodLabel}  ·  Generado el ${data.generatedAtLabel}`, textX, 33);
+  doc.text(`${data.periodLabel}  ·  ${data.generatedAtLabel}`, textX, 33);
 
   y = headerH + 9;
 

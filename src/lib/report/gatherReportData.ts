@@ -116,7 +116,7 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
   const replyRate = totals.contacted > 0 ? (totals.replied / totals.contacted) * 100 : 0;
 
   const generatedAtLabel = new Date().toLocaleDateString("es", {
-    day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
+    day: "numeric", month: "long", year: "numeric",
   });
 
   const data: ReportData = {
@@ -141,6 +141,7 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
           kind: opts.kind,
           clientName: opts.clientName,
           periodLabel: data.periodLabel,
+          month: new Date().getMonth() + 1,
           totals,
           replyRate,
           lowContacts: totals.remaining < LOW_CONTACTS_THRESHOLD,
