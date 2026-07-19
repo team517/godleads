@@ -23,7 +23,6 @@ export interface ReportTestClient {
 export default function ReportTestDialog({ client, open, onClose }: {
   client: ReportTestClient; open: boolean; onClose: () => void;
 }) {
-  const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string }[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [kind, setKind] = useState<ReportKind>("48h");
