@@ -81,7 +81,12 @@ const ENGAGEMENT = [
   // wrongly flip a clear rejection into engagement.
 ];
 const NOT_INTERESTED = [
-  /no\s+(me|nos)\s+interesa/i, /no\s+est(oy|amos)\s+interesad/i, /sin\s+inter[ée]s/i,
+  // "no interesa", "no me interesa", "no interesado/a/s" (with or without me/nos/estoy),
+  // "no interés", "sin interés" — the plain "No interesado" reply that used to leak as
+  // Interested because the bare word "interesado" matched.
+  /\bno\s+(me\s+|nos\s+|le\s+|les\s+|estamos?\s+|est[áa]n?\s+)?interesad[oa]s?\b/i,
+  /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa\b/i,
+  /\bno\s+(hay\s+)?inter[ée]s\b/i, /sin\s+inter[ée]s/i,
   /\bnot\s+interested\b/i, /\bno\s+interest\b/i, /pas\s+int[ée]ress[ée]/i, /kein\s+interesse/i, /non\s+(mi|ci)\s+interessa/i,
   /no\s+ens\s+interessa/i,
   /(no|not).{0,15}(a\s+)?(fit|good fit|match|lo que (buscamos|necesitamos))/i,

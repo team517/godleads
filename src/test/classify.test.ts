@@ -18,6 +18,9 @@ describe("classifyMessage", () => {
     expect(classifyMessage("Re:", "No me interesa, gracias.")).toBe("not_interested");
     expect(classifyMessage(null, "Please remove me from your list, not interested.")).toBe("not_interested");
     expect(classifyMessage(null, "Deja de enviar correos, por favor.")).toBe("not_interested");
+    // The plain "No interesado" reply (no "me"/"estoy") used to leak as Interested.
+    expect(classifyMessage(null, "No interesado")).toBe("not_interested");
+    expect(classifyMessage("Re:", "No interesa")).toBe("not_interested");
   });
 
   it("detects OUT OF OFFICE / auto", () => {
