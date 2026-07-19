@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { Loader2, FlaskConical, Download, RefreshCw, CalendarClock, CalendarDays } from "lucide-react";
+import { Loader2, FlaskConical, Download, RefreshCw, CalendarClock, CalendarDays, Send } from "lucide-react";
 import { gatherReportData } from "@/lib/report/gatherReportData";
 import { renderReportPdfBlob } from "@/lib/report/renderPdfBrowser";
 import type { ReportKind } from "@/lib/report/types";
@@ -17,11 +19,12 @@ export interface ReportTestClient {
   logo_url?: string | null;
 }
 
-/** "Hacer una prueba": generates the client report from the AGENCY OWNER's own
- *  campaigns and previews the exact PDF a client would receive. Sends nothing. */
+/** "Hacer una prueba": previews the exact PDF a client would receive (from the AGENCY
+ *  OWNER's own campaigns) and can send a test copy by email to verify delivery. */
 export default function ReportTestDialog({ client, open, onClose }: {
   client: ReportTestClient; open: boolean; onClose: () => void;
 }) {
+  const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string }[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [kind, setKind] = useState<ReportKind>("48h");
@@ -33,6 +36,11 @@ export default function ReportTestDialog({ client, open, onClose }: {
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
+  // Test send
+  const [sendTo, setSendTo] = useState("hello@onepulso.blog");
+  const [sending, setSending] = useState(false);
+  const [ownerAccount, setOwnerAccount] = useState<string | null>(null);
+
   const brandColor = client.brand_color || "#6E58F1";
   const company = client.company_name || client.full_name || client.email || "Cliente";
 
@@ -40,17 +48,19 @@ export default function ReportTestDialog({ client, open, onClose }: {
     if (!open) return;
     setLoadingCamps(true);
     (async () => {
-      const { data } = await supabase.from("campaigns").select("id, name, status").order("created_at", { ascending: false });
-      const list = data || [];
+      const [campRes, acctRes] = await Promise.all([
+        supabase.from("campaigns").select("id, name, status").order("created_at", { ascending: false }),
+        supabase.from("email_accounts").select("id").eq("status", "connected").not("smtp_host", "is", null).order("email").limit(1),
+      ]);
+      const list = campRes.data || [];
       setCampaigns(list);
-      // Preselect active campaigns (or all if none active) so a test is one click.
       const active = list.filter((c) => c.status === "active").map((c) => c.id);
       setSelected(new Set(active.length ? active : list.map((c) => c.id)));
+      setOwnerAccount(acctRes.data?.[0]?.id || null);
       setLoadingCamps(false);
     })();
   }, [open]);
 
-  // Revoke the object URL when it changes / on unmount.
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
 
   const toggle = (id: string) => setSelected((s) => {
@@ -62,16 +72,9 @@ export default function ReportTestDialog({ client, open, onClose }: {
     setGenerating(true);
     try {
       const data = await gatherReportData({
-        kind,
-        periodDays: kind === "weekly" ? 7 : 2,
-        clientName: company,
-        campaignIds: Array.from(selected),
+        kind, periodDays: kind === "weekly" ? 7 : 2, clientName: company, campaignIds: Array.from(selected),
       });
-      const { blob, filename } = await renderReportPdfBlob(data, {
-        company, brandColor, logoUrl: client.logo_url || undefined,
-      });
-      // Dialog closed mid-generation → don't setState on an unmounted component
-      // (would leak the object URL, since the cleanup effect already captured the old one).
+      const { blob, filename } = await renderReportPdfBlob(data, { company, brandColor, logoUrl: client.logo_url || undefined });
       if (!aliveRef.current) return;
       lastBlob.current = blob;
       setFilename(filename);
@@ -93,22 +96,38 @@ export default function ReportTestDialog({ client, open, onClose }: {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
 
+  // Email a test copy (via the deliverable server path: report + link to the PDF).
+  const sendTest = async () => {
+    if (!sendTo.trim()) { toast.error("Escribe un email"); return; }
+    if (!ownerAccount) { toast.error("No tienes ninguna cuenta de email conectada para enviar"); return; }
+    if (!user?.id) { toast.error("Sesión no disponible"); return; }
+    setSending(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ mode: "manual", client_user_id: user.id, kind, test_to: sendTo.trim(), from_account_id: ownerAccount }),
+      });
+      const j = await resp.json();
+      if (j.ok) toast.success(`Prueba enviada a ${sendTo}. Revísalo (Unibox → Importantes si te lo mandas a ti).`);
+      else toast.error(j.error || "No se pudo enviar la prueba");
+    } catch (e: any) { toast.error(String(e?.message || e)); }
+    setSending(false);
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="flex max-h-[93vh] w-[95vw] max-w-5xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-display">
             <FlaskConical className="h-4 w-4 text-primary" /> Prueba de informe · {company}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Genera el PDF <b>exactamente como lo recibiría el cliente</b>, usando tus propias campañas. No se envía nada — es solo una vista previa.
-          </p>
-
+        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
           {/* Tipo de informe */}
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <button
               onClick={() => setKind("48h")}
               className={`flex flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${kind === "48h" ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted/40"}`}
@@ -124,14 +143,14 @@ export default function ReportTestDialog({ client, open, onClose }: {
           </div>
 
           {/* Campañas */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Campañas a incluir</p>
             {loadingCamps ? (
-              <div className="flex justify-center py-4"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
+              <div className="flex justify-center py-3"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
             ) : campaigns.length === 0 ? (
               <p className="text-xs text-muted-foreground">No tienes campañas todavía.</p>
             ) : (
-              <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-border/60 p-2">
+              <div className="max-h-24 space-y-1 overflow-y-auto rounded-lg border border-border/60 p-2">
                 {campaigns.map((c) => (
                   <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted/40">
                     <Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggle(c.id)} />
@@ -143,7 +162,8 @@ export default function ReportTestDialog({ client, open, onClose }: {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button onClick={generate} disabled={generating} className="gap-2">
               {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
               {pdfUrl ? "Regenerar" : "Generar prueba"}
@@ -153,13 +173,25 @@ export default function ReportTestDialog({ client, open, onClose }: {
                 <Download className="h-4 w-4" /> Descargar PDF
               </Button>
             )}
-            {generating && <span className="text-xs text-muted-foreground">Calculando métricas y redactando el análisis con IA…</span>}
+            {generating && <span className="text-xs text-muted-foreground">Calculando métricas y redactando con IA…</span>}
+          </div>
+
+          {/* Test send */}
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+            <div className="flex-1 space-y-1">
+              <label className="text-[11px] font-medium text-muted-foreground">Enviar una prueba por email a</label>
+              <Input type="email" value={sendTo} onChange={(e) => setSendTo(e.target.value)} placeholder="hello@onepulso.blog" className="h-9 text-sm" />
+            </div>
+            <Button onClick={sendTest} disabled={sending || !ownerAccount} className="h-9 shrink-0 gap-2">
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar prueba
+            </Button>
+            {!ownerAccount && !loadingCamps && <p className="w-full text-[10px] text-amber-600">No tienes ninguna cuenta de email conectada para enviar.</p>}
           </div>
 
           {/* Preview */}
           {pdfUrl && (
             <div className="overflow-hidden rounded-lg border border-border/60">
-              <iframe title="preview" src={pdfUrl} className="h-[520px] w-full bg-white" />
+              <iframe title="preview" src={`${pdfUrl}#zoom=page-width`} className="h-[65vh] min-h-[420px] w-full bg-white" />
             </div>
           )}
           {!pdfUrl && !generating && (
