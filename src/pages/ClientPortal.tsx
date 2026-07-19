@@ -349,19 +349,23 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
     loadReports();
   }, [client.id]);
 
-  // Send a REAL report to the client right now (to test the automated pipeline).
+  // Send a REAL report to the client right now. Uses the CURRENT form values (account +
+  // "Enviar a"), so it works without needing to Save first.
   const sendNow = async (kind: "48h" | "weekly") => {
-    if (!confirm(`¿Enviar ahora el informe ${kind === "weekly" ? "semanal" : "de 48h"} a ${client.email}? Se enviará un email real al cliente.`)) return;
+    if (!fromAccount) { toast.error("Elige primero la cuenta de envío"); return; }
+    const recipient = toEmail.trim();
+    if (!recipient) { toast.error("Escribe el email del cliente en 'Enviar a'"); return; }
+    if (!confirm(`¿Enviar ahora el informe ${kind === "weekly" ? "semanal" : "de 48h"} a ${recipient}? Se enviará un email real al cliente.`)) return;
     setSendingKind(kind);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ mode: "manual", client_user_id: client.id, kind }),
+        body: JSON.stringify({ mode: "manual", client_user_id: client.id, kind, test_to: recipient, from_account_id: fromAccount }),
       });
       const j = await resp.json();
-      if (j.ok) { toast.success("Informe enviado al cliente"); loadReports(); }
+      if (j.ok) { toast.success(`Informe enviado a ${recipient}`); loadReports(); }
       else toast.error(j.error || "No se pudo enviar el informe");
     } catch (e: any) { toast.error(String(e?.message || e)); }
     setSendingKind(null);
@@ -468,7 +472,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
                       {sendingKind === "weekly" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Enviar semanal ahora
                     </Button>
                   </div>
-                  <p className="text-[10px] text-muted-foreground">Guarda antes si has cambiado la cuenta de envío. El informe se enviará al email del cliente ({client.email}).</p>
+                  <p className="text-[10px] text-muted-foreground">Se enviará desde la cuenta elegida al email de "Enviar a" ({toEmail.trim() || "escríbelo arriba"}). No hace falta guardar para esto; guarda para dejarlo automático.</p>
                 </div>
               </div>
             )}
