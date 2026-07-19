@@ -185,20 +185,28 @@ export default function Campaigns() {
   const handleStatusToggle = async (campaign: any) => {
     const newStatus = campaign.status === "active" ? "paused" : "active";
     if (newStatus === "active") {
-      const [{ data: ca }, { data: cl }, { data: st }] = await Promise.all([
+      // Read account_tags FRESH from the DB. The in-memory campaign object comes
+      // from the list load() and is NOT refreshed when the user changes the
+      // sending accounts/tag in the Options tab (that saves to the DB directly),
+      // so trusting campaign.account_tags here made a valid tag-only selection
+      // fail launch with "Asigna al menos una cuenta…".
+      const [{ data: fresh }, { data: ca }, { data: cl }, { data: st }] = await Promise.all([
+        supabase.from("campaigns").select("account_tags").eq("id", campaign.id).single(),
         supabase.from("campaign_accounts").select("id").eq("campaign_id", campaign.id),
         supabase.from("campaign_leads").select("id").eq("campaign_id", campaign.id),
         supabase.from("campaign_steps").select("id").eq("campaign_id", campaign.id),
       ]);
 
-      // Check accounts: direct assignments OR tag-based accounts
+      // Mirror the sending engine: direct assignments OR any CONNECTED account
+      // whose tags overlap the campaign's account_tags.
+      const accountTags: string[] = (fresh?.account_tags as string[] | null) || [];
       let hasAccounts = (ca?.length || 0) > 0;
-      if (!hasAccounts && (campaign.account_tags || []).length > 0) {
+      if (!hasAccounts && accountTags.length > 0) {
         const { data: tagAccounts } = await supabase
           .from("email_accounts")
           .select("id")
           .eq("status", "connected")
-          .overlaps("tags", campaign.account_tags);
+          .overlaps("tags", accountTags);
         hasAccounts = (tagAccounts?.length || 0) > 0;
       }
 
