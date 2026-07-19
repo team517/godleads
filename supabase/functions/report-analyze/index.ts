@@ -84,9 +84,21 @@ function buildPrompt(body: any): string {
     ? `NOTA DE TEMPORADA (IMPORTANTE, tenla en cuenta en el resumen): estamos en ${monthNames[month]}, época de ${month === 12 ? "Navidad y festivos" : "vacaciones de verano"}. Es NORMAL y ESPERABLE que estos días los resultados sean algo más flojos y que haya MÁS respuestas automáticas de "fuera de la oficina" (out of office), porque mucha gente no está en su puesto. Explícalo en positivo: NO es un problema de la campaña, es la época del año; en cuanto pase, el ritmo se recupera. No lo pintes como algo negativo.`
     : "";
 
+  const rate = Number(body.replyRate) || 0;
+  const benchmark =
+    "REFERENCIA DEL SECTOR: en cold email B2B, una tasa de respuesta SOBRE CONTACTADOS del 1-3% es lo normal/promedio, del 3-6% es buena, y por encima del 6% es excelente. " +
+    (rate >= 6
+      ? `La nuestra es del ${rate.toFixed(1)}% → EXCELENTE, muy por encima de la media. ELÓGIALO claramente en el resumen y en los destacados, poniéndolo en contexto con una frase tipo "estamos en un ${rate.toFixed(1)}% de respuesta, cuando lo habitual en el sector es 1-3%, así que vamos muy por encima de lo normal".`
+      : rate >= 3
+      ? `La nuestra es del ${rate.toFixed(1)}% → BUENA, por encima de la media. Elógialo en el resumen comparándolo con el estándar: "tenemos un ${rate.toFixed(1)}%, cuando lo normal en el sector es 1-3%".`
+      : rate >= 1.2
+      ? `La nuestra es del ${rate.toFixed(1)}%, dentro de la media del sector. Enmárcala en positivo, con margen de mejora, y menciona que estamos en línea con lo normal (1-3%).`
+      : `La nuestra es del ${rate.toFixed(1)}%. Enmárcala en positivo: hay recorrido de mejora y estamos trabajando para subirla hacia la media del sector (1-3%).`);
+
   return [
     `Cliente: ${body.clientName || "Cliente"}. Periodo: ${body.periodLabel || ""}. ${kindTxt}`,
     seasonal ? "\n" + seasonal : "",
+    "\n" + benchmark,
     "",
     "MÉTRICAS GLOBALES:",
     `- Personas contactadas (únicas): ${t.contacted || 0}`,
