@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, Users, MailOpen, MessageSquareReply, DollarSign, AlertTriangle, MailX } from "lucide-react";
+import { Send, Users, MailOpen, MessageSquareReply, DollarSign, AlertTriangle } from "lucide-react";
 
 type Stats = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number };
 
@@ -57,7 +57,9 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
     { label: "Replied",   value: m?.replied ?? 0,       sub: replyPct,             icon: MessageSquareReply, color: "text-teal-600" },
     { label: "Positive",  value: m?.positive ?? 0,      sub: null,                 icon: DollarSign,         color: "text-emerald-600" },
     { label: "Bounced",   value: m?.bounced ?? 0,       sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500" },
-    { label: "Sender B.", value: m?.senderBounced ?? 0, sub: pct(m?.senderBounced ?? 0), icon: MailX,        color: "text-red-600" },
+    // "Sender B." (failed-send recipients) removed: it conflated transient SMTP
+    // failures (e.g. an IONOS "503" storm that simply retries) with real bounces,
+    // showing an alarming inflated number. "Bounced" above = real hard bounces.
   ];
 
   return (

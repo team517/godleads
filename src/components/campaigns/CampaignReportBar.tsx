@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Send, Users, MailOpen, MessageSquareReply, AlertTriangle, MailX,
+  Send, Users, MailOpen, MessageSquareReply, AlertTriangle,
   Play, Pause, FileEdit, ExternalLink, DollarSign,
 } from "lucide-react";
 
@@ -96,7 +96,9 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
     { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600" },
     { key: "positive", label: "Positive Reply", value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600", link: true },
     { key: "bounced",  label: "Bounced",       value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500" },
-    { key: "sbounced", label: "Sender Bounced", value: m.senderBounced, sub: pct(m.senderBounced), icon: MailX,         color: "text-red-600" },
+    // "Sender Bounced" removed — it counted transient SMTP failures (e.g. an IONOS
+    // "503" storm that just retries) as if they were bounces, inflating a scary red
+    // number. "Bounced" above is the real hard-bounce count.
   ];
 
   return (
