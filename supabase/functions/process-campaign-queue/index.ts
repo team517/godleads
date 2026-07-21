@@ -362,6 +362,15 @@ function formatMailbox(name: string | undefined, email: string): string {
 //          'rate' = rate-limited (backoff this account)
 function classifySmtpError(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unknown' {
   const e = (err || '').toLowerCase();
+  // 503 / "bad sequence" / "out of order" = a broken or throttled SMTP *session*
+  // (commands arriving out of order, or IONOS resetting a slow/overloaded socket
+  // mid-conversation). This is NEVER a real recipient bounce — it MUST be retried
+  // with an account backoff, not burned. Kept FIRST so it wins over the generic
+  // "recipient rejected" hard match below (our RCPT error wraps the raw 503 reply
+  // in that phrase). \b503\b matches only a standalone 503 — 550/551/553/554 hard
+  // bounces are unaffected. This is the exact fault that stalled the whole engine
+  // (IONOS threw "503 Bad sequence" in a storm → retried forever, zero sends).
+  if (/\b503\b|bad sequence|out of sequence|out of order|sequence of commands/i.test(e)) return 'rate';
   // TRANSIENT first — many of these mention "auth" but are NOT credential failures
   // and must NOT disconnect the account (that froze all its leads forever). E.g.
   // "Authentication temporarily unavailable", "too many auth attempts", greylisting.
@@ -746,7 +755,15 @@ async function sendSmtpEmail(
           return { ok: false, error: `Auth failed: ${authResp.trim()}`, errorClass: classifySmtpError(authResp) };
         }
 
-        await sendTls(`MAIL FROM:<${from}>`);
+        const mailResp = await sendTls(`MAIL FROM:<${from}>`);
+        if (!mailResp.startsWith("250")) {
+          try { await sendTls("QUIT"); } catch {}
+          try { conn.close(); } catch {}
+          // MAIL FROM refused / session out of sync. Bail BEFORE RCPT so a slow or
+          // throttled server can't yield a misleading "503 bad sequence" on RCPT and
+          // burn the lead — classify the REAL sender error and let it retry.
+          return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: classifySmtpError(mailResp) };
+        }
         const rcptResp = await sendTls(`RCPT TO:<${to}>`);
         if (!rcptResp.startsWith("250")) {
           try { await sendTls("QUIT"); } catch {}
@@ -792,7 +809,13 @@ async function sendSmtpEmail(
       return { ok: false, error: `Auth failed: ${authResp.trim()}`, errorClass: classifySmtpError(authResp) };
     }
 
-    await send(`MAIL FROM:<${from}>`);
+    const mailResp = await send(`MAIL FROM:<${from}>`);
+    if (!mailResp.startsWith("250")) {
+      try { await send("QUIT"); } catch {}
+      try { conn.close(); } catch {}
+      // MAIL FROM refused / session out of sync — bail before RCPT (see STARTTLS path).
+      return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: classifySmtpError(mailResp) };
+    }
     const rcptResp = await send(`RCPT TO:<${to}>`);
     if (!rcptResp.startsWith("250")) {
       try { await send("QUIT"); } catch {}
@@ -931,6 +954,14 @@ serve(async (req) => {
     // local array), so a second campaign sharing the mailbox re-attempted it in
     // the same tick and burned another global slot on a guaranteed throttle.
     const rateLimitedThisRun = new Set<string>();
+    // Consecutive non-success failures per account THIS run. A throttled/desynced
+    // mailbox (e.g. IONOS in a "503 bad sequence" storm) must not be retried
+    // forever — after a few misses in a row we back it off for the rest of the run
+    // so one bad server can't burn the whole tick achieving zero sends. Reset to 0
+    // on every success. This is a class-agnostic safety net on top of the per-error
+    // reactions below (it also catches 'unknown'/'soft' storms those don't).
+    const accountFailStreak: Record<string, number> = {};
+    const MAX_ACCOUNT_FAIL_STREAK = 3;
     const MIN_GAP_BETWEEN_SENDS_MS = 1500; // pause when the same sending DOMAIN repeats back-to-back
     let lastSendDomain = ""; // sender domain of the previous send in this tick
 
@@ -1800,6 +1831,7 @@ serve(async (req) => {
           account.sent_today++;
           account.last_send_at = now.toISOString();
           accountSendsThisTick[account.id] = (accountSendsThisTick[account.id] || 0) + 1;
+          accountFailStreak[account.id] = 0; // healthy send → reset the breaker
 
           // Update domain sent count
           if (domainLimitEnabled) {
@@ -1831,6 +1863,18 @@ serve(async (req) => {
         } else {
           // Smart error reaction (Instantly behaviour)
           console.warn(`SMTP fail [${errClass}] account=${account.email} → ${lead.email}: ${result.error}`);
+
+          // Class-agnostic circuit breaker: back a mailbox off for the rest of the
+          // run after MAX_ACCOUNT_FAIL_STREAK consecutive misses, so a throttled or
+          // desynced server (any error class, incl. 'unknown'/'soft') can't be
+          // hammered lead after lead achieving zero sends.
+          accountFailStreak[account.id] = (accountFailStreak[account.id] || 0) + 1;
+          if (accountFailStreak[account.id] >= MAX_ACCOUNT_FAIL_STREAK && !rateLimitedThisRun.has(account.id)) {
+            rateLimitedThisRun.add(account.id);
+            const bidx = accounts.findIndex((a: any) => a.id === account.id);
+            if (bidx >= 0) accounts.splice(bidx, 1);
+            console.warn(`Circuit breaker: ${account.email} backed off for this run after ${accountFailStreak[account.id]} consecutive failures`);
+          }
 
           if (errClass === 'auth') {
             // Special bypass: never disconnect Dekano accounts (keep campaigns running)
