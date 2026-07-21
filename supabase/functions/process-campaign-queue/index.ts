@@ -678,8 +678,18 @@ async function sendSmtpEmail(
       return await readResponse();
     };
 
-    // Greeting
-    await readResponse();
+    // Greeting — a REAL client validates it. Under load IONOS can answer the
+    // connection with "421 too many connections" / "421 service unavailable"
+    // instead of "220". Ignoring that and barreling into EHLO desyncs the whole
+    // session and surfaces downstream as a bogus "503 bad sequence" (the exact
+    // fault that stormed the engine). Bail cleanly + classify (421 → rate) so the
+    // account backs off and the lead is retried, never burned.
+    const greetResp = await readResponse();
+    if (!greetResp.trim().startsWith("220")) {
+      try { await send("QUIT"); } catch {}
+      try { conn.close(); } catch {}
+      return { ok: false, error: `No 220 greeting: ${greetResp.trim()}`, errorClass: classifySmtpError(greetResp) };
+    }
 
     // EHLO with the SMTP server hostname — this is what real mail clients do
     // (IONOS, Gmail, Outlook). Using the sender domain here can cause some
@@ -792,7 +802,14 @@ async function sendSmtpEmail(
           : { ok: false, error: `Send failed: ${dataResp.trim()}`, errorClass: classifySmtpError(dataResp) };
     }
 
-    await send(`EHLO ${ehloHost}`);
+    const ehloResp = await send(`EHLO ${ehloHost}`);
+    if (!ehloResp.trim().startsWith("250")) {
+      try { await send("QUIT"); } catch {}
+      try { conn.close(); } catch {}
+      // EHLO refused (throttle / server busy). Bail before AUTH so the session
+      // can't desync into a later "503 bad sequence".
+      return { ok: false, error: `EHLO rejected: ${ehloResp.trim()}`, errorClass: classifySmtpError(ehloResp) };
+    }
     const authLoginResp = await send("AUTH LOGIN");
     if (!authLoginResp.startsWith("334")) {
       try { conn.close(); } catch {}
