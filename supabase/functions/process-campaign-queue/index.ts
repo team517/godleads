@@ -386,6 +386,20 @@ function classifySmtpError(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'un
   return 'unknown';
 }
 
+// Classify a failure that happened BEFORE we ever addressed the recipient — the
+// greeting, EHLO, STARTTLS or MAIL FROM stage. Such a failure is a SENDER-side or
+// transport problem (a sending domain with a broken MX/DNS record, the server
+// throttling the connection, etc.), NEVER a recipient bounce. It must NOT map to
+// 'hard': that would suppress a perfectly good lead (blocklist + status=bounced)
+// just because OUR sending mailbox was broken — e.g. "550 invalid DNS MX record"
+// from a mis-configured sending domain wrongly burned every recipient it touched.
+// Downgrade 'hard' → 'rate' so the ACCOUNT backs off for the run and the lead is
+// retried from a healthy mailbox; the recipient is left untouched.
+function senderStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unknown' {
+  const c = classifySmtpError(err);
+  return c === 'hard' ? 'rate' : c;
+}
+
 // Promise with timeout — prevents hung connections from killing the cron
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -688,7 +702,7 @@ async function sendSmtpEmail(
     if (!greetResp.trim().startsWith("220")) {
       try { await send("QUIT"); } catch {}
       try { conn.close(); } catch {}
-      return { ok: false, error: `No 220 greeting: ${greetResp.trim()}`, errorClass: classifySmtpError(greetResp) };
+      return { ok: false, error: `No 220 greeting: ${greetResp.trim()}`, errorClass: senderStageClass(greetResp) };
     }
 
     // EHLO with the SMTP server hostname — this is what real mail clients do
@@ -708,7 +722,7 @@ async function sendSmtpEmail(
         const startTlsResp = await readResponse();
         if (!startTlsResp.startsWith("220")) {
           try { conn.close(); } catch {}
-          return { ok: false, error: `STARTTLS failed: ${startTlsResp.trim()}`, errorClass: classifySmtpError(startTlsResp) };
+          return { ok: false, error: `STARTTLS failed: ${startTlsResp.trim()}`, errorClass: senderStageClass(startTlsResp) };
         }
 
         conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: endpoint.host });
@@ -747,7 +761,7 @@ async function sendSmtpEmail(
         const tlsEhloResp = await sendTls(`EHLO ${ehloHost}`);
         if (!tlsEhloResp.startsWith("250")) {
           try { conn.close(); } catch {}
-          return { ok: false, error: `EHLO after STARTTLS failed: ${tlsEhloResp.trim()}`, errorClass: classifySmtpError(tlsEhloResp) };
+          return { ok: false, error: `EHLO after STARTTLS failed: ${tlsEhloResp.trim()}`, errorClass: senderStageClass(tlsEhloResp) };
         }
         const authLoginResp = await sendTls("AUTH LOGIN");
         if (!authLoginResp.startsWith("334")) {
@@ -772,7 +786,7 @@ async function sendSmtpEmail(
           // MAIL FROM refused / session out of sync. Bail BEFORE RCPT so a slow or
           // throttled server can't yield a misleading "503 bad sequence" on RCPT and
           // burn the lead — classify the REAL sender error and let it retry.
-          return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: classifySmtpError(mailResp) };
+          return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: senderStageClass(mailResp) };
         }
         const rcptResp = await sendTls(`RCPT TO:<${to}>`);
         if (!rcptResp.startsWith("250")) {
@@ -808,7 +822,7 @@ async function sendSmtpEmail(
       try { conn.close(); } catch {}
       // EHLO refused (throttle / server busy). Bail before AUTH so the session
       // can't desync into a later "503 bad sequence".
-      return { ok: false, error: `EHLO rejected: ${ehloResp.trim()}`, errorClass: classifySmtpError(ehloResp) };
+      return { ok: false, error: `EHLO rejected: ${ehloResp.trim()}`, errorClass: senderStageClass(ehloResp) };
     }
     const authLoginResp = await send("AUTH LOGIN");
     if (!authLoginResp.startsWith("334")) {
@@ -831,7 +845,7 @@ async function sendSmtpEmail(
       try { await send("QUIT"); } catch {}
       try { conn.close(); } catch {}
       // MAIL FROM refused / session out of sync — bail before RCPT (see STARTTLS path).
-      return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: classifySmtpError(mailResp) };
+      return { ok: false, error: `Sender rejected: ${mailResp.trim()}`, errorClass: senderStageClass(mailResp) };
     }
     const rcptResp = await send(`RCPT TO:<${to}>`);
     if (!rcptResp.startsWith("250")) {

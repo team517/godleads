@@ -106,6 +106,29 @@ serve(async (req) => {
       topError = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
     }
 
+    // ── (C) A single BROKEN account: many failures with ZERO successes in the last
+    // 30 min (e.g. a sending domain with a dead MX/DNS record, or bad credentials).
+    // The sender-stage fix means these no longer burn leads, but the mailbox is dead
+    // weight until fixed — so flag it by email instead of the owner having to notice.
+    // Read-only. Bounded: pull failing account_ids, then one exact count per account
+    // that crosses the threshold (few, if any).
+    const since30 = new Date(Date.now() - 30 * 60_000).toISOString();
+    const { data: failRows } = await admin.from("sent_emails")
+      .select("account_id").in("status", ["failed", "bounced"]).gte("created_at", since30)
+      .not("account_id", "is", null).limit(3000);
+    const failByAcct: Record<string, number> = {};
+    for (const r of failRows || []) failByAcct[(r as any).account_id] = (failByAcct[(r as any).account_id] || 0) + 1;
+    const brokenAccounts: string[] = [];
+    for (const [accId, n] of Object.entries(failByAcct)) {
+      if (n < 15) continue; // needs a real streak, not a couple of ordinary bounces
+      const { count: okCount } = await admin.from("sent_emails")
+        .select("id", { count: "exact", head: true }).eq("account_id", accId).eq("status", "sent").gte("created_at", since30);
+      if ((okCount || 0) === 0) {
+        const { data: a } = await admin.from("email_accounts").select("email").eq("id", accId).maybeSingle();
+        if (a?.email) brokenAccounts.push(`${a.email} (${n} fallos, 0 envios en 30 min)`);
+      }
+    }
+
     // ── Decide if something is wrong ──
     // (A) Storm: real failure volume with almost no successes getting through.
     const highFailure = fail20 >= 25 && ok20 <= Math.floor(fail20 * 0.15);
@@ -114,8 +137,8 @@ serve(async (req) => {
     const inBusinessHours = utcHour >= 8 && utcHour <= 16;
     const silence = ok30 === 0 && activeCampaigns > 0 && inBusinessHours;
 
-    const problem = body.force === true || highFailure || silence;
-    const diagnostics = { ok20, fail20, ok30, activeCampaigns, highFailure, silence, topError, utcHour };
+    const problem = body.force === true || highFailure || silence || brokenAccounts.length > 0;
+    const diagnostics = { ok20, fail20, ok30, activeCampaigns, highFailure, silence, brokenAccounts, topError, utcHour };
     if (!problem) return json({ ok: true, alerted: false, ...diagnostics });
 
     // ── Anti-spam: at most one alert per hour ──
@@ -131,9 +154,11 @@ serve(async (req) => {
     const acct = (accts || []).find((a: any) => a.email === "team@onepulso.online") || (accts || [])[0];
     if (!acct?.smtp_host) return json({ ok: false, error: "No hay cuenta conectada para enviar el aviso", ...diagnostics }, 500);
 
-    const reason = highFailure
-      ? `Los envíos están FALLANDO: ${fail20} fallidos y solo ${ok20} correctos en los ultimos 20 minutos.`
-      : `El motor NO esta enviando: 0 envios correctos en los ultimos 30 minutos con campañas activas y la ventana de envio abierta.`;
+    const reasons: string[] = [];
+    if (highFailure) reasons.push(`Los envios estan FALLANDO: ${fail20} fallidos y solo ${ok20} correctos en los ultimos 20 minutos.`);
+    if (silence) reasons.push(`El motor NO esta enviando: 0 envios correctos en los ultimos 30 minutos con campañas activas y la ventana de envio abierta.`);
+    if (brokenAccounts.length) reasons.push(`Cuenta(s) de envio ROTAS (no envian nada, probable DNS/config): ${brokenAccounts.join("; ")}.\nRevisa su DNS (registro MX/A) o quitala de las campañas. El motor ya la aparta sola y reintenta con otras, asi que NO se pierden leads.`);
+    const reason = reasons.join("\n\n") || "Aviso de prueba (force).";
     const text = [
       "Hola,",
       "",
@@ -153,7 +178,9 @@ serve(async (req) => {
     ].join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 
     const to = Deno.env.get("ALERT_EMAIL") || "team@onepulso.online";
-    const subject = highFailure ? "AVISO: los envios estan fallando" : "AVISO: el motor no esta enviando";
+    const subject = highFailure ? "AVISO: los envios estan fallando"
+      : silence ? "AVISO: el motor no esta enviando"
+      : "AVISO: una cuenta de envio esta rota";
     const r = await sendMail(acct, to, subject, text);
     return json({ ok: r.ok, alerted: r.ok, error: r.error, ...diagnostics, preview: body.test ? { subject, text } : undefined });
   } catch (e: any) {
