@@ -355,41 +355,38 @@ serve(async (req) => {
       if (!body.secret || body.secret !== Deno.env.get("REPORTS_CRON_SECRET")) return json({ error: "Unauthorized" }, 401);
       const kind: "48h" | "weekly" = body.kind === "weekly" ? "weekly" : "48h";
       const minGapMs = kind === "weekly" ? 6 * 24 * 3600 * 1000 : 40 * 3600 * 1000;
-      const { data: profiles } = await admin.from("profiles").select(PROFILE_COLS).eq("report_enabled", true);
+      // Send ONE report per invocation (batch_size overridable). The cron fires every
+      // ~3 min in a short morning window, so successive clients go out ~3 MINUTES
+      // apart (real minutes, not seconds) with no single invocation ever running long
+      // enough to hit the edge wall-clock limit. Once every due client has been sent,
+      // the remaining firings in the window are cheap no-ops (all debounced).
+      const perRun = Math.max(1, Number(body.batch_size) || 1);
+      const stampCol = kind === "weekly" ? "report_last_weekly_at" : "report_last_48h_at";
+      const { data: profiles } = await admin.from("profiles")
+        .select(PROFILE_COLS).eq("report_enabled", true).order("user_id", { ascending: true });
       const results: any[] = [];
-
-      // Work out who is actually DUE first (has a sending account + past the debounce),
-      // so we can space those sends out. Skips are recorded but don't consume a slot.
-      const due: any[] = [];
+      let handled = 0;
       for (const p of (profiles || []) as any[]) {
+        if (handled >= perRun) break;
         if (!p.report_from_account_id) { results.push({ user: p.user_id, skipped: "no account" }); continue; }
         const last = kind === "weekly" ? p.report_last_weekly_at : p.report_last_48h_at;
         if (last && (Date.now() - new Date(last).getTime()) < minGapMs) { results.push({ user: p.user_id, skipped: "not due" }); continue; }
-        due.push(p);
-      }
-
-      // Light shuffle so the same client isn't always first (natural, non-mechanical).
-      for (let i = due.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [due[i], due[j]] = [due[j], due[i]]; }
-
-      // Send them at DIFFERENT minutes instead of all at once: spread the batch over
-      // ~1 minute with a jittered gap between each. Reasons: (1) looks natural, not a
-      // simultaneous blast, (2) kinder to the sending mailbox. BOUNDED (total sleep ≤
-      // ~60s, jitter ≤ 1×gap) so the whole run stays well within the edge function's
-      // wall-clock limit even as the client list grows.
-      const TOTAL_SPREAD_MS = 60_000;
-      const gapMs = due.length > 1 ? Math.floor(TOTAL_SPREAD_MS / (due.length - 1)) : 0;
-      for (let i = 0; i < due.length; i++) {
-        if (i > 0 && gapMs > 0) await new Promise((res) => setTimeout(res, Math.floor(gapMs * (0.5 + Math.random() * 0.5))));
-        const p = due[i];
-        const { data: u } = await admin.auth.admin.getUserById(p.user_id);
-        const client: ClientCtx = { ...p, email: u?.user?.email || null };
-        const r = await generateReport(admin, client, kind, {});
-        if (r.ok) {
-          await admin.from("profiles").update(kind === "weekly" ? { report_last_weekly_at: new Date().toISOString() } : { report_last_48h_at: new Date().toISOString() }).eq("user_id", p.user_id);
+        handled++;
+        let r: { ok: boolean; error?: string };
+        try {
+          const { data: u } = await admin.auth.admin.getUserById(p.user_id);
+          const client: ClientCtx = { ...p, email: u?.user?.email || null };
+          r = await generateReport(admin, client, kind, {});
+        } catch (e: any) {
+          r = { ok: false, error: e?.message || String(e) };
         }
+        // Stamp on EVERY attempt (success or fail) so a rare failure never wedges the
+        // batch — the next 3-min tick moves on to the next client. A failed report
+        // retries next cycle; "Enviar ahora" covers one-offs.
+        await admin.from("profiles").update({ [stampCol]: new Date().toISOString() }).eq("user_id", p.user_id);
         results.push({ user: p.user_id, ok: r.ok, error: r.error });
       }
-      return json({ ok: true, kind, processed: due.length, results });
+      return json({ ok: true, kind, sent: handled, results });
     }
 
     if (mode === "manual") {
