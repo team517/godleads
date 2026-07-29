@@ -948,7 +948,12 @@ serve(async (req) => {
     // expires. Capping keeps every run comfortably fast; the cron fires every 1-2
     // min, so throughput is unaffected — the same volume just spreads over more,
     // safer ticks instead of a single risky one.
-    const MAX_SENDS_PER_INVOCATION = 12;
+    // RAISED 12 → 24: at 12 the WHOLE platform maxed out at ~360 sends/hour (12 × 30
+    // ticks), a shared pool split across every tenant — so busy accounts sat far below
+    // their own daily caps ("pocos envíos"). Per-account limits (1/tick, 30/day, 6–9min
+    // cooldown) are UNCHANGED, so no mailbox sends faster — this just lets MORE distinct
+    // mailboxes send per tick. The 90s deadline still bounds each run.
+    const MAX_SENDS_PER_INVOCATION = 24;
     // WALL-CLOCK DEADLINE — the real safety net. The attempt cap alone can't bound
     // a tick's duration (each attempt costs 2–15s, plus per-lead DB round-trips),
     // and an overrunning tick makes the NEXT cron fire hit the job lock and skip —
