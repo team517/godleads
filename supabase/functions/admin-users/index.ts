@@ -203,7 +203,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -219,6 +219,10 @@ serve(async (req) => {
             report_from_account_id: p.report_from_account_id || null,
             report_low_contacts_threshold: p.report_low_contacts_threshold ?? 200,
             report_to_email: p.report_to_email || null,
+            ai_reply_enabled: !!p.ai_reply_enabled,
+            ai_reply_prompt: p.ai_reply_prompt || "",
+            ai_reply_calendar_url: p.ai_reply_calendar_url || "",
+            ai_reply_mode: p.ai_reply_mode || "rules",
           };
         })
         .filter(Boolean);
@@ -229,7 +233,8 @@ serve(async (req) => {
 
     if (action === "update_client") {
       const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password,
-        report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email } = body;
+        report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email,
+        ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode } = body;
       if (!user_id) throw new Error("user_id required");
       const upd: Record<string, unknown> = {};
       if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
@@ -241,6 +246,10 @@ serve(async (req) => {
       if (report_from_account_id !== undefined) upd.report_from_account_id = report_from_account_id || null;
       if (report_low_contacts_threshold !== undefined) upd.report_low_contacts_threshold = Number(report_low_contacts_threshold) || 200;
       if (report_to_email !== undefined) upd.report_to_email = report_to_email || null;
+      if (ai_reply_enabled !== undefined) upd.ai_reply_enabled = !!ai_reply_enabled;
+      if (ai_reply_prompt !== undefined) upd.ai_reply_prompt = ai_reply_prompt || null;
+      if (ai_reply_calendar_url !== undefined) upd.ai_reply_calendar_url = ai_reply_calendar_url || null;
+      if (ai_reply_mode !== undefined) upd.ai_reply_mode = ai_reply_mode || "rules";
       if (password) upd.client_password = password;
       if (Object.keys(upd).length > 0) {
         const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);

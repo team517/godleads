@@ -32,6 +32,7 @@ type Client = {
   client_password: string | null; created_at: string;
   report_enabled?: boolean; report_from_account_id?: string | null; report_low_contacts_threshold?: number | null;
   report_to_email?: string | null;
+  ai_reply_enabled?: boolean; ai_reply_prompt?: string | null; ai_reply_calendar_url?: string | null; ai_reply_mode?: string | null;
 };
 
 async function callAdmin(payload: Record<string, unknown>) {
@@ -350,6 +351,10 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [fromAccount, setFromAccount] = useState<string>(client.report_from_account_id || "");
   const [threshold, setThreshold] = useState<number>(client.report_low_contacts_threshold ?? 200);
   const [toEmail, setToEmail] = useState<string>(client.report_to_email || "");
+  // AI auto-reply assistant config (per client)
+  const [aiEnabled, setAiEnabled] = useState(!!client.ai_reply_enabled);
+  const [aiPrompt, setAiPrompt] = useState<string>(client.ai_reply_prompt || "");
+  const [aiCalendar, setAiCalendar] = useState<string>(client.ai_reply_calendar_url || "");
   const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [reports, setReports] = useState<any[]>([]);
@@ -527,6 +532,37 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
               </div>
             </div>
           )}
+
+          {/* ── AI auto-reply assistant (per client) ── */}
+          <div className="space-y-3 rounded-lg border border-border/60 p-3">
+            <div className="flex items-center gap-2">
+              <Checkbox id="ai-enabled" checked={aiEnabled} onCheckedChange={(v) => setAiEnabled(!!v)} />
+              <Label htmlFor="ai-enabled" className="cursor-pointer text-sm font-medium">Asistente de IA (respuestas)</Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Cuando alguien responde a un correo de las cuentas de este cliente, la IA contesta con este prompt.
+              Modo "con reglas": envía sola las dudas claras y las peticiones de reunión (comparte el link); lo negativo o ambiguo lo deja como <b>borrador</b> para revisar.
+            </p>
+            {aiEnabled && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Prompt (tono, qué vende, cómo responder, qué NO decir…)</Label>
+                  <textarea
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    rows={6}
+                    placeholder="Ej: Eres el asistente de {empresa}. Responde en español, cercano y profesional. Vendemos X. Si preguntan por precio, di que depende y ofrece una llamada. Nunca inventes datos. Si muestran interés o piden reunión, comparte el enlace del calendario."
+                    className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Se <b>guarda</b> con el cliente y la IA lo tiene en cuenta en cada respuesta. También sabe de qué campañas es este cliente.</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Enlace del calendario (para reuniones)</Label>
+                  <Input value={aiCalendar} onChange={(e) => setAiCalendar(e.target.value)} placeholder="https://calendly.com/tu-cliente/30min" className="h-8 text-sm" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
@@ -537,6 +573,10 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
             report_from_account_id: reportEnabled ? (fromAccount || null) : null,
             report_to_email: reportEnabled ? (toEmail.trim() || null) : null,
             report_low_contacts_threshold: threshold,
+            ai_reply_enabled: aiEnabled,
+            ai_reply_prompt: aiPrompt.trim() || null,
+            ai_reply_calendar_url: aiCalendar.trim() || null,
+            ai_reply_mode: "rules",
             ...(newPassword ? { password: newPassword } : {}),
           })}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Guardar
