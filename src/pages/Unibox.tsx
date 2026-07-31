@@ -3530,40 +3530,32 @@ export default function Unibox() {
                       ))}
                     </div>
                   )}
-                  {/* People added to the conversation ("Añadir persona") — they get the
-                      SAME threaded reply as a Cc. */}
-                  {(ccList.length > 0 || ccOpen) && (
-                    <div className="mb-2.5 space-y-2">
-                      {ccList.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-medium text-muted-foreground">También a:</span>
-                          {ccList.map((e) => (
-                            <span key={e} className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2 pr-1 text-xs font-medium text-primary">
-                              {e}
-                              <button type="button" onClick={() => removeCc(e)} className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive" title="Quitar">
-                                <X className="h-3 w-3" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {ccOpen && (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            value={ccInput}
-                            onChange={(e) => setCcInput(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCc(); } }}
-                            placeholder="email@empresa.com"
-                            className="h-8 max-w-[260px] text-sm"
-                            autoFocus
-                          />
-                          <Button size="sm" variant="secondary" className="h-8 gap-1 text-xs" onClick={addCc} disabled={!ccInput.trim()}>
-                            <Check className="h-3.5 w-3.5" /> Añadir
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* "Para" — recipients as chips, like a normal compose. The person you
+                      reply to is always included; add more (they persist on the thread). */}
+                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2 py-1.5">
+                    <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Para</span>
+                    {selected?.from_email && (
+                      <span className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
+                        {(selected.from_email || "").toLowerCase()}
+                      </span>
+                    )}
+                    {ccList.map((e) => (
+                      <span key={e} className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2 pr-1 text-xs font-medium text-primary">
+                        {e}
+                        <button type="button" onClick={() => removeCc(e)} className="rounded-full p-0.5 hover:bg-destructive/10 hover:text-destructive" title="Quitar">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      value={ccInput}
+                      onChange={(e) => setCcInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addCc(); } if (e.key === "Backspace" && !ccInput && ccList.length) { removeCc(ccList[ccList.length - 1]); } }}
+                      onBlur={() => { if (ccInput.trim()) addCc(); }}
+                      placeholder="Añadir email…"
+                      className="min-w-[130px] flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                    />
+                  </div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1">
                       <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
@@ -3609,15 +3601,6 @@ export default function Unibox() {
                       >
                         <Languages className="h-3.5 w-3.5" />
                         {autoTranslating ? "Traduciendo…" : (replyLang ? `En ${langLabels[replyLang] || replyLang}` : "Su idioma")}
-                      </Button>
-                      <Button
-                        variant="outline" size="sm"
-                        className={`h-8 gap-1.5 text-xs ${ccList.length ? "border-primary/40 text-primary" : ""}`}
-                        onClick={() => setCcOpen((o) => !o)}
-                        title="Añade a alguien en copia; recibirá esta respuesta en el mismo hilo"
-                      >
-                        <User className="h-3.5 w-3.5" />
-                        {ccList.length ? `Personas (${ccList.length})` : "Añadir persona"}
                       </Button>
                     </div>
                     <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
