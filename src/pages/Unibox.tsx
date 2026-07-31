@@ -1249,16 +1249,11 @@ export default function Unibox() {
   const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
   // Extra people added to the conversation ("Añadir persona"): the reply is sent
-  // to the original sender AND these, all in the same thread (as Cc).
+  // to the original sender AND these, all in the same thread (as Cc). PERSISTENT
+  // per conversation (thread_cc table) — once added they stay on the thread.
   const [ccList, setCcList] = useState<string[]>([]);
   const [ccInput, setCcInput] = useState("");
   const [ccOpen, setCcOpen] = useState(false);
-  const addCc = () => {
-    const e = ccInput.trim().toLowerCase();
-    if (!/^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(e)) { toast.error("Email no válido"); return; }
-    if (ccList.includes(e)) { setCcInput(""); return; }
-    setCcList((prev) => [...prev, e]); setCcInput("");
-  };
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1536px)");
     const apply = () => setIsDesktop(mq.matches);
@@ -1753,7 +1748,7 @@ export default function Unibox() {
 
   // Clear the translation ONLY when the selected message changes — not on every
   // 30s messages reload (that used to make a just-made translation disappear).
-  useEffect(() => { setTranslatedBody(""); setCcList([]); setCcInput(""); setCcOpen(false); }, [selectedId]);
+  useEffect(() => { setTranslatedBody(""); setCcInput(""); setCcOpen(false); }, [selectedId]);
 
   // Clear AI suggestion + probe language + load thread on select / refresh
   useEffect(() => {
@@ -1837,6 +1832,32 @@ export default function Unibox() {
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
   const selected = useMemo(() => messages.find(m => m.id === selectedId) || (searchResults || []).find(m => m.id === selectedId) || importantItems.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || null, [messages, sentItems, searchResults, importantItems, selectedId]);
+
+  // ── "Añadir persona" (persistent per-conversation Cc) ──
+  const ccThreadKey = (selected?.from_email || "").toLowerCase();
+  // Load the saved extra people whenever the open conversation changes, so they
+  // stay on the thread across sends and across sessions.
+  useEffect(() => {
+    if (!ccThreadKey || !user) { setCcList([]); return; }
+    let alive = true;
+    (async () => {
+      const { data } = await (supabase as any).from("thread_cc")
+        .select("cc_email").eq("user_id", user.id).eq("thread_email", ccThreadKey);
+      if (alive) setCcList(((data || []) as any[]).map((r) => r.cc_email));
+    })();
+    return () => { alive = false; };
+  }, [ccThreadKey, user]);
+  const addCc = async () => {
+    const e = ccInput.trim().toLowerCase();
+    if (!/^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(e)) { toast.error("Email no válido"); return; }
+    if (ccList.includes(e)) { setCcInput(""); return; }
+    setCcList((prev) => [...prev, e]); setCcInput("");
+    if (ccThreadKey && user) { try { await (supabase as any).from("thread_cc").insert({ user_id: user.id, thread_email: ccThreadKey, cc_email: e }); } catch { /* stays in-session either way */ } }
+  };
+  const removeCc = async (e: string) => {
+    setCcList((prev) => prev.filter((x) => x !== e));
+    if (ccThreadKey && user) { try { await (supabase as any).from("thread_cc").delete().eq("user_id", user.id).eq("thread_email", ccThreadKey).eq("cc_email", e); } catch { /* */ } }
+  };
 
   // Language bucket per message, cached by id (text never changes). Cleared by "Re-filtrar idioma".
   const messageLang = useCallback((m: any): "es" | "en" | "fr" | "it" | "other" | "unknown" => {
@@ -2613,7 +2634,9 @@ export default function Unibox() {
       setReply("");
       setReplyFiles([]);
       setReplyLang(null);
-      setCcList([]); setCcInput(""); setCcOpen(false);
+      // Keep ccList — the added people STAY on this conversation (persisted), so
+      // your next reply here also goes to them. Only close the input UI.
+      setCcInput(""); setCcOpen(false);
       // Mark this sender as "replied-to" NOW so the inbound message stays visible in
       // "Todos" immediately (no wait for the next sent_emails reload).
       const repliedEmail = (selected.from_email || "").toLowerCase();
@@ -3517,7 +3540,7 @@ export default function Unibox() {
                           {ccList.map((e) => (
                             <span key={e} className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2 pr-1 text-xs font-medium text-primary">
                               {e}
-                              <button type="button" onClick={() => setCcList((prev) => prev.filter((x) => x !== e))} className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive" title="Quitar">
+                              <button type="button" onClick={() => removeCc(e)} className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive" title="Quitar">
                                 <X className="h-3 w-3" />
                               </button>
                             </span>
