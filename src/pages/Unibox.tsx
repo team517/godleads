@@ -1248,6 +1248,17 @@ export default function Unibox() {
   // Files the user attaches to a reply (sent via send-email as base64 parts).
   const [replyFiles, setReplyFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
+  // Extra people added to the conversation ("Añadir persona"): the reply is sent
+  // to the original sender AND these, all in the same thread (as Cc).
+  const [ccList, setCcList] = useState<string[]>([]);
+  const [ccInput, setCcInput] = useState("");
+  const [ccOpen, setCcOpen] = useState(false);
+  const addCc = () => {
+    const e = ccInput.trim().toLowerCase();
+    if (!/^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(e)) { toast.error("Email no válido"); return; }
+    if (ccList.includes(e)) { setCcInput(""); return; }
+    setCcList((prev) => [...prev, e]); setCcInput("");
+  };
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1536px)");
     const apply = () => setIsDesktop(mq.matches);
@@ -1742,7 +1753,7 @@ export default function Unibox() {
 
   // Clear the translation ONLY when the selected message changes — not on every
   // 30s messages reload (that used to make a just-made translation disappear).
-  useEffect(() => { setTranslatedBody(""); }, [selectedId]);
+  useEffect(() => { setTranslatedBody(""); setCcList([]); setCcInput(""); setCcOpen(false); }, [selectedId]);
 
   // Clear AI suggestion + probe language + load thread on select / refresh
   useEffect(() => {
@@ -2584,6 +2595,7 @@ export default function Unibox() {
           references: ([targetRefChain, targetMsgId].filter(Boolean).join(" ").trim()) || undefined,
           signature_html: acctSignature || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
+          cc: ccList,   // extra people added to the thread ("Añadir persona")
         }),
         signal: controller.signal,
       });
@@ -2597,10 +2609,11 @@ export default function Unibox() {
         return;
       }
 
-      toast.success("Respuesta enviada");
+      toast.success(ccList.length ? `Respuesta enviada (+${ccList.length} en copia)` : "Respuesta enviada");
       setReply("");
       setReplyFiles([]);
       setReplyLang(null);
+      setCcList([]); setCcInput(""); setCcOpen(false);
       // Mark this sender as "replied-to" NOW so the inbound message stays visible in
       // "Todos" immediately (no wait for the next sent_emails reload).
       const repliedEmail = (selected.from_email || "").toLowerCase();
@@ -3494,6 +3507,40 @@ export default function Unibox() {
                       ))}
                     </div>
                   )}
+                  {/* People added to the conversation ("Añadir persona") — they get the
+                      SAME threaded reply as a Cc. */}
+                  {(ccList.length > 0 || ccOpen) && (
+                    <div className="mb-2.5 space-y-2">
+                      {ccList.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-medium text-muted-foreground">En copia:</span>
+                          {ccList.map((e) => (
+                            <span key={e} className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2 pr-1 text-xs font-medium text-primary">
+                              {e}
+                              <button type="button" onClick={() => setCcList((prev) => prev.filter((x) => x !== e))} className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive" title="Quitar">
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {ccOpen && (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={ccInput}
+                            onChange={(e) => setCcInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCc(); } }}
+                            placeholder="email@empresa.com"
+                            className="h-8 max-w-[260px] text-sm"
+                            autoFocus
+                          />
+                          <Button size="sm" variant="secondary" className="h-8 gap-1 text-xs" onClick={addCc} disabled={!ccInput.trim()}>
+                            <Check className="h-3.5 w-3.5" /> Añadir
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1">
                       <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
@@ -3539,6 +3586,15 @@ export default function Unibox() {
                       >
                         <Languages className="h-3.5 w-3.5" />
                         {autoTranslating ? "Traduciendo…" : (replyLang ? `En ${langLabels[replyLang] || replyLang}` : "Su idioma")}
+                      </Button>
+                      <Button
+                        variant="outline" size="sm"
+                        className={`h-8 gap-1.5 text-xs ${ccList.length ? "border-primary/40 text-primary" : ""}`}
+                        onClick={() => setCcOpen((o) => !o)}
+                        title="Añade a alguien en copia; recibirá esta respuesta en el mismo hilo"
+                      >
+                        <User className="h-3.5 w-3.5" />
+                        {ccList.length ? `Personas (${ccList.length})` : "Añadir persona"}
                       </Button>
                     </div>
                     <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>

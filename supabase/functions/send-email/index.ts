@@ -245,7 +245,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[] }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
@@ -326,6 +326,13 @@ async function sendSmtpEmail(
         `To: ${to}`,
         `Reply-To: <${from}>`,
       ];
+
+      // Extra people added to the conversation (Unibox "Añadir persona"): they
+      // receive the SAME threaded message. Shown in the Cc header so everyone sees
+      // who is on the thread; each is also added as an SMTP RCPT below.
+      if (opts?.cc && opts.cc.length > 0) {
+        headers.push(`Cc: ${opts.cc.join(", ")}`);
+      }
 
       if (opts?.inReplyTo) {
         const refId = opts.inReplyTo.includes("<") ? opts.inReplyTo : `<${opts.inReplyTo}>`;
@@ -514,6 +521,11 @@ async function sendSmtpEmail(
           try { await sendTls("QUIT"); } catch {} try { conn.close(); } catch {}
           return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
         }
+        // Extra CC recipients — best-effort: a bad CC must NOT abort the send to
+        // the main recipient (who always gets it).
+        for (const c of (opts?.cc || [])) {
+          try { const cr = await sendTls(`RCPT TO:<${c}>`); if (!cr.startsWith("25")) console.warn(`CC rechazado ${c}: ${cr.trim().slice(0, 80)}`); } catch { console.warn(`CC error RCPT ${c}`); }
+        }
         await sendTls("DATA");
         const dataResp = await writeRawTls(buildMessage());
         const sent = dataResp.includes("250");
@@ -536,6 +548,10 @@ async function sendSmtpEmail(
     if (!rcptResp.startsWith("250") && !rcptResp.startsWith("251")) {
       try { await send("QUIT"); } catch {} try { conn.close(); } catch {}
       return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
+    }
+    // Extra CC recipients — best-effort (a bad CC never blocks the main recipient).
+    for (const c of (opts?.cc || [])) {
+      try { const cr = await send(`RCPT TO:<${c}>`); if (!cr.startsWith("25")) console.warn(`CC rechazado ${c}: ${cr.trim().slice(0, 80)}`); } catch { console.warn(`CC error RCPT ${c}`); }
     }
     await send("DATA");
     const dataResp = await writeRaw(buildMessage());
@@ -590,7 +606,17 @@ serve(async (req) => {
       include_unsubscribe,
       attachments,
       signature_html,   // rich branded signature (from the Unibox reply)
+      cc,               // extra people added to the thread (Unibox "Añadir persona")
     } = await req.json();
+
+    // Clean the CC list: accept an array or a comma/;-separated string, extract a
+    // valid address from each ("Name <a@b.com>" too), dedupe, and drop the main
+    // recipient if it slipped in. Invalid entries are simply ignored (never fail).
+    const cleanCc: string[] = Array.from(new Set(
+      (Array.isArray(cc) ? cc : String(cc || "").split(/[,;]/))
+        .map((raw: string) => (String(raw).match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/)?.[1] || String(raw).match(/[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+/)?.[0] || "").trim().toLowerCase())
+        .filter((e: string) => /^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(e))
+    ));
 
     // Attachments: [{ filename, mime, base64 }]. Guard total size (~15 MB of
     // base64) so a huge payload can't blow the SMTP DATA / function memory.
@@ -768,6 +794,8 @@ serve(async (req) => {
           || (campaign_id ? (account as any).signature_html : undefined)
           || undefined,
         attachments: safeAttachments,
+        // Extra thread participants — drop the main recipient if it slipped in.
+        cc: cleanCc.filter((e) => e !== cleanTo),
       }
     );
 
