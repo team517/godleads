@@ -4,7 +4,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
-type Daily = { day: string; label: string; full: string; envios: number; respuestas: number };
+type Daily = { day: string; label: string; full: string; envios: number; nuevos: number; followups: number; respuestas: number };
 
 export default function Stats() {
   const { user } = useAuth();
@@ -39,7 +39,7 @@ export default function Stats() {
           replied: Number(s.replied || 0),
           failed: Number(s.failed || 0),
         });
-        const rows = (dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>;
+        const rows = (dailyRes?.data || []) as Array<{ day: string; sends: number; new_leads: number; followups: number; replies: number }>;
         setDaily(rows.map((r) => {
           const d = new Date(`${r.day}T00:00:00`);
           return {
@@ -47,6 +47,8 @@ export default function Stats() {
             label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
             full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
             envios: Number(r.sends || 0),
+            nuevos: Number(r.new_leads || 0),
+            followups: Number(r.followups || 0),
             respuestas: Number(r.replies || 0),
           };
         }));
@@ -84,6 +86,8 @@ export default function Stats() {
 
   const totalWindow = daily.reduce((s, p) => s + p.envios, 0);
   const totalReplies = daily.reduce((s, p) => s + p.respuestas, 0);
+  const totalNuevos = daily.reduce((s, p) => s + p.nuevos, 0);
+  const totalFollowups = daily.reduce((s, p) => s + p.followups, 0);
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
@@ -131,8 +135,10 @@ export default function Stats() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="font-display text-base">Envíos por día · últimos 14 días</CardTitle>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(217, 91%, 60%)" }} /> {totalWindow.toLocaleString("es")} envíos</span>
+                <span>· {totalNuevos.toLocaleString("es")} leads nuevos</span>
+                <span>· {totalFollowups.toLocaleString("es")} follow-ups</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(142, 76%, 36%)" }} /> {totalReplies.toLocaleString("es")} respuestas</span>
               </div>
             </CardHeader>
@@ -161,6 +167,8 @@ export default function Stats() {
                         <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
                           <p className="mb-1 font-medium capitalize">{p.full}</p>
                           <p className="font-semibold" style={{ color: "hsl(217, 91%, 60%)" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
+                          <p className="text-muted-foreground">· {p.nuevos.toLocaleString("es")} leads nuevos</p>
+                          <p className="text-muted-foreground">· {p.followups.toLocaleString("es")} follow-ups</p>
                           {p.respuestas > 0 && <p style={{ color: "hsl(142, 76%, 36%)" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
                         </div>
                       );
