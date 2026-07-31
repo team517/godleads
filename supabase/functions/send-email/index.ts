@@ -323,16 +323,12 @@ async function sendSmtpEmail(
         `Message-ID: ${messageId}`,
         `Subject: ${encodeMimeHeader(subject)}`,
         `From: ${fromHeader}`,
-        `To: ${to}`,
+        // Extra people added to the conversation (Unibox "Añadir persona") go in the
+        // SAME "To" so both show together as direct recipients ("los dos mails"),
+        // not one in To + one in Cc. Each is also added as an SMTP RCPT below.
+        `To: ${[to, ...(opts?.cc || [])].join(", ")}`,
         `Reply-To: <${from}>`,
       ];
-
-      // Extra people added to the conversation (Unibox "Añadir persona"): they
-      // receive the SAME threaded message. Shown in the Cc header so everyone sees
-      // who is on the thread; each is also added as an SMTP RCPT below.
-      if (opts?.cc && opts.cc.length > 0) {
-        headers.push(`Cc: ${opts.cc.join(", ")}`);
-      }
 
       if (opts?.inReplyTo) {
         const refId = opts.inReplyTo.includes("<") ? opts.inReplyTo : `<${opts.inReplyTo}>`;

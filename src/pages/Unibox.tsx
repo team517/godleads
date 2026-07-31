@@ -2630,7 +2630,7 @@ export default function Unibox() {
         return;
       }
 
-      toast.success(ccList.length ? `Respuesta enviada (+${ccList.length} en copia)` : "Respuesta enviada");
+      toast.success(ccList.length ? `Respuesta enviada a ${ccList.length + 1} personas (mismo hilo)` : "Respuesta enviada");
       setReply("");
       setReplyFiles([]);
       setReplyLang(null);
@@ -3536,7 +3536,7 @@ export default function Unibox() {
                     <div className="mb-2.5 space-y-2">
                       {ccList.length > 0 && (
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-medium text-muted-foreground">En copia:</span>
+                          <span className="text-[11px] font-medium text-muted-foreground">También a:</span>
                           {ccList.map((e) => (
                             <span key={e} className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2 pr-1 text-xs font-medium text-primary">
                               {e}
