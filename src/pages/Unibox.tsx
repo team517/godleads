@@ -1230,6 +1230,7 @@ export default function Unibox() {
   const syncLockRef = useRef(false);
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const replyDraftRef = useRef(""); // mirrors `reply` so the debounced reload can skip while composing
+  const readingThreadRef = useRef<string | null>(null); // mirrors selectedId → skip auto-reload while a conversation is OPEN (don't yank the thread under the user)
   const backgroundSyncOffsetRef = useRef(0);
   const lastAutoSyncAttemptRef = useRef(0);
   const replyRef = useRef<HTMLTextAreaElement>(null);
@@ -1494,7 +1495,10 @@ export default function Unibox() {
       }
 
       setLastSyncAt(new Date());
-      await load();
+      // A SILENT (auto) sync must not reload the list while the user is reading a
+      // conversation — it would re-fire loadThread and make the open thread jump.
+      // New mail still landed in the DB; the list refreshes on close / manual sync.
+      if (!(silent && readingThreadRef.current)) await load();
       if (!silent) {
         if (!anySuccess) {
           toast.error(firstError ? `No se pudo sincronizar: ${firstError}` : "No se pudo sincronizar", { id: PROGRESS_ID });
@@ -1786,6 +1790,13 @@ export default function Unibox() {
   // Keep a ref of the reply draft so the debounced reload can tell if the user is
   // mid-compose without re-creating the callback on every keystroke.
   useEffect(() => { replyDraftRef.current = reply; }, [reply]);
+  useEffect(() => {
+    const wasReading = readingThreadRef.current;
+    readingThreadRef.current = selectedId;
+    // Just CLOSED a conversation → refresh the list now so any mail that arrived
+    // while reading (the auto-reload was paused) shows up immediately.
+    if (wasReading && !selectedId) load();
+  }, [selectedId, load]);
 
   // DEBOUNCED, compose-aware reload. A background IMAP sync inserts many rows at
   // once; firing load() on each realtime event re-rendered the whole list over and
@@ -1795,8 +1806,11 @@ export default function Unibox() {
   const scheduleReload = useCallback(() => {
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
     const run = () => {
-      if (replyDraftRef.current.trim().length > 0) {
-        reloadTimerRef.current = setTimeout(run, 8000); // busy composing → try again later
+      // Never yank the screen while the user is WRITING a reply OR just READING an
+      // open conversation — the data keeps syncing in the background; we only defer
+      // the list re-render (which would re-fire loadThread and make the thread jump).
+      if (replyDraftRef.current.trim().length > 0 || readingThreadRef.current) {
+        reloadTimerRef.current = setTimeout(run, 8000); // busy / reading → try again later
         return;
       }
       load();
