@@ -30,10 +30,10 @@ interface InboxMessage {
 function isRealMessage(m: Partial<InboxMessage>): boolean {
   if (isBounceOrFailure(m.from_email || "")) return false;
   if (hasWarmupCodes(m.subject || "", m.body_text || "")) return false;
-  if (!(m.lead_id || m.campaign_id)) {
-    const sample = (m.body_text && m.body_text.trim()) ? m.body_text : (m.subject || "");
-    if (detectLangHeuristic(sample) === "other") return false;
-  }
+  // The dashboard glance shows ONLY genuine campaign replies. Warmup traffic is
+  // inbound between your own mailboxes and is NEVER linked to a lead/campaign, so
+  // require a link — that alone removes all warmup (and any stray cold inbound).
+  if (!(m.lead_id || m.campaign_id)) return false;
   return true;
 }
 
@@ -60,9 +60,12 @@ export default function TodayMessages() {
       .select("id, from_email, from_name, subject, body_text, received_at, is_read, labels, lead_id, campaign_id")
       .eq("user_id", user.id)
       .eq("is_archived", false)
+      // Only real campaign replies (linked to a lead/campaign) — excludes warmup at
+      // the DB level so it never fills the window.
+      .or("lead_id.not.is.null,campaign_id.not.is.null")
       .gte("received_at", todayStart.toISOString())
       .order("received_at", { ascending: false })
-      .limit(80); // fetch extra, then drop warmup/noise before showing 20
+      .limit(80); // fetch extra, then drop bounces/noise before showing 20
 
     setMessages(((data as InboxMessage[]) || []).filter(isRealMessage).slice(0, 20));
     setLoading(false);
