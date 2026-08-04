@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 import MyReportsCard from "@/components/reports/MyReportsCard";
+import { extractLogoColor } from "@/lib/logoColor";
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -61,7 +62,7 @@ function SectionPicker({ selected, onToggle }: { selected: string[]; onToggle: (
   );
 }
 
-function LogoField({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+function LogoField({ value, onChange, onColor }: { value: string; onChange: (url: string) => void; onColor?: (hex: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +77,8 @@ function LogoField({ value, onChange }: { value: string; onChange: (url: string)
       if (error) throw error;
       const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
       onChange(data.publicUrl);
+      // Auto-derive the brand color from the logo (dominant vivid color).
+      if (onColor) { const c = await extractLogoColor(file); if (c) onColor(c); }
       toast.success("Logo subido");
     } catch (e: any) {
       toast.error(e.message || "Error al subir el logo");
@@ -276,7 +279,7 @@ export default function ClientPortal() {
           <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
             <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Branding</Label>
             <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-              <LogoField value={logoUrl} onChange={setLogoUrl} />
+              <LogoField value={logoUrl} onChange={setLogoUrl} onColor={setBrandColor} />
               <div className="space-y-1.5"><Label className="text-xs">Color de marca</Label>
                 <div className="flex items-center gap-2">
                   <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-9 w-12 cursor-pointer rounded border border-border bg-background" />
@@ -425,7 +428,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} /></div>
             <div className="space-y-1.5"><Label className="text-xs">Nueva contraseña</Label><Input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="(dejar vacío = sin cambio)" /></div>
-            <div className="sm:col-span-2"><LogoField value={logoUrl} onChange={setLogoUrl} /></div>
+            <div className="sm:col-span-2"><LogoField value={logoUrl} onChange={setLogoUrl} onColor={setBrandColor} /></div>
             <div className="space-y-1.5"><Label className="text-xs">Color de marca</Label>
               <div className="flex items-center gap-2">
                 <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-9 w-12 cursor-pointer rounded border border-border bg-background" />

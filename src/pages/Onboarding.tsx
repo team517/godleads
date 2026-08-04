@@ -12,6 +12,7 @@ import {
   ChevronDown, Link2, Users,
 } from "lucide-react";
 import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, type PhaseState } from "@/lib/onboarding";
+import { extractLogoColor } from "@/lib/logoColor";
 
 type Client = {
   id: string; email: string; full_name: string | null; company_name: string | null;
@@ -178,6 +179,10 @@ function CreateClient({ onCreated }: { onCreated: () => void }) {
       const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
       if (error) throw error;
       setLogoUrl(supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl);
+      // Auto-set the brand color from the logo's dominant vivid color (read locally,
+      // before upload finishes touching CORS). Falls back silently if unreadable.
+      const color = await extractLogoColor(file);
+      if (color) setBrandColor(color);
       toast.success("Logo subido");
     } catch (e: any) { toast.error(e.message || "Error al subir el logo"); }
     setUploading(false);
