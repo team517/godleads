@@ -141,12 +141,6 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
               placeholder={slugify(c.company_name || c.full_name || "cliente") || "cliente"}
               className="h-8 w-40 text-sm"
             />
-            {!slug && (
-              <Button type="button" size="sm" variant="ghost" className="h-8 text-xs"
-                onClick={() => setSlug(slugify(c.company_name || c.full_name || c.email.split("@")[0]))}>
-                Generar
-              </Button>
-            )}
             {url && (
               <>
                 <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={copyUrl}>
@@ -260,7 +254,6 @@ function CreateClient({ onCreated }: { onCreated: () => void }) {
       action: "create_user", email: email.trim().toLowerCase(), password,
       company_name: company.trim() || null, logo_url: logoUrl.trim() || null, brand_color: brandColor || null,
       allowed_routes: ["/dashboard", "/campaigns", "/unibox", "/stats", "/onboarding"],
-      onboarding_slug: company.trim() ? slugify(company) : null,
     });
     if (res.error) toast.error(res.error);
     else {
@@ -359,6 +352,7 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [fromAccountId, setFromAccountId] = useState("");
+  const backfillingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) return;
@@ -386,6 +380,31 @@ export default function Onboarding() {
     supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
       .then(({ data }) => setAccounts((data as EmailAccount[]) || []));
   }, [access, loadClients]);
+
+  // Auto-assign a stable access link (slug) to any client that doesn't have one yet,
+  // and persist it ONCE — so the owner never has to click "Generar". Uniqueness is
+  // resolved against the already-loaded clients (case-insensitive, same as the DB index).
+  useEffect(() => {
+    const missing = clients.filter((c) => !c.onboarding_slug && !backfillingRef.current.has(c.id));
+    if (missing.length === 0) return;
+    missing.forEach((c) => backfillingRef.current.add(c.id));
+    (async () => {
+      const taken = new Set(clients.map((c) => (c.onboarding_slug || "").toLowerCase()).filter(Boolean));
+      const uniqueSlug = (base: string) => {
+        let s = base || "cliente", i = 2;
+        while (taken.has(s)) s = `${base}-${i++}`;
+        taken.add(s);
+        return s;
+      };
+      let changed = false;
+      for (const c of missing) {
+        const base = slugify(c.company_name || c.full_name || c.email.split("@")[0]) || "cliente";
+        const res = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: uniqueSlug(base) });
+        if (!res?.error) changed = true;
+      }
+      if (changed) loadClients();
+    })();
+  }, [clients, loadClients]);
 
   const changeSender = async (id: string) => {
     setFromAccountId(id);
