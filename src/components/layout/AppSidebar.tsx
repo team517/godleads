@@ -49,6 +49,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const [isAdmin, setIsAdmin] = useState(false);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
+  // Onboarding is an owner-only management tool — never shown to clients/managers.
+  const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
+  const visibleTools = toolsNav.filter((item) => item.path !== "/onboarding" || isOwner);
 
   useEffect(() => {
     setUnreadCount(readCachedUniboxUnread());
@@ -170,11 +173,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         </div>
 
         {/* Tools section */}
-        {(!allowedRoutes || toolsNav.some(item => allowedRoutes.includes(item.path))) && (
+        {(!allowedRoutes || visibleTools.some(item => allowedRoutes.includes(item.path))) && (
         <div className="mt-4 pt-4 border-t border-sidebar-border/70">
           {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Herramientas</p>}
           <div className="divide-y divide-sidebar-border/50">
-            {toolsNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+            {visibleTools.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
           </div>
         </div>
         )}

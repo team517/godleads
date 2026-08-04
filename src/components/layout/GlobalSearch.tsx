@@ -62,7 +62,9 @@ export function GlobalSearch() {
 
     // Nav matches first (instant, no network).
     const lower = term.toLowerCase();
+    const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
     const navMatches: SearchResult[] = NAV
+      .filter((n) => n.path !== "/onboarding" || isOwner) // Onboarding is owner-only
       .filter((n) => n.label.toLowerCase().includes(lower) || n.keywords.includes(lower))
       .slice(0, 4)
       .map((n) => ({ kind: "page", id: n.path, title: n.label, subtitle: "Sección", to: n.path }));

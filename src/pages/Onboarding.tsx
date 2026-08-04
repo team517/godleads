@@ -253,7 +253,7 @@ function CreateClient({ onCreated }: { onCreated: () => void }) {
     const res = await callAdmin({
       action: "create_user", email: email.trim().toLowerCase(), password,
       company_name: company.trim() || null, logo_url: logoUrl.trim() || null, brand_color: brandColor || null,
-      allowed_routes: ["/dashboard", "/campaigns", "/unibox", "/stats", "/onboarding"],
+      allowed_routes: ["/dashboard", "/campaigns", "/unibox", "/stats"],
     });
     if (res.error) toast.error(res.error);
     else {
