@@ -75,7 +75,7 @@ const OUT_OF_OFFICE = [
 
 // ── 2) NOT interested ───────────────────────────────────────────────────────
 // Someone asking for info / a call is NOT "not interested" even if they wrote "no".
-const SEND_INFO = /(p[áa]s|env[íi]|mand|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|the\s+|some\s+|m[áa]s\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
+const SEND_INFO = /(p[áa]s|env[íi]|mand|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
 const ENGAGEMENT = [
   SEND_INFO,
   /(cu[ée]nta|tell)(me|nos|\s+me|\s+us)?\s*(m[áa]s|more|about)/i,
@@ -107,7 +107,9 @@ const NOT_INTERESTED = [
 // checked BEFORE not-interested and NEVER saved by an accompanying question/engagement.
 const DO_NOT_CONTACT = [
   /unsubscri/i, /desuscri/i, /d[ée]sinscri/i,
-  /d[aá](r|me|te|nos|rme|rte|rnos)?\s*de\s*baja/i, /darse de baja/i, /baja\s+de\s+(la\s+)?lista/i, /\bbaja\b.*lista/i,
+  /d[aá]d?(me|nos)?\s+de\s+baja/i, /d[aá](r|rme|rnos)?\s+de\s+baja/i, /me\s+doy\s+de\s+baja/i, /darse de baja/i,
+  /(quiero|queremos|solicito|solicitamos|desea\w*|pido|pedimos)\s+(la\s+|una\s+|darme\s+de\s+|darnos\s+de\s+)?baja/i,
+  /baja\s+de\s+(la\s+)?lista/i, /\bbaja\b.*lista/i,
   /(please\s+)?remove\s+(me|us)?\s*(from|de)/i, /quit(a|ad|en|adme|arme|ame|adnos)?\s+(me\s+|nos\s+)?de\s+(la\s+)?lista/i, /b[óo]rr(a|ame|enme|adme|ad|arme)\s*(me\s+)?(de\s+(la\s+)?lista|mis datos)?/i,
   /take\s+(me|us)?\s*off/i,
   /stop\s+(contact|email|writ|send|messag|reach)/i,
@@ -148,6 +150,8 @@ const INTERESTED = [
   /\bcalendly\b/i, /\bcalendar\b/i,
   /(when|cu[áa]ndo)\s+(are you|est[áa]s|est[áa]is|puedes|podemos|would you|te viene)/i,
   /disponib(le|ilidad)/i, /\bavailab(le|ility)\b/i, /estoy disponible/i, /(i'?m|we'?re)\s+available/i,
+  // "¿Tenéis hueco el jueves?" — asking for a slot/time to meet = a warm meeting ask.
+  /\bhueco\b/i, /(ten[ée]is|tienes|ten[ée]s|hay|te va bien|os va bien|te viene|os viene|te encaja)\b[^.?!]{0,25}(hueco|disponib|un (rato|momento|hueco)|libre|para (hablar|vernos|una (llamada|reuni)))/i,
   /(a|sobre) las \d{1,2}([:.]\d{2})?/i, /\b\d{1,2}\s*(h|hrs|am|pm)\b/i, /\b(lunes|martes|mi[ée]rcoles|jueves|viernes|monday|tuesday|wednesday|thursday|friday)\b.*\b\d/i,
   SEND_INFO,
   /(quiero|queremos|me gustar[íi]a)\s+(una demo|probar|ver[l]?o|conocer)/i,
