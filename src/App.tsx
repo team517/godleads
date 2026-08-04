@@ -35,7 +35,8 @@ const ClientPortal = lazy(() => import("./pages/ClientPortal"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Install = lazy(() => import("./pages/Install"));
 const Community = lazy(() => import("./pages/Community"));
-const Workflows = lazy(() => import("./pages/Workflows"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
+const OnboardingPortal = lazy(() => import("./pages/OnboardingPortal"));
 const GodTube = lazy(() => import("./pages/GodTube"));
 const Partners = lazy(() => import("./pages/Partners"));
 const Metrics = lazy(() => import("./pages/Metrics"));
@@ -64,6 +65,9 @@ const App = () => (
               <Route path="/" element={<Landing />} />
               <Route path="/install" element={<Install />} />
               <Route path="/auth" element={<Auth />} />
+              {/* Public client onboarding portal — client logs in with the
+                  credentials the owner created and sees only their own progress. */}
+              <Route path="/o/:slug" element={<OnboardingPortal />} />
               <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/email-accounts" element={<EmailAccounts />} />
@@ -76,7 +80,7 @@ const App = () => (
                 <Route path="/ai-prompts" element={<AIPrompts />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/community" element={<Community />} />
-                <Route path="/workflows" element={<Workflows />} />
+                <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/godtube" element={<GodTube />} />
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />

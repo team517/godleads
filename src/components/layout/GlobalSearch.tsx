@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Workflow, Tv, CornerDownLeft } from "lucide-react";
+import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Rocket, Tv, CornerDownLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -24,7 +24,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Estadísticas", path: "/stats", keywords: "estadisticas stats metricas analytics", icon: BarChart3 },
   { label: "Entregabilidad", path: "/deliverability", keywords: "entregabilidad deliverability spam dkim", icon: ShieldCheck },
   { label: "IA", path: "/ai-prompts", keywords: "ia ai prompts inteligencia", icon: Brain },
-  { label: "Nodos", path: "/workflows", keywords: "nodos workflows automatizacion flujos", icon: Workflow },
+  { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
   { label: "Tutorial", path: "/godtube", keywords: "tutorial ayuda godtube videos", icon: Tv },
 ];
 

@@ -203,7 +203,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode, onboarding_slug, onboarding_status");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -223,6 +223,8 @@ serve(async (req) => {
             ai_reply_prompt: p.ai_reply_prompt || "",
             ai_reply_calendar_url: p.ai_reply_calendar_url || "",
             ai_reply_mode: p.ai_reply_mode || "rules",
+            onboarding_slug: p.onboarding_slug || "",
+            onboarding_status: Array.isArray(p.onboarding_status) ? p.onboarding_status : [],
           };
         })
         .filter(Boolean);
@@ -234,7 +236,8 @@ serve(async (req) => {
     if (action === "update_client") {
       const { user_id, allowed_routes, company_name, full_name, logo_url, brand_color, password,
         report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email,
-        ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode } = body;
+        ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode,
+        onboarding_slug, onboarding_status } = body;
       if (!user_id) throw new Error("user_id required");
       const upd: Record<string, unknown> = {};
       if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
@@ -250,6 +253,8 @@ serve(async (req) => {
       if (ai_reply_prompt !== undefined) upd.ai_reply_prompt = ai_reply_prompt || null;
       if (ai_reply_calendar_url !== undefined) upd.ai_reply_calendar_url = ai_reply_calendar_url || null;
       if (ai_reply_mode !== undefined) upd.ai_reply_mode = ai_reply_mode || "rules";
+      if (onboarding_slug !== undefined) upd.onboarding_slug = (onboarding_slug || "").toLowerCase().replace(/[^a-z0-9-]/g, "") || null;
+      if (onboarding_status !== undefined) upd.onboarding_status = Array.isArray(onboarding_status) ? onboarding_status : [];
       if (password) upd.client_password = password;
       if (Object.keys(upd).length > 0) {
         const { error } = await supabase.from("profiles").update(upd).eq("user_id", user_id);
