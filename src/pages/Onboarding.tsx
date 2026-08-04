@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, Link2, Users, Mail, Send, Pencil,
+  ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil,
 } from "lucide-react";
 import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, buildPhaseEmail, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -48,7 +48,7 @@ const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]
 const cleanSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
 
 // ── One client's onboarding card: editable slug + 6 phases + progress ──
-function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountId: string; onSaved: () => void }) {
+function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: Client; fromAccountId: string; expanded: boolean; onToggle: () => void; onSaved: () => void }) {
   const [slug, setSlug] = useState(c.onboarding_slug || "");
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [saving, setSaving] = useState(false);
@@ -107,7 +107,7 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
+        <button onClick={onToggle} className="flex w-full items-start justify-between gap-3 text-left" title={expanded ? "Contraer" : "Desplegar"}>
           <div className="flex min-w-0 items-center gap-3">
             {c.logo_url
               ? <img src={c.logo_url} alt="" className="h-10 w-10 rounded-lg border object-contain" />
@@ -117,17 +117,21 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
               <p className="truncate text-xs text-muted-foreground">{c.email}</p>
             </div>
           </div>
-          <div className="shrink-0 text-right">
-            <p className="font-display text-xl font-bold leading-none text-primary">{pct}%</p>
-            <p className="text-[10px] text-muted-foreground">completado</p>
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="text-right">
+              <p className="font-display text-xl font-bold leading-none text-primary">{pct}%</p>
+              <p className="text-[10px] text-muted-foreground">completado</p>
+            </div>
+            <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
           </div>
-        </div>
+        </button>
         {/* progress bar */}
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
         </div>
       </CardHeader>
 
+      {expanded && (
       <CardContent className="space-y-4">
         {/* Access URL */}
         <div className="space-y-1.5 rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -229,6 +233,7 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
           </Button>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }
@@ -370,7 +375,12 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [fromAccountId, setFromAccountId] = useState("");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const backfillingRef = useRef<Set<string>>(new Set());
+
+  const toggleCard = (id: string) => setExpandedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allExpanded = clients.length > 0 && clients.every((c) => expandedIds.has(c.id));
+  const toggleAll = () => setExpandedIds(allExpanded ? new Set() : new Set(clients.map((c) => c.id)));
 
   useEffect(() => {
     if (!user) return;
@@ -457,7 +467,22 @@ export default function Onboarding() {
         </CardContent></Card>
       ) : (
         <div className="space-y-4">
-          {clients.map((c) => <OnboardingCard key={c.id} c={c} fromAccountId={fromAccountId} onSaved={loadClients} />)}
+          <div className="flex items-center justify-between px-1">
+            <p className="text-sm font-medium text-muted-foreground">{clients.length} cliente{clients.length !== 1 ? "s" : ""}</p>
+            <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground" onClick={toggleAll}>
+              <ChevronsUpDown className="h-3.5 w-3.5" /> {allExpanded ? "Contraer todo" : "Expandir todo"}
+            </Button>
+          </div>
+          {clients.map((c) => (
+            <OnboardingCard
+              key={c.id}
+              c={c}
+              fromAccountId={fromAccountId}
+              expanded={expandedIds.has(c.id)}
+              onToggle={() => toggleCard(c.id)}
+              onSaved={loadClients}
+            />
+          ))}
         </div>
       )}
     </div>
