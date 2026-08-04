@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, Workflow, Tv, ChevronLeft, ShieldCheck, Sparkles, Rocket,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,6 @@ const toolsNav = [
   { icon: ShieldCheck, label: "Entregabilidad", path: "/deliverability" },
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
-  { icon: Tv, label: "Tutorial", path: "/godtube" },
 ];
 
 interface AppSidebarProps {
