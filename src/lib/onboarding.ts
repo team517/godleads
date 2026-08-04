@@ -86,3 +86,59 @@ export function progressPct(status: PhaseState[]): number {
   const total = s.reduce((acc, st) => acc + STATE_META[st].weight, 0);
   return Math.round((total / PHASES.length) * 100);
 }
+
+const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+
+/** Client-facing email when the owner moves a phase to "en curso" or "completado". */
+export function buildPhaseEmail(opts: {
+  state: "in_progress" | "done";
+  phaseTitle: string;
+  phaseIndex: number;   // 0-based
+  companyName?: string | null;
+  pct: number;
+  portalUrl?: string | null;
+  accent?: string | null;
+}): { subject: string; html: string } {
+  const accent = opts.accent || "#6E58F1";
+  const company = (opts.companyName || "").trim();
+  const brand = company || "tu proyecto";
+  const n = opts.phaseIndex + 1;
+  const allDone = opts.state === "done" && opts.pct >= 100;
+
+  const subject = opts.state === "done"
+    ? (allDone ? `🎉 ${brand} · ¡Onboarding completado!` : `✅ ${brand} · Fase completada: ${opts.phaseTitle}`)
+    : `🚧 ${brand} · Fase en curso: ${opts.phaseTitle}`;
+
+  const intro = opts.state === "done"
+    ? (allDone
+        ? "¡Buenas noticias! Hemos completado la última fase de tu proyecto."
+        : "¡Buenas noticias! Hemos completado una fase de tu proyecto:")
+    : "Hemos empezado a trabajar en una nueva fase de tu proyecto:";
+  const stateLabel = opts.state === "done" ? "Completada ✅" : "En curso 🚧";
+
+  const button = opts.portalUrl
+    ? `<p style="margin:20px 0"><a href="${esc(opts.portalUrl)}" style="display:inline-block;background:${esc(accent)};color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:600;font-size:14px">Ver mi progreso</a></p>`
+    : "";
+
+  const congrats = allDone
+    ? `<p style="margin:16px 0;font-size:15px">🎉 Con esto hemos completado <strong>todas las fases</strong> de tu onboarding. ¡Encantados de tenerte a bordo!</p>`
+    : "";
+
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;line-height:1.55;font-size:15px">
+  <p style="margin:0 0 14px">Hola,</p>
+  <p style="margin:0 0 14px">${intro}</p>
+  <div style="border-left:4px solid ${esc(accent)};background:#f8fafc;padding:12px 16px;margin:0 0 16px;border-radius:6px">
+    <div style="font-weight:700;font-size:16px">Fase ${n}: ${esc(opts.phaseTitle)}</div>
+    <div style="color:#6b7280;font-size:14px;margin-top:2px">${stateLabel}</div>
+  </div>
+  <p style="margin:0 0 4px">Progreso de tu proyecto: <strong style="color:${esc(accent)}">${opts.pct}%</strong> completado.</p>
+  <div style="height:8px;background:#eceef2;border-radius:99px;overflow:hidden;margin:8px 0 4px">
+    <div style="height:8px;width:${opts.pct}%;background:${esc(accent)}"></div>
+  </div>
+  ${congrats}
+  ${button}
+  <p style="color:#9ca3af;font-size:12px;margin-top:26px">Aviso automático sobre el progreso de tu onboarding${company ? ` con ${esc(company)}` : ""}.</p>
+</div>`;
+
+  return { subject, html };
+}

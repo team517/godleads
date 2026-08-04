@@ -9,9 +9,9 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, Link2, Users,
+  ChevronDown, Link2, Users, Mail,
 } from "lucide-react";
-import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, type PhaseState } from "@/lib/onboarding";
+import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, buildPhaseEmail, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
 
 type Client = {
@@ -19,6 +19,8 @@ type Client = {
   logo_url: string | null; brand_color: string | null; client_password: string | null;
   onboarding_slug?: string | null; onboarding_status?: unknown;
 };
+
+type EmailAccount = { id: string; email: string; status: string };
 
 async function callAdmin(payload: Record<string, unknown>) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -30,11 +32,23 @@ async function callAdmin(payload: Record<string, unknown>) {
   return resp.json();
 }
 
+// Send a transactional onboarding email from one of the owner's connected accounts.
+// is_test:true → send-email skips the sent_emails log and never touches daily limits.
+async function sendOnboardingEmail(accountId: string, to: string, subject: string, html: string) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ account_id: accountId, to_email: to, subject, body: html, is_test: true }),
+  });
+  return resp.json().catch(() => ({ error: "bad response" }));
+}
+
 const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const cleanSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
 
 // ── One client's onboarding card: editable slug + 6 phases + progress ──
-function OnboardingCard({ c, onSaved }: { c: Client; onSaved: () => void }) {
+function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountId: string; onSaved: () => void }) {
   const [slug, setSlug] = useState(c.onboarding_slug || "");
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [saving, setSaving] = useState(false);
@@ -56,9 +70,39 @@ function OnboardingCard({ c, onSaved }: { c: Client; onSaved: () => void }) {
 
   const save = async () => {
     setSaving(true);
+    const prev = normalizeStatus(c.onboarding_status);
     const res = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
-    if (res.error) toast.error(res.error);
-    else { toast.success("Onboarding guardado"); onSaved(); }
+    if (res.error) { toast.error(res.error); setSaving(false); return; }
+    toast.success("Onboarding guardado");
+
+    // Notify the client ONLY for phases that just changed to "en curso" or "completado".
+    // (A change back to pendiente never emails.) Fires from the owner's chosen account.
+    const transitions = status
+      .map((st, i) => ({ i, st, was: prev[i] }))
+      .filter((t) => (t.st === "in_progress" || t.st === "done") && t.st !== t.was);
+
+    if (transitions.length) {
+      if (!fromAccountId) {
+        toast.message("Guardado. Elige la cuenta de envío arriba para avisar al cliente por email.");
+      } else if (!c.email) {
+        toast.message("Guardado. Este cliente no tiene email, no se le pudo avisar.");
+      } else {
+        const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
+        let sent = 0, failed = 0;
+        for (const t of transitions) {
+          const { subject, html } = buildPhaseEmail({
+            state: t.st as "in_progress" | "done",
+            phaseTitle: PHASES[t.i].title, phaseIndex: t.i,
+            companyName: c.company_name, pct, portalUrl, accent: c.brand_color,
+          });
+          const r = await sendOnboardingEmail(fromAccountId, c.email, subject, html);
+          if (r?.success) sent++; else failed++;
+        }
+        if (sent) toast.success(`Aviso enviado al cliente (${sent} email${sent > 1 ? "s" : ""})`);
+        if (failed) toast.error(`No se pudieron enviar ${failed} aviso(s). Revisa la cuenta de envío.`);
+      }
+    }
+    onSaved();
     setSaving(false);
   };
 
@@ -251,20 +295,61 @@ function CreateClient({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+// ── Sender account for onboarding notifications (owner-level setting) ──
+function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[]; value: string; onChange: (id: string) => void }) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base"><Mail className="h-4 w-4 text-primary" /> Avisos al cliente</CardTitle>
+        <CardDescription>
+          Cuando marcas una fase como <b>En curso</b> o <b>Completado</b>, se envía un email automático al cliente. Elige desde qué cuenta sale.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {accounts.length === 0 ? (
+          <p className="text-sm text-amber-600">
+            No tienes cuentas de email conectadas en este perfil. Conecta una (Gmail, IONOS…) en <Link to="/email-accounts" className="text-primary hover:underline">Cuentas Email</Link> y aquí podrás elegirla.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              className="h-9 min-w-[240px] rounded-md border border-border bg-background px-2 text-sm"
+            >
+              <option value="">— Sin avisos (no enviar email) —</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.email}{a.status !== "connected" ? ` (${a.status})` : ""}</option>
+              ))}
+            </select>
+            {value && <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><Check className="h-3.5 w-3.5" /> Avisos activados</span>}
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Solo aparecen las cuentas conectadas en <b>este</b> perfil. Estos avisos no gastan el límite diario de envío ni afectan a tus campañas.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Onboarding() {
   const { user } = useAuth();
   const [access, setAccess] = useState<"loading" | "yes" | "no">("loading");
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [fromAccountId, setFromAccountId] = useState("");
 
   useEffect(() => {
     if (!user) return;
     (async () => {
       const [{ data: r }, { data: p }] = await Promise.all([
         supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
-        (supabase as any).from("profiles").select("is_client_manager").eq("user_id", user.id).single(),
+        (supabase as any).from("profiles").select("is_client_manager, onboarding_from_account_id").eq("user_id", user.id).single(),
       ]);
       setAccess(r?.role === "admin" || (p as any)?.is_client_manager ? "yes" : "no");
+      if ((p as any)?.onboarding_from_account_id) setFromAccountId((p as any).onboarding_from_account_id);
     })();
   }, [user]);
 
@@ -276,7 +361,18 @@ export default function Onboarding() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (access === "yes") loadClients(); }, [access, loadClients]);
+  useEffect(() => {
+    if (access !== "yes") return;
+    loadClients();
+    supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
+      .then(({ data }) => setAccounts((data as EmailAccount[]) || []));
+  }, [access, loadClients]);
+
+  const changeSender = async (id: string) => {
+    setFromAccountId(id);
+    const { error } = await (supabase as any).rpc("set_onboarding_from_account", { p_account_id: id || null });
+    if (error) toast.error("No se pudo guardar la cuenta de envío");
+  };
 
   if (access === "loading") return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (access === "no") return <Navigate to="/dashboard" replace />;
@@ -292,6 +388,8 @@ export default function Onboarding() {
         </p>
       </div>
 
+      <SenderPicker accounts={accounts} value={fromAccountId} onChange={changeSender} />
+
       <CreateClient onCreated={loadClients} />
 
       {loading ? (
@@ -303,7 +401,7 @@ export default function Onboarding() {
         </CardContent></Card>
       ) : (
         <div className="space-y-4">
-          {clients.map((c) => <OnboardingCard key={c.id} c={c} onSaved={loadClients} />)}
+          {clients.map((c) => <OnboardingCard key={c.id} c={c} fromAccountId={fromAccountId} onSaved={loadClients} />)}
         </div>
       )}
     </div>
