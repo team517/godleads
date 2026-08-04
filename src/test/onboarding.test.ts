@@ -31,6 +31,16 @@ describe("buildPhaseEmail", () => {
     expect(html).toContain("#1EA7B5");
     expect(html).not.toMatch(/\{\{|\}\}|undefined/);
   });
+  it("done with a next phase names the next task", () => {
+    const { subject, html } = buildPhaseEmail({
+      state: "done", phaseTitle: "Calentamiento", phaseIndex: 2,
+      companyName: "SEO innova", pct: 42, nextPhaseTitle: "Listas y segmentación",
+    });
+    expect(subject).toContain("Fase completada");
+    expect(subject).not.toContain("Onboarding completado"); // has a next → not the final
+    expect(html).toContain("siguiente fase");
+    expect(html).toContain("Listas y segmentación");
+  });
   it("done at 100% is a congrats email", () => {
     const { subject, html } = buildPhaseEmail({
       state: "done", phaseTitle: "Lanzamiento y optimización", phaseIndex: 5,

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, Link2, Users, Mail,
+  ChevronDown, Link2, Users, Mail, Send,
 } from "lucide-react";
 import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, buildPhaseEmail, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -53,6 +53,7 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sendingPhase, setSendingPhase] = useState<number | null>(null);
 
   // Re-sync when the parent reloads with fresh server data.
   useEffect(() => { setSlug(c.onboarding_slug || ""); setStatus(normalizeStatus(c.onboarding_status)); }, [c.id, c.onboarding_slug, c.onboarding_status]);
@@ -70,40 +71,36 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
 
   const save = async () => {
     setSaving(true);
-    const prev = normalizeStatus(c.onboarding_status);
     const res = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
-    if (res.error) { toast.error(res.error); setSaving(false); return; }
-    toast.success("Onboarding guardado");
-
-    // Notify the client ONLY for phases that just changed to "en curso" or "completado".
-    // (A change back to pendiente never emails.) Fires from the owner's chosen account.
-    const transitions = status
-      .map((st, i) => ({ i, st, was: prev[i] }))
-      .filter((t) => (t.st === "in_progress" || t.st === "done") && t.st !== t.was);
-
-    if (transitions.length) {
-      if (!fromAccountId) {
-        toast.message("Guardado. Elige la cuenta de envío arriba para avisar al cliente por email.");
-      } else if (!c.email) {
-        toast.message("Guardado. Este cliente no tiene email, no se le pudo avisar.");
-      } else {
-        const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
-        let sent = 0, failed = 0;
-        for (const t of transitions) {
-          const { subject, html } = buildPhaseEmail({
-            state: t.st as "in_progress" | "done",
-            phaseTitle: PHASES[t.i].title, phaseIndex: t.i,
-            companyName: c.company_name, pct, portalUrl, accent: c.brand_color,
-          });
-          const r = await sendOnboardingEmail(fromAccountId, c.email, subject, html);
-          if (r?.success) sent++; else failed++;
-        }
-        if (sent) toast.success(`Aviso enviado al cliente (${sent} email${sent > 1 ? "s" : ""})`);
-        if (failed) toast.error(`No se pudieron enviar ${failed} aviso(s). Revisa la cuenta de envío.`);
-      }
-    }
-    onSaved();
+    if (res.error) toast.error(res.error);
+    else { toast.success("Onboarding guardado"); onSaved(); }
     setSaving(false);
+  };
+
+  // Manual per-phase notify: send the client the email for THIS phase's current state.
+  // Persists the state first so the client's portal matches what we just told them.
+  const sendPhase = async (i: number) => {
+    const st = status[i];
+    if (st !== "in_progress" && st !== "done") { toast.message("Marca la fase como 'En curso' o 'Completado' para poder avisar."); return; }
+    if (!fromAccountId) { toast.error("Elige primero la cuenta de envío en 'Avisos al cliente' (arriba)."); return; }
+    if (!c.email) { toast.error("Este cliente no tiene email."); return; }
+    setSendingPhase(i);
+    try {
+      const upd = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
+      if (upd.error) { toast.error(upd.error); return; }
+      const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
+      const nextPhaseTitle = st === "done" ? (PHASES[i + 1]?.title ?? null) : null;
+      const { subject, html } = buildPhaseEmail({
+        state: st, phaseTitle: PHASES[i].title, phaseIndex: i,
+        companyName: c.company_name, pct, portalUrl, accent: c.brand_color, nextPhaseTitle,
+      });
+      const r = await sendOnboardingEmail(fromAccountId, c.email, subject, html);
+      if (r?.success) toast.success(`Email enviado a ${c.email}`);
+      else toast.error(r?.error || "No se pudo enviar el email");
+      onSaved();
+    } finally {
+      setSendingPhase(null);
+    }
   };
 
   return (
@@ -171,22 +168,44 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
           {PHASES.map((p, i) => {
             const st = status[i];
             const meta = STATE_META[st];
+            const canSend = st === "in_progress" || st === "done";
             return (
-              <button
+              <div
                 key={p.key}
-                onClick={() => cycle(i)}
-                className="flex w-full items-center gap-3 rounded-lg border border-border/60 p-2.5 text-left transition-colors hover:bg-muted/40"
-                title="Clic para cambiar: Pendiente → En curso → Completado"
+                className="flex w-full items-center gap-2 rounded-lg border border-border/60 p-2.5"
               >
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${st === "done" ? "bg-emerald-500 text-white" : st === "in_progress" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"}`}>
-                  {st === "done" ? <Check className="h-3.5 w-3.5" /> : i + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{p.title}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">{p.description}</span>
-                </span>
-                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.badge}`}>{meta.label}</span>
-              </button>
+                <button
+                  onClick={() => cycle(i)}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  title="Clic para cambiar: Pendiente → En curso → Completado"
+                >
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${st === "done" ? "bg-emerald-500 text-white" : st === "in_progress" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                    {st === "done" ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{p.title}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">{p.description}</span>
+                  </span>
+                </button>
+                <span className={`hidden shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:inline ${meta.badge}`}>{meta.label}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 gap-1 px-2 text-xs"
+                  disabled={!canSend || sendingPhase === i}
+                  onClick={() => sendPhase(i)}
+                  title={
+                    !canSend
+                      ? "Marca la fase como En curso o Completado para avisar"
+                      : st === "done"
+                        ? "Avisar al cliente de que esta fase está terminada"
+                        : "Avisar al cliente de que estamos con esta fase"
+                  }
+                >
+                  {sendingPhase === i ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Enviar
+                </Button>
+              </div>
             );
           })}
         </div>
@@ -302,7 +321,7 @@ function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[];
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base"><Mail className="h-4 w-4 text-primary" /> Avisos al cliente</CardTitle>
         <CardDescription>
-          Cuando marcas una fase como <b>En curso</b> o <b>Completado</b>, se envía un email automático al cliente. Elige desde qué cuenta sale.
+          Cada fase tiene un botón <b>Enviar</b>: avisa al cliente por email de que esa fase está <b>en curso</b> o ya <b>completada</b> (con la siguiente tarea). Elige desde qué cuenta salen.
         </CardDescription>
       </CardHeader>
       <CardContent>
