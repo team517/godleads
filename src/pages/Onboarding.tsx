@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, Link2, Users, Mail, Send,
+  ChevronDown, Link2, Users, Mail, Send, Pencil,
 } from "lucide-react";
 import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, buildPhaseEmail, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -54,6 +54,7 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendingPhase, setSendingPhase] = useState<number | null>(null);
+  const [editingSlug, setEditingSlug] = useState(false);
 
   // Re-sync when the parent reloads with fresh server data.
   useEffect(() => { setSlug(c.onboarding_slug || ""); setStatus(normalizeStatus(c.onboarding_status)); }, [c.id, c.onboarding_slug, c.onboarding_status]);
@@ -133,25 +134,42 @@ function OnboardingCard({ c, fromAccountId, onSaved }: { c: Client; fromAccountI
           <Label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Link2 className="h-3.5 w-3.5" /> Enlace de acceso del cliente
           </Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">{window.location.origin}/o/</span>
-            <Input
-              value={slug}
-              onChange={(e) => setSlug(cleanSlug(e.target.value))}
-              placeholder={slugify(c.company_name || c.full_name || "cliente") || "cliente"}
-              className="h-8 w-40 text-sm"
-            />
-            {url && (
-              <>
-                <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={copyUrl}>
-                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} Copiar
-                </Button>
-                <a href={url} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-primary hover:underline">
-                  <ExternalLink className="h-3.5 w-3.5" /> Abrir
-                </a>
-              </>
-            )}
-          </div>
+          {editingSlug || !slug ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">…/o/</span>
+              <Input
+                value={slug}
+                onChange={(e) => setSlug(cleanSlug(e.target.value))}
+                placeholder={slugify(c.company_name || c.full_name || "cliente") || "cliente"}
+                className="h-8 w-44 text-sm"
+                autoFocus
+              />
+              <Button type="button" size="sm" variant="secondary" className="h-8 gap-1 text-xs" onClick={() => setEditingSlug(false)}>
+                <Check className="h-3.5 w-3.5" /> Listo
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Compact clickable link — shows only /o/<slug>, hides the long domain (full URL on hover / Copiar). */}
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                title={url}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background px-2.5 py-1 text-sm font-medium text-primary transition-colors hover:bg-primary/5"
+              >
+                <Link2 className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                <span className="truncate">/o/{slug}</span>
+                <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
+              </a>
+              <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={copyUrl}>
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} Copiar
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 text-xs text-muted-foreground" onClick={() => setEditingSlug(true)}>
+                <Pencil className="h-3.5 w-3.5" /> Editar
+              </Button>
+            </div>
+          )}
           <p className="text-[10px] text-muted-foreground">
             El cliente entra ahí con su email y contraseña (los mismos de la plataforma) y ve su progreso con su logo. Gestiona sus credenciales en <Link to="/admin/clients" className="text-primary hover:underline">Portal de Clientes</Link>.
           </p>
