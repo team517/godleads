@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PHASES, normalizeStatus, progressPct, buildPhaseEmail } from "@/lib/onboarding";
+import { PHASES, normalizeStatus, progressPct, phaseEmailDraft, credentialsEmailDraft } from "@/lib/onboarding";
 
 describe("onboarding progress", () => {
   it("has exactly 6 fixed phases", () => {
@@ -17,45 +17,51 @@ describe("onboarding progress", () => {
   });
 });
 
-describe("buildPhaseEmail", () => {
-  it("in_progress email carries phase title, %, portal button, no raw templates", () => {
-    const { subject, html } = buildPhaseEmail({
+describe("phaseEmailDraft", () => {
+  it("in_progress draft names the phase, %, portal link; no raw templates", () => {
+    const { subject, body } = phaseEmailDraft({
       state: "in_progress", phaseTitle: "Calentamiento", phaseIndex: 2,
-      companyName: "SEO innova", pct: 25, portalUrl: "https://x.test/o/seo-innova", accent: "#1EA7B5",
+      companyName: "SEO innova", pct: 25, portalUrl: "https://x.test/o/seo-innova",
     });
-    expect(subject).toContain("Fase en curso");
-    expect(subject).toContain("Calentamiento");
-    expect(html).toContain("Fase 3: Calentamiento");
-    expect(html).toContain("25%");
-    expect(html).toContain("https://x.test/o/seo-innova");
-    expect(html).toContain("#1EA7B5");
-    expect(html).not.toMatch(/\{\{|\}\}|undefined/);
+    expect(subject).toBe("Fase en curso: Calentamiento");
+    expect(body).toContain("Calentamiento");
+    expect(body).toContain("25%");
+    expect(body).toContain("https://x.test/o/seo-innova");
+    expect(body).not.toMatch(/\{\{|\}\}|undefined|null/);
   });
   it("done with a next phase names the next task", () => {
-    const { subject, html } = buildPhaseEmail({
+    const { subject, body } = phaseEmailDraft({
       state: "done", phaseTitle: "Calentamiento", phaseIndex: 2,
       companyName: "SEO innova", pct: 42, nextPhaseTitle: "Listas y segmentación",
     });
-    expect(subject).toContain("Fase completada");
-    expect(subject).not.toContain("Onboarding completado"); // has a next → not the final
-    expect(html).toContain("siguiente fase");
-    expect(html).toContain("Listas y segmentación");
+    expect(subject).toBe("Fase completada: Calentamiento");
+    expect(body).toContain("siguiente");
+    expect(body).toContain("Listas y segmentación");
   });
-  it("done at 100% is a congrats email", () => {
-    const { subject, html } = buildPhaseEmail({
-      state: "done", phaseTitle: "Lanzamiento y optimización", phaseIndex: 5,
-      companyName: "SEO innova", pct: 100,
+  it("done at 100% is a congrats draft", () => {
+    const { subject, body } = phaseEmailDraft({
+      state: "done", phaseTitle: "Lanzamiento y optimización", phaseIndex: 5, pct: 100,
     });
-    expect(subject).toContain("Onboarding completado");
-    expect(html).toContain("todas las fases");
+    expect(subject).toBe("¡Onboarding completado!");
+    expect(body).toContain("última fase");
+    expect(body).not.toContain("undefined");
   });
-  it("escapes HTML in company/phase and tolerates missing company + url", () => {
-    const { subject, html } = buildPhaseEmail({
-      state: "done", phaseTitle: "A & <b>B</b>", phaseIndex: 0, companyName: null, pct: 50, portalUrl: null,
+});
+
+describe("credentialsEmailDraft", () => {
+  it("includes the email, password and portal link", () => {
+    const { subject, body } = credentialsEmailDraft({
+      companyName: "SEO innova", portalUrl: "https://x.test/o/seo-innova",
+      email: "info@seoinnova.es", password: "OnePulso123%",
     });
-    expect(subject).toContain("tu proyecto");
-    expect(html).toContain("A &amp; &lt;b&gt;B&lt;/b&gt;");
-    expect(html).not.toContain("<b>B</b>");
-    expect(html).not.toContain("Ver mi progreso"); // no button without url
+    expect(subject).toContain("SEO innova");
+    expect(body).toContain("info@seoinnova.es");
+    expect(body).toContain("OnePulso123%");
+    expect(body).toContain("https://x.test/o/seo-innova");
+  });
+  it("tolerates a missing password", () => {
+    const { body } = credentialsEmailDraft({ email: "a@b.com", password: null });
+    expect(body).toContain("a@b.com");
+    expect(body).not.toContain("null");
   });
 });

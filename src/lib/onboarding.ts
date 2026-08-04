@@ -87,65 +87,66 @@ export function progressPct(status: PhaseState[]): number {
   return Math.round((total / PHASES.length) * 100);
 }
 
-const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
-
-/** Client-facing email when the owner moves a phase to "en curso" or "completado". */
-export function buildPhaseEmail(opts: {
+/**
+ * Predetermined (NON-AI) editable draft for a phase change. Returns plain-text
+ * subject + body that the owner reviews in a compose box and sends. Newlines are
+ * turned into paragraphs by the send-email function.
+ */
+export function phaseEmailDraft(opts: {
   state: "in_progress" | "done";
   phaseTitle: string;
   phaseIndex: number;   // 0-based
   companyName?: string | null;
   pct: number;
   portalUrl?: string | null;
-  accent?: string | null;
-  nextPhaseTitle?: string | null; // shown on a "completado" email as the next task
-}): { subject: string; html: string } {
-  const accent = opts.accent || "#6E58F1";
-  const company = (opts.companyName || "").trim();
-  const brand = company || "tu proyecto";
-  const n = opts.phaseIndex + 1;
+  nextPhaseTitle?: string | null;
+}): { subject: string; body: string } {
   const hasNext = opts.state === "done" && !!(opts.nextPhaseTitle && opts.nextPhaseTitle.trim());
   const allDone = opts.state === "done" && !hasNext && opts.pct >= 100;
+  const link = opts.portalUrl ? `\n\nPuedes seguir tu progreso en tiempo real aquí:\n${opts.portalUrl}` : "";
+  const sign = "\n\nUn saludo,\nEl equipo";
 
-  const subject = opts.state === "done"
-    ? (allDone ? `🎉 ${brand} · ¡Onboarding completado!` : `✅ ${brand} · Fase completada: ${opts.phaseTitle}`)
-    : `🚧 ${brand} · Fase en curso: ${opts.phaseTitle}`;
+  if (opts.state === "in_progress") {
+    return {
+      subject: `Fase en curso: ${opts.phaseTitle}`,
+      body: `Hola,\n\nHemos empezado a trabajar en una nueva fase de tu proyecto: "${opts.phaseTitle}". Te iremos informando de cómo avanza.\n\nProgreso actual: ${opts.pct}%.${link}${sign}`,
+    };
+  }
+  if (allDone) {
+    return {
+      subject: `¡Onboarding completado!`,
+      body: `Hola,\n\n¡Buenas noticias! Hemos completado la última fase de tu onboarding. Tu proyecto ya está en marcha al 100%.${link}${sign}`,
+    };
+  }
+  const nextLine = hasNext ? ` Ya nos ponemos con la siguiente: "${opts.nextPhaseTitle!.trim()}".` : "";
+  return {
+    subject: `Fase completada: ${opts.phaseTitle}`,
+    body: `Hola,\n\n¡Buenas noticias! Hemos completado la fase "${opts.phaseTitle}" de tu proyecto.${nextLine}\n\nProgreso actual: ${opts.pct}%.${link}${sign}`,
+  };
+}
 
-  const intro = opts.state === "done"
-    ? (allDone
-        ? "¡Buenas noticias! Hemos completado la última fase de tu proyecto."
-        : "¡Buenas noticias! Hemos completado una fase de tu proyecto:")
-    : "Hemos empezado a trabajar en una nueva fase de tu proyecto:";
-  const stateLabel = opts.state === "done" ? "Completada ✅" : "En curso 🚧";
-
-  const nextLine = hasNext
-    ? `<p style="margin:0 0 14px">Ya nos ponemos con la siguiente fase: <strong>${esc(opts.nextPhaseTitle!.trim())}</strong>. Te iremos informando.</p>`
-    : "";
-
-  const button = opts.portalUrl
-    ? `<p style="margin:20px 0"><a href="${esc(opts.portalUrl)}" style="display:inline-block;background:${esc(accent)};color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:600;font-size:14px">Ver mi progreso</a></p>`
-    : "";
-
-  const congrats = allDone
-    ? `<p style="margin:16px 0;font-size:15px">🎉 Con esto hemos completado <strong>todas las fases</strong> de tu onboarding. ¡Encantados de tenerte a bordo!</p>`
-    : "";
-
-  const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;line-height:1.55;font-size:15px">
-  <p style="margin:0 0 14px">Hola,</p>
-  <p style="margin:0 0 14px">${intro}</p>
-  <div style="border-left:4px solid ${esc(accent)};background:#f8fafc;padding:12px 16px;margin:0 0 16px;border-radius:6px">
-    <div style="font-weight:700;font-size:16px">Fase ${n}: ${esc(opts.phaseTitle)}</div>
-    <div style="color:#6b7280;font-size:14px;margin-top:2px">${stateLabel}</div>
-  </div>
-  ${nextLine}
-  <p style="margin:0 0 4px">Progreso de tu proyecto: <strong style="color:${esc(accent)}">${opts.pct}%</strong> completado.</p>
-  <div style="height:8px;background:#eceef2;border-radius:99px;overflow:hidden;margin:8px 0 4px">
-    <div style="height:8px;width:${opts.pct}%;background:${esc(accent)}"></div>
-  </div>
-  ${congrats}
-  ${button}
-  <p style="color:#9ca3af;font-size:12px;margin-top:26px">Aviso automático sobre el progreso de tu onboarding${company ? ` con ${esc(company)}` : ""}.</p>
-</div>`;
-
-  return { subject, html };
+/** Predetermined editable draft to send the client their access credentials. */
+export function credentialsEmailDraft(opts: {
+  companyName?: string | null;
+  portalUrl?: string | null;
+  email: string;
+  password?: string | null;
+}): { subject: string; body: string } {
+  const brand = (opts.companyName || "").trim();
+  const lines: string[] = [
+    "Hola,",
+    "",
+    `Ya puedes acceder a tu portal de onboarding${brand ? ` de ${brand}` : ""}. Estos son tus datos de acceso:`,
+    "",
+  ];
+  if (opts.portalUrl) lines.push(`Enlace: ${opts.portalUrl}`);
+  lines.push(`Email: ${opts.email}`);
+  lines.push(`Contraseña: ${opts.password || "(la que te facilitamos)"}`);
+  lines.push("");
+  lines.push("Con estas mismas credenciales puedes entrar también a la plataforma completa.");
+  lines.push("\nUn saludo,\nEl equipo");
+  return {
+    subject: `Tus accesos${brand ? ` · ${brand}` : ""}`,
+    body: lines.join("\n"),
+  };
 }

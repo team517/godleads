@@ -9,10 +9,49 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil,
+  ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil, KeyRound,
 } from "lucide-react";
-import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, buildPhaseEmail, type PhaseState } from "@/lib/onboarding";
+import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, phaseEmailDraft, credentialsEmailDraft, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+
+// Compose box: shows a PREDETERMINED (non-AI) editable draft; owner reviews & sends.
+function ComposeDialog({ to, initialSubject, initialBody, onClose, onSend }: {
+  to: string; initialSubject: string; initialBody: string;
+  onClose: () => void; onSend: (subject: string, body: string) => Promise<void>;
+}) {
+  const [subject, setSubject] = useState(initialSubject);
+  const [body, setBody] = useState(initialBody);
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    if (!subject.trim() || !body.trim()) { toast.error("El asunto y el mensaje no pueden estar vacíos"); return; }
+    setSending(true);
+    try { await onSend(subject, body); onClose(); } finally { setSending(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle className="font-display">Redactar correo</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label className="text-xs">Para</Label><Input value={to} disabled className="bg-muted/40" /></div>
+          <div className="space-y-1.5"><Label className="text-xs">Asunto</Label><Input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Mensaje</Label>
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={11}
+              className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            <p className="text-[10px] text-muted-foreground">Texto ya redactado: revísalo o edítalo y pulsa Enviar. No interviene ninguna IA.</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={sending}>Cancelar</Button>
+          <Button onClick={send} disabled={sending} className="gap-1.5">
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 type Client = {
   id: string; email: string; full_name: string | null; company_name: string | null;
@@ -53,8 +92,8 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [sendingPhase, setSendingPhase] = useState<number | null>(null);
   const [editingSlug, setEditingSlug] = useState(false);
+  const [compose, setCompose] = useState<null | { subject: string; body: string; onSend: (s: string, b: string) => Promise<void> }>(null);
 
   // Re-sync when the parent reloads with fresh server data.
   useEffect(() => { setSlug(c.onboarding_slug || ""); setStatus(normalizeStatus(c.onboarding_status)); }, [c.id, c.onboarding_slug, c.onboarding_status]);
@@ -78,30 +117,49 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
     setSaving(false);
   };
 
-  // Manual per-phase notify: send the client the email for THIS phase's current state.
-  // Persists the state first so the client's portal matches what we just told them.
-  const sendPhase = async (i: number) => {
+  // Guard shared by both "Enviar" flows: need a sender account + a recipient.
+  const canEmail = () => {
+    if (!fromAccountId) { toast.error("Elige primero la cuenta de envío en 'Avisos al cliente' (arriba)."); return false; }
+    if (!c.email) { toast.error("Este cliente no tiene email."); return false; }
+    return true;
+  };
+
+  // Open the compose box PRE-FILLED with this phase's predetermined draft.
+  const openPhaseCompose = (i: number) => {
     const st = status[i];
     if (st !== "in_progress" && st !== "done") { toast.message("Marca la fase como 'En curso' o 'Completado' para poder avisar."); return; }
-    if (!fromAccountId) { toast.error("Elige primero la cuenta de envío en 'Avisos al cliente' (arriba)."); return; }
-    if (!c.email) { toast.error("Este cliente no tiene email."); return; }
-    setSendingPhase(i);
-    try {
-      const upd = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
-      if (upd.error) { toast.error(upd.error); return; }
-      const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
-      const nextPhaseTitle = st === "done" ? (PHASES[i + 1]?.title ?? null) : null;
-      const { subject, html } = buildPhaseEmail({
-        state: st, phaseTitle: PHASES[i].title, phaseIndex: i,
-        companyName: c.company_name, pct, portalUrl, accent: c.brand_color, nextPhaseTitle,
-      });
-      const r = await sendOnboardingEmail(fromAccountId, c.email, subject, html);
-      if (r?.success) toast.success(`Email enviado a ${c.email}`);
-      else toast.error(r?.error || "No se pudo enviar el email");
-      onSaved();
-    } finally {
-      setSendingPhase(null);
-    }
+    if (!canEmail()) return;
+    const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
+    const nextPhaseTitle = st === "done" ? (PHASES[i + 1]?.title ?? null) : null;
+    const { subject, body } = phaseEmailDraft({
+      state: st, phaseTitle: PHASES[i].title, phaseIndex: i, companyName: c.company_name, pct, portalUrl, nextPhaseTitle,
+    });
+    setCompose({
+      subject, body,
+      onSend: async (subj, bod) => {
+        // Persist the phase state first so the client's portal matches the email.
+        const upd = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
+        if (upd.error) { toast.error(upd.error); return; }
+        const r = await sendOnboardingEmail(fromAccountId, c.email, subj, bod);
+        if (r?.success) { toast.success(`Email enviado a ${c.email}`); onSaved(); }
+        else toast.error(r?.error || "No se pudo enviar el email");
+      },
+    });
+  };
+
+  // Open the compose box PRE-FILLED with the client's access credentials.
+  const openCredentialsCompose = () => {
+    if (!canEmail()) return;
+    const portalUrl = slug ? `${window.location.origin}/o/${slug}` : null;
+    const { subject, body } = credentialsEmailDraft({ companyName: c.company_name, portalUrl, email: c.email, password: c.client_password });
+    setCompose({
+      subject, body,
+      onSend: async (subj, bod) => {
+        const r = await sendOnboardingEmail(fromAccountId, c.email, subj, bod);
+        if (r?.success) toast.success(`Credenciales enviadas a ${c.email}`);
+        else toast.error(r?.error || "No se pudieron enviar las credenciales");
+      },
+    });
   };
 
   return (
@@ -174,6 +232,11 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
               </Button>
             </div>
           )}
+          <div className="pt-1">
+            <Button type="button" size="sm" variant="secondary" className="h-8 gap-1.5 text-xs" onClick={openCredentialsCompose}>
+              <KeyRound className="h-3.5 w-3.5" /> Enviar credenciales al cliente
+            </Button>
+          </div>
           <p className="text-[10px] text-muted-foreground">
             El cliente entra ahí con su email y contraseña (los mismos de la plataforma) y ve su progreso con su logo. Gestiona sus credenciales en <Link to="/admin/clients" className="text-primary hover:underline">Portal de Clientes</Link>.
           </p>
@@ -208,18 +271,17 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
                   size="sm"
                   variant="outline"
                   className="h-7 shrink-0 gap-1 px-2 text-xs"
-                  disabled={!canSend || sendingPhase === i}
-                  onClick={() => sendPhase(i)}
+                  disabled={!canSend}
+                  onClick={() => openPhaseCompose(i)}
                   title={
                     !canSend
                       ? "Marca la fase como En curso o Completado para avisar"
                       : st === "done"
-                        ? "Avisar al cliente de que esta fase está terminada"
-                        : "Avisar al cliente de que estamos con esta fase"
+                        ? "Redactar el aviso de que esta fase está terminada"
+                        : "Redactar el aviso de que estamos con esta fase"
                   }
                 >
-                  {sendingPhase === i ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                  Enviar
+                  <Send className="h-3.5 w-3.5" /> Enviar
                 </Button>
               </div>
             );
@@ -233,6 +295,15 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
           </Button>
         </div>
       </CardContent>
+      )}
+      {compose && (
+        <ComposeDialog
+          to={c.email}
+          initialSubject={compose.subject}
+          initialBody={compose.body}
+          onClose={() => setCompose(null)}
+          onSend={compose.onSend}
+        />
       )}
     </Card>
   );
