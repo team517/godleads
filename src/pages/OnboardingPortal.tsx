@@ -69,16 +69,21 @@ export default function OnboardingPortal() {
     <div className="relative min-h-screen bg-[#FAFAF7] text-[#111111]">
       <Backdrop accent={accent} />
 
-      {/* Header — horizontal, OnePulso brand left */}
+      {/* Header — co-branded: OnePulso + the client's own logo */}
       <header className="relative z-10 mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5">
-        <img src="/onepulso-logo-transparent.png" alt="OnePulso" className="h-6 w-auto" />
+        <div className="flex items-center gap-3">
+          <img src="/onepulso-logo-transparent.png" alt="OnePulso" className="h-6 w-auto" />
+          {branding?.logo_url && (
+            <>
+              <span className="h-6 w-px bg-[#E0E0DB]" aria-hidden />
+              <img src={branding.logo_url} alt={branding.company_name || "Cliente"} className="h-7 max-w-[140px] object-contain" />
+            </>
+          )}
+        </div>
         {user && (
-          <div className="flex items-center gap-4">
-            {branding?.company_name && <span className="hidden text-sm text-[#5C5C5C] sm:inline">{branding.company_name}</span>}
-            <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-full border border-[#E4E4DF] bg-white/70 px-3 py-1.5 text-xs font-medium text-[#5C5C5C] backdrop-blur transition-colors hover:text-[#111]">
-              <LogOut className="h-3.5 w-3.5" /> Salir
-            </button>
-          </div>
+          <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-full border border-[#E4E4DF] bg-white/70 px-3 py-1.5 text-xs font-medium text-[#5C5C5C] backdrop-blur transition-colors hover:text-[#111]">
+            <LogOut className="h-3.5 w-3.5" /> Salir
+          </button>
         )}
       </header>
 
@@ -263,10 +268,11 @@ function Progress({ accent, branding }: { accent: string; branding: Branding | n
         })}
       </div>
 
-      <div className="mt-10 flex justify-center">
-        <a href="/dashboard" className="inline-flex items-center gap-1.5 rounded-full border border-[#E4E4DF] bg-white/70 px-4 py-2 text-sm font-medium text-[#5C5C5C] backdrop-blur transition-colors hover:text-[#111]">
-          Ir a la plataforma <ArrowUpRight className="h-4 w-4" />
+      <div className="mt-12 flex flex-col items-center gap-2">
+        <a href="/dashboard" className="inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold text-white shadow-sm transition-transform active:scale-[0.99]" style={{ background: accent }}>
+          Ir a mi plataforma <ArrowUpRight className="h-4 w-4" />
         </a>
+        <p className="text-[11px] text-[#9C9C9C]">Con tu logo y tus colores, todo en un mismo acceso.</p>
       </div>
     </div>
   );
