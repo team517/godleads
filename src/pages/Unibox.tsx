@@ -3114,9 +3114,14 @@ export default function Unibox() {
                         <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1">
                           {cleanBodyText(msg.body_text, true).slice(0, 120)}
                         </p>
-                        {/* Bottom row: campaign tag (only if it belongs to a campaign) + folder */}
-                        {(campaignName || msgFolder) && (
+                        {/* Bottom row: classification mini-tag + campaign tag + folder */}
+                        {(catCfg.label || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                            {catCfg.label && (
+                              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} /> {catCfg.label}
+                              </span>
+                            )}
                             {campaignName && (
                               <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/5 px-2 py-0.5 text-[11px] font-semibold text-primary whitespace-nowrap">
                                 <Megaphone className="h-3 w-3" /> {campaignName}
