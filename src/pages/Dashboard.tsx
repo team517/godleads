@@ -82,9 +82,6 @@ export default function Dashboard() {
           <h1 className="font-display text-2xl font-bold">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Resumen de tu actividad de email marketing</p>
         </div>
-        <Button onClick={() => navigate("/metrics")} className="gap-2">
-          <BarChart3 className="h-4 w-4" /> Métricas
-        </Button>
       </div>
 
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
