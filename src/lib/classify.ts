@@ -3,18 +3,22 @@
 // SINGLE source of truth (Unibox delegates to this after cleaning the body text).
 //
 // Categories drive the Unibox filter pills + the daily digest:
-//   interested / question / not_interested / out_of_office / neutral
+//   interested / question / not_interested / no_contactar / derivado / out_of_office / neutral
 //
 // Priority (first match wins, top = strongest override):
-//   1. bounce / "person no longer here" / auto-reply / out-of-office  → out_of_office
-//   2. clear NOT interested (unless they also ask for info/a call)     → not_interested
-//   3. clear interest / meeting / "send me info" / a proposed time     → interested
-//   4. a genuine question / doubt                                      → question
-//   5. everything else                                                 → neutral
+//   1. bounce / "person no longer here" / auto-reply / out-of-office  → out_of_office (AUTOMÁTICO)
+//   2. unsubscribe / RGPD / spam / hostile — "la baja manda"          → no_contactar
+//   3. hands you off to another person ("esto lo lleva Marta")        → derivado
+//   4. clear NOT interested (unless they also ask for info/a call)    → not_interested
+//   5. clear interest / meeting / "send me info" / a proposed time    → interested
+//   6. a genuine question / doubt                                     → question
+//   7. everything else                                                → neutral
 
 export type MessageCategory =
   | "interested"
   | "not_interested"
+  | "no_contactar"
+  | "derivado"
   | "question"
   | "out_of_office"
   | "neutral";
@@ -83,7 +87,8 @@ const ENGAGEMENT = [
 const NOT_INTERESTED = [
   // "no interesa", "no me interesa", "no interesado/a/s" (with or without me/nos/estoy),
   // "no interés", "sin interés" — the plain "No interesado" reply that used to leak as
-  // Interested because the bare word "interesado" matched.
+  // Interested because the bare word "interesado" matched. NOTE: unsubscribe / "don't
+  // contact me" phrasing lives in DO_NOT_CONTACT below (checked first — la baja manda).
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+|estamos?\s+|est[áa]n?\s+)?interesad[oa]s?\b/i,
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa\b/i,
   /\bno\s+(hay\s+)?inter[ée]s\b/i, /sin\s+inter[ée]s/i,
@@ -91,15 +96,44 @@ const NOT_INTERESTED = [
   /no\s+ens\s+interessa/i,
   /(no|not).{0,15}(a\s+)?(fit|good fit|match|lo que (buscamos|necesitamos))/i,
   /ya\s+(tenemos|contamos con|trabajamos con|disponemos)/i, /already\s+(have|work with|use|using|got)/i,
+  /(lo hacemos|lo llevamos|lo gestionamos)\s+(internamente|in[- ]?house|nosotros)/i, /(in[- ]?house|internamente)\b/i,
+  /(no hay|sin)\s+(presupuesto|budget)/i, /(no es el|not the right)\s+momento/i, /(ahora|now)\s+no\s+(es el momento|toca)/i, /not?\s+(right\s+)?now/i,
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
   /(no,?\s*)?(gracias|thanks|thank you)[.! ]*$/i, /no\s+thank/i,
-  /unsubscri/i, /desuscri/i, /darse de baja/i, /d[ée]sinscri/i, /darme de baja/i,
-  /(please\s+)?remove\s+(me|us)?\s*(from|de)/i, /quit(ar|en|a)?\s+(me\s+|nos\s+)?de\s+(la\s+)?lista/i,
-  /d[aá](r|me|te|nos|rme|rte)?\s*de\s*baja/i,
-  /take\s+(me|us)?\s*off/i, /stop\s+(contact|email|writ|send)/i,
-  /(no|don'?t|do not)\s+(me\s+)?(contact|email|write|escrib|contacte|env[íi]e)/i,
-  /deja\s+de\s+(enviar|escribir|contactar|molestar)/i, /leave me alone/i,
-  /no\s+(nos\s+)?(interesa|hace falta|necesitamos)/i,
+  /no\s+(nos\s+)?(interesa|hace falta|necesitamos|encaja)/i,
+];
+
+// ── 2b) DO NOT CONTACT — unsubscribe / RGPD / spam / hostile. "La baja manda":
+// checked BEFORE not-interested and NEVER saved by an accompanying question/engagement.
+const DO_NOT_CONTACT = [
+  /unsubscri/i, /desuscri/i, /d[ée]sinscri/i,
+  /d[aá](r|me|te|nos|rme|rte|rnos)?\s*de\s*baja/i, /darse de baja/i, /baja\s+de\s+(la\s+)?lista/i, /\bbaja\b.*lista/i,
+  /(please\s+)?remove\s+(me|us)?\s*(from|de)/i, /quit(a|ad|en|adme|arme|ame|adnos)?\s+(me\s+|nos\s+)?de\s+(la\s+)?lista/i, /b[óo]rr(a|ame|enme|adme|ad|arme)\s*(me\s+)?(de\s+(la\s+)?lista|mis datos)?/i,
+  /take\s+(me|us)?\s*off/i,
+  /stop\s+(contact|email|writ|send|messag|reach)/i,
+  /(no|don'?t|do not)\s+(me\s+|nos\s+)?(contact|email|write|escrib|contacte|env[íi]e|manden?|mand[ée]is)/i,
+  /deja(d|r)?\s+de\s+(enviar|escribir|contactar|molestar|mandar)/i,
+  /no\s+(me\s+|nos\s+)?(volv[áa]is|vuelvas?|volver)\s+a\s+(escribir|contactar|enviar|molestar|mandar)/i,
+  /no\s+(me\s+|nos\s+)?(escrib[áa]is|escribas|contact[ée]is|mand[ée]is)\s+(m[áa]s|nunca m[áa]s)?/i,
+  /leave me alone/i, /d[ée]jad?me en paz/i,
+  // RGPD / data protection
+  /\brgpd\b/i, /\bgdpr\b/i, /\blopd\b/i, /protecci[óo]n de datos/i, /data protection/i, /datos personales/i,
+  // spam accusation
+  /\bspam\b/i, /correo (no deseado|basura)/i, /junk mail/i, /unsolicited/i,
+];
+
+// ── 2c) DERIVADO — hands you off to another person/team. Conservative patterns so a
+// plain "contáctanos" (themselves) doesn't count. Checked after DO_NOT_CONTACT.
+const REFERRAL = [
+  /(esto|eso|este (tema|asunto|correo)|el tema)\s+(lo|la)\s+(lleva|gestiona|ve\b|maneja|coordina|gestion)/i,
+  /(la persona|el|la)\s+(encargad[oa]|responsable|indicad[oa]|adecuad[oa])\s+(es|ser[íi]a|de esto)/i,
+  /te\s+(paso|pongo|dejo|reenv[íi]o|derivo)\s+(con|a|el|la|los|su|tu|el correo)/i,
+  /no\s+soy\s+(yo|la persona|el|la)\s+(indicad|adecuad|correct|encargad|responsable|qui[ée]n)/i,
+  /(deber[íi]as|mejor|te recomiendo)\s+(hablar|contactar|escribir|dirigirte)\s+(con|a)\b/i,
+  /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
+  /reach out to\s+/i, /you (should|can|may want to)\s+(contact|reach|talk to|speak with)\s+/i,
+  /(is|es)\s+the\s+(right|best)\s+person/i, /(qui[ée]n|who)\s+(lo\s+)?(lleva|gestiona|se encarga|handles)/i,
+  /(competencia|responsabilidad|cosa)\s+de\s+\w+/i, /(reenv[íi]|forward)(o|ando|ed|ing|é)?\s+(tu|este|su|el|your|to)/i,
 ];
 
 // ── 3) Interested ───────────────────────────────────────────────────────────
@@ -146,9 +180,16 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   // 1) Bounce / left the company / auto-reply / OOO — always wins.
   if (any(SYSTEM_BOUNCE, text) || any(LEFT_COMPANY, text) || any(OUT_OF_OFFICE, text)) return "out_of_office";
 
+  // 2) Unsubscribe / RGPD / spam / hostile — "la baja manda": beats rejection AND is
+  // NOT saved by an accompanying question or engagement (they want it to STOP).
+  if (any(DO_NOT_CONTACT, text)) return "no_contactar";
+
+  // 2b) Hands you off to someone else ("esto lo lleva Marta") — a redirect, not a no.
+  if (any(REFERRAL, text)) return "derivado";
+
   const hasEngagement = any(ENGAGEMENT, text);
 
-  // 2) Clearly not interested (unless they still asked for info / a call).
+  // 3) Clearly not interested (unless they still asked for info / a call).
   if (!hasEngagement && any(NOT_INTERESTED, text)) return "not_interested";
 
   // Doubt about fit reads as a question even if they also ask for info.

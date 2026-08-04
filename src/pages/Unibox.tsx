@@ -872,7 +872,7 @@ const REPLY_SUBJECT_RE = /^\s*(re|res|rv|aw|tr|fw|fwd)\s*[:\]]|^\s*(respuesta au
 function isRelevantInboxItem(m: any): boolean {
   if (m?.lead_id || m?.campaign_id) return true;
   const labels: string[] = Array.isArray(m?.labels) ? m.labels : [];
-  if (labels.some((l) => ["Interesado", "No interesado", "Pregunta", "Fuera / Auto"].includes(l))) return true;
+  if (labels.some((l) => ["Interesado", "No interesado", "No contactar", "Derivado", "Pregunta", "Fuera / Auto"].includes(l))) return true;
   return REPLY_SUBJECT_RE.test(decodeSubjectKeepCodes(m?.subject || ""));
 }
 
@@ -918,7 +918,7 @@ function detectLanguageBucket(text: string): "es" | "en" | "fr" | "it" | "other"
   return "unknown"; // no hay señal — poco texto
 }
 
-type MessageCategory = "interested" | "not_interested" | "question" | "out_of_office" | "neutral";
+type MessageCategory = "interested" | "not_interested" | "no_contactar" | "derivado" | "question" | "out_of_office" | "neutral";
 
 function classifyMessage(subject: string | null, body: string | null): MessageCategory {
   // Single source of truth for the intent rules lives in src/lib/classify.ts. Unibox just
@@ -929,6 +929,8 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
 const categoryConfig: Record<MessageCategory, { label: string; bg: string; text: string; dot: string }> = {
   interested:     { label: "Interesado",     bg: "bg-emerald-500/10", text: "text-emerald-600", dot: "bg-emerald-500" },
   not_interested: { label: "No interesado", bg: "bg-red-500/10",     text: "text-red-600",     dot: "bg-red-500" },
+  no_contactar:   { label: "No contactar",  bg: "bg-rose-600/10",    text: "text-rose-700",    dot: "bg-rose-600" },
+  derivado:       { label: "Derivado",      bg: "bg-amber-500/10",   text: "text-amber-600",   dot: "bg-amber-500" },
   question:       { label: "Pregunta",      bg: "bg-blue-500/10",    text: "text-blue-600",    dot: "bg-blue-500" },
   out_of_office:  { label: "Fuera / Auto",  bg: "bg-violet-500/10",  text: "text-violet-600",  dot: "bg-violet-500" },
   neutral:        { label: "",              bg: "",                  text: "text-muted-foreground", dot: "bg-muted-foreground" },
@@ -1391,6 +1393,8 @@ export default function Unibox() {
       const labels: string[] = m.labels || [];
       if (cat === "interested" && !labels.includes("Interesado")) return true;
       if (cat === "not_interested" && !labels.includes("No interesado")) return true;
+      if (cat === "no_contactar" && !labels.includes("No contactar")) return true;
+      if (cat === "derivado" && !labels.includes("Derivado")) return true;
       if (cat === "out_of_office" && !labels.includes("Fuera / Auto")) return true;
       if (cat === "question" && !labels.includes("Pregunta")) return true;
       return false;
@@ -1402,6 +1406,8 @@ export default function Unibox() {
       let newLabel = "";
       if (cat === "interested") newLabel = "Interesado";
       else if (cat === "not_interested") newLabel = "No interesado";
+      else if (cat === "no_contactar") newLabel = "No contactar";
+      else if (cat === "derivado") newLabel = "Derivado";
       else if (cat === "out_of_office") newLabel = "Fuera / Auto";
       else if (cat === "question") newLabel = "Pregunta";
       if (newLabel && !currentLabels.includes(newLabel)) {
@@ -2765,6 +2771,8 @@ export default function Unibox() {
     { key: "interested", label: "Interesados", dot: "bg-success" },
     { key: "question", label: "Preguntas", dot: "bg-info" },
     { key: "not_interested", label: "No interesados", dot: "bg-destructive" },
+    { key: "no_contactar", label: "No contactar", dot: "bg-rose-600" },
+    { key: "derivado", label: "Derivados", dot: "bg-amber-500" },
     { key: "out_of_office", label: "Fuera / Auto", dot: "bg-brand-purple" },
   ];
 
