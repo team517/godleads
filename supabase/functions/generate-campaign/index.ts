@@ -29,9 +29,9 @@ PROHIBIDO INVENTAR SOBRE EL PROSPECT: NO supongas ni afirmes hechos concretos de
 
 QUÉ SÍ ES REAL Y ESPECÍFICO: lo del CLIENTE (lo que ofrece, según briefing/web) y los casos/números TÍPICOS del sector (verosímiles). Ahí sí concretas. En el prospect, general + variables.
 
-LONGITUD:
-- Email inicial (step 1): alrededor de 160 palabras (rango 140-180). Suficiente para investigar, halagar a {{companyName}}, plantear el valor y el CTA — sin relleno.
-- Follow-ups: MÁS CORTOS que el inicial (60-110 palabras), y cada uno APORTA VALOR NUEVO (un insight del sector {{industry}}, un mini-caso con número, un recurso o una idea útil para {{companyName}}), no solo "¿lo viste?".
+LONGITUD (ESTRICTA — cuenta las palabras del cuerpo):
+- Email inicial (step 1): AL MENOS 160 palabras, NUNCA menos. Objetivo 160-190. Si te quedas corto, amplía con más contexto general del sector {{industry}} o más valor — hasta llegar a 160. No rellenes con paja, pero NO entregues menos de 160 palabras.
+- Follow-ups: MÁS CORTOS que el inicial (60-110 palabras), y cada uno APORTA VALOR NUEVO (un insight del sector {{industry}}, un mini-caso con número, un recurso o una idea útil), no solo "¿lo viste?".
 
 ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
 1. <p>Hola {{firstName}},</p>
@@ -63,6 +63,8 @@ ASUNTOS (todos los steps y variantes llevan asunto, NUNCA vacío):
 VARIANTES: cada variante es CLARAMENTE distinta (otro asunto y otro enfoque), no una reescritura trivial.
 
 Básate SOLO en el briefing y la web; no inventes datos que los contradigan (los números de casos sí pueden ser verosímiles del nicho).
+
+RECUERDA ANTES DE RESPONDER: el cuerpo del email inicial NUNCA baja de 160 palabras (los follow-ups sí son más cortos). Revisa que el step 1 tenga 160+ palabras.
 
 Devuelve EXCLUSIVAMENTE un JSON válido con esta forma exacta, sin markdown ni texto extra:
 {"steps":[{"subject":"...","body":"<p>...</p>","variants":[{"subject":"...","body":"<p>...</p>"}]}]}`;
@@ -177,7 +179,7 @@ serve(async (req) => {
     const companyBlock = company ? `EMPRESA DEL CLIENTE (quien envía): ${company}\n\n` : "";
     const senderBlock = sender ? `NOMBRE DEL COMERCIAL (firma cada email así, "Un saludo,<br>${sender}"): ${sender}\n\n` : "";
     const webBlock = webText ? `INFORMACIÓN EXTRAÍDA DE LA WEB DEL CLIENTE (${website}) — úsala para investigar y personalizar, cero genérico:\n${webText}\n\n` : "";
-    const userPrompt = `${skillsBlock}${companyBlock}${senderBlock}${webBlock}BRIEFING DEL CLIENTE:\n${briefing || "(sin briefing; usa la web)"}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
+    const userPrompt = `${skillsBlock}${companyBlock}${senderBlock}${webBlock}BRIEFING DEL CLIENTE:\n${briefing || "(sin briefing; usa la web)"}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 (y su(s) variante(s)) DEBE tener 160+ palabras cada uno; los follow-ups más cortos. El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
 
     let steps: Step[] = [];
     let lastErr: unknown;

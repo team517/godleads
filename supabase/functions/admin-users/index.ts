@@ -224,22 +224,23 @@ serve(async (req) => {
       if (campErr || !camp) throw new Error(`No se pudo crear la campaña: ${campErr?.message}`);
       const campaignId = camp.id;
 
-      // Steps (+ variants + per-step delay)
-      const stepRows = (Array.isArray(steps) ? steps : []).map((s: any, i: number) => ({
-        campaign_id: campaignId,
-        step_order: i,
-        subject: String(s?.subject || "").slice(0, 500),
-        body: String(s?.body || ""),
-        delay_days: Math.max(0, Math.floor(Number(s?.delay_days) || 0)),
-        variants: (Array.isArray(s?.variants) ? s.variants : []).map((v: any) => ({
-          subject: String(v?.subject || "").slice(0, 500),
-          body: String(v?.body || ""),
-        })),
-      }));
-      if (stepRows.length) {
-        const { error: stepErr } = await supabase.from("campaign_steps").insert(stepRows);
-        if (stepErr) throw new Error(`No se pudieron crear los steps: ${stepErr.message}`);
-      }
+      // Steps (+ variants + per-step delay). Drop empty steps/variants so nothing
+      // broken reaches the campaign.
+      const stepRows = (Array.isArray(steps) ? steps : [])
+        .filter((s: any) => String(s?.subject || "").trim() && String(s?.body || "").trim())
+        .map((s: any, i: number) => ({
+          campaign_id: campaignId,
+          step_order: i,
+          subject: String(s?.subject || "").trim().slice(0, 500),
+          body: String(s?.body || ""),
+          delay_days: Math.max(0, Math.floor(Number(s?.delay_days) || 0)),
+          variants: (Array.isArray(s?.variants) ? s.variants : [])
+            .filter((v: any) => String(v?.subject || "").trim() && String(v?.body || "").trim())
+            .map((v: any) => ({ subject: String(v?.subject || "").trim().slice(0, 500), body: String(v?.body || "") })),
+        }));
+      if (stepRows.length === 0) throw new Error("La campaña no tiene ningún mensaje válido");
+      const { error: stepErr } = await supabase.from("campaign_steps").insert(stepRows);
+      if (stepErr) throw new Error(`No se pudieron crear los steps: ${stepErr.message}`);
 
       // Leads: dedup by email; the BEFORE INSERT trigger silently skips blocklisted ones.
       let addedLeads = 0;

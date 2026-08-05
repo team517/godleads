@@ -193,10 +193,13 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
         include_unsubscribe: includeUnsub,
       },
       steps: steps.map((s, i) => ({
-        subject: s.subject,
+        subject: s.subject.trim(),
         body: textToHtml(s.body),
-        delay_days: i === 0 ? 0 : s.delay_days,
-        variants: s.variants.map((v) => ({ subject: v.subject, body: textToHtml(v.body) })),
+        delay_days: i === 0 ? 0 : Math.max(1, Math.floor(s.delay_days) || 1),
+        // Only keep variants with real content — nunca mandamos una variante vacía.
+        variants: s.variants
+          .filter((v) => v.subject.trim() && v.body.trim())
+          .map((v) => ({ subject: v.subject.trim(), body: textToHtml(v.body) })),
       })),
       leads,
     });
