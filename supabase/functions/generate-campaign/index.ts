@@ -21,17 +21,21 @@ VOZ Y TONO:
 - Tono: ${tone}. Directo, humano, como un colega senior que sabe lo que hace. Sin jerga corporate.
 - PROHIBIDO: emojis, "estimado", "saludos cordiales", aperturas genéricas ("espero que estés bien"), poner en negrita frases enteras.
 
-VARIABLES (úsalas de verdad, repartidas): {{firstName}}, {{companyName}}, {{industry}}, {{city}}. Mínimo 3 de las 4 en cada email. Redacta de forma natural aunque una quede vacía. No inventes otras variables ni dejes corchetes sueltos.
+VARIABLES OBLIGATORIAS — en CADA email y en CADA variante usa SIEMPRE las tres: {{firstName}} (en el saludo), {{companyName}} y {{industry}}. Usa {{city}} además cuando encaje de forma natural. Intégralas con naturalidad, nunca forzadas; el correo debe leerse HECHO A MEDIDA para ESE lead. No inventes otras variables ni dejes corchetes sueltos.
+
+PARECER PREPARADO: cada email debe DEMOSTRAR que has investigado a {{companyName}} — menciona algo concreto de su sector {{industry}} o de su web, como si lo hubieras preparado a mano para ellos. Cero frases que valdrían para cualquiera.
 
 ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
 1. <p>Hola {{firstName}},</p>
-2. Apertura con investigación específica: por qué le contactas (algo de {{companyName}}, su sector {{industry}}, su ciudad {{city}} o lo que diga la web).
-3. Problema concreto del cliente ideal + propuesta de valor directa (qué hace el cliente).
-4. Prueba social con un NÚMERO concreto (caso real del sector; si no lo tienes, uno verosímil del nicho).
-5. Gancho personalizado (algo preparado para ellos).
+2. Apertura con investigación específica de {{companyName}} y su sector {{industry}} (por qué le contactas justo a ellos; algo concreto de la web/sector, no genérico).
+3. Problema concreto del cliente ideal en {{industry}} + propuesta de valor directa (qué hace el cliente).
+4. Prueba social con un NÚMERO concreto (caso real del sector {{industry}}; si no lo tienes, uno verosímil del nicho).
+5. Gancho personalizado (algo preparado para {{companyName}}).
 6. CTA claro (p. ej. "¿15 minutos esta semana?").
 7. Salida sin presión ("si no encaja, dímelo y lo dejamos aquí").
-8. Firma (comercial del cliente).
+8. Firma con el NOMBRE de quien envía (ver regla de FIRMA).
+
+FIRMA (despedida): firma SIEMPRE con el nombre de la persona que envía, en dos líneas: <p>Un saludo,<br>Nombre</p>. Si se te da un NOMBRE DEL COMERCIAL, úsalo tal cual. Si no, usa el nombre del fundador/CEO que aparezca en el briefing o la web. Nunca firmes solo con "El equipo" si puedes poner un nombre de persona.
 
 FOLLOW-UPS — cada uno MÁS CORTO que el anterior y con ángulo NUEVO (no repitas frases):
 - FU1 (~3 días): bump suave, retoma el gancho.
@@ -147,6 +151,7 @@ serve(async (req) => {
     const numVariants = Math.max(1, Math.min(3, Number(body?.num_variants) || 1));
     const goal = String(body?.goal || "conseguir una reunión / llamada").trim();
     const company = String(body?.company || "").trim();
+    const sender = String(body?.sender || "").trim();
     const website = String(body?.website || "").trim();
     const skills = String(body?.skills || "").trim().slice(0, 12000);
     if (!briefing && !website) return new Response(JSON.stringify({ error: "Falta el briefing (o una web)" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -161,9 +166,10 @@ serve(async (req) => {
 
     const system = buildSystem(language, tone);
     const skillsBlock = skills ? `CONOCIMIENTO Y BUENAS PRÁCTICAS (aplícalos siempre, tienen prioridad sobre tu criterio):\n${skills}\n\n` : "";
-    const companyBlock = company ? `EMPRESA DEL CLIENTE (quien envía / firma): ${company}\n\n` : "";
+    const companyBlock = company ? `EMPRESA DEL CLIENTE (quien envía): ${company}\n\n` : "";
+    const senderBlock = sender ? `NOMBRE DEL COMERCIAL (firma cada email así, "Un saludo,<br>${sender}"): ${sender}\n\n` : "";
     const webBlock = webText ? `INFORMACIÓN EXTRAÍDA DE LA WEB DEL CLIENTE (${website}) — úsala para investigar y personalizar, cero genérico:\n${webText}\n\n` : "";
-    const userPrompt = `${skillsBlock}${companyBlock}${webBlock}BRIEFING DEL CLIENTE:\n${briefing || "(sin briefing; usa la web)"}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
+    const userPrompt = `${skillsBlock}${companyBlock}${senderBlock}${webBlock}BRIEFING DEL CLIENTE:\n${briefing || "(sin briefing; usa la web)"}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
 
     let steps: Step[] = [];
     let lastErr: unknown;

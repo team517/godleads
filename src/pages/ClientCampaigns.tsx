@@ -52,6 +52,7 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
   const [name, setName] = useState(`Campaña ${client.company_name || client.full_name || ""}`.trim());
   const [briefing, setBriefing] = useState("");
   const [website, setWebsite] = useState("");
+  const [sender, setSender] = useState("");
   const briefFileRef = useRef<HTMLInputElement>(null);
   const [readingBrief, setReadingBrief] = useState(false);
 
@@ -122,7 +123,7 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ briefing, website: website.trim(), company: client.company_name || client.full_name || "", language, tone, goal, num_steps: numSteps, num_variants: numVariants, skills }),
+        body: JSON.stringify({ briefing, website: website.trim(), company: client.company_name || client.full_name || "", sender: sender.trim(), language, tone, goal, num_steps: numSteps, num_variants: numVariants, skills }),
       });
       const j = await resp.json();
       if (j.error) { toast.error(j.error); }
@@ -211,10 +212,17 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
               className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-1.5 text-xs"><Globe className="h-3.5 w-3.5 text-primary" /> Web del cliente (opcional)</Label>
-            <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="oncontrol.es" />
-            <p className="text-[10px] text-muted-foreground">La IA la lee para investigar y personalizar mejor (sector, propuesta, casos).</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5 text-xs"><Globe className="h-3.5 w-3.5 text-primary" /> Web del cliente (opcional)</Label>
+              <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="oncontrol.es" />
+              <p className="text-[10px] text-muted-foreground">La IA la lee para investigar y personalizar mejor.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5 text-xs"><Pencil className="h-3.5 w-3.5 text-primary" /> Firma / comercial (opcional)</Label>
+              <Input value={sender} onChange={(e) => setSender(e.target.value)} placeholder="Ej: Marc Puig" />
+              <p className="text-[10px] text-muted-foreground">Con este nombre se despide cada email.</p>
+            </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
