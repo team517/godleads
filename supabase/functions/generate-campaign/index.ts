@@ -21,11 +21,13 @@ VOZ Y TONO:
 - Tono: ${tone}. Directo, humano, como un colega senior que sabe lo que hace. Sin jerga corporate.
 - PROHIBIDO: emojis, "estimado", "saludos cordiales", aperturas genéricas ("espero que estés bien"), poner en negrita frases enteras.
 
-VARIABLES OBLIGATORIAS — JUEGA con ellas en CADA email y CADA variante: {{firstName}} (saludo y, si encaja, alguna vez más), {{companyName}} (varias veces, hablando de ELLOS), {{industry}} (su sector) y {{city}} cuando venga natural. Intégralas con naturalidad, nunca forzadas ni repetidas de forma robótica; el correo debe leerse HECHO A MEDIDA para ese lead, como si lo hubieras escrito tú a mano solo para él.
+ESTO ES UNA PLANTILLA MASIVA — el MISMO correo se envía a MUCHAS empresas distintas. Lo ÚNICO que sabes de cada prospect son las variables: {{firstName}}, {{companyName}}, {{industry}} y {{city}}. Regla de oro: PARECE personalizado por las variables, pero el contenido es GENERAL y cierto para cualquier empresa de {{industry}}. Personalizado pero general.
 
-HABLA DE SU EMPRESA (en positivo): dedica frases a {{companyName}} y a lo que hacen bien en {{industry}} — un reconocimiento genuino, algo que admiras o que os llamó la atención de ellos (de la web/sector). Que sientan que de verdad los has mirado, no un halago vacío. Luego conectas con vuestra propuesta.
+VARIABLES — JUEGA con ellas de forma natural y repartida ({{firstName}} en el saludo; {{companyName}} y {{industry}} varias veces; {{city}} cuando encaje) para que SUENE hecho a medida.
 
-PARECER PREPARADO Y REAL: cada email debe DEMOSTRAR investigación concreta sobre {{companyName}} (algo real de su web o su sector {{industry}}). Cero frases que valdrían para cualquiera. Que se lea humano y real, no a plantilla ni a IA.
+PROHIBIDO INVENTAR SOBRE EL PROSPECT: NO supongas ni afirmes hechos concretos de su empresa que no sabes. Nada de "imagino que dependéis de X", "seguro que vuestro paletizado…", "sé que tenéis 3 turnos", "vi que hacéis Y". Puede ser falso y suena a invento. Habla de {{companyName}} y {{industry}} SOLO en general: retos TÍPICOS del sector, no operaciones internas suyas.
+
+QUÉ SÍ ES REAL Y ESPECÍFICO: lo del CLIENTE (lo que ofrece, según briefing/web) y los casos/números TÍPICOS del sector (verosímiles). Ahí sí concretas. En el prospect, general + variables.
 
 LONGITUD:
 - Email inicial (step 1): alrededor de 160 palabras (rango 140-180). Suficiente para investigar, halagar a {{companyName}}, plantear el valor y el CTA — sin relleno.
@@ -33,10 +35,10 @@ LONGITUD:
 
 ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
 1. <p>Hola {{firstName}},</p>
-2. Apertura con investigación específica de {{companyName}} y su sector {{industry}} (por qué le contactas justo a ellos; algo concreto de la web/sector, no genérico).
-3. Problema concreto del cliente ideal en {{industry}} + propuesta de valor directa (qué hace el cliente).
-4. Prueba social con un NÚMERO concreto (caso real del sector {{industry}}; si no lo tienes, uno verosímil del nicho).
-5. Gancho personalizado (algo preparado para {{companyName}}).
+2. Apertura que conecta con {{companyName}} y {{industry}} de forma GENERAL (un reto o tendencia típica del sector; SIN suponer detalles internos suyos).
+3. Reto común del sector {{industry}} + propuesta de valor directa del cliente (qué ofrece).
+4. Prueba social con un NÚMERO concreto (caso TÍPICO del sector {{industry}}, verosímil — no un hecho del prospect).
+5. Gancho con un guiño natural a {{companyName}} (general, sin inventar nada sobre ellos).
 6. CTA claro (p. ej. "¿15 minutos esta semana?").
 7. Salida sin presión ("si no encaja, dímelo y lo dejamos aquí").
 8. Firma con el NOMBRE de quien envía (ver regla de FIRMA).
