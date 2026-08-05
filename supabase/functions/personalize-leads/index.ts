@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PERSONALIZE_SYSTEM, generatePersonalized } from "../_shared/personalize.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -97,11 +98,14 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
-    // Process in background using waitUntil pattern via EdgeRuntime
+    // Process in background using waitUntil pattern via EdgeRuntime.
+    // Prefer Claude (follows the prompt better) when its key is set; else DeepSeek.
     const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!DEEPSEEK_API_KEY) {
+    const CLAUDE_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const provider: "claude" | "deepseek" = CLAUDE_API_KEY ? "claude" : "deepseek";
+    if (!DEEPSEEK_API_KEY && !CLAUDE_API_KEY) {
       await db.from("personalization_jobs").update({ status: "failed", errors: job.total }).eq("id", job_id);
-      return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY not configured" }), {
+      return new Response(JSON.stringify({ error: "No AI key configured (DEEPSEEK_API_KEY / ANTHROPIC_API_KEY)" }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -140,34 +144,17 @@ serve(async (req) => {
           .join("\n");
 
         try {
-          const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "deepseek-chat",
-              messages: [
-                {
-                  role: "system",
-                  content: "Genera contenido personalizado basado en la información del lead. Responde SOLO con el texto generado, sin explicaciones, sin comillas, sin prefijos.",
-                },
-                {
-                  role: "user",
-                  content: `${prompt}\n\nDatos del lead:\n${context}\n\nResponde SOLO con el texto generado, sin explicaciones.`,
-                },
-              ],
-            }),
+          const userPrompt = `INSTRUCCIÓN:\n${prompt}\n\nDATOS DE ESTE LEAD (personaliza usándolos):\n${context}`;
+          const generatedText = await generatePersonalized({
+            provider,
+            deepseekKey: DEEPSEEK_API_KEY,
+            claudeKey: CLAUDE_API_KEY,
+            system: PERSONALIZE_SYSTEM,
+            userPrompt,
+            temperature: 0.7,
+            maxTokens: 700,
+            retries: 2,
           });
-
-          if (!aiResp.ok) {
-            errors++;
-            return;
-          }
-
-          const data = await aiResp.json();
-          const generatedText = data.choices?.[0]?.message?.content?.trim() || "";
 
           if (generatedText) {
             const updatedFields = { ...fields, [colName]: generatedText };

@@ -1,81 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PERSONALIZE_SYSTEM, applyMapping, generatePersonalized } from "../_shared/personalize.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-const DEFAULT_SYSTEM =
-  "Eres un experto en cold email B2B en español de España. Genera SOLO el texto " +
-  "personalizado que se te pide (una línea, un párrafo o el cuerpo, según el prompt). " +
-  "Frases cortas (<20 palabras), tono natural y directo, sin sonar a plantilla. " +
-  "Devuelve SOLO el texto final: sin comillas, sin prefijos, sin explicaciones, sin markdown.";
-
-/** Replace {col}/{{col}} with the row's value. Matching is tolerant: case + spaces +
- *  underscores/hyphens are ignored, so {first_name} matches a column "First Name". */
-function applyMapping(prompt: string, data: Record<string, string>): string {
-  const norm = (s: string) => String(s).toLowerCase().replace(/[\s_.\-]/g, "");
-  const normMap: Record<string, string> = {};
-  for (const k of Object.keys(data)) normMap[norm(k)] = data[k];
-  return prompt.replace(/\{\{?\s*([^{}]+?)\s*\}?\}/g, (_m, rawKey) => {
-    const key = String(rawKey).trim();
-    if (key in data) return data[key] ?? "";
-    const nk = norm(key);
-    return nk in normMap ? (normMap[nk] ?? "") : "";
-  });
-}
-
-function cleanOutput(text: string): string {
-  return (text || "")
-    .trim()
-    .replace(/^```(?:html|text)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .replace(/^["'“”]+|["'“”]+$/g, "")
-    .trim();
-}
-
-async function callDeepSeek(apiKey: string, system: string, userPrompt: string): Promise<string> {
-  const resp = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userPrompt },
-      ],
-      max_tokens: 1000,
-      temperature: 0.75,
-      stream: false,
-    }),
-  });
-  if (!resp.ok) throw new Error(`DeepSeek ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-  const data = await resp.json();
-  return cleanOutput(data.choices?.[0]?.message?.content || "");
-}
-
-async function callClaude(apiKey: string, system: string, userPrompt: string): Promise<string> {
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1000,
-      temperature: 0.75,
-      system,
-      messages: [{ role: "user", content: userPrompt }],
-    }),
-  });
-  if (!resp.ok) throw new Error(`Claude ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-  const data = await resp.json();
-  const txt = (data.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-  return cleanOutput(txt);
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -96,7 +26,7 @@ serve(async (req) => {
     const rows: { index: number; data: Record<string, string> }[] = Array.isArray(body?.rows) ? body.rows : [];
     const prompt: string = String(body?.prompt || "").trim();
     const provider: string = body?.provider === "claude" ? "claude" : "deepseek";
-    const system: string = String(body?.system || "").trim() || DEFAULT_SYSTEM;
+    const system: string = String(body?.system || "").trim() || PERSONALIZE_SYSTEM;
 
     if (!prompt) return new Response(JSON.stringify({ error: "Falta el prompt" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (!rows.length) return new Response(JSON.stringify({ error: "No hay filas" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -109,8 +39,8 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY no configurada en el servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const gen = async (userPrompt: string) =>
-      useProvider === "claude" ? callClaude(claudeKey!, system, userPrompt) : callDeepSeek(deepseekKey!, system, userPrompt);
+    const gen = (userPrompt: string) =>
+      generatePersonalized({ provider: useProvider as "claude" | "deepseek", deepseekKey, claudeKey, system, userPrompt, temperature: 0.7, retries: 2 });
 
     // Bounded concurrency so a 25-row batch stays well within the edge time budget.
     const results: { index: number; message: string; error?: string }[] = [];
