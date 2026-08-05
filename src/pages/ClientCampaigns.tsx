@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { parseCSVToObjects } from "@/lib/csv-parser";
+import { readFileText } from "@/lib/read-file-text";
 import {
-  Megaphone, Loader2, Building2, Users, ArrowLeft, Upload, Sparkles, Wand2,
-  Trash2, Plus, Send, Check, ChevronRight, MailWarning,
+  Megaphone, Loader2, Building2, Users, ArrowLeft, Upload, Wand2,
+  Trash2, Plus, Send, Check, ChevronRight, FileText, GraduationCap,
 } from "lucide-react";
 
 type Client = {
@@ -36,9 +38,22 @@ const LANGUAGES = ["Español de España", "Español (LatAm)", "Inglés", "Franc�
 const DEFAULT_DELAYS = [0, 3, 4, 5, 6, 7];
 
 // ───────────────────────── Campaign builder for one client ─────────────────────────
-function Builder({ client, onBack, onCreated }: { client: Client; onBack: () => void; onCreated: () => void }) {
+function Builder({ client, skills, onBack, onCreated }: { client: Client; skills: string; onBack: () => void; onCreated: () => void }) {
   const [name, setName] = useState(`Campaña ${client.company_name || client.full_name || ""}`.trim());
   const [briefing, setBriefing] = useState("");
+  const briefFileRef = useRef<HTMLInputElement>(null);
+  const [readingBrief, setReadingBrief] = useState(false);
+
+  const readBriefFile = async (file: File) => {
+    setReadingBrief(true);
+    try {
+      const txt = await readFileText(file);
+      if (!txt.trim()) { toast.error("No se pudo extraer texto del archivo"); return; }
+      setBriefing((b) => (b.trim() ? b.trim() + "\n\n" : "") + txt.trim());
+      toast.success(`Briefing cargado de ${file.name}`);
+    } catch (e: any) { toast.error(e.message || "No se pudo leer el archivo"); }
+    finally { setReadingBrief(false); if (briefFileRef.current) briefFileRef.current.value = ""; }
+  };
   const [language, setLanguage] = useState(LANGUAGES[0]);
   const [tone, setTone] = useState("cercano y profesional");
   const [goal, setGoal] = useState("conseguir una reunión / llamada");
@@ -95,7 +110,7 @@ function Builder({ client, onBack, onCreated }: { client: Client; onBack: () => 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ briefing, language, tone, goal, num_steps: numSteps, num_variants: numVariants }),
+        body: JSON.stringify({ briefing, language, tone, goal, num_steps: numSteps, num_variants: numVariants, skills }),
       });
       const j = await resp.json();
       if (j.error) { toast.error(j.error); }
@@ -170,7 +185,13 @@ function Builder({ client, onBack, onCreated }: { client: Client; onBack: () => 
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaña Q3 — reuniones" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Briefing del cliente</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label className="text-xs">Briefing del cliente</Label>
+              <input ref={briefFileRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.html,.htm" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) readBriefFile(f); }} />
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" disabled={readingBrief} onClick={() => briefFileRef.current?.click()}>
+                {readingBrief ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />} Subir archivo (PDF/texto)
+              </Button>
+            </div>
             <textarea
               value={briefing} onChange={(e) => setBriefing(e.target.value)} rows={6}
               placeholder="Ej: Agencia de SEO local para clínicas dentales. Ayudan a llenar la agenda con pacientes de su zona. Prueba social: +30 clínicas. Ofrecen auditoría gratis. Tono cercano. CTA: 15 min de llamada. Calendario: calendly.com/…"
@@ -339,6 +360,65 @@ function OptRow({ checked, onChange, title, desc }: { checked: boolean; onChange
   );
 }
 
+// Skills (knowledge base) dialog — upload files or paste; saved to the owner's profile.
+function SkillsDialog({ initial, onClose, onSaved }: { initial: string; onClose: () => void; onSaved: (v: string) => void }) {
+  const [text, setText] = useState(initial);
+  const [reading, setReading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = async (files: FileList) => {
+    setReading(true);
+    let added = 0;
+    for (const file of Array.from(files)) {
+      try {
+        const txt = await readFileText(file);
+        if (txt.trim()) { setText((t) => (t.trim() ? t.trim() + "\n\n" : "") + `# ${file.name}\n${txt.trim()}`); added++; }
+      } catch (e: any) { toast.error(`${file.name}: ${e.message || "no se pudo leer"}`); }
+    }
+    setReading(false);
+    if (added) toast.success(`${added} archivo(s) añadidos`);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await (supabase as any).rpc("set_campaign_skills", { p_text: text });
+    if (error) toast.error("No se pudo guardar");
+    else { toast.success("Skills guardadas"); onSaved(text.trim()); onClose(); }
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-display"><GraduationCap className="h-5 w-5 text-primary" /> Skills · conocimiento de la IA</DialogTitle>
+          <DialogDescription>Sube o pega tu conocimiento (buenas prácticas de copy, ejemplos que funcionan, tu estilo…). La IA lo usa al generar TODAS las campañas.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input ref={fileRef} type="file" multiple accept=".pdf,.txt,.md,.csv,.json,.html,.htm" className="hidden" onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); }} />
+            <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={reading} onClick={() => fileRef.current?.click()}>
+              {reading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Subir archivos (PDF/texto)
+            </Button>
+            {text.trim() && <span className="text-xs text-muted-foreground">{text.length.toLocaleString()} caracteres</span>}
+          </div>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12}
+            placeholder="Ej: Fórmulas de asunto que convierten. Aperturas que evitan spam. Ejemplos de correos ganadores. Reglas de estilo del equipo…"
+            className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={save} disabled={saving} className="gap-1.5">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ───────────────────────── Page ─────────────────────────
 export default function ClientCampaigns() {
   const { user } = useAuth();
@@ -346,16 +426,18 @@ export default function ClientCampaigns() {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Client | null>(null);
+  const [skills, setSkills] = useState("");
+  const [showSkills, setShowSkills] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    (async () => {
-      const [{ data: r }, { data: p }] = await Promise.all([
-        supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
-        (supabase as any).from("profiles").select("is_client_manager").eq("user_id", user.id).single(),
-      ]);
-      setAccess(r?.role === "admin" || (p as any)?.is_client_manager ? "yes" : "no");
-    })();
+    // Owner-only section — only hello@onepulso.blog.
+    const owner = (user.email || "").toLowerCase() === "hello@onepulso.blog";
+    setAccess(owner ? "yes" : "no");
+    if (owner) {
+      (supabase as any).from("profiles").select("campaign_skills").eq("user_id", user.id).single()
+        .then(({ data }: any) => { if (data?.campaign_skills) setSkills(data.campaign_skills); });
+    }
   }, [user]);
 
   const loadClients = useCallback(async () => {
@@ -372,19 +454,26 @@ export default function ClientCampaigns() {
   if (access === "no") return <Navigate to="/dashboard" replace />;
 
   if (selected) {
-    return <Builder client={selected} onBack={() => setSelected(null)} onCreated={() => { setSelected(null); }} />;
+    return <Builder client={selected} skills={skills} onBack={() => setSelected(null)} onCreated={() => { setSelected(null); }} />;
   }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 font-display text-2xl font-bold tracking-tight">
-          <Megaphone className="h-6 w-6 text-primary" /> Crear campaña
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Elige un cliente y crea su campaña con la IA (mensajes, variantes y steps). Se crea como borrador en su cuenta.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 font-display text-2xl font-bold tracking-tight">
+            <Megaphone className="h-6 w-6 text-primary" /> Automatizar campaña
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Elige un cliente y la IA le crea la campaña (mensajes, variantes y steps). Se crea como borrador en su cuenta.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowSkills(true)}>
+          <GraduationCap className="h-4 w-4" /> Skills{skills.trim() ? " ✓" : ""}
+        </Button>
       </div>
+
+      {showSkills && <SkillsDialog initial={skills} onClose={() => setShowSkills(false)} onSaved={setSkills} />}
 
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>

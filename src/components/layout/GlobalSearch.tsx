@@ -25,7 +25,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Entregabilidad", path: "/deliverability", keywords: "entregabilidad deliverability spam dkim", icon: ShieldCheck },
   { label: "IA", path: "/ai-prompts", keywords: "ia ai prompts inteligencia", icon: Brain },
   { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
-  { label: "Crear campaña", path: "/client-campaigns", keywords: "crear campana cliente ia mensajes variantes secuencia", icon: Megaphone },
+  { label: "Automatizar campaña", path: "/client-campaigns", keywords: "automatizar crear campana cliente ia mensajes variantes secuencia skills", icon: Megaphone },
 ];
 
 const KIND_META: Record<ResultKind, { icon: any; label: string }> = {

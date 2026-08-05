@@ -27,7 +27,7 @@ const toolsNav = [
   { icon: ShieldCheck, label: "Entregabilidad", path: "/deliverability" },
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
-  { icon: Megaphone, label: "Crear campaña", path: "/client-campaigns" },
+  { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
 ];
 
 interface AppSidebarProps {

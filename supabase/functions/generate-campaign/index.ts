@@ -98,6 +98,7 @@ serve(async (req) => {
     const numSteps = Math.max(1, Math.min(6, Number(body?.num_steps) || 3));
     const numVariants = Math.max(1, Math.min(3, Number(body?.num_variants) || 1));
     const goal = String(body?.goal || "conseguir una reunión / llamada").trim();
+    const skills = String(body?.skills || "").trim().slice(0, 12000); // owner knowledge base
     if (!briefing) return new Response(JSON.stringify({ error: "Falta el briefing" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
@@ -107,7 +108,10 @@ serve(async (req) => {
     }
 
     const system = buildSystem(language, tone);
-    const userPrompt = `BRIEFING DEL CLIENTE:\n${briefing}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
+    const skillsBlock = skills
+      ? `CONOCIMIENTO Y BUENAS PRÁCTICAS (aplícalos siempre, tienen prioridad sobre tu criterio):\n${skills}\n\n`
+      : "";
+    const userPrompt = `${skillsBlock}BRIEFING DEL CLIENTE:\n${briefing}\n\nOBJETIVO DE LA CAMPAÑA: ${goal}\n\nGenera EXACTAMENTE ${numSteps} step(s), cada uno con EXACTAMENTE ${numVariants} variante(s). El step 1 es el email inicial; los siguientes son follow-ups. Devuelve el JSON con ${numSteps} elementos en "steps" y ${numVariants} en cada "variants".`;
 
     // Prefer Claude when available (better instruction-following), else DeepSeek. Retry once.
     let steps: Step[] = [];
