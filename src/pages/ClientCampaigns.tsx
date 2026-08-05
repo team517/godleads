@@ -13,7 +13,7 @@ import { parseCSVToObjects } from "@/lib/csv-parser";
 import { readFileText } from "@/lib/read-file-text";
 import {
   Megaphone, Loader2, Building2, Users, ArrowLeft, Upload, Wand2,
-  Trash2, Plus, Send, Check, ChevronRight, FileText, GraduationCap,
+  Trash2, Plus, Send, Check, ChevronRight, FileText, GraduationCap, Globe, Eye, Pencil,
 } from "lucide-react";
 
 type Client = {
@@ -37,10 +37,21 @@ async function callAdmin(payload: Record<string, unknown>) {
 const LANGUAGES = ["Español de España", "Español (LatAm)", "Inglés", "Francés", "Alemán", "Italiano", "Portugués", "Catalán"];
 const DEFAULT_DELAYS = [0, 3, 4, 5, 6, 7];
 
+// Sample values so the owner can preview how the email reads with a real lead.
+const SAMPLE_VARS: Record<string, string> = { firstname: "Juan", companyname: "Acme", company: "Acme", industry: "SaaS", city: "Madrid" };
+function fillVars(html: string): string {
+  return String(html || "").replace(/\{\{\s*([\w]+)\s*\}\}/g, (_m, k) => SAMPLE_VARS[String(k).toLowerCase().replace(/_/g, "")] ?? `{{${k}}}`);
+}
+// Render the AI body safely-ish (owner's own content) — drop scripts, keep basic HTML.
+function previewHtml(body: string): string {
+  return fillVars(String(body || "").replace(/<script[\s\S]*?<\/script>/gi, ""));
+}
+
 // ───────────────────────── Campaign builder for one client ─────────────────────────
 function Builder({ client, skills, onBack, onCreated }: { client: Client; skills: string; onBack: () => void; onCreated: () => void }) {
   const [name, setName] = useState(`Campaña ${client.company_name || client.full_name || ""}`.trim());
   const [briefing, setBriefing] = useState("");
+  const [website, setWebsite] = useState("");
   const briefFileRef = useRef<HTMLInputElement>(null);
   const [readingBrief, setReadingBrief] = useState(false);
 
@@ -67,6 +78,7 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
   const [steps, setSteps] = useState<Step[]>([]);
   const [generating, setGenerating] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [preview, setPreview] = useState(true);
 
   // Options (recommended defaults)
   const [stopOnReply, setStopOnReply] = useState(true);
@@ -103,18 +115,19 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
   };
 
   const generate = async () => {
-    if (!briefing.trim()) { toast.error("Escribe el briefing del cliente primero"); return; }
+    if (!briefing.trim() && !website.trim()) { toast.error("Escribe el briefing o pon la web del cliente"); return; }
     setGenerating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ briefing, language, tone, goal, num_steps: numSteps, num_variants: numVariants, skills }),
+        body: JSON.stringify({ briefing, website: website.trim(), company: client.company_name || client.full_name || "", language, tone, goal, num_steps: numSteps, num_variants: numVariants, skills }),
       });
       const j = await resp.json();
       if (j.error) { toast.error(j.error); }
       else {
+        if (website.trim() && !j.website_read) toast.message("No pude leer la web (¿bloquea bots?). Generé con el briefing.");
         const st: Step[] = (j.steps || []).map((s: any, i: number) => ({
           subject: s.subject || "", body: s.body || "",
           delay_days: i === 0 ? 0 : (DEFAULT_DELAYS[i] ?? 3),
@@ -198,6 +211,11 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
               className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5 text-xs"><Globe className="h-3.5 w-3.5 text-primary" /> Web del cliente (opcional)</Label>
+            <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="oncontrol.es" />
+            <p className="text-[10px] text-muted-foreground">La IA la lee para investigar y personalizar mejor (sector, propuesta, casos).</p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Idioma</Label>
@@ -228,7 +246,7 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
               </div>
             </div>
           </div>
-          <Button onClick={generate} disabled={generating || !briefing.trim()} className="gap-2">
+          <Button onClick={generate} disabled={generating || (!briefing.trim() && !website.trim())} className="gap-2">
             {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             {steps.length ? "Regenerar con IA" : "Generar secuencia con IA"}
           </Button>
@@ -237,8 +255,18 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
 
       {/* 2. Mensajes (preview + editable) */}
       {steps.length > 0 && (
-        <Section n={2} title="Mensajes (IA)" desc="Revísalos y edita lo que quieras. Usa {{first_name}} y {{company_name}} — se rellenan por lead.">
+        <Section n={2} title="Mensajes (IA)" desc="Escritos con la voz OnePulso. Cámbialos a vista previa para ver cómo quedan, o edítalos a mano.">
           <div className="space-y-4">
+            <div className="flex items-center justify-end gap-1 rounded-lg border bg-muted/30 p-1 text-xs">
+              <button onClick={() => setPreview(true)} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors ${preview ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                <Eye className="h-3.5 w-3.5" /> Vista previa
+              </button>
+              <button onClick={() => setPreview(false)} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-colors ${!preview ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                <Pencil className="h-3.5 w-3.5" /> Editar
+              </button>
+            </div>
+            {preview && <p className="text-[11px] text-muted-foreground">Vista previa con datos de ejemplo (Juan · Acme · SaaS · Madrid). Cada lead recibe los suyos.</p>}
+
             {steps.map((s, i) => (
               <div key={i} className="rounded-xl border border-border/70 p-3.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -249,38 +277,56 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
                   {i > 0 && (
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       Enviar
-                      <Input type="number" min={1} value={s.delay_days} onChange={(e) => updateStep(i, { delay_days: Math.max(1, Number(e.target.value) || 1) })} className="h-7 w-16 text-xs" />
+                      <Input type="number" min={1} value={s.delay_days} onChange={(e) => updateStep(i, { delay_days: Math.max(1, Number(e.target.value) || 1) })} className="h-7 w-16 text-xs" disabled={preview} />
                       días tras el anterior
                     </span>
                   )}
                 </div>
-                <div className="space-y-2">
-                  <Input value={s.subject} onChange={(e) => updateStep(i, { subject: e.target.value })} placeholder="Asunto" className="text-sm font-medium" />
-                  <textarea value={s.body} onChange={(e) => updateStep(i, { body: e.target.value })} rows={4}
-                    className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                </div>
+
+                {preview ? (
+                  <div className="rounded-lg border bg-white p-3.5 dark:bg-zinc-900">
+                    <p className="mb-2 border-b pb-2 text-sm"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(s.subject)}</span></p>
+                    <div className="prose-email text-sm leading-relaxed [&_p]:my-2 [&_strong]:font-semibold" dangerouslySetInnerHTML={{ __html: previewHtml(s.body) }} />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Input value={s.subject} onChange={(e) => updateStep(i, { subject: e.target.value })} placeholder="Asunto" className="text-sm font-medium" />
+                    <textarea value={s.body} onChange={(e) => updateStep(i, { body: e.target.value })} rows={6}
+                      className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                )}
+
                 {/* Variants */}
                 {s.variants.length > 0 && (
                   <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variantes (A/B)</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variantes (A/B/C)</p>
                     {s.variants.map((v, vi) => (
                       <div key={vi} className="rounded-lg border border-dashed border-border/70 p-2.5">
                         <div className="mb-1.5 flex items-center justify-between">
                           <span className="text-[11px] font-medium text-muted-foreground">Variante {String.fromCharCode(66 + vi)}</span>
-                          <button onClick={() => removeVariant(i, vi)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                          {!preview && <button onClick={() => removeVariant(i, vi)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>}
                         </div>
-                        <div className="space-y-1.5">
-                          <Input value={v.subject} onChange={(e) => updateVariant(i, vi, { subject: e.target.value })} placeholder="Asunto variante" className="h-8 text-sm" />
-                          <textarea value={v.body} onChange={(e) => updateVariant(i, vi, { body: e.target.value })} rows={3}
-                            className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                        </div>
+                        {preview ? (
+                          <div className="rounded-md border bg-white p-2.5 dark:bg-zinc-900">
+                            <p className="mb-1.5 border-b pb-1.5 text-xs"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(v.subject)}</span></p>
+                            <div className="text-xs leading-relaxed [&_p]:my-1.5 [&_strong]:font-semibold" dangerouslySetInnerHTML={{ __html: previewHtml(v.body) }} />
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <Input value={v.subject} onChange={(e) => updateVariant(i, vi, { subject: e.target.value })} placeholder="Asunto variante" className="h-8 text-sm" />
+                            <textarea value={v.body} onChange={(e) => updateVariant(i, vi, { body: e.target.value })} rows={4}
+                              className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
-                <Button variant="ghost" size="sm" className="mt-2 h-7 gap-1 text-xs text-muted-foreground" onClick={() => addVariant(i)}>
-                  <Plus className="h-3.5 w-3.5" /> Añadir variante
-                </Button>
+                {!preview && (
+                  <Button variant="ghost" size="sm" className="mt-2 h-7 gap-1 text-xs text-muted-foreground" onClick={() => addVariant(i)}>
+                    <Plus className="h-3.5 w-3.5" /> Añadir variante
+                  </Button>
+                )}
               </div>
             ))}
           </div>
