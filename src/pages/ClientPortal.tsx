@@ -9,10 +9,14 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 import MyReportsCard from "@/components/reports/MyReportsCard";
 import { extractLogoColor } from "@/lib/logoColor";
+import { ComposeEmailDialog } from "@/components/ComposeEmailDialog";
+import { credentialsEmailDraft } from "@/lib/onboarding";
+
+const CREDENTIALS_FROM = "team@onepulso.online"; // fixed sender for credential emails
 
 const SECTIONS = [
   { path: "/dashboard", label: "Dashboard" },
@@ -363,7 +367,36 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const { user } = useAuth();
   const [testEmail, setTestEmail] = useState(user?.email || "");
   const [testing, setTesting] = useState(false);
+  const [creds, setCreds] = useState<null | { subject: string; body: string }>(null);
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
+
+  // Open the compose box PRE-FILLED with the client's access credentials.
+  const openCredentials = () => {
+    const teamAcc = accounts.find((a) => a.email.toLowerCase() === CREDENTIALS_FROM);
+    if (!teamAcc) { toast.error(`Conecta ${CREDENTIALS_FROM} en "Cuentas Email" para enviar credenciales.`); return; }
+    const { subject, body } = credentialsEmailDraft({
+      companyName: client.company_name, portalUrl: window.location.origin,
+      email: client.email, password: newPassword.trim() || client.client_password,
+    });
+    setCreds({ subject, body });
+  };
+
+  // Send the credentials from team@onepulso.online (is_test → no quota, no log).
+  const sendCredentials = async (subject: string, body: string) => {
+    const teamAcc = accounts.find((a) => a.email.toLowerCase() === CREDENTIALS_FROM);
+    if (!teamAcc) { toast.error(`No se encontró la cuenta ${CREDENTIALS_FROM}.`); return; }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ account_id: teamAcc.id, to_email: client.email, subject, body, is_test: true }),
+      });
+      const j = await resp.json();
+      if (j.success) toast.success(`Credenciales enviadas a ${client.email}`);
+      else toast.error(j.error || "No se pudieron enviar las credenciales");
+    } catch (e: any) { toast.error(String(e?.message || e)); }
+  };
 
   const loadReports = () => callAdmin({ action: "list_client_reports", user_id: client.id }).then((res) => { if (!res.error) setReports(res.reports || []); });
 
@@ -419,6 +452,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   };
 
   return (
+    <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader><DialogTitle className="font-display">Editar · {client.email}</DialogTitle></DialogHeader>
@@ -434,6 +468,14 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
               </div>
             </div>
           </div>
+          {/* Send access credentials from team@onepulso.online */}
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+            <Button type="button" size="sm" variant="secondary" className="gap-1.5" onClick={openCredentials}>
+              <KeyRound className="h-4 w-4" /> Enviar credenciales
+            </Button>
+            <span className="text-[11px] text-muted-foreground">Le manda un correo (desde {CREDENTIALS_FROM}) con su enlace, email y contraseña. Lo revisas antes de enviar.</span>
+          </div>
+
           <div className="space-y-2">
             <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Secciones con acceso</Label>
             <SectionPicker selected={routes} onToggle={toggle} />
@@ -585,5 +627,15 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    {creds && (
+      <ComposeEmailDialog
+        to={client.email}
+        initialSubject={creds.subject}
+        initialBody={creds.body}
+        onClose={() => setCreds(null)}
+        onSend={sendCredentials}
+      />
+    )}
+    </>
   );
 }
