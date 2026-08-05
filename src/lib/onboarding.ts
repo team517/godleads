@@ -136,17 +136,19 @@ export function credentialsEmailDraft(opts: {
   const lines: string[] = [
     "Hola,",
     "",
-    `Ya puedes acceder a tu portal de onboarding${brand ? ` de ${brand}` : ""}. Estos son tus datos de acceso:`,
+    `Ya puedes acceder a tu plataforma de email${brand ? ` de ${brand}` : ""}. Estos son tus datos de acceso:`,
     "",
   ];
   if (opts.portalUrl) lines.push(`Enlace: ${opts.portalUrl}`);
   lines.push(`Email: ${opts.email}`);
   lines.push(`Contraseña: ${opts.password || "(la que te facilitamos)"}`);
   lines.push("");
-  lines.push("Con estas mismas credenciales puedes entrar también a la plataforma completa.");
+  lines.push("Dentro verás las cuentas de envío de tu campaña. Durante estos días verás cómo vamos creando y lanzando las campañas, paso a paso.");
+  lines.push("");
+  lines.push("Con estas mismas credenciales entras también a la plataforma completa.");
   lines.push("\nUn saludo,\nEl equipo");
   return {
-    subject: `Tus accesos${brand ? ` · ${brand}` : ""}`,
+    subject: `Acceso a tu plataforma de email${brand ? ` · ${brand}` : ""}`,
     body: lines.join("\n"),
   };
 }
