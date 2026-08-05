@@ -21,9 +21,15 @@ VOZ Y TONO:
 - Tono: ${tone}. Directo, humano, como un colega senior que sabe lo que hace. Sin jerga corporate.
 - PROHIBIDO: emojis, "estimado", "saludos cordiales", aperturas genéricas ("espero que estés bien"), poner en negrita frases enteras.
 
-VARIABLES OBLIGATORIAS — en CADA email y en CADA variante usa SIEMPRE las tres: {{firstName}} (en el saludo), {{companyName}} y {{industry}}. Usa {{city}} además cuando encaje de forma natural. Intégralas con naturalidad, nunca forzadas; el correo debe leerse HECHO A MEDIDA para ESE lead. No inventes otras variables ni dejes corchetes sueltos.
+VARIABLES OBLIGATORIAS — JUEGA con ellas en CADA email y CADA variante: {{firstName}} (saludo y, si encaja, alguna vez más), {{companyName}} (varias veces, hablando de ELLOS), {{industry}} (su sector) y {{city}} cuando venga natural. Intégralas con naturalidad, nunca forzadas ni repetidas de forma robótica; el correo debe leerse HECHO A MEDIDA para ese lead, como si lo hubieras escrito tú a mano solo para él.
 
-PARECER PREPARADO: cada email debe DEMOSTRAR que has investigado a {{companyName}} — menciona algo concreto de su sector {{industry}} o de su web, como si lo hubieras preparado a mano para ellos. Cero frases que valdrían para cualquiera.
+HABLA DE SU EMPRESA (en positivo): dedica frases a {{companyName}} y a lo que hacen bien en {{industry}} — un reconocimiento genuino, algo que admiras o que os llamó la atención de ellos (de la web/sector). Que sientan que de verdad los has mirado, no un halago vacío. Luego conectas con vuestra propuesta.
+
+PARECER PREPARADO Y REAL: cada email debe DEMOSTRAR investigación concreta sobre {{companyName}} (algo real de su web o su sector {{industry}}). Cero frases que valdrían para cualquiera. Que se lea humano y real, no a plantilla ni a IA.
+
+LONGITUD:
+- Email inicial (step 1): alrededor de 160 palabras (rango 140-180). Suficiente para investigar, halagar a {{companyName}}, plantear el valor y el CTA — sin relleno.
+- Follow-ups: MÁS CORTOS que el inicial (60-110 palabras), y cada uno APORTA VALOR NUEVO (un insight del sector {{industry}}, un mini-caso con número, un recurso o una idea útil para {{companyName}}), no solo "¿lo viste?".
 
 ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
 1. <p>Hola {{firstName}},</p>
@@ -37,16 +43,16 @@ ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p
 
 FIRMA (despedida): firma SIEMPRE con el nombre de la persona que envía, en dos líneas: <p>Un saludo,<br>Nombre</p>. Si se te da un NOMBRE DEL COMERCIAL, úsalo tal cual. Si no, usa el nombre del fundador/CEO que aparezca en el briefing o la web. Nunca firmes solo con "El equipo" si puedes poner un nombre de persona.
 
-FOLLOW-UPS — cada uno MÁS CORTO que el anterior y con ángulo NUEVO (no repitas frases):
-- FU1 (~3 días): bump suave, retoma el gancho.
-- FU2 (~4 días): caso real / dato con número + pregunta de cualificación.
-- FU3 (~5 días): breakup amable invitando a retomar cuando les venga bien.
+FOLLOW-UPS — más cortos que el inicial y cada uno APORTANDO VALOR NUEVO sobre {{companyName}} / {{industry}} (no repitas frases ni hagas solo "¿lo viste?"):
+- FU1 (~3 días): retoma el gancho + aporta un insight o idea concreta útil para {{companyName}}.
+- FU2 (~4 días): mini-caso real del sector {{industry}} con un número + pregunta de cualificación.
+- FU3 (~5 días): breakup amable, con un último apunte de valor, invitando a retomar cuando les venga bien.
 
 FORMATO HTML (obligatorio en cada body):
 - Cada bloque en su propio <p>...</p>. UNA idea por <p>.
 - <strong>...</strong> SOLO en el gancho, el número clave y el CTA (máximo 3-4 por email). Nunca en frases enteras.
 - <br> para saltos suaves (p. ej. dentro de la firma).
-- Frases de máximo 20 palabras. Bloques de máximo 3 líneas.
+- Frases (cada una) de máximo 20 palabras — esto es longitud de FRASE, no del email; el inicial ronda las 160 palabras con varias frases cortas. Bloques de máximo 3 líneas.
 
 ASUNTOS (todos los steps y variantes llevan asunto, NUNCA vacío):
 - Con variable obligatoria ({{companyName}} o {{firstName}}), 4-7 palabras, minúscula inicial, sin emojis ni exclamaciones, personal y que despierte curiosidad.
@@ -92,7 +98,7 @@ async function callDeepSeekJson(key: string, system: string, user: string): Prom
     body: JSON.stringify({
       model: "deepseek-chat",
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      max_tokens: 4000, temperature: 0.8, response_format: { type: "json_object" },
+      max_tokens: 6000, temperature: 0.8, response_format: { type: "json_object" },
     }),
   });
   if (!r.ok) throw new Error(`DeepSeek ${r.status}: ${(await r.text()).slice(0, 200)}`);
@@ -104,7 +110,7 @@ async function callClaudeJson(key: string, system: string, user: string): Promis
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001", max_tokens: 4000, temperature: 0.8,
+      model: "claude-haiku-4-5-20251001", max_tokens: 6000, temperature: 0.8,
       system: system + "\n\nResponde SOLO con el JSON, empezando por { y terminando por }.",
       messages: [{ role: "user", content: user }],
     }),
