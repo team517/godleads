@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -90,30 +90,46 @@ const cleanSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slic
 function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: Client; fromAccountId: string; expanded: boolean; onToggle: () => void; onSaved: () => void }) {
   const [slug, setSlug] = useState(c.onboarding_slug || "");
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
+  const [serverSlug, setServerSlug] = useState(c.onboarding_slug || "");
+  const [serverStatus, setServerStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editingSlug, setEditingSlug] = useState(false);
   const [compose, setCompose] = useState<null | { subject: string; body: string; onSend: (s: string, b: string) => Promise<void> }>(null);
 
   // Re-sync when the parent reloads with fresh server data.
-  useEffect(() => { setSlug(c.onboarding_slug || ""); setStatus(normalizeStatus(c.onboarding_status)); }, [c.id, c.onboarding_slug, c.onboarding_status]);
+  useEffect(() => {
+    const ns = normalizeStatus(c.onboarding_status);
+    setStatus(ns); setServerStatus(ns);
+    setSlug(c.onboarding_slug || ""); setServerSlug(c.onboarding_slug || "");
+  }, [c.id, c.onboarding_slug, c.onboarding_status]);
 
   const pct = progressPct(status);
-  const dirty = useMemo(() => {
-    const origSlug = c.onboarding_slug || "";
-    const origStatus = normalizeStatus(c.onboarding_status);
-    return slug !== origSlug || JSON.stringify(status) !== JSON.stringify(origStatus);
-  }, [slug, status, c.onboarding_slug, c.onboarding_status]);
+  const dirty = slug !== serverSlug || JSON.stringify(status) !== JSON.stringify(serverStatus);
 
   const url = slug ? `${window.location.origin}/o/${slug}` : "";
-  const cycle = (i: number) => setStatus((s) => s.map((st, idx) => (idx === i ? NEXT_STATE[st] : st)));
   const copyUrl = () => { if (!url) return; navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1400); };
+
+  // Persist to the DB and remember the saved snapshot (so "dirty" clears and the client's
+  // portal updates in real time). Returns false on error.
+  const persist = async (nextStatus: PhaseState[], nextSlug: string): Promise<boolean> => {
+    const res = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: nextSlug || null, onboarding_status: nextStatus });
+    if (res.error) { toast.error(res.error); return false; }
+    setServerStatus(nextStatus); setServerSlug(nextSlug);
+    return true;
+  };
+
+  // Clic en una fase = cambia y GUARDA al instante (no hay que pulsar "Guardar"),
+  // y el cliente lo ve en tiempo real.
+  const cycle = async (i: number) => {
+    const next = status.map((st, idx) => (idx === i ? NEXT_STATE[st] : st));
+    setStatus(next);
+    await persist(next, slug);
+  };
 
   const save = async () => {
     setSaving(true);
-    const res = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
-    if (res.error) toast.error(res.error);
-    else { toast.success("Onboarding guardado"); onSaved(); }
+    if (await persist(status, slug)) { toast.success("Guardado"); onSaved(); }
     setSaving(false);
   };
 
@@ -138,10 +154,9 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
       subject, body,
       onSend: async (subj, bod) => {
         // Persist the phase state first so the client's portal matches the email.
-        const upd = await callAdmin({ action: "update_client", user_id: c.id, onboarding_slug: slug || null, onboarding_status: status });
-        if (upd.error) { toast.error(upd.error); return; }
+        if (!(await persist(status, slug))) return;
         const r = await sendOnboardingEmail(fromAccountId, c.email, subj, bod);
-        if (r?.success) { toast.success(`Email enviado a ${c.email}`); onSaved(); }
+        if (r?.success) toast.success(`Email enviado a ${c.email}`);
         else toast.error(r?.error || "No se pudo enviar el email");
       },
     });

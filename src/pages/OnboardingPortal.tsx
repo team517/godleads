@@ -89,7 +89,7 @@ export default function OnboardingPortal() {
 
       <main className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-24">
         {user
-          ? <Progress accent={accent} branding={branding} />
+          ? <Progress accent={accent} branding={branding} slug={slug} />
           : <LoginView accent={accent} signIn={signIn} companyName={branding?.company_name} logoUrl={branding?.logo_url} />}
       </main>
 
@@ -174,44 +174,50 @@ function LoginView({ accent, signIn, companyName, logoUrl }: {
 }
 
 // ───────────────────────── Progress ─────────────────────────
-function Progress({ accent, branding }: { accent: string; branding: Branding | null }) {
-  const { user } = useAuth();
+function Progress({ accent, branding, slug }: { accent: string; branding: Branding | null; slug?: string }) {
   const [me, setMe] = useState<Me | null>(null);
+  const [clientUserId, setClientUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Progress comes from the SLUG's client — so the portal shows the right progress
+  // whether the client or the owner is viewing it (not the viewer's own account).
   const load = useCallback(async () => {
-    const { data } = await (supabase as any).rpc("onboarding_me");
+    if (!slug) { setLoading(false); return; }
+    const { data } = await (supabase as any).rpc("onboarding_by_slug", { p_slug: slug });
     const row = Array.isArray(data) ? data[0] : data;
-    setMe(row ? { ...row, onboarding_status: normalizeStatus(row.onboarding_status) } : null);
+    if (row) {
+      setMe({ ...row, onboarding_status: normalizeStatus(row.onboarding_status) });
+      if (row.client_user_id) setClientUserId(row.client_user_id as string);
+    } else {
+      setMe(null);
+    }
     setLoading(false);
-  }, []);
+  }, [slug]);
 
   useEffect(() => {
     load();
     const onFocus = () => load();
     window.addEventListener("focus", onFocus);
     const iv = setInterval(load, 30000); // fallback poll; realtime below is near-instant
+    return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); };
+  }, [load]);
 
-    // Realtime: refresh the moment the owner changes THIS client's onboarding.
-    // RLS ("Users can read own profile") means only the client's own row is delivered.
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    if (user?.id) {
-      channel = supabase
-        .channel(`onboarding-me-${user.id}`)
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${user.id}` },
-          () => load(),
-        )
-        .subscribe();
-    }
-
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      clearInterval(iv);
-      if (channel) supabase.removeChannel(channel);
-    };
-  }, [load, user?.id]);
+  // Realtime: refresh the instant the owner changes this client's onboarding.
+  // Subscribes to the CLIENT's own profile row; when the client is the viewer, RLS
+  // ("Users can read own profile") delivers it live. (For other viewers RLS blocks the
+  // push and the 30s poll keeps it fresh.)
+  useEffect(() => {
+    if (!clientUserId) return;
+    const channel = supabase
+      .channel(`onboarding-progress-${clientUserId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${clientUserId}` },
+        () => load(),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [clientUserId, load]);
 
   if (loading) return <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-[#9C9C9C]" /></div>;
 
