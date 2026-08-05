@@ -42,9 +42,36 @@ const SAMPLE_VARS: Record<string, string> = { firstname: "Juan", companyname: "A
 function fillVars(html: string): string {
   return String(html || "").replace(/\{\{\s*([\w]+)\s*\}\}/g, (_m, k) => SAMPLE_VARS[String(k).toLowerCase().replace(/_/g, "")] ?? `{{${k}}}`);
 }
-// Render the AI body safely-ish (owner's own content) — drop scripts, keep basic HTML.
-function previewHtml(body: string): string {
-  return fillVars(String(body || "").replace(/<script[\s\S]*?<\/script>/gi, ""));
+
+// The AI returns HTML (<p>/<strong>/<br>). In the editor we show CLEAN TEXT instead:
+// paragraphs separated by a blank line, **negrita** for bold. Converted back to HTML
+// for the preview and when the campaign is created (so the email renders well).
+function htmlToText(html: string): string {
+  return String(html || "")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/p\s*>\s*<p[^>]*>/gi, "\n\n")
+    .replace(/<\/?p[^>]*>/gi, "")
+    .replace(/<strong>(.*?)<\/strong>/gi, "**$1**")
+    .replace(/<b>(.*?)<\/b>/gi, "**$1**")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+function textToHtml(text: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(text || "").trim()
+    .split(/\n\s*\n/)
+    .map((block) => {
+      const inner = esc(block.trim()).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+      return inner ? `<p>${inner}</p>` : "";
+    })
+    .filter(Boolean)
+    .join("");
+}
+// text (editor) → HTML with sample vars filled, for the rendered preview.
+function renderPreview(textBody: string): string {
+  return fillVars(textToHtml(textBody));
 }
 
 // ───────────────────────── Campaign builder for one client ─────────────────────────
@@ -130,9 +157,9 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
       else {
         if (website.trim() && !j.website_read) toast.message("No pude leer la web (¿bloquea bots?). Generé con el briefing.");
         const st: Step[] = (j.steps || []).map((s: any, i: number) => ({
-          subject: s.subject || "", body: s.body || "",
+          subject: s.subject || "", body: htmlToText(s.body || ""),
           delay_days: i === 0 ? 0 : (DEFAULT_DELAYS[i] ?? 3),
-          variants: Array.isArray(s.variants) ? s.variants.map((v: any) => ({ subject: v.subject || "", body: v.body || "" })) : [],
+          variants: Array.isArray(s.variants) ? s.variants.map((v: any) => ({ subject: v.subject || "", body: htmlToText(v.body || "") })) : [],
         }));
         setSteps(st);
         toast.success(`Secuencia de ${st.length} email(s) generada`);
@@ -165,7 +192,12 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
         break_thread_after: breakThread,
         include_unsubscribe: includeUnsub,
       },
-      steps: steps.map((s, i) => ({ subject: s.subject, body: s.body, delay_days: i === 0 ? 0 : s.delay_days, variants: s.variants })),
+      steps: steps.map((s, i) => ({
+        subject: s.subject,
+        body: textToHtml(s.body),
+        delay_days: i === 0 ? 0 : s.delay_days,
+        variants: s.variants.map((v) => ({ subject: v.subject, body: textToHtml(v.body) })),
+      })),
       leads,
     });
     if (res.error) toast.error(res.error);
@@ -292,15 +324,16 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
                 </div>
 
                 {preview ? (
-                  <div className="rounded-lg border bg-white p-3.5 dark:bg-zinc-900">
-                    <p className="mb-2 border-b pb-2 text-sm"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(s.subject)}</span></p>
-                    <div className="prose-email text-sm leading-relaxed [&_p]:my-2 [&_strong]:font-semibold" dangerouslySetInnerHTML={{ __html: previewHtml(s.body) }} />
+                  <div className="rounded-lg border bg-white p-4 dark:bg-zinc-900">
+                    <p className="mb-3 border-b pb-2 text-sm"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(s.subject)}</span></p>
+                    <div className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-100 [&_p]:my-2.5 [&_strong]:font-semibold [&_strong]:text-zinc-900 dark:[&_strong]:text-white" dangerouslySetInnerHTML={{ __html: renderPreview(s.body) }} />
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <Input value={s.subject} onChange={(e) => updateStep(i, { subject: e.target.value })} placeholder="Asunto" className="text-sm font-medium" />
-                    <textarea value={s.body} onChange={(e) => updateStep(i, { body: e.target.value })} rows={6}
-                      className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    <textarea value={s.body} onChange={(e) => updateStep(i, { body: e.target.value })} rows={9}
+                      className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    <p className="text-[10px] text-muted-foreground">Separa párrafos con una línea en blanco. Usa <b>**texto**</b> para poner algo en <b>negrita</b>.</p>
                   </div>
                 )}
 
@@ -315,15 +348,15 @@ function Builder({ client, skills, onBack, onCreated }: { client: Client; skills
                           {!preview && <button onClick={() => removeVariant(i, vi)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>}
                         </div>
                         {preview ? (
-                          <div className="rounded-md border bg-white p-2.5 dark:bg-zinc-900">
-                            <p className="mb-1.5 border-b pb-1.5 text-xs"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(v.subject)}</span></p>
-                            <div className="text-xs leading-relaxed [&_p]:my-1.5 [&_strong]:font-semibold" dangerouslySetInnerHTML={{ __html: previewHtml(v.body) }} />
+                          <div className="rounded-md border bg-white p-3 dark:bg-zinc-900">
+                            <p className="mb-2 border-b pb-1.5 text-xs"><span className="text-muted-foreground">Asunto: </span><span className="font-medium">{fillVars(v.subject)}</span></p>
+                            <div className="text-xs leading-relaxed text-zinc-800 dark:text-zinc-100 [&_p]:my-2 [&_strong]:font-semibold [&_strong]:text-zinc-900 dark:[&_strong]:text-white" dangerouslySetInnerHTML={{ __html: renderPreview(v.body) }} />
                           </div>
                         ) : (
                           <div className="space-y-1.5">
                             <Input value={v.subject} onChange={(e) => updateVariant(i, vi, { subject: e.target.value })} placeholder="Asunto variante" className="h-8 text-sm" />
-                            <textarea value={v.body} onChange={(e) => updateVariant(i, vi, { body: e.target.value })} rows={4}
-                              className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                            <textarea value={v.body} onChange={(e) => updateVariant(i, vi, { body: e.target.value })} rows={6}
+                              className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
                           </div>
                         )}
                       </div>
