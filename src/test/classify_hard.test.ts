@@ -47,6 +47,13 @@ const CASES: Array<[string[], string]> = [
   // edge: empty / symbols
   [["neutral"], "   "],
   [["neutral"], "👍"],
+  // bare date/time is NOT interest (timestamps, signatures, OOO leaks) — the bug reported
+  [["neutral"], "Confirmado, lo revisamos el jueves 20."],
+  [["neutral"], "Nuestro horario de oficina es de 9h a 18h."],
+  [["neutral", "question"], "Recibí tu correo el martes a las 10."],
+  // a date/time WITH a meeting word IS interest
+  [["interested"], "Perfecto, el jueves a las 10 me viene bien."],
+  [["interested"], "Podemos hacer la llamada el martes a las 16h."],
 ];
 
 describe("classifier hard battery", () => {

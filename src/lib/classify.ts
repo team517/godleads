@@ -154,7 +154,11 @@ const INTERESTED = [
   /disponib(le|ilidad)/i, /\bavailab(le|ility)\b/i, /estoy disponible/i, /(i'?m|we'?re)\s+available/i,
   // "¿Tenéis hueco el jueves?" — asking for a slot/time to meet = a warm meeting ask.
   /\bhueco\b/i, /(ten[ée]is|tienes|ten[ée]s|hay|te va bien|os va bien|te viene|os viene|te encaja)\b[^.?!]{0,25}(hueco|disponib|un (rato|momento|hueco)|libre|para (hablar|vernos|una (llamada|reuni)))/i,
-  /(a|sobre) las \d{1,2}([:.]\d{2})?/i, /\b\d{1,2}\s*(h|hrs|am|pm)\b/i, /\b(lunes|martes|mi[ée]rcoles|jueves|viernes|monday|tuesday|wednesday|thursday|friday)\b.*\b\d/i,
+  // A proposed time ONLY counts as interest when it sits next to a meeting word. A bare
+  // "a las 10:00" / "el jueves 20" / "10h" is NOT interest — it shows up in timestamps,
+  // signatures and out-of-office notes, which used to leak as false "Interesado".
+  /(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar)\b[^.?!]{0,30}\b((a|sobre) las \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes|monday|tuesday|wednesday|thursday|friday))/i,
+  /((a|sobre) las \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes))\b[^.?!]{0,30}(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar|me (viene|va) bien|te (viene|va) bien|perfecto)/i,
   SEND_INFO,
   /(quiero|queremos|me gustar[íi]a)\s+(una demo|probar|ver[l]?o|conocer)/i,
   /(s[íi]|yes)[,! ]+(claro|por supuesto|encantad|adelante|please|sure|absolutely|of course|me interesa|hablamos)/i,
