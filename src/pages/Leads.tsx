@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { Plus, Upload, Search, Users, Trash2, FolderPlus, Folder, FolderOpen, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { Plus, Upload, Search, Users, Trash2, FolderPlus, Folder, FolderOpen, ArrowRight, Loader2, ShieldCheck, ShieldBan } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,6 +19,18 @@ import { parseCSVToObjects } from "@/lib/csv-parser";
 import { useVerification } from "@/contexts/VerificationContext";
 import { useSearchParams } from "react-router-dom";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const DOMAIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+
+// Accepts "lead@empresa.com" (email), "empresa.com" or "@empresa.com" (domain).
+function parseRemoveInput(raw: string): { value: string; isDomain: boolean } | null {
+  const v = raw.trim().toLowerCase();
+  if (!v) return null;
+  if (v.startsWith("@")) { const d = v.slice(1); return DOMAIN_RE.test(d) ? { value: d, isDomain: true } : null; }
+  if (v.includes("@")) return EMAIL_RE.test(v) ? { value: v, isDomain: false } : null;
+  return DOMAIN_RE.test(v) ? { value: v, isDomain: true } : null;
+}
 
 const FINAL_VERIFICATION_STATUSES = new Set(["valid", "risky", "invalid"]);
 
@@ -50,6 +62,52 @@ export default function Leads() {
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 100;
   const [deleting, setDeleting] = useState(false);
+
+  // Eliminar / bloquear por email o dominio
+  const [showRemove, setShowRemove] = useState(false);
+  const [removeInput, setRemoveInput] = useState("");
+  const [removeBlock, setRemoveBlock] = useState(true);
+  const [removeMatch, setRemoveMatch] = useState<number | null>(null);
+  const [removeSearching, setRemoveSearching] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const removeParsed = parseRemoveInput(removeInput);
+
+  const searchRemoveMatches = async () => {
+    if (!user || !removeParsed) return;
+    setRemoveSearching(true);
+    setRemoveMatch(null);
+    let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id);
+    q = removeParsed.isDomain ? q.ilike("email", `%@${removeParsed.value}`) : q.eq("email", removeParsed.value);
+    const { count } = await q;
+    setRemoveMatch(count || 0);
+    setRemoveSearching(false);
+  };
+
+  const doRemove = async () => {
+    if (!user || !removeParsed) return;
+    setRemoving(true);
+    try {
+      const { data, error } = await (supabase as any).rpc("delete_leads_by_match", { p_value: removeParsed.value, p_is_domain: removeParsed.isDomain });
+      if (error) throw error;
+      const deleted = typeof data === "number" ? data : 0;
+      if (removeBlock) {
+        const { error: bErr } = await supabase.from("blocklist").upsert(
+          { user_id: user.id, entry_type: removeParsed.isDomain ? "domain" : "email", value: removeParsed.value },
+          { onConflict: "user_id,entry_type,value", ignoreDuplicates: true },
+        );
+        if (bErr) throw bErr;
+      }
+      const label = removeParsed.isDomain ? `@${removeParsed.value}` : removeParsed.value;
+      toast.success(`${deleted.toLocaleString()} lead(s) de ${label} eliminados de todas las campañas${removeBlock ? " y bloqueados" : ""}.`);
+      setShowRemove(false);
+      setRemoveInput(""); setRemoveMatch(null); setRemoveBlock(true);
+      setPage(0);
+      load();
+    } catch (e: any) {
+      toast.error(e.message || "No se pudo eliminar");
+    }
+    setRemoving(false);
+  };
 
   const [showVerify, setShowVerify] = useState(false);
   const [unverifiedTotalCount, setUnverifiedTotalCount] = useState(0);
@@ -262,16 +320,19 @@ export default function Leads() {
           return { user_id: user.id, email, custom_fields, list_id: activeList || null };
         });
 
-        const { error } = await supabase.from("leads").insert(batch);
+        // .select("id") so we count what ACTUALLY inserted — blocked emails/domains are
+        // silently skipped by the DB trigger, so they never enter and aren't counted.
+        const { data, error } = await supabase.from("leads").insert(batch).select("id");
         if (error) { toast.error(error.message); break; }
-        imported += batch.length;
+        imported += data?.length || 0;
         setImportProgress({ current: imported, total: selectedRows.length, active: true });
         // Give browser a chance to paint the progress update
         await yieldToMain();
       }
 
+      const skipped = selectedRows.length - imported;
       const varNames = csvHeaders.filter(h => h !== "email");
-      toast.success(`${imported} leads importados. Variables: ${varNames.map(v => `{{${v}}}`).join(", ")}`);
+      toast.success(`${imported.toLocaleString()} leads importados${skipped > 0 ? ` · ${skipped.toLocaleString()} omitidos (bloqueados o repetidos)` : ""}. Variables: ${varNames.map(v => `{{${v}}}`).join(", ")}`);
       setCsvRows([]);
       setCsvHeaders([]);
       parsedRowsRef.current = [];
@@ -441,8 +502,75 @@ export default function Leads() {
             {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
             <span className="hidden sm:inline">Verificar</span>
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 border-destructive/30 text-destructive"
+            onClick={() => setShowRemove(true)}
+          >
+            <ShieldBan className="h-4 w-4" /> <span className="hidden sm:inline">Eliminar/bloquear</span>
+          </Button>
         </div>
       </div>
+
+      {/* Eliminar / bloquear por email o dominio */}
+      <Dialog open={showRemove} onOpenChange={(o) => { setShowRemove(o); if (!o) { setRemoveInput(""); setRemoveMatch(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ShieldBan className="h-5 w-5 text-destructive" /> Eliminar / bloquear leads</DialogTitle>
+            <DialogDescription>Escribe un email o un dominio: se eliminan de TODAS las campañas.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Email o dominio</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={removeInput}
+                  onChange={(e) => { setRemoveInput(e.target.value); setRemoveMatch(null); }}
+                  placeholder="lead@empresa.com  o  empresa.com"
+                  onKeyDown={(e) => { if (e.key === "Enter" && removeParsed) searchRemoveMatches(); }}
+                />
+                <Button variant="outline" size="icon" onClick={searchRemoveMatches} disabled={!removeParsed || removeSearching} title="Buscar cuántos coinciden">
+                  {removeSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </Button>
+              </div>
+              {removeInput.trim() && !removeParsed && (
+                <p className="text-xs text-destructive">Escribe un email válido (lead@empresa.com) o un dominio (empresa.com).</p>
+              )}
+              {removeParsed && (
+                <p className="text-xs text-muted-foreground">
+                  {removeParsed.isDomain
+                    ? <>Dominio <b>@{removeParsed.value}</b> — se eliminan todos sus leads.</>
+                    : <>Email <b>{removeParsed.value}</b>.</>}
+                </p>
+              )}
+            </div>
+
+            {removeMatch !== null && (
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                {removeMatch > 0
+                  ? <>Se encontraron <b>{removeMatch.toLocaleString()}</b> lead(s). Al eliminar, salen de todas las campañas.</>
+                  : <>Ahora mismo no hay leads con ese {removeParsed?.isDomain ? "dominio" : "email"}{removeBlock ? ", pero se bloqueará para futuras subidas." : "."}</>}
+              </div>
+            )}
+
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3">
+              <Checkbox checked={removeBlock} onCheckedChange={(v) => setRemoveBlock(!!v)} className="mt-0.5" />
+              <span className="text-sm">
+                <span className="font-medium">Bloquear también</span>
+                <span className="block text-xs text-muted-foreground">
+                  Cuando subas leads, este {removeParsed?.isDomain ? "dominio" : "email"} no se subirá (los demás sí). El motor tampoco le enviará.
+                </span>
+              </span>
+            </label>
+
+            <Button variant="destructive" className="w-full gap-2" disabled={!removeParsed || removing} onClick={doRemove}>
+              {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {removeBlock ? "Eliminar y bloquear" : "Eliminar de todas las campañas"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Floating progress banners - fixed at bottom so user can keep navigating */}
       {csvParsing && (
