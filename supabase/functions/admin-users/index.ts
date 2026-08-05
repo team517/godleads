@@ -46,7 +46,7 @@ serve(async (req) => {
     const action = body.action || "list";
 
     // A client manager is restricted to client CRUD — never the full-admin actions.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports"]);
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports", "create_client_campaign"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
@@ -195,6 +195,74 @@ serve(async (req) => {
       }
 
       return new Response(JSON.stringify({ success: true, user_id: newUser?.user?.id }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Create a full campaign (steps + variants + leads) INSIDE a client's account, as a draft.
+    if (action === "create_client_campaign") {
+      const { client_user_id, name, options, steps, leads } = body;
+      if (!client_user_id) throw new Error("client_user_id requerido");
+      // Target must be a real client of this manager (has allowed_routes, not staff).
+      const { data: tgt } = await supabase.from("profiles").select("allowed_routes, is_client_manager").eq("user_id", client_user_id).single();
+      if (!tgt?.allowed_routes || (tgt.allowed_routes as string[]).length === 0 || tgt.is_client_manager) {
+        throw new Error("El destino no es un cliente válido");
+      }
+
+      const opt = options || {};
+      const { data: camp, error: campErr } = await supabase.from("campaigns").insert({
+        user_id: client_user_id,
+        name: String(name || "Nueva campaña").slice(0, 200),
+        status: "draft",
+        stop_on_reply: opt.stop_on_reply !== false,
+        first_email_text_only: !!opt.first_email_text_only,
+        text_only_emails: !!opt.text_only_emails,
+        break_thread_after: Number.isFinite(opt.break_thread_after) ? Math.max(0, Math.floor(opt.break_thread_after)) : 0,
+        include_unsubscribe: !!opt.include_unsubscribe,
+        ab_test_enabled: Array.isArray(steps) && steps.some((s: any) => Array.isArray(s.variants) && s.variants.length > 0),
+      }).select("id").single();
+      if (campErr || !camp) throw new Error(`No se pudo crear la campaña: ${campErr?.message}`);
+      const campaignId = camp.id;
+
+      // Steps (+ variants + per-step delay)
+      const stepRows = (Array.isArray(steps) ? steps : []).map((s: any, i: number) => ({
+        campaign_id: campaignId,
+        step_order: i,
+        subject: String(s?.subject || "").slice(0, 500),
+        body: String(s?.body || ""),
+        delay_days: Math.max(0, Math.floor(Number(s?.delay_days) || 0)),
+        variants: (Array.isArray(s?.variants) ? s.variants : []).map((v: any) => ({
+          subject: String(v?.subject || "").slice(0, 500),
+          body: String(v?.body || ""),
+        })),
+      }));
+      if (stepRows.length) {
+        const { error: stepErr } = await supabase.from("campaign_steps").insert(stepRows);
+        if (stepErr) throw new Error(`No se pudieron crear los steps: ${stepErr.message}`);
+      }
+
+      // Leads: dedup by email; the BEFORE INSERT trigger silently skips blocklisted ones.
+      let addedLeads = 0;
+      const rawLeads = Array.isArray(leads) ? leads : [];
+      const seen = new Set<string>();
+      const clean = rawLeads
+        .map((l: any) => ({ email: String(l?.email || "").trim().toLowerCase(), custom_fields: (l?.custom_fields && typeof l.custom_fields === "object") ? l.custom_fields : {} }))
+        .filter((l) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l.email) && !seen.has(l.email) && seen.add(l.email));
+
+      for (let i = 0; i < clean.length; i += 500) {
+        const batch = clean.slice(i, i + 500).map((l) => ({ user_id: client_user_id, email: l.email, custom_fields: l.custom_fields, is_campaign_only: true }));
+        const { data: ins } = await supabase.from("leads").insert(batch).select("id");
+        const ids = (ins || []).map((d: any) => d.id);
+        if (ids.length) {
+          await supabase.from("campaign_leads").upsert(
+            ids.map((id: string) => ({ campaign_id: campaignId, lead_id: id })),
+            { onConflict: "campaign_id,lead_id", ignoreDuplicates: true },
+          );
+          addedLeads += ids.length;
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true, campaign_id: campaignId, steps: stepRows.length, leads: addedLeads, leads_submitted: clean.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

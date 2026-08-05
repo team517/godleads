@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,7 @@ const toolsNav = [
   { icon: ShieldCheck, label: "Entregabilidad", path: "/deliverability" },
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
+  { icon: Megaphone, label: "Crear campaña", path: "/client-campaigns" },
 ];
 
 interface AppSidebarProps {
@@ -48,9 +49,10 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const [isAdmin, setIsAdmin] = useState(false);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
-  // Onboarding is an owner-only management tool — never shown to clients/managers.
+  // Owner-only agency tools — never shown to clients/managers.
   const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
-  const visibleTools = toolsNav.filter((item) => item.path !== "/onboarding" || isOwner);
+  const OWNER_ONLY = new Set(["/onboarding", "/client-campaigns"]);
+  const visibleTools = toolsNav.filter((item) => !OWNER_ONLY.has(item.path) || isOwner);
 
   useEffect(() => {
     setUnreadCount(readCachedUniboxUnread());

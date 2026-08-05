@@ -18,6 +18,7 @@ const routeMap: Record<string, ImportThunk> = {
   "/ai-prompts":     () => import("@/pages/AIPrompts"),
   "/settings":       () => import("@/pages/SettingsPage"),
   "/onboarding":     () => import("@/pages/Onboarding"),
+  "/client-campaigns": () => import("@/pages/ClientCampaigns"),
   "/godtube":        () => import("@/pages/GodTube"),
 };
 
