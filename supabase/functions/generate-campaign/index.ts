@@ -152,13 +152,22 @@ async function callClaudeText(key: string, system: string, user: string): Promis
   return (d.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
 }
 
-// Rewrite a too-short initial email to reach 160+ words, keeping style/vars/signature.
-async function expandTo160(body: string, language: string, tone: string, useClaude: boolean, dkKey?: string, clKey?: string): Promise<string> {
-  const sys = `Reescribe este email de cold email en ${language} para que el cuerpo tenga AL MENOS 160 palabras (objetivo 160-185). Mantén EXACTAMENTE: el idioma, el tono (${tone}), la estructura en párrafos <p>, los <strong> en lo importante, TODAS las variables {{...}} tal cual, y la firma final. Amplía con valor real: más contexto GENERAL del sector, beneficios concretos, un detalle más del caso/número. SIN relleno vacío, sin repetir frases, sin inventar hechos del prospect. Devuelve SOLO el HTML del cuerpo (<p>...</p>), sin comentarios ni comillas.`;
-  const out = useClaude ? await callClaudeText(clKey!, sys, body) : await callDeepSeekText(dkKey!, sys, body);
-  const cleaned = cleanHtmlBody(out);
-  // Only accept the rewrite if it's actually longer; else keep original.
-  return countWords(cleaned) > countWords(body) ? cleaned : body;
+// Iteratively rewrite a too-short initial email until it reaches 160+ words. Tells the
+// model its current count and the deficit each round; stops at 160, at 4 tries, or when
+// a round makes no progress. Keeps style / vars / signature.
+async function ensure160(body: string, language: string, tone: string, useClaude: boolean, dkKey?: string, clKey?: string): Promise<string> {
+  let current = body;
+  for (let attempt = 0; attempt < 3 && countWords(current) < 160; attempt++) {
+    const wc = countWords(current);
+    const need = Math.max(15, 172 - wc);
+    const sys = `Este email de cold email tiene ${wc} palabras y es DEMASIADO CORTO. Reescríbelo en ${language} para que el cuerpo tenga ENTRE 160 y 190 palabras — MÍNIMO 160, NUNCA menos. Añade unas ${need} palabras más de VALOR REAL: más contexto general del sector, beneficios concretos, otro ángulo del caso/número, una frase más en la apertura o en el gancho. Mantén EXACTAMENTE el idioma, el tono (${tone}), la estructura en párrafos <p>, los <strong> en lo importante, TODAS las variables {{...}} tal cual, y la firma final. SIN relleno vacío, sin repetir frases, sin inventar hechos del prospect. Devuelve SOLO el HTML del cuerpo (<p>...</p>), sin comentarios ni comillas.`;
+    let out = "";
+    try { out = cleanHtmlBody(useClaude ? await callClaudeText(clKey!, sys, current) : await callDeepSeekText(dkKey!, sys, current)); }
+    catch { break; }
+    if (countWords(out) > countWords(current)) current = out; // progress → keep, loop again
+    else break; // no progress → stop
+  }
+  return current;
 }
 
 function parseSteps(raw: string): Step[] {
@@ -236,13 +245,9 @@ serve(async (req) => {
     // undershoot word counts, so if it's short we ask the AI to expand it. Follow-ups stay short.
     const useClaude = !!claudeKey;
     if (steps[0]) {
-      if (countWords(steps[0].body) < 150) {
-        try { steps[0].body = await expandTo160(steps[0].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep original */ }
-      }
+      try { steps[0].body = await ensure160(steps[0].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep original */ }
       for (let vi = 0; vi < steps[0].variants.length; vi++) {
-        if (countWords(steps[0].variants[vi].body) < 150) {
-          try { steps[0].variants[vi].body = await expandTo160(steps[0].variants[vi].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep */ }
-        }
+        try { steps[0].variants[vi].body = await ensure160(steps[0].variants[vi].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep */ }
       }
     }
 
