@@ -175,6 +175,7 @@ function LoginView({ accent, signIn, companyName, logoUrl }: {
 
 // ───────────────────────── Progress ─────────────────────────
 function Progress({ accent, branding }: { accent: string; branding: Branding | null }) {
+  const { user } = useAuth();
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -189,9 +190,28 @@ function Progress({ accent, branding }: { accent: string; branding: Branding | n
     load();
     const onFocus = () => load();
     window.addEventListener("focus", onFocus);
-    const iv = setInterval(load, 60000);
-    return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); };
-  }, [load]);
+    const iv = setInterval(load, 30000); // fallback poll; realtime below is near-instant
+
+    // Realtime: refresh the moment the owner changes THIS client's onboarding.
+    // RLS ("Users can read own profile") means only the client's own row is delivered.
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    if (user?.id) {
+      channel = supabase
+        .channel(`onboarding-me-${user.id}`)
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${user.id}` },
+          () => load(),
+        )
+        .subscribe();
+    }
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearInterval(iv);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [load, user?.id]);
 
   if (loading) return <div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-[#9C9C9C]" /></div>;
 
