@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2 } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
@@ -75,6 +75,7 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [steps, setSteps] = useState<any[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [expandOpen, setExpandOpen] = useState(false);
   const [correcting, setCorrecting] = useState(false);
   const [dynamicVars, setDynamicVars] = useState<{ label: string; tag: string }[]>([]);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
@@ -905,7 +906,17 @@ export default function CampaignSequences({ campaignId }: Props) {
           <div className="flex-1 overflow-y-auto">
             {showPreview ? (
               <div className="p-6 prose prose-sm max-w-none">
-                <p className="text-xs text-muted-foreground mb-3 not-prose">Vista previa con datos de ejemplo:</p>
+                <div className="mb-3 flex items-center justify-between not-prose">
+                  <p className="text-xs text-muted-foreground">Vista previa con datos de ejemplo:</p>
+                  <button
+                    type="button"
+                    onClick={() => setExpandOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    title="Ver el email completo"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" /> Ampliar
+                  </button>
+                </div>
                 <div
                   className="whitespace-pre-wrap text-sm leading-relaxed"
                   dangerouslySetInnerHTML={{ __html: previewText(getCurrentBody()) }}
@@ -1294,6 +1305,23 @@ export default function CampaignSequences({ campaignId }: Props) {
             {aiGenerating ? "Generando..." : "Generar secuencia"}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Ampliar: ver el email completo sin scroll apretado */}
+    <Dialog open={expandOpen} onOpenChange={setExpandOpen}>
+      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+        <DialogHeader><DialogTitle className="font-display text-base">Email completo</DialogTitle></DialogHeader>
+        <div className="rounded-lg border bg-white p-5 dark:bg-zinc-900">
+          <p className="mb-3 border-b pb-2 text-sm">
+            <span className="text-muted-foreground">Asunto: </span>
+            <span className="font-medium" dangerouslySetInnerHTML={{ __html: previewText(getCurrentSubject()) }} />
+          </p>
+          <div
+            className="whitespace-pre-wrap text-sm leading-relaxed [&_b]:font-semibold [&_strong]:font-semibold"
+            dangerouslySetInnerHTML={{ __html: previewText(getCurrentBody()) }}
+          />
+        </div>
       </DialogContent>
     </Dialog>
     </>
