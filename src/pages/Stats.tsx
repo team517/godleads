@@ -163,6 +163,10 @@ export default function Stats() {
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null;
                       const p = payload[0].payload as Daily;
+                      // Reply rate = respuestas ÷ envíos de ESE día (guardado contra
+                      // división por cero). Si ese día no hubo envíos no se puede
+                      // calcular un % → se muestra "—".
+                      const replyRate = p.envios > 0 ? (p.respuestas / p.envios) * 100 : null;
                       return (
                         <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
                           <p className="mb-1 font-medium capitalize">{p.full}</p>
@@ -170,6 +174,9 @@ export default function Stats() {
                           <p className="text-muted-foreground">· {p.nuevos.toLocaleString("es")} leads nuevos</p>
                           <p className="text-muted-foreground">· {p.followups.toLocaleString("es")} follow-ups</p>
                           {p.respuestas > 0 && <p style={{ color: "hsl(142, 76%, 36%)" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
+                          <p className="mt-1 border-t border-border pt-1 font-semibold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                            Reply rate: {replyRate === null ? "—" : `${replyRate.toFixed(1).replace(".", ",")}%`}
+                          </p>
                         </div>
                       );
                     }}
