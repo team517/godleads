@@ -18,6 +18,7 @@ const SYSTEM =
   "Tu tono es SIEMPRE POSITIVO, cercano y motivador: destacas lo bueno, enmarcas los retos como oportunidades, y transmites que la campaña va por buen camino y que estamos encima optimizándola. NUNCA suenas negativo, alarmista ni derrotista. " +
   "Eres honesto con las cifras (no te las inventas), pero las cuentas siempre con optimismo y enfoque de mejora. " +
   "Hablas SIEMPRE en primera persona del plural ('hemos contactado', 'estamos recibiendo'), como la agencia que gestiona la campaña para el cliente. " +
+  "MUY IMPORTANTE: cada informe debe sonar DISTINTO al anterior. Varía la redacción, el orden de las ideas y el vocabulario; NO uses plantillas ni las mismas frases de apertura una y otra vez ('Durante este periodo…', 'Estamos viendo…'). Que se note escrito a mano cada vez. " +
   "La tasa de respuesta se mide SOBRE personas contactadas, no sobre correos enviados. " +
   "Devuelves EXCLUSIVAMENTE un objeto JSON válido, sin markdown ni texto alrededor.";
 
@@ -29,7 +30,7 @@ async function callDeepSeek(apiKey: string, userPrompt: string): Promise<string>
       model: "deepseek-chat",
       messages: [{ role: "system", content: SYSTEM }, { role: "user", content: userPrompt }],
       max_tokens: 2000,
-      temperature: 0.5,
+      temperature: 0.85,
       stream: false,
       response_format: { type: "json_object" },
     }),
@@ -46,7 +47,7 @@ async function callClaude(apiKey: string, userPrompt: string): Promise<string> {
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 2000,
-      temperature: 0.5,
+      temperature: 0.85,
       system: SYSTEM,
       messages: [{ role: "user", content: userPrompt }],
     }),
@@ -65,6 +66,20 @@ function parseJson(raw: string): any {
 
 const asList = (v: any, max: number): string[] =>
   (Array.isArray(v) ? v : []).map((x) => String(x || "").trim()).filter(Boolean).slice(0, max);
+
+// Rotating narrative angles so two consecutive reports never read the same. One is
+// picked at random per call and injected into the prompt (on top of temperature 0.85).
+const STYLE_VARIANTS = [
+  "Abre el resumen con el DATO más llamativo del periodo y desarrolla desde ahí.",
+  "Empieza situando el contexto general del periodo y luego entra en los números.",
+  "Cuenta el resumen como una breve historia de progreso: de dónde venimos, dónde estamos y hacia dónde vamos.",
+  "Arranca con una frase de ánimo sobre el avance y sostenla con cifras concretas.",
+  "Enfoca el resumen en el APRENDIZAJE del periodo: qué nos están diciendo los datos.",
+  "Enfoca el resumen en el MOMENTUM: el ritmo y la tendencia de estos días.",
+  "Estructura el resumen alrededor de la campaña que mejor va y qué vamos a replicar en las demás.",
+  "Empieza reconociendo el esfuerzo del periodo (volumen contactado) y conecta con los resultados.",
+];
+const pickVariant = (): string => STYLE_VARIANTS[Math.floor(Math.random() * STYLE_VARIANTS.length)];
 
 function buildPrompt(body: any): string {
   const t = body.totals || {};
@@ -97,6 +112,7 @@ function buildPrompt(body: any): string {
 
   return [
     `Cliente: ${body.clientName || "Cliente"}. Periodo: ${body.periodLabel || ""}. ${kindTxt}`,
+    `\nVARIACIÓN DE ESTILO (para que este informe NO salga calcado del anterior): ${pickVariant()} Cambia también las frases de apertura y el vocabulario respecto a un informe estándar; mantén el tono positivo y la honestidad con las cifras.`,
     seasonal ? "\n" + seasonal : "",
     "\n" + benchmark,
     "",
