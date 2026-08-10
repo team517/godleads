@@ -953,7 +953,25 @@ serve(async (req) => {
     // their own daily caps ("pocos envíos"). Per-account limits (1/tick, 30/day, 6–9min
     // cooldown) are UNCHANGED, so no mailbox sends faster — this just lets MORE distinct
     // mailboxes send per tick. The 90s deadline still bounds each run.
-    const MAX_SENDS_PER_INVOCATION = 24;
+    //
+    // SEND_CONCURRENCY (env, default 1) — how many SMTP handoffs overlap per batch.
+    // At 1 the engine is byte-identical to the sequential version. Above 1, each tick
+    // finishes its sends far faster, so we scale the per-tick budget with it to turn
+    // that saved time into MORE emails/hour (otherwise a faster tick would still stop
+    // at 24 and the 1-min cron would cap throughput). The 90s wall-clock deadline
+    // below is the real safety net and still bounds every run regardless of these caps.
+    const SEND_CONCURRENCY = Math.max(1, Math.min(8, Number(Deno.env.get("SEND_CONCURRENCY")) || 1));
+    const MAX_SENDS_PER_INVOCATION = 24 * SEND_CONCURRENCY;
+    // MAX_CONCURRENT_PER_HOST (env SMTP_HOST_CONCURRENCY, default 2) — hard ceiling on
+    // how many SMTP handoffs to the SAME server (e.g. smtp.ionos.es) may overlap at
+    // once. ~All accounts here live on ONE IONOS host, so THIS is the real IONOS-load
+    // knob: parallelism only helps when it can spread across DIFFERENT servers, and
+    // this keeps any single server from seeing a connection burst (the "503 bad
+    // sequence" storm was IONOS-side under load). Clamped to [1, SEND_CONCURRENCY].
+    // DEFAULT 1 = IONOS sees the EXACT one-at-a-time pattern it always had (zero added
+    // load, provably safe). Raise via the SMTP_HOST_CONCURRENCY secret to allow a
+    // gentle N concurrent per server once we've watched it behave.
+    const MAX_CONCURRENT_PER_HOST = Math.max(1, Math.min(SEND_CONCURRENCY, Number(Deno.env.get("SMTP_HOST_CONCURRENCY")) || 1));
     // WALL-CLOCK DEADLINE — the real safety net. The attempt cap alone can't bound
     // a tick's duration (each attempt costs 2–15s, plus per-lead DB round-trips),
     // and an overrunning tick makes the NEXT cron fire hit the job lock and skip —
@@ -966,6 +984,11 @@ serve(async (req) => {
     // activated / window just opened) can't take the whole invocation budget and
     // make every other tenant wait N ticks. 12/tick ÷ 4 = at least 3 campaigns
     // interleave in every full tick.
+    // DELIBERATELY NOT scaled by SEND_CONCURRENCY: a single campaign must keep the
+    // EXACT same per-tick cadence as before (same slow-ramp / pacing / anti-spam
+    // timing). The extra capacity from parallelism comes purely from serving MORE
+    // campaigns per tick (bigger MAX_SENDS_PER_INVOCATION total), never from any one
+    // campaign — or any one mailbox — sending faster.
     const MAX_SENDS_PER_CAMPAIGN_PER_TICK = 4;
     // After this many TRANSIENT send failures to the SAME recipient on the SAME
     // step, the lead is parked as undeliverable instead of retried forever.
@@ -1000,6 +1023,61 @@ serve(async (req) => {
     const MAX_ACCOUNT_FAIL_STREAK = 3;
     const MIN_GAP_BETWEEN_SENDS_MS = 1500; // pause when the same sending DOMAIN repeats back-to-back
     let lastSendDomain = ""; // sender domain of the previous send in this tick
+
+    // ═══ PARALLEL SEND (Smartlead-style) — controlled by SEND_CONCURRENCY ═══
+    // Default 1 ⇒ BYTE-IDENTICAL to the old one-at-a-time path (zero-risk deploy,
+    // instant revert by setting the SEND_CONCURRENCY secret back to 1).
+    // When >1, ONLY the network handoff (sendSmtpEmail) runs concurrently, and only
+    // across DISTINCT mailboxes: each account is reserved in accountSendsThisTick
+    // BEFORE dispatch, so no mailbox is ever used twice in a tick (MAX_PER_ACCOUNT_
+    // PER_TICK=1 still holds). Every state-mutating side-effect (counters, cooldown,
+    // circuit breaker, DB writes, accounts.splice) runs STRICTLY SEQUENTIALLY after
+    // the batch resolves → no races. A per-recipient guard (batchEmails) guarantees
+    // two sends to the SAME address can never sit in one batch, so the dedup query
+    // still catches duplicate leads exactly like the sequential path.
+    // (SEND_CONCURRENCY itself is defined up top, next to MAX_SENDS_PER_INVOCATION.)
+    type SmtpResult = { ok: boolean; error?: string; messageId?: string; errorClass?: string };
+    type SendTask = { email: string; send: () => Promise<SmtpResult>; record: (r: SmtpResult) => Promise<void> };
+    let sendBatch: SendTask[] = [];
+    const batchEmails = new Set<string>();
+    // In-flight tallies for the per-lead caps whose real counters only bump inside
+    // record() (which runs at flush). Counting queued-but-not-yet-recorded sends here
+    // keeps those caps exact under parallelism too — they'd otherwise overshoot by up
+    // to SEND_CONCURRENCY-1. Reset on every flush. At SEND_CONCURRENCY=1 they stay
+    // empty/0 (nothing is ever pushed), so the gates below are unchanged.
+    let batchDomainCounts: Record<string, number> = {};
+    let batchNewLeads = 0;
+    // Sending domains already represented in the current batch. Two mailboxes on the
+    // SAME sending domain must never fire concurrently (that would be a burst on one
+    // domain/IP → spam risk). We flush before queueing a repeat, so same-domain sends
+    // keep their original inter-send spacing; only DISTINCT domains ever overlap. This
+    // is what preserves the exact anti-spam timing while still absorbing more clients.
+    const batchSendDomains = new Set<string>();
+    // How many sends to each SMTP server are already in the current batch. Capped at
+    // MAX_CONCURRENT_PER_HOST so no single server (≈all of IONOS here) gets a burst of
+    // simultaneous connections. This is the guard that keeps IONOS healthy.
+    let batchHostCounts: Record<string, number> = {};
+    const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchSendDomains.clear(); batchHostCounts = {}; };
+    const flushSendBatch = async () => {
+      if (sendBatch.length === 0) { resetBatchTallies(); return; }
+      const batch = sendBatch;
+      sendBatch = [];
+      resetBatchTallies();
+      // Fire the SMTP handoffs concurrently — pure network, touches no shared state.
+      const results = await Promise.all(batch.map(t =>
+        t.send().catch((e): SmtpResult => ({ ok: false, error: String((e as Error)?.message || e), errorClass: 'unknown' }))
+      ));
+      // Apply side-effects one at a time → identical semantics to sequential sending.
+      // Each record() is isolated so one failed bookkeeping write can't drop the
+      // rest of the batch (the SMTP handoff already happened for all of them).
+      for (let i = 0; i < batch.length; i++) {
+        try {
+          await batch[i].record(results[i]);
+        } catch (recErr) {
+          console.error(`record() failed for ${batch[i].email}:`, (recErr as Error)?.message || recErr);
+        }
+      }
+    };
 
     for (const campaign of campaigns) {
       if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
@@ -1342,10 +1420,14 @@ serve(async (req) => {
       let newLeadsScanned = 0;
 
       for (const cl of campaignLeads) {
-        if (campaignSentToday + sentThisCampaign >= campaignDailyLimit) break;
-        if (sentThisCampaign >= paceBudgetThisRun) break; // stay on the hourly pace
+        // sendBatch.length = sends already dispatched this campaign but not yet
+        // recorded (their counters bump at flush). Counting them here keeps every
+        // cap exact under parallelism; at SEND_CONCURRENCY=1 the batch is always
+        // empty, so these are identical to the original checks.
+        if (campaignSentToday + sentThisCampaign + sendBatch.length >= campaignDailyLimit) break;
+        if (sentThisCampaign + sendBatch.length >= paceBudgetThisRun) break; // stay on the hourly pace
         // Per-tick fairness cap: leave slots for the OTHER campaigns in this tick.
-        if (sentThisCampaign >= MAX_SENDS_PER_CAMPAIGN_PER_TICK) break;
+        if (sentThisCampaign + sendBatch.length >= MAX_SENDS_PER_CAMPAIGN_PER_TICK) break;
         if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
         // Per-lane scan cap — continue past an exhausted lane so the other is reached.
         if ((cl.current_step || 0) === 0) { if (++newLeadsScanned > MAX_NEW_LEAD_SCAN) continue; }
@@ -1368,6 +1450,14 @@ serve(async (req) => {
           continue;
         }
 
+        // PARALLEL SAFETY: if a send to this exact recipient is already waiting in
+        // the current batch, flush it first so this lead's dedup query below sees
+        // the prior insert. Guarantees two emails to the same address never race
+        // inside one batch (protects against duplicate leads). No-op at concurrency 1.
+        if (SEND_CONCURRENCY > 1 && batchEmails.has(leadEmail)) {
+          await flushSendBatch();
+        }
+
         // STEP + DUE-DATE gate FIRST, before any per-lead DB query. A not-yet-due
         // follow-up is skipped with pure date math — previously the stop_on_reply
         // query ran for every scanned lead (incl. hundreds of not-due ones) each tick.
@@ -1386,9 +1476,9 @@ serve(async (req) => {
           }
         }
 
-        // Domain daily limit check
+        // Domain daily limit check (+ in-flight sends to this domain queued in the batch)
         if (domainLimitEnabled) {
-          const currentDomainCount = domainSentCounts[leadDomain] || 0;
+          const currentDomainCount = (domainSentCounts[leadDomain] || 0) + (batchDomainCounts[leadDomain] || 0);
           if (currentDomainCount >= domainDailyLimit) {
             totalSkipped++;
             continue;
@@ -1550,7 +1640,8 @@ serve(async (req) => {
           }
         } else {
           // First touch (lead nuevo) — respeta el tope diario de leads nuevos si existe
-          if (maxNewLeads != null && newLeadsSentThisRun >= maxNewLeads) {
+          // (+ step-0 sends already queued in the batch but not yet recorded).
+          if (maxNewLeads != null && (newLeadsSentThisRun + batchNewLeads) >= maxNewLeads) {
             totalSkipped++;
             continue;
           }
@@ -1780,7 +1871,6 @@ serve(async (req) => {
 
         // inbox/reply ops on existing campaigns. We always send via local SMTP
         // (with full deliverability headers: List-Unsubscribe, Reply-To, QP, Feedback-ID).
-        let result: { ok: boolean; error?: string; messageId?: string; errorClass?: string };
         const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
         // Opt-out link — only on the FIRST email (step 0), and only if the campaign
@@ -1801,28 +1891,32 @@ serve(async (req) => {
           }
         }
 
-        {
-          sendAttemptsThisRun++;
-          result = await sendSmtpEmail(
-            account.smtp_host, account.smtp_port,
-            account.smtp_username, account.smtp_password,
-            account.email, lead.email, threadSubject, finalBody,
-            {
-              messageId: thisMsgId,
-              firstName: account.first_name || undefined,
-              lastName: account.last_name || undefined,
-              signatureHtml,
-              textOnly: forceTextOnly,
-              inReplyTo,
-              references,
-              userId: campaign.user_id,
-              campaignId: campaign.id,
-              unsubscribeUrl,
-            }
-          );
-        }
+        // The SMTP handoff as a thunk — run inline (sequential) or dispatched with
+        // a concurrent batch (parallel). All captured vars are already finalised here.
+        const doSend = (): Promise<SmtpResult> => sendSmtpEmail(
+          account.smtp_host, account.smtp_port,
+          account.smtp_username, account.smtp_password,
+          account.email, lead.email, threadSubject, finalBody,
+          {
+            messageId: thisMsgId,
+            firstName: account.first_name || undefined,
+            lastName: account.last_name || undefined,
+            signatureHtml,
+            textOnly: forceTextOnly,
+            inReplyTo,
+            references,
+            userId: campaign.user_id,
+            campaignId: campaign.id,
+            unsubscribeUrl,
+          }
+        );
 
 
+        // All side-effects of ONE send (status decision + sent_emails insert +
+        // counter/cooldown/breaker/domain updates + campaign_leads update) live in
+        // this thunk so they can run strictly sequentially — inline at concurrency 1,
+        // or one-by-one after a batch's network sends resolve. Zero shared-state races.
+        const record = async (result: SmtpResult) => {
         // Determine final status based on error class (Instantly-style smart handling)
         const errClass = (result as any).errorClass as string | undefined;
         // A post-DATA timeout ('sent_unconfirmed') is treated as SENT: the message
@@ -1954,11 +2048,49 @@ serve(async (req) => {
           }
           // 'soft' / 'unknown' → leave campaign_lead pending, will retry next cron cycle
         }
+        }; // ── end record() thunk ──
+
+        // ─── Dispatch ───────────────────────────────────────────────────────────
+        // Every real attempt (success OR failure) counts toward the invocation cap,
+        // incremented BEFORE dispatch so the cap stays exact under parallelism.
+        sendAttemptsThisRun++;
+        if (SEND_CONCURRENCY <= 1) {
+          // Sequential — byte-for-byte the original one-at-a-time behaviour.
+          const seqResult = await doSend();
+          await record(seqResult);
+        } else {
+          // Flush FIRST if adding this send would break either health guard:
+          //  (a) same SENDING DOMAIN already in the batch → keep its inter-send spacing
+          //      (recipient-side reputation; no domain ever bursts), OR
+          //  (b) this SMTP SERVER already has MAX_CONCURRENT_PER_HOST sends in flight →
+          //      protect the server (IONOS) from a burst of simultaneous connections.
+          const sendDomain = (account.email || "").split("@")[1]?.toLowerCase() || "";
+          const smtpHost = (account.smtp_host || "").toLowerCase();
+          if (batchSendDomains.has(sendDomain) || (batchHostCounts[smtpHost] || 0) >= MAX_CONCURRENT_PER_HOST) {
+            await flushSendBatch();
+          }
+          // Parallel — reserve THIS mailbox now (distinct-account invariant: no other
+          // lead in the batch can pick it), remember the recipient + sending domain +
+          // SMTP server, tally the in-flight caps, and queue the send.
+          accountSendsThisTick[account.id] = (accountSendsThisTick[account.id] || 0) + 1;
+          batchEmails.add(leadEmail);
+          batchSendDomains.add(sendDomain);
+          batchHostCounts[smtpHost] = (batchHostCounts[smtpHost] || 0) + 1;
+          if (domainLimitEnabled) batchDomainCounts[leadDomain] = (batchDomainCounts[leadDomain] || 0) + 1;
+          if (currentStepIndex === 0) batchNewLeads++;
+          sendBatch.push({ email: leadEmail, send: doSend, record });
+          if (sendBatch.length >= SEND_CONCURRENCY) await flushSendBatch();
+        }
       }
       } catch (campErr) {
         // One poisoned campaign (bad data, null field, crypto error…) must not
         // kill the tick for other tenants — log and move on to the next campaign.
         console.error(`Campaign "${(campaign as any)?.name}" (${(campaign as any)?.id}) threw this tick — skipped:`, campErr);
+      } finally {
+        // Always flush THIS campaign's queued sends before advancing — even if the
+        // leads loop threw partway. Their record() closures capture this campaign's
+        // `accounts`, so a leftover batch must never leak into the next iteration.
+        try { await flushSendBatch(); } catch (fe) { console.error("flush on campaign exit failed:", (fe as Error)?.message || fe); }
       }
     }
 
@@ -1966,6 +2098,7 @@ serve(async (req) => {
       success: true, sent: totalSent, followups_sent: followupsSentTotal,
       new_sent: newSentTotal, skipped: totalSkipped,
       campaigns_processed: campaigns.length,
+      concurrency: SEND_CONCURRENCY, // active parallel-send level (1 = sequential)
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     } finally {
       await releaseLock();
