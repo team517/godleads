@@ -210,8 +210,8 @@ function attachmentObjectUrl(att: ParsedAttachment): string | null {
 const QUOTE_MARKERS: RegExp[] = [
   /(^|\n)\s*Missatge de\b[\s\S]{0,180}?a les\s+\d{1,2}[:.]\d{2}\s*:/i,        // CA "Missatge de … a les 22:18:"
   /(^|\n)\s*(El|On|Le|Em|Il|Am)\b[\s\S]{0,160}?(escri(b|v)i[óo]|wrote|a écrit|escreveu|ha scritto|va escriure|schrieb)[^\n]{0,40}:/i, // "El … escribió:" / "On … wrote:"
-  /(^|\n)\s*-{2,}\s*(Original Message|Mensaje original|Missatge original|Forwarded message)\s*-{2,}/i,
-  /(^|\n)\s*(De|From|Von|Da)\s*:\s*.+\n\s*(Enviado|Sent|Date|Fecha|Data|Datum)\s*:/i,
+  /(^|\n)\s*-{2,}\s*(Original Message|Mensaje original|Missatge original|Forwarded message|Message d['’]origine|Message original|Ursprüngliche Nachricht|Messaggio originale|Mensagem original|Oorspronkelijk bericht)\s*-{2,}/i,
+  /(^|\n)\s*(De|From|Von|Da|Van)\s*:\s*.+\n\s*(Enviado|Sent|Date|Fecha|Data|Datum|Envoy[ée]|Gesendet|Inviato|Verzonden|Verzonden op)\s*:/i,
   /<blockquote/i,
   /class=["']?gmail_quote/i,
   /(^|\n)\s*>{1,}\s?\S/,                                                       // "> quoted line"

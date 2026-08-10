@@ -54,6 +54,13 @@ const CASES: Array<[string[], string]> = [
   // a date/time WITH a meeting word IS interest
   [["interested"], "Perfecto, el jueves a las 10 me viene bien."],
   [["interested"], "Podemos hacer la llamada el martes a las 16h."],
+  // French rejections (REVIMA case) — must NOT read as interested
+  [["not_interested"], "Bonjour, j'ai bien reçu vos multiples relances. Toutefois, nous n'avons pas dans nos matériels de composants/références électroniques. Bien cordialement, Stéphane"],
+  [["not_interested"], "Merci mais ça ne nous intéresse pas."],
+  [["not_interested", "neutral"], "Nous n'avons pas besoin de ce service pour le moment."],
+  // "indisponible" = UNavailable (opposite of interest) — the /disponible/ leak
+  [["neutral", "not_interested", "question"], "Ces composants sont actuellement indisponibles chez nous."],
+  [["neutral", "not_interested"], "Ce produit est indisponible dans notre catalogue."],
 ];
 
 describe("classifier hard battery", () => {

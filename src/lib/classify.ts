@@ -102,6 +102,14 @@ const NOT_INTERESTED = [
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
   /(no,?\s*)?(gracias|thanks|thank you)[.! ]*$/i, /no\s+thank/i,
   /no\s+(nos\s+)?(interesa|hace falta|necesitamos|encaja)/i,
+  // ── French rejections (REVIMA & other FR prospects). "pas intéressé" is covered
+  // above; add the "ne … pas" forms, "we don't need", and the fit-rejection
+  // "nous n'avons pas dans nos … de composants/références/produits" (= we don't deal
+  // with that). These read as NOT interested, not a warm reply.
+  /ne\s+(nous\s+|m['’e ]?)?int[ée]resse\s+pas/i,
+  /n['’]avons\s+pas\s+besoin/i,
+  /n['’]avons\s+pas\s+(dans\s+nos?|de)\b[^.?!]{0,35}\b(composant|r[ée]f[ée]rence|produit|mat[ée]riel|article|pi[èe]ce)/i,
+  /(cela|[çc]a|ce)\s+ne\s+(nous\s+)?correspond\s+pas/i,
 ];
 
 // ── 2b) DO NOT CONTACT — unsubscribe / RGPD / spam / hostile. "La baja manda":
@@ -151,7 +159,8 @@ const INTERESTED = [
   /(me|nos)\s+encaja/i, /(me|nos)\s+(viene|va)\s+(bien|genial|perfecto)/i,
   /\bcalendly\b/i, /\bcalendar\b/i,
   /(when|cu[áa]ndo)\s+(are you|est[áa]s|est[áa]is|puedes|podemos|would you|te viene)/i,
-  /disponib(le|ilidad)/i, /\bavailab(le|ility)\b/i, /estoy disponible/i, /(i'?m|we'?re)\s+available/i,
+  // \b so "INdisponible/INdisponibles" (= UNavailable, the opposite) never matches.
+  /\bdisponib(le|ilidad|les)/i, /\bavailab(le|ility)\b/i, /estoy disponible/i, /(i'?m|we'?re)\s+available/i,
   // "¿Tenéis hueco el jueves?" — asking for a slot/time to meet = a warm meeting ask.
   /\bhueco\b/i, /(ten[ée]is|tienes|ten[ée]s|hay|te va bien|os va bien|te viene|os viene|te encaja)\b[^.?!]{0,25}(hueco|disponib|un (rato|momento|hueco)|libre|para (hablar|vernos|una (llamada|reuni)))/i,
   // A proposed time ONLY counts as interest when it sits next to a meeting word. A bare
