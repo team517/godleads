@@ -53,6 +53,16 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
   const line: Rgb = [228, 228, 236];
   const softBrand = mix(brand, [255, 255, 255], 0.9); // very light brand tint
 
+  // ── Template rotation ──────────────────────────────────────────────────────
+  // 1 of 3 visual styles so consecutive reports don't look identical. Deterministic
+  // from client+period+kind → the "Hacer una prueba" preview matches the sent PDF and
+  // the look changes only BETWEEN reports, never on re-generation. Geometry is IDENTICAL
+  // across templates (only fills/borders/section styling differ) so layout can't break.
+  //   0 = Banda (clásica) · 1 = Editorial (cabecera blanca) · 2 = Bold (color sólido)
+  const styleSeed = `${data.clientName}|${data.periodLabel}|${data.kind}`;
+  let _h = 0; for (let i = 0; i < styleSeed.length; i++) _h = (_h * 31 + styleSeed.charCodeAt(i)) >>> 0;
+  const variant = _h % 3;
+
   let y = 0;
 
   const setText = (c: Rgb) => doc.setTextColor(c[0], c[1], c[2]);
@@ -63,15 +73,25 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
   const newPage = () => { doc.addPage(); y = MARGIN + 4; };
   const ensure = (h: number) => { if (y + h > PAGE_H - FOOTER_H) newPage(); };
 
-  // ── Header band ──────────────────────────────────────────────────────────
+  // ── Header (3 templates) ───────────────────────────────────────────────────
   const headerH = 44;
-  setFill(brand);
-  doc.rect(0, 0, PAGE_W, headerH, "F");
-  // subtle darker strip at the very top for depth
-  setFill(mix(brand, [0, 0, 0], 0.18));
-  doc.rect(0, 0, PAGE_W, 2.2, "F");
+  const headerLight = variant === 1; // Editorial: white header + brand text
+  if (headerLight) {
+    setFill([255, 255, 255]);
+    doc.rect(0, 0, PAGE_W, headerH, "F");
+    setFill(brand); doc.rect(0, 0, PAGE_W, 4, "F");          // brand top rule
+    setDraw(line); doc.setLineWidth(0.4);
+    doc.line(0, headerH, PAGE_W, headerH);                    // hairline under header
+  } else {
+    setFill(brand);
+    doc.rect(0, 0, PAGE_W, headerH, "F");
+    setFill(mix(brand, [0, 0, 0], variant === 2 ? 0.28 : 0.18));
+    doc.rect(0, 0, PAGE_W, variant === 2 ? 3.4 : 2.2, "F");   // top accent (bolder on v2)
+    if (variant === 2) { setFill(mix(brand, [0, 0, 0], 0.28)); doc.rect(0, headerH - 2.4, PAGE_W, 2.4, "F"); }
+  }
+  const headerText: Rgb = headerLight ? brand : onBrand;
 
-  // Logo on a white chip (so any logo reads on the colored band)
+  // Logo — on a white chip over a colored band, or directly on the white header.
   let textX = MARGIN;
   if (branding.logoPngDataUrl) {
     try {
@@ -80,21 +100,25 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
       const logoH = 13;
       const logoW = Math.min(logoH * ratio, 46);
       const chipW = logoW + 8;
-      setFill([255, 255, 255]);
-      doc.roundedRect(MARGIN, (headerH - chipH) / 2, chipW, chipH, 2.5, 2.5, "F");
-      doc.addImage(branding.logoPngDataUrl, "PNG", MARGIN + 4, (headerH - logoH) / 2, logoW, logoH);
-      textX = MARGIN + chipW + 7;
+      if (!headerLight) {
+        setFill([255, 255, 255]);
+        doc.roundedRect(MARGIN, (headerH - chipH) / 2, chipW, chipH, 2.5, 2.5, "F");
+      }
+      doc.addImage(branding.logoPngDataUrl, "PNG", MARGIN + (headerLight ? 0 : 4), (headerH - logoH) / 2, logoW, logoH);
+      textX = MARGIN + (headerLight ? logoW + 7 : chipW + 7);
     } catch { /* logo failed → just skip it */ }
   }
 
-  setText(onBrand);
+  setText(headerText);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(19);
   const title = data.kind === "weekly" ? "Informe semanal de campaña" : "Informe de rendimiento";
   doc.text(title, textX, 19);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10.5);
-  const sub = readableOn(brand)[0] === 255 ? mix(onBrand, brand, 0.15) : mix(onBrand, brand, 0.25);
+  const sub = headerLight
+    ? muted
+    : (readableOn(brand)[0] === 255 ? mix(onBrand, brand, 0.15) : mix(onBrand, brand, 0.25));
   setText(sub);
   doc.text(branding.company || data.clientName, textX, 26.5);
   doc.setFontSize(9);
@@ -102,20 +126,31 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
 
   y = headerH + 9;
 
-  // ── Reply-rate highlight strip ───────────────────────────────────────────
+  // ── Reply-rate highlight strip (3 templates) ──────────────────────────────
   const stripH = 26;
-  setFill(softBrand);
-  doc.roundedRect(MARGIN, y, CONTENT_W, stripH, 3, 3, "F");
-  setText(brand);
+  if (variant === 2) {                       // Bold: solid brand fill, white text
+    setFill(brand);
+    doc.roundedRect(MARGIN, y, CONTENT_W, stripH, 3, 3, "F");
+  } else if (variant === 1) {                // Editorial: white with brand border
+    setFill([255, 255, 255]); setDraw(brand); doc.setLineWidth(0.5);
+    doc.roundedRect(MARGIN, y, CONTENT_W, stripH, 3, 3, "FD");
+  } else {                                   // Banda: soft brand tint
+    setFill(softBrand);
+    doc.roundedRect(MARGIN, y, CONTENT_W, stripH, 3, 3, "F");
+  }
+  const stripBig: Rgb = variant === 2 ? onBrand : brand;
+  const stripLabel: Rgb = variant === 2 ? onBrand : ink;
+  const stripSub: Rgb = variant === 2 ? mix(onBrand, brand, 0.22) : muted;
+  setText(stripBig);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(26);
   doc.text(`${data.replyRate.toFixed(1)}%`, MARGIN + 8, y + 17);
-  setText(ink);
+  setText(stripLabel);
   doc.setFontSize(11);
   doc.text("Tasa de respuesta", MARGIN + 42, y + 11);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
-  setText(muted);
+  setText(stripSub);
   doc.text(
     `${data.totals.replied.toLocaleString("es")} respuestas de ${data.totals.contacted.toLocaleString("es")} personas contactadas`,
     MARGIN + 42, y + 18,
@@ -140,10 +175,17 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
     const row = Math.floor(i / 3);
     const cx = MARGIN + col * (cardW + gap);
     const cy = y + row * (cardH + gap);
-    setFill([250, 250, 252]);
-    setDraw(line);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(cx, cy, cardW, cardH, 2.5, 2.5, "FD");
+    if (variant === 2) {                       // Bold: brand-tinted, borderless
+      setFill(softBrand);
+      doc.roundedRect(cx, cy, cardW, cardH, 2.5, 2.5, "F");
+    } else if (variant === 1) {                // Editorial: white + brand top accent
+      setFill([255, 255, 255]); setDraw(line); doc.setLineWidth(0.3);
+      doc.roundedRect(cx, cy, cardW, cardH, 2.5, 2.5, "FD");
+      setFill(brand); doc.rect(cx + 1, cy, cardW - 2, 1.4, "F");
+    } else {                                   // Banda: light gray + border
+      setFill([250, 250, 252]); setDraw(line); doc.setLineWidth(0.3);
+      doc.roundedRect(cx, cy, cardW, cardH, 2.5, 2.5, "FD");
+    }
     setText(ink);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
@@ -163,12 +205,26 @@ export function buildReportDoc(jsPDFCtor: any, data: ReportData, branding: Repor
   // ── Section helper ───────────────────────────────────────────────────────
   const section = (label: string) => {
     ensure(14);
-    setFill(brand);
-    doc.roundedRect(MARGIN, y, 3, 6.5, 1, 1, "F");
-    setText(ink);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text(label, MARGIN + 6, y + 5.5);
+    if (variant === 2) {                       // Bold: filled brand pill, white text
+      const tw = doc.getTextWidth(label);
+      setFill(brand);
+      doc.roundedRect(MARGIN, y - 0.5, tw + 10, 8.5, 1.8, 1.8, "F");
+      setText(onBrand);
+      doc.text(label, MARGIN + 5, y + 5.5);
+    } else if (variant === 1) {                // Editorial: label + brand underline
+      setText(ink);
+      doc.text(label, MARGIN, y + 5.5);
+      const tw = doc.getTextWidth(label);
+      setDraw(brand); doc.setLineWidth(0.8);
+      doc.line(MARGIN, y + 8, MARGIN + tw, y + 8);
+    } else {                                   // Banda: brand accent bar
+      setFill(brand);
+      doc.roundedRect(MARGIN, y, 3, 6.5, 1, 1, "F");
+      setText(ink);
+      doc.text(label, MARGIN + 6, y + 5.5);
+    }
     y += 11;
   };
 
