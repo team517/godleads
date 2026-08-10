@@ -61,6 +61,13 @@ const CASES: Array<[string[], string]> = [
   // "indisponible" = UNavailable (opposite of interest) — the /disponible/ leak
   [["neutral", "not_interested", "question"], "Ces composants sont actuellement indisponibles chez nous."],
   [["neutral", "not_interested"], "Ce produit est indisponible dans notre catalogue."],
+  // a SERVICE/thing being "disponible" is NOT the prospect's interest (real false
+  // positive: a Colegio de Aparejadores newsletter). Must NOT be "interested".
+  [["neutral", "question", "out_of_office"], "El servicio de asesoramiento y gestión de accidentes está disponible 24/7 en el teléfono 659 904 889."],
+  [["neutral", "question"], "Nuestro horario está disponible en la web y el producto disponible en tienda."],
+  // but the PERSON stating their own availability to meet IS interest
+  [["interested"], "Estoy disponible el jueves por la mañana para la llamada."],
+  [["interested"], "Te paso mi disponibilidad para la reunión."],
 ];
 
 describe("classifier hard battery", () => {
