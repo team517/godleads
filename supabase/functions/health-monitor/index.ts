@@ -64,8 +64,11 @@ function evaluate(m: any): Check[] {
       msg: `⛔ El motor de envío parece PARADO: ${m.last_send_min_ago ?? "∞"} min sin ningún envío (con ${m.campaigns_scheduled_now} campaña(s) que deberían estar enviando ahora y ${m.pending_leads} leads pendientes).` },
     { key: "unibox_no_intake", failing: m.hour_madrid >= 9 && m.hour_madrid < 21 && m.inbox_last_hour === 0,
       msg: `📭 No ha entrado NINGÚN mensaje al Unibox en la última hora — la sincronización IMAP podría estar caída.` },
-    { key: "accounts_out_of_sync", failing: m.accounts_stale_30m > 8,
-      msg: `🔌 ${m.accounts_stale_30m} de ${m.accounts_connected} cuentas llevan >30 min sin sincronizar.` },
+    // Only mailboxes IN AN ACTIVE CAMPAIGN, and only a REAL lag (>2h). Idle/unassigned
+    // mailboxes are ignored (no more "263 de 818" spam), and the threshold fires only
+    // when a big chunk of the ACTIVE fleet is stuck — normal IMAP cadence never alerts.
+    { key: "accounts_out_of_sync", failing: m.accounts_stale_2h > Math.max(15, Math.round((m.accounts_in_use || 0) * 0.25)),
+      msg: `🔌 ${m.accounts_stale_2h} de ${m.accounts_in_use} cuentas EN CAMPAÑA llevan >2h sin sincronizar.` },
     { key: "accounts_auth_failed", failing: m.accounts_auth_failed > 0,
       msg: `🔑 ${m.accounts_auth_failed} cuenta(s) desconectada(s) por fallo de credenciales (auth_failed).` },
     { key: "cron_failures", failing: m.cron_failures_15m > 0,
@@ -148,7 +151,7 @@ serve(async (req) => {
           + (recoveredAnnounce.length ? `<h2 style="margin:0 0 10px;font-size:15px">Recuperado</h2><ul style="padding-left:18px;margin:0 0 14px">${recoveredList}</ul>` : "");
         const html = `<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#0a0d14">`
           + sections
-          + `<p style="color:#667085;font-size:12px">Snapshot: ${metrics.active_campaigns} campañas activas · ${metrics.accounts_connected} cuentas · ${metrics.inbox_last_hour} msgs/última hora · ${metrics.sent_2h} enviados/2h.</p>`
+          + `<p style="color:#667085;font-size:12px">Snapshot: ${metrics.active_campaigns} campañas activas · ${metrics.accounts_in_use} cuentas en campaña · ${metrics.inbox_last_hour} msgs/última hora · ${metrics.sent_2h} enviados/2h.</p>`
           + `<p style="color:#98a2b3;font-size:11px">Monitor automático · comprueba cada 5 min · te aviso UNA vez por incidencia y otra cuando se resuelve.</p></div>`;
         const r = await sendSmtpEmail(acc.smtp_host, acc.smtp_port || 465, acc.smtp_username, acc.smtp_password, acc.email, to, subject, html);
         emailed = r.ok;
