@@ -68,6 +68,19 @@ const CASES: Array<[string[], string]> = [
   // but the PERSON stating their own availability to meet IS interest
   [["interested"], "Estoy disponible el jueves por la mañana para la llamada."],
   [["interested"], "Te paso mi disponibilidad para la reunión."],
+  // August multilingual absences / inactive accounts / auto-replies → out_of_office
+  [["out_of_office"], "Este correo no será leído hasta el 17 de agosto, si es urgente contacta con Virginia."],
+  [["out_of_office"], "Hola, seré fora de l'oficina fins el proper 31 d'agost."],
+  [["out_of_office"], "Je serai absent du 7 au 24 août 2026 inclus."],
+  [["out_of_office"], "Summer break, from August 10th to 21st. For urgent queries contact me."],
+  [["out_of_office"], "Este correo se encuentra inactivo, por favor contactar con sandra@twic.es"],
+  // multilingual not-interested
+  [["not_interested"], "No need thank you."],
+  [["not_interested"], "En Nayar hacemos nuestro propio software, gracias por contactarme."],
+  [["not_interested"], "Buongiorno. Siamo a posto grazie mille."],
+  [["not_interested"], "Gracias, en estos momentos no es nuestro caso."],
+  // not the decision-maker → derivado
+  [["derivado", "neutral"], "No decido nada en los temas que me mencionas. Saludos."],
 ];
 
 describe("classifier hard battery", () => {

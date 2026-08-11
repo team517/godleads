@@ -71,6 +71,17 @@ const OUT_OF_OFFICE = [
   /abwesen(d|heit)/i, /nicht im b[üu]ro/i,
   /vuelvo el/i, /regreso el/i, /volver[ée] el/i, /back in the office/i,
   /(estoy|estar[ée]?|est[áa]|estamos|estaremos)\s+de\s+baja\b/i, /\bde\s+baja\s+(m[ée]dica|laboral|por|maternal|paternal)/i, /baja\s+(m[ée]dica|laboral)/i,
+  // Extra absence / inactive-account / auto-reply signals seen in real August traffic
+  // (multilingual): "no será leído hasta", "Ausencia", inactive/deactivated mailboxes,
+  // Catalan "fora de l'oficina", French "serai absent", English "summer break", and the
+  // "Auto:" subject prefix some mail clients put on their auto-replies.
+  /no\s+ser[áa]\s+le[íi]d[oa]\s+hasta/i, /\bausencia\b/i,
+  /(correo|cuenta|email|compte|bústia|casella)\s+(electr[óo]nic[oa]\s+)?(se\s+encuentra\s+|est[àa]\s+)?inactiv[oau]?/i,
+  /(deixar[àa]|dejar[áa])\s+d[e']?\s*(estar\s+)?actiu?/i,
+  /fora de l['i ]?oficina/i,
+  /(je\s+)?serai\s+absent/i,
+  /summer\s+(break|holidays?|closure|vacation)/i, /closed\s+for\s+(summer|the\s+holidays|vacation)/i,
+  /(^|\s)auto\s*:\s*(re|rv|fw|aw)\b/i,
 ];
 
 // ── 2) NOT interested ───────────────────────────────────────────────────────
@@ -115,6 +126,14 @@ const NOT_INTERESTED = [
   /n['’]avons\s+pas\s+besoin/i,
   /n['’]avons\s+pas\s+(dans\s+nos?|de)\b[^.?!]{0,35}\b(composant|r[ée]f[ée]rence|produit|mat[ée]riel|article|pi[èe]ce)/i,
   /(cela|[çc]a|ce)\s+ne\s+(nous\s+)?correspond\s+pas/i,
+  // More real rejections seen in August traffic (multilingual): "no need thank you",
+  // in-house ("hacemos/tenemos nuestro propio…"), Italian "siamo a posto / non fa per
+  // noi", "no es nuestro caso / para nosotros / lo que buscamos".
+  /\bno\s+need\b[^.!?]{0,18}(thank|thanks|for\s+now|right\s+now|at\s+the\s+moment|por\s+ahora)/i, /\bno\s+need,?\s*thank/i,
+  /\bno\s+necesito\b/i,
+  /(hacemos|tenemos|desarrollamos|fabricamos|producimos|montamos)\s+(lo\s+|el\s+|la\s+|nuestro\s+|nuestra\s+|nuestros\s+|nuestras\s+)*propi[oa]s?\b/i,
+  /siamo\s+a\s+posto/i, /non\s+fa\s+per\s+noi/i,
+  /no\s+es\s+(nuestro\s+caso|para\s+nosotros)/i, /no\s+es\s+lo\s+que\s+(buscamos|necesitamos|nos\s+interesa)/i,
 ];
 
 // ── 2b) DO NOT CONTACT — unsubscribe / RGPD / spam / hostile. "La baja manda":
@@ -150,6 +169,8 @@ const REFERRAL = [
   /reach out to\s+/i, /you (should|can|may want to)\s+(contact|reach|talk to|speak with)\s+/i,
   /(is|es)\s+the\s+(right|best)\s+person/i, /(qui[ée]n|who)\s+(lo\s+)?(lleva|gestiona|se encarga|handles)/i,
   /(competencia|responsabilidad|cosa)\s+de\s+\w+/i, /(reenv[íi]|forward)(o|ando|ed|ing|é)?\s+(tu|este|su|el|your|to)/i,
+  // "No decido nada" / "no soy quien decide" — not the decision-maker → redirect, not a no.
+  /\bno\s+decido\b/i, /no\s+soy\s+qui[ée]n\s+(decide|lo\s+decide)/i, /no\s+(soy\s+el\s+que\s+)?tom[oa]\s+(la|las|esa|estas)\s+decisi/i,
 ];
 
 // ── 3) Interested ───────────────────────────────────────────────────────────
