@@ -513,11 +513,15 @@ serve(async (req) => {
         if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 10)).data?.signedUrl || null;
       } catch { /* ignore — we can still send the attachment without a link */ }
 
-      const emailText = String(message).trim() + (signed ? `\n\nTambién puedes verlo aquí:\n${signed}` : "");
+      // LINK ONLY (no attachment): far faster to send AND better deliverability. The
+      // client just clicks the link and sees the copys. The email IS the link, so if the
+      // upload failed there is nothing useful to send → error out.
+      if (!signed) return json({ ok: false, error: "No se pudo generar el enlace del PDF (revisa el storage)." }, 500);
+      const emailText = String(message).trim() + `\n\nAquí tienes los mensajes (haz clic para abrirlos):\n${signed}`;
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
         acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", emailText,
-        bytes ? [{ filename: (filename || "copys.pdf"), mime: "application/pdf", base64: pdf_base64 }] : [],
+        [], // solo el enlace, sin adjunto
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript, link: signed, from: acct.email, to });
     }
