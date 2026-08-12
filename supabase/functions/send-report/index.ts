@@ -512,17 +512,32 @@ serve(async (req) => {
         } catch (e: any) { return json({ ok: false, error: e?.message || "upload error" }, 500); }
       }
 
-      // send_copys — send the composed message (link already inside) from the chosen account.
-      const { to, from_account_id, subject, message } = body;
+      // send_copys — send the composed message from the chosen account. The new frontend
+      // already put the link inside `message`. BACKWARD-COMPAT: an older deployed frontend
+      // sends pdf_base64 + a message WITHOUT a link → upload it and append the link so the
+      // email always carries one.
+      const { to, from_account_id, subject, message, pdf_base64 } = body;
       if (!to || !from_account_id || !message) return json({ error: "Faltan datos (to, from_account_id, message)" }, 400);
       let acctQ = admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id);
       if (callerId) acctQ = acctQ.eq("user_id", callerId);
       const { data: acct } = await acctQ.maybeSingle();
       if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe, no es tuya o no tiene SMTP" }, 400);
+      let finalMsg = String(message).trim();
+      if (pdf_base64 && !/https?:\/\//i.test(finalMsg)) {
+        try {
+          const bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
+          const path = `copys/${Date.now()}.pdf`;
+          const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
+          if (!up.error) {
+            const link = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 30)).data?.signedUrl;
+            if (link) finalMsg += `\n\nAquí tienes los mensajes (haz clic para abrirlos):\n${link}`;
+          }
+        } catch { /* si falla, se envía el mensaje tal cual */ }
+      }
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-        acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", String(message).trim(),
-        [], // el enlace ya va en el mensaje; sin adjunto
+        acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", finalMsg,
+        [], // sin adjunto
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript, from: acct.email, to });
     }
