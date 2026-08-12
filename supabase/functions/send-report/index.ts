@@ -476,6 +476,52 @@ serve(async (req) => {
       return json({ ok: r.ok, error: r.error, smtp: r.transcript });
     }
 
+    if (mode === "send_copys") {
+      // Email the client the campaign-COPY PDF generated in the browser: upload it, then
+      // send the owner's (editable) message with the PDF ATTACHED and a link to it.
+      const viaSecret = !!(body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET"));
+      let callerId: string | null = null;
+      if (!viaSecret) {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (token) {
+          const { data: ures } = await admin.auth.getUser(token);
+          const caller = ures?.user;
+          if (caller) {
+            const { data: role } = await admin.from("user_roles").select("role").eq("user_id", caller.id).single();
+            const { data: cprof } = await admin.from("profiles").select("is_client_manager").eq("user_id", caller.id).single();
+            if (role?.role === "admin" || cprof?.is_client_manager) callerId = caller.id;
+          }
+        }
+      }
+      if (!viaSecret && !callerId) return json({ error: "Forbidden" }, 403);
+
+      const { to, from_account_id, pdf_base64, subject, message, filename } = body;
+      if (!to || !from_account_id || !pdf_base64 || !message) return json({ error: "Faltan datos (to, from_account_id, pdf_base64, message)" }, 400);
+      let acctQ = admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id);
+      if (callerId) acctQ = acctQ.eq("user_id", callerId);
+      const { data: acct } = await acctQ.maybeSingle();
+      if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe, no es tuya o no tiene SMTP" }, 400);
+
+      // Upload → signed link (10 days) so the email carries both a link AND the attachment.
+      let signed: string | null = null;
+      let bytes: Uint8Array | null = null;
+      try {
+        bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
+        const path = `copys/${Date.now()}.pdf`;
+        const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
+        if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 10)).data?.signedUrl || null;
+      } catch { /* ignore — we can still send the attachment without a link */ }
+
+      const emailText = String(message).trim() + (signed ? `\n\nTambién puedes verlo aquí:\n${signed}` : "");
+      const r = await sendSmtp(
+        acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
+        acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", emailText,
+        bytes ? [{ filename: (filename || "copys.pdf"), mime: "application/pdf", base64: pdf_base64 }] : [],
+      );
+      return json({ ok: r.ok, error: r.error, smtp: r.transcript, link: signed, from: acct.email, to });
+    }
+
     if (mode === "purge_pdfs") {
       // Delete report PDFs older than N days from storage (keeps the platform lean).
       // Secret-gated (called by cron). The client_reports LOG rows stay — only the

@@ -124,7 +124,7 @@ function LogoField({ value, onChange, onColor }: { value: string; onChange: (url
   );
 }
 
-function ClientRow({ c, onEdit, onDelete, onTest, onCopys, copysBusy }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void; copysBusy: boolean }) {
+function ClientRow({ c, onEdit, onDelete, onTest, onCopys }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string, key: string) => {
@@ -182,11 +182,118 @@ function ClientRow({ c, onEdit, onDelete, onTest, onCopys, copysBusy }: { c: Cli
       <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
         {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onTest} title="Generar un informe de prueba con tus campañas"><FlaskConical className="h-3.5 w-3.5 text-primary" /> Probar informe</Button>
-        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onCopys} disabled={copysBusy} title="Exportar a PDF todos los copys de sus campañas (para revisar/entregar)"><FileText className="h-3.5 w-3.5 text-primary" /> {copysBusy ? "Generando…" : "Exportar copys"}</Button>
+        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onCopys} title="Descargar o enviar al cliente el PDF con los copys de sus campañas"><FileText className="h-3.5 w-3.5 text-primary" /> Copys</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
       </div>
     </div>
+  );
+}
+
+const DEFAULT_COPYS_MSG = `Buenas,
+
+Te pasamos los mensajes que hemos creado para tu campaña. Creemos que estos son los que van a tener mejor conversión.
+
+De todas formas, durante la campaña iremos analizando los resultados e iremos ajustando y mejorando los mensajes sobre la marcha.
+
+Si todo te parece bien, hacemos la revisión final y empezamos.
+
+Un saludo,
+Equipo OnePulso`;
+
+// Copys dialog — genera el PDF de copys y permite descargarlo o enviárselo al cliente
+// por email (PDF adjunto + link), desde una cuenta elegida y con un mensaje editable.
+function CopysDialog({ client, open, onClose }: { client: Client | null; open: boolean; onClose: () => void }) {
+  const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
+  const [fromAccount, setFromAccount] = useState("");
+  const [message, setMessage] = useState(DEFAULT_COPYS_MSG);
+  const [busy, setBusy] = useState<null | "download" | "send">(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setMessage(DEFAULT_COPYS_MSG);
+    supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
+      .then(({ data }) => {
+        const a = ((data as any) || []) as { id: string; email: string; status: string }[];
+        setAccounts(a);
+        setFromAccount((prev) => prev || a.find((x) => /team@onepulso/i.test(x.email))?.id || a[0]?.id || "");
+      });
+  }, [open]);
+
+  const safeName = () => String(client?.company_name || client?.full_name || client?.email || "cliente").replace(/[^\w.-]+/g, "_").slice(0, 40);
+
+  const buildDoc = async () => {
+    if (!client) throw new Error("Sin cliente");
+    const res = await callAdmin({ action: "client_campaign_copy", user_id: client.id });
+    if (res.error) throw new Error(res.error);
+    if (!res.campaigns?.length) throw new Error("Este cliente todavía no tiene campañas.");
+    const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
+      import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
+    ]);
+    return buildCopyDoc(jsPDF, {
+      clientName: client.company_name || client.full_name || client.email,
+      generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
+      campaigns: res.campaigns, sampleLead: res.sampleLead || null,
+      agencyLogoDataUrl: logo?.dataUrl || null, agencyLogoRatio: logo?.ratio || null,
+    });
+  };
+
+  const download = async () => {
+    setBusy("download");
+    try { (await buildDoc()).save(`copys_${safeName()}.pdf`); toast.success("PDF descargado"); }
+    catch (e: any) { toast.error(e?.message || "No se pudo generar el PDF"); }
+    finally { setBusy(null); }
+  };
+
+  const send = async () => {
+    if (!fromAccount) { toast.error("Elige la cuenta de envío"); return; }
+    if (!client?.email) { toast.error("El cliente no tiene email"); return; }
+    setBusy("send");
+    try {
+      const doc = await buildDoc();
+      const uri: string = doc.output("datauristring");
+      const b64 = uri.substring(uri.indexOf("base64,") + 7);
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ mode: "send_copys", to: client.email, from_account_id: fromAccount, pdf_base64: b64, subject: "Los mensajes de tu campaña", message, filename: `copys_${safeName()}.pdf` }),
+      });
+      const r = await resp.json();
+      if (r.ok) { toast.success(`Enviado a ${client.email}`); onClose(); }
+      else toast.error(r.error || "No se pudo enviar");
+    } catch (e: any) { toast.error(e?.message || "Error al enviar"); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogHeader><DialogTitle className="font-display">Copys · {client?.company_name || client?.email}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Genera el PDF con todos los mensajes de sus campañas. Puedes descargarlo o enviárselo al cliente por email (PDF adjunto + enlace).</p>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Enviar a</Label>
+            <Input value={client?.email || ""} readOnly className="text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Desde la cuenta</Label>
+            <select value={fromAccount} onChange={(e) => setFromAccount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+              <option value="">— elige cuenta —</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.email}{a.status !== "connected" ? ` (${a.status})` : ""}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Mensaje del email</Label>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={8} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={download} disabled={!!busy} className="gap-1.5"><FileText className="h-4 w-4" /> {busy === "download" ? "Generando…" : "Descargar PDF"}</Button>
+          <Button onClick={send} disabled={!!busy} className="gap-1.5"><Send className="h-4 w-4" /> {busy === "send" ? "Enviando…" : "Enviar al cliente"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -212,8 +319,8 @@ export default function ClientPortal() {
   const [savingEdit, setSavingEdit] = useState(false);
   // Report test-preview dialog
   const [testing, setTesting] = useState<Client | null>(null);
-  // "Exportar copys" — id of the client whose copy-PDF is being generated
-  const [copysBusy, setCopysBusy] = useState<string | null>(null);
+  // "Copys" — the client whose copys dialog (download / email) is open
+  const [copysClient, setCopysClient] = useState<Client | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -268,36 +375,6 @@ export default function ClientPortal() {
     else { toast.success("Cliente eliminado"); loadClients(); }
   };
 
-  // Build & download a clean PDF with ALL the copy of this client's campaigns (every
-  // step + variant, as readable text, with the variables and a real-lead example).
-  const exportCopys = async (c: Client) => {
-    setCopysBusy(c.id);
-    try {
-      const res = await callAdmin({ action: "client_campaign_copy", user_id: c.id });
-      if (res.error) { toast.error(res.error); return; }
-      if (!res.campaigns?.length) { toast.error("Este cliente todavía no tiene campañas."); return; }
-      const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
-        import("jspdf"),
-        import("@/lib/report/buildCopyPdf"),
-        loadPngDataUrl("/onepulso-logo-white-transparent.png"),
-      ]);
-      const doc = buildCopyDoc(jsPDF, {
-        clientName: c.company_name || c.full_name || c.email,
-        generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
-        campaigns: res.campaigns,
-        sampleLead: res.sampleLead || null,
-        agencyLogoDataUrl: logo?.dataUrl || null,
-        agencyLogoRatio: logo?.ratio || null,
-      });
-      const safe = String(c.company_name || c.full_name || c.email || "cliente").replace(/[^\w.-]+/g, "_").slice(0, 40);
-      doc.save(`copys_${safe}.pdf`);
-      toast.success("PDF de copys generado");
-    } catch (e: any) {
-      toast.error(e?.message || "No se pudo generar el PDF de copys");
-    } finally {
-      setCopysBusy(null);
-    }
-  };
 
   if (access === "loading") return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (access === "no") return <Navigate to="/dashboard" replace />;
@@ -366,7 +443,7 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => exportCopys(c)} copysBusy={copysBusy === c.id} />
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => setCopysClient(c)} />
               ))}
             </div>
           )}
@@ -376,6 +453,7 @@ export default function ClientPortal() {
       {testing && (
         <ReportTestDialog client={testing} open={!!testing} onClose={() => setTesting(null)} />
       )}
+      <CopysDialog client={copysClient} open={!!copysClient} onClose={() => setCopysClient(null)} />
 
       {editing && (
         <EditClientDialog
