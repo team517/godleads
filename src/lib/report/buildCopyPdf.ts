@@ -12,6 +12,8 @@ export type CopyData = {
   generatedAtLabel: string;
   campaigns: CopyCampaign[];
   sampleLead?: { email?: string | null; custom_fields?: Record<string, any> | null } | null;
+  agencyLogoDataUrl?: string | null;  // OnePulso logo (white PNG) for the header
+  agencyLogoRatio?: number | null;    // logo width/height, to place it without distortion
 };
 
 // HTML → clean text (mirrors src/pages/ClientCampaigns.tsx htmlToText, minus the **bold**
@@ -29,22 +31,26 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-// Fill {{variables}} with a real lead's fields (case-insensitive + common aliases).
-function fillVars(text: string, fields: Record<string, any>): string {
-  const lower: Record<string, any> = {};
-  for (const [k, v] of Object.entries(fields || {})) lower[k.toLowerCase().replace(/[\s_-]/g, "")] = v;
-  const alias: Record<string, string[]> = {
-    firstname: ["firstname", "first", "nombre", "name"],
-    companyname: ["companyname", "company", "empresa", "compania"],
-    city: ["city", "ciudad"],
-    industry: ["industry", "sector", "industria"],
-  };
-  return String(text || "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key) => {
-    const k = String(key).toLowerCase().replace(/[\s_-]/g, "");
-    const candidates = alias[k] || [k];
-    for (const c of candidates) if (lower[c] != null && String(lower[c]).trim()) return String(lower[c]);
-    return `{{${key}}}`;
-  });
+// The real personalized message for the sample lead (custom_fields.personalized_message,
+// or any long free-text field). Used to show the ACTUAL text where a campaign body is just
+// {{personalized_message}} — so the client reads real copy, not a placeholder token.
+function personalizedMsgOf(sampleLead: CopyData["sampleLead"]): string {
+  const cf = (sampleLead && sampleLead.custom_fields) || {};
+  const direct = (cf as any).personalized_message || (cf as any).personalized || (cf as any).mensaje_personalizado;
+  // The stored personalized message is often HTML → clean it to plain text so it never
+  // shows raw tags in the PDF.
+  if (typeof direct === "string" && direct.trim()) return htmlToText(direct);
+  const long = Object.values(cf).find((v: any) => typeof v === "string" && v.length > 120);
+  return typeof long === "string" ? htmlToText(long) : "";
+}
+
+// HTML → clean text, swapping ONLY {{personalized_message}} for a real example message.
+// Other merge variables ({{firstName}}, {{companyName}}…) stay as-is ON PURPOSE — the
+// client should see the merge fields, not fake filled-in data.
+function renderCopy(html: string, personalizedMsg: string): string {
+  let t = htmlToText(html);
+  if (personalizedMsg) t = t.replace(/\{\{\s*(personalized_message|personalized|mensaje_personalizado)\s*\}\}/gi, personalizedMsg);
+  return t;
 }
 
 function variablesIn(text: string): string[] {
@@ -60,6 +66,7 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
   const brand: Rgb = [110, 88, 241];
   const ink: Rgb = [28, 28, 36], muted: Rgb = [120, 120, 134], line: Rgb = [228, 228, 236];
   const soft: Rgb = [244, 242, 255];
+  const personalizedMsg = personalizedMsgOf(data.sampleLead);
   let y = 0;
   const setT = (c: Rgb) => doc.setTextColor(c[0], c[1], c[2]);
   const setF = (c: Rgb) => doc.setFillColor(c[0], c[1], c[2]);
@@ -67,8 +74,15 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
   const newPage = () => { doc.addPage(); y = MARGIN; };
   const ensure = (h: number) => { if (y + h > PAGE_H - FOOTER_H) newPage(); };
 
-  // Header
+  // Header (violet band with the OnePulso logo, top-right)
   setF(brand); doc.rect(0, 0, PAGE_W, 34, "F");
+  if (data.agencyLogoDataUrl) {
+    try {
+      const lh = 8;
+      const lw = lh * (data.agencyLogoRatio && data.agencyLogoRatio > 0 ? data.agencyLogoRatio : 4);
+      doc.addImage(data.agencyLogoDataUrl, "PNG", PAGE_W - MARGIN - lw, (34 - lh) / 2, lw, lh);
+    } catch { /* logo is optional */ }
+  }
   setT([255, 255, 255]); doc.setFont("helvetica", "bold"); doc.setFontSize(18);
   doc.text("Copys de campaña", MARGIN, 15);
   doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
@@ -88,6 +102,20 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
     setF(bg); doc.roundedRect(MARGIN, y - 4, w, 6.5, 1.5, 1.5, "F");
     setT(fg); doc.text(label, MARGIN + 3, y + 0.6); y += 8;
   };
+
+  // Intro — presentación para el cliente
+  {
+    const intro = "Hola, aquí tienes los mensajes de todas tus campañas: cada email y cada variante, tal cual se envían. Échales un vistazo con calma. Si todo te parece bien, hacemos la revisión final y empezamos a enviar.";
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
+    const lines: string[] = doc.splitTextToSize(intro, CONTENT_W - 12);
+    const boxH = lines.length * 5.4 + 9;
+    ensure(boxH + 2);
+    setF(soft); doc.roundedRect(MARGIN, y, CONTENT_W, boxH, 2.5, 2.5, "F");
+    setF(brand); doc.roundedRect(MARGIN, y, 2.5, boxH, 1, 1, "F");
+    setT([64, 54, 110]);
+    lines.forEach((ln, i) => doc.text(ln, MARGIN + 7, y + 7 + i * 5.4));
+    y += boxH + 9;
+  }
 
   if (!data.campaigns.length) { para("Este cliente todavía no tiene campañas creadas.", 11, muted); }
 
@@ -118,7 +146,7 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
         }))),
       ];
       versions.forEach((v) => {
-        const subj = htmlToText(v.subject), bodyTxt = htmlToText(v.body);
+        const subj = renderCopy(v.subject, personalizedMsg), bodyTxt = renderCopy(v.body, personalizedMsg);
         variablesIn(subj).forEach((x) => allVars.add(x));
         variablesIn(bodyTxt).forEach((x) => allVars.add(x));
         ensure(16);
@@ -144,25 +172,6 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
       y += 3;
     }
 
-    // Real-lead example (first email, first version) filled with the sample lead's data
-    const first = (camp.steps || [])[0];
-    if (first && data.sampleLead?.custom_fields) {
-      const fields = data.sampleLead.custom_fields || {};
-      const exSubj = fillVars(htmlToText(first.subject || ""), fields);
-      const exBody = fillVars(htmlToText(first.body || ""), fields);
-      ensure(16);
-      // Single-line filled header (never spans a page → no box-height bug when the
-      // example text below flows onto the next page). The text then wraps/paginates
-      // normally via para().
-      setF([233, 246, 236]); doc.roundedRect(MARGIN, y - 4, CONTENT_W, 7, 1.5, 1.5, "F");
-      setT([22, 120, 60]); doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
-      doc.text(`Ejemplo con datos reales — ${data.sampleLead.email || "lead"}`, MARGIN + 3, y + 0.8);
-      y += 9;
-      para(`Asunto: ${exSubj || "(sin asunto)"}`, 9.5, ink);
-      y += 1;
-      para(exBody || "(sin cuerpo)", 9.5, ink);
-      y += 6;
-    }
   });
 
   // Footer

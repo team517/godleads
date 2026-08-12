@@ -48,6 +48,25 @@ async function callAdmin(payload: Record<string, unknown>) {
   return resp.json();
 }
 
+// Load a bundled PNG, DOWNSCALE it (jsPDF embeds images uncompressed, so a big logo
+// would bloat the PDF to megabytes), and return a small data URI + its width/height ratio.
+async function loadPngDataUrl(url: string, maxW = 340): Promise<{ dataUrl: string; ratio: number } | null> {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const src = await new Promise<string>((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(blob);
+    });
+    const img = await new Promise<HTMLImageElement>((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+    const ratio = img.naturalWidth / img.naturalHeight || 4;
+    const w = Math.min(maxW, img.naturalWidth), h = Math.max(1, Math.round(w / ratio));
+    const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { dataUrl: src, ratio };
+    ctx.drawImage(img, 0, 0, w, h);
+    return { dataUrl: canvas.toDataURL("image/png"), ratio };
+  } catch { return null; }
+}
+
 function SectionPicker({ selected, onToggle }: { selected: string[]; onToggle: (path: string) => void }) {
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -257,15 +276,18 @@ export default function ClientPortal() {
       const res = await callAdmin({ action: "client_campaign_copy", user_id: c.id });
       if (res.error) { toast.error(res.error); return; }
       if (!res.campaigns?.length) { toast.error("Este cliente todavía no tiene campañas."); return; }
-      const [{ default: jsPDF }, { buildCopyDoc }] = await Promise.all([
+      const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
         import("jspdf"),
         import("@/lib/report/buildCopyPdf"),
+        loadPngDataUrl("/onepulso-logo-white-transparent.png"),
       ]);
       const doc = buildCopyDoc(jsPDF, {
         clientName: c.company_name || c.full_name || c.email,
         generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
         campaigns: res.campaigns,
         sampleLead: res.sampleLead || null,
+        agencyLogoDataUrl: logo?.dataUrl || null,
+        agencyLogoRatio: logo?.ratio || null,
       });
       const safe = String(c.company_name || c.full_name || c.email || "cliente").replace(/[^\w.-]+/g, "_").slice(0, 40);
       doc.save(`copys_${safe}.pdf`);
