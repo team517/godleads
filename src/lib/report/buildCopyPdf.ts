@@ -150,19 +150,18 @@ export function buildCopyDoc(jsPDFCtor: any, data: CopyData): any {
       const fields = data.sampleLead.custom_fields || {};
       const exSubj = fillVars(htmlToText(first.subject || ""), fields);
       const exBody = fillVars(htmlToText(first.body || ""), fields);
-      ensure(20);
-      setF([247, 250, 247]); setD([200, 224, 200]); doc.setLineWidth(0.3);
-      const boxTop = y; y += 5;
+      ensure(16);
+      // Single-line filled header (never spans a page → no box-height bug when the
+      // example text below flows onto the next page). The text then wraps/paginates
+      // normally via para().
+      setF([233, 246, 236]); doc.roundedRect(MARGIN, y - 4, CONTENT_W, 7, 1.5, 1.5, "F");
       setT([22, 120, 60]); doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
-      doc.text(`Ejemplo con datos reales — ${data.sampleLead.email || "lead"}`, MARGIN + 4, y); y += 6;
-      const startY = y;
-      setT(ink); para(`Asunto: ${exSubj}`, 9.5, ink); y += 1; para(exBody, 9.5, ink);
-      const boxH = y - boxTop + 4;
-      // draw the box border AFTER measuring (re-draw text on top is avoided by drawing border only)
-      setD([200, 224, 200]); doc.setLineWidth(0.3);
-      doc.roundedRect(MARGIN, boxTop, CONTENT_W, boxH, 2, 2, "S");
-      y = boxTop + boxH + 6;
-      void startY;
+      doc.text(`Ejemplo con datos reales — ${data.sampleLead.email || "lead"}`, MARGIN + 3, y + 0.8);
+      y += 9;
+      para(`Asunto: ${exSubj || "(sin asunto)"}`, 9.5, ink);
+      y += 1;
+      para(exBody || "(sin cuerpo)", 9.5, ink);
+      y += 6;
     }
   });
 
