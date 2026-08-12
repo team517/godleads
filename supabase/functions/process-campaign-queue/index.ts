@@ -1723,11 +1723,14 @@ serve(async (req) => {
           if (firstSentVariant?.length) {
             variantIndex = firstSentVariant[0].variant_index ?? 0;
           }
-          // Clamp to available range — if this step has fewer variants than the original, fall back to base (0)
-          if (variantIndex >= allVariants.length) variantIndex = 0;
-          // If the reused variant isn't eligible for THIS account's tags, re-pick from the
-          // eligible pool so a tag-filtered variant never leaks to a non-matching account.
-          if (!eligibleIdx.includes(variantIndex)) variantIndex = eligibleIdx[Math.floor(Math.random() * eligibleIdx.length)];
+          // If the reused variant doesn't exist in THIS step (this step has fewer variants
+          // than the one the lead started on) OR it isn't eligible for this account's tags,
+          // pick a RANDOM one of the variants this step DOES have (from the eligible pool)
+          // — instead of always falling back to the base. So with 3 variants in step 1 and
+          // 2 here, an overflow lead gets a random one of these 2, not always the first.
+          if (variantIndex >= allVariants.length || !eligibleIdx.includes(variantIndex)) {
+            variantIndex = eligibleIdx[Math.floor(Math.random() * eligibleIdx.length)];
+          }
         } else if (allVariants.length > 1) {
           // First step: random pick across the variants ELIGIBLE for this account's tags.
           variantIndex = eligibleIdx[Math.floor(Math.random() * eligibleIdx.length)];
