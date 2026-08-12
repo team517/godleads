@@ -46,7 +46,7 @@ serve(async (req) => {
     const action = body.action || "list";
 
     // A client manager is restricted to client CRUD — never the full-admin actions.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports", "create_client_campaign"]);
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports", "create_client_campaign", "client_campaign_copy"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
@@ -377,6 +377,46 @@ serve(async (req) => {
         return { ...r, url };
       }));
       return new Response(JSON.stringify({ reports }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "client_campaign_copy") {
+      // All campaign COPY (subject + body of every step + variant) for a client, so the
+      // owner can export a clean PDF to hand over. Plus one real lead's fields (data used)
+      // and, if present, a personalized message (long text in custom_fields).
+      const { user_id } = body;
+      if (!user_id) throw new Error("user_id required");
+      const { data: camps } = await supabase
+        .from("campaigns")
+        .select("id, name, status, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", { ascending: false });
+      const campaigns: any[] = [];
+      for (const c of camps || []) {
+        const { data: steps } = await supabase
+          .from("campaign_steps")
+          .select("step_order, subject, body, variants, delay_days")
+          .eq("campaign_id", c.id)
+          .order("step_order", { ascending: true });
+        campaigns.push({ id: c.id, name: c.name, status: c.status, steps: steps || [] });
+      }
+      // Pick a sample lead — prefer one whose custom_fields hold a long text (a
+      // personalized message) so the example shows real, filled-in copy.
+      let sampleLead: any = null;
+      const { data: leadRows } = await supabase
+        .from("leads")
+        .select("email, custom_fields")
+        .eq("user_id", user_id)
+        .not("custom_fields", "is", null)
+        .limit(30);
+      for (const l of leadRows || []) {
+        const cf = l.custom_fields || {};
+        if (!sampleLead) sampleLead = l;
+        const hasLongText = Object.values(cf).some((v: any) => typeof v === "string" && v.length > 120);
+        if (hasLongText) { sampleLead = l; break; }
+      }
+      return new Response(JSON.stringify({ campaigns, sampleLead }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

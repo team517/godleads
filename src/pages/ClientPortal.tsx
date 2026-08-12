@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound, FileText } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 import MyReportsCard from "@/components/reports/MyReportsCard";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -105,7 +105,7 @@ function LogoField({ value, onChange, onColor }: { value: string; onChange: (url
   );
 }
 
-function ClientRow({ c, onEdit, onDelete, onTest }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void }) {
+function ClientRow({ c, onEdit, onDelete, onTest, onCopys, copysBusy }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void; copysBusy: boolean }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string, key: string) => {
@@ -163,6 +163,7 @@ function ClientRow({ c, onEdit, onDelete, onTest }: { c: Client; onEdit: () => v
       <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
         {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onTest} title="Generar un informe de prueba con tus campañas"><FlaskConical className="h-3.5 w-3.5 text-primary" /> Probar informe</Button>
+        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onCopys} disabled={copysBusy} title="Exportar a PDF todos los copys de sus campañas (para revisar/entregar)"><FileText className="h-3.5 w-3.5 text-primary" /> {copysBusy ? "Generando…" : "Exportar copys"}</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
       </div>
@@ -192,6 +193,8 @@ export default function ClientPortal() {
   const [savingEdit, setSavingEdit] = useState(false);
   // Report test-preview dialog
   const [testing, setTesting] = useState<Client | null>(null);
+  // "Exportar copys" — id of the client whose copy-PDF is being generated
+  const [copysBusy, setCopysBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -244,6 +247,34 @@ export default function ClientPortal() {
     const res = await callAdmin({ action: "delete", user_id: c.id });
     if (res.error) toast.error(res.error);
     else { toast.success("Cliente eliminado"); loadClients(); }
+  };
+
+  // Build & download a clean PDF with ALL the copy of this client's campaigns (every
+  // step + variant, as readable text, with the variables and a real-lead example).
+  const exportCopys = async (c: Client) => {
+    setCopysBusy(c.id);
+    try {
+      const res = await callAdmin({ action: "client_campaign_copy", user_id: c.id });
+      if (res.error) { toast.error(res.error); return; }
+      if (!res.campaigns?.length) { toast.error("Este cliente todavía no tiene campañas."); return; }
+      const [{ default: jsPDF }, { buildCopyDoc }] = await Promise.all([
+        import("jspdf"),
+        import("@/lib/report/buildCopyPdf"),
+      ]);
+      const doc = buildCopyDoc(jsPDF, {
+        clientName: c.company_name || c.full_name || c.email,
+        generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
+        campaigns: res.campaigns,
+        sampleLead: res.sampleLead || null,
+      });
+      const safe = String(c.company_name || c.full_name || c.email || "cliente").replace(/[^\w.-]+/g, "_").slice(0, 40);
+      doc.save(`copys_${safe}.pdf`);
+      toast.success("PDF de copys generado");
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo generar el PDF de copys");
+    } finally {
+      setCopysBusy(null);
+    }
   };
 
   if (access === "loading") return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -313,7 +344,7 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} />
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => exportCopys(c)} copysBusy={copysBusy === c.id} />
               ))}
             </div>
           )}
