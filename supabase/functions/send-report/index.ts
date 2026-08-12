@@ -476,9 +476,11 @@ serve(async (req) => {
       return json({ ok: r.ok, error: r.error, smtp: r.transcript });
     }
 
-    if (mode === "send_copys") {
-      // Email the client the campaign-COPY PDF generated in the browser: upload it, then
-      // send the owner's (editable) message with the PDF ATTACHED and a link to it.
+    if (mode === "upload_copys" || mode === "send_copys") {
+      //  upload_copys → store the browser-built copys PDF and RETURN a signed link, so the
+      //                 owner sees the link inside the message textarea before sending.
+      //  send_copys   → just send the (already-composed) message as-is; the link is inside
+      //                 it, so this is fast (no attachment, no upload).
       const viaSecret = !!(body.secret && body.secret === Deno.env.get("REPORTS_CRON_SECRET"));
       let callerId: string | null = null;
       if (!viaSecret) {
@@ -496,34 +498,33 @@ serve(async (req) => {
       }
       if (!viaSecret && !callerId) return json({ error: "Forbidden" }, 403);
 
-      const { to, from_account_id, pdf_base64, subject, message, filename } = body;
-      if (!to || !from_account_id || !pdf_base64 || !message) return json({ error: "Faltan datos (to, from_account_id, pdf_base64, message)" }, 400);
+      if (mode === "upload_copys") {
+        const { pdf_base64 } = body;
+        if (!pdf_base64) return json({ error: "Falta pdf_base64" }, 400);
+        try {
+          const bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
+          const path = `copys/${Date.now()}.pdf`;
+          const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
+          if (up.error) return json({ ok: false, error: "No se pudo subir el PDF al storage." }, 500);
+          const link = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 30)).data?.signedUrl || null;
+          if (!link) return json({ ok: false, error: "No se pudo generar el enlace." }, 500);
+          return json({ ok: true, link });
+        } catch (e: any) { return json({ ok: false, error: e?.message || "upload error" }, 500); }
+      }
+
+      // send_copys — send the composed message (link already inside) from the chosen account.
+      const { to, from_account_id, subject, message } = body;
+      if (!to || !from_account_id || !message) return json({ error: "Faltan datos (to, from_account_id, message)" }, 400);
       let acctQ = admin.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password").eq("id", from_account_id);
       if (callerId) acctQ = acctQ.eq("user_id", callerId);
       const { data: acct } = await acctQ.maybeSingle();
       if (!acct?.smtp_host) return json({ error: "La cuenta de envío no existe, no es tuya o no tiene SMTP" }, 400);
-
-      // Upload → signed link (10 days) so the email carries both a link AND the attachment.
-      let signed: string | null = null;
-      let bytes: Uint8Array | null = null;
-      try {
-        bytes = Uint8Array.from(atob(pdf_base64), (c) => c.charCodeAt(0));
-        const path = `copys/${Date.now()}.pdf`;
-        const up = await admin.storage.from("client-reports").upload(path, bytes, { contentType: "application/pdf", upsert: true });
-        if (!up.error) signed = (await admin.storage.from("client-reports").createSignedUrl(path, 60 * 60 * 24 * 10)).data?.signedUrl || null;
-      } catch { /* ignore — we can still send the attachment without a link */ }
-
-      // LINK ONLY (no attachment): far faster to send AND better deliverability. The
-      // client just clicks the link and sees the copys. The email IS the link, so if the
-      // upload failed there is nothing useful to send → error out.
-      if (!signed) return json({ ok: false, error: "No se pudo generar el enlace del PDF (revisa el storage)." }, 500);
-      const emailText = String(message).trim() + `\n\nAquí tienes los mensajes (haz clic para abrirlos):\n${signed}`;
       const r = await sendSmtp(
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
-        acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", emailText,
-        [], // solo el enlace, sin adjunto
+        acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", String(message).trim(),
+        [], // el enlace ya va en el mensaje; sin adjunto
       );
-      return json({ ok: r.ok, error: r.error, smtp: r.transcript, link: signed, from: acct.email, to });
+      return json({ ok: r.ok, error: r.error, smtp: r.transcript, from: acct.email, to });
     }
 
     if (mode === "purge_pdfs") {

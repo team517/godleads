@@ -196,6 +196,9 @@ Te pasamos los mensajes que hemos creado para tu campaña. Creemos que estos son
 
 De todas formas, durante la campaña iremos analizando los resultados e iremos ajustando y mejorando los mensajes sobre la marcha.
 
+Aquí los tienes (haz clic para abrirlos):
+{{LINK}}
+
 Si todo te parece bien, hacemos la revisión final y empezamos.
 
 Un saludo,
@@ -206,23 +209,14 @@ Equipo OnePulso`;
 function CopysDialog({ client, open, onClose }: { client: Client | null; open: boolean; onClose: () => void }) {
   const [accounts, setAccounts] = useState<{ id: string; email: string; status: string }[]>([]);
   const [fromAccount, setFromAccount] = useState("");
-  const [message, setMessage] = useState(DEFAULT_COPYS_MSG);
-  const [busy, setBusy] = useState<null | "download" | "send">(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setMessage(DEFAULT_COPYS_MSG);
-    supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
-      .then(({ data }) => {
-        const a = ((data as any) || []) as { id: string; email: string; status: string }[];
-        setAccounts(a);
-        setFromAccount((prev) => prev || a.find((x) => /team@onepulso/i.test(x.email))?.id || a[0]?.id || "");
-      });
-  }, [open]);
+  const [message, setMessage] = useState("");
+  const [pdfB64, setPdfB64] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [sending, setSending] = useState(false);
 
   const safeName = () => String(client?.company_name || client?.full_name || client?.email || "cliente").replace(/[^\w.-]+/g, "_").slice(0, 40);
 
-  const buildDoc = async () => {
+  const buildB64 = async (): Promise<string> => {
     if (!client) throw new Error("Sin cliente");
     const res = await callAdmin({ action: "client_campaign_copy", user_id: client.id });
     if (res.error) throw new Error(res.error);
@@ -230,40 +224,72 @@ function CopysDialog({ client, open, onClose }: { client: Client | null; open: b
     const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
       import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
     ]);
-    return buildCopyDoc(jsPDF, {
+    const doc = buildCopyDoc(jsPDF, {
       clientName: client.company_name || client.full_name || client.email,
       generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
       campaigns: res.campaigns, sampleLead: res.sampleLead || null,
       agencyLogoDataUrl: logo?.dataUrl || null, agencyLogoRatio: logo?.ratio || null,
     });
+    const uri: string = doc.output("datauristring");
+    return uri.substring(uri.indexOf("base64,") + 7);
   };
 
-  const download = async () => {
-    setBusy("download");
-    try { (await buildDoc()).save(`copys_${safeName()}.pdf`); toast.success("PDF descargado"); }
-    catch (e: any) { toast.error(e?.message || "No se pudo generar el PDF"); }
-    finally { setBusy(null); }
+  // On open: build the PDF, upload it, get the link, and drop the link INTO the message
+  // (replacing the {{LINK}} placeholder) so the owner sees it before sending.
+  useEffect(() => {
+    if (!open || !client) return;
+    setMessage(DEFAULT_COPYS_MSG.replace("{{LINK}}", "(generando enlace…)"));
+    setPdfB64(null); setPreparing(true);
+    supabase.from("email_accounts").select("id, email, status").not("smtp_host", "is", null).order("email")
+      .then(({ data }) => {
+        const a = ((data as any) || []) as { id: string; email: string; status: string }[];
+        setAccounts(a);
+        setFromAccount((prev) => prev || a.find((x) => /team@onepulso/i.test(x.email))?.id || a[0]?.id || "");
+      });
+    (async () => {
+      try {
+        const b64 = await buildB64();
+        setPdfB64(b64);
+        const { data: { session } } = await supabase.auth.getSession();
+        const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ mode: "upload_copys", pdf_base64: b64 }),
+        });
+        const r = await resp.json();
+        if (r.ok && r.link) setMessage((m) => m.replace("(generando enlace…)", r.link));
+        else { setMessage((m) => m.replace("(generando enlace…)", "(no se pudo generar el enlace)")); toast.error(r.error || "No se pudo generar el enlace"); }
+      } catch (e: any) {
+        setMessage((m) => m.replace("(generando enlace…)", "(error generando el enlace)"));
+        toast.error(e?.message || "No se pudo preparar el PDF");
+      } finally { setPreparing(false); }
+    })();
+  }, [open, client]);
+
+  const download = () => {
+    if (!pdfB64) { toast.error("El PDF aún se está generando…"); return; }
+    const blob = new Blob([Uint8Array.from(atob(pdfB64), (c) => c.charCodeAt(0))], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `copys_${safeName()}.pdf`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast.success("PDF descargado");
   };
 
   const send = async () => {
     if (!fromAccount) { toast.error("Elige la cuenta de envío"); return; }
     if (!client?.email) { toast.error("El cliente no tiene email"); return; }
-    setBusy("send");
+    if (preparing || message.includes("(generando enlace")) { toast.error("Espera a que se genere el enlace…"); return; }
+    setSending(true);
     try {
-      const doc = await buildDoc();
-      const uri: string = doc.output("datauristring");
-      const b64 = uri.substring(uri.indexOf("base64,") + 7);
       const { data: { session } } = await supabase.auth.getSession();
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ mode: "send_copys", to: client.email, from_account_id: fromAccount, pdf_base64: b64, subject: "Los mensajes de tu campaña", message, filename: `copys_${safeName()}.pdf` }),
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ mode: "send_copys", to: client.email, from_account_id: fromAccount, subject: "Los mensajes de tu campaña", message }),
       });
       const r = await resp.json();
       if (r.ok) { toast.success(`Enviado a ${client.email}`); onClose(); }
       else toast.error(r.error || "No se pudo enviar");
     } catch (e: any) { toast.error(e?.message || "Error al enviar"); }
-    finally { setBusy(null); }
+    finally { setSending(false); }
   };
 
   return (
@@ -271,7 +297,7 @@ function CopysDialog({ client, open, onClose }: { client: Client | null; open: b
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader><DialogTitle className="font-display">Copys · {client?.company_name || client?.email}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">Genera el PDF con todos los mensajes de sus campañas. Puedes descargarlo o enviárselo al cliente por email (PDF adjunto + enlace).</p>
+          <p className="text-xs text-muted-foreground">Al abrir se genera el PDF con todos los mensajes y su enlace, y se mete en el mensaje de abajo. El cliente hace clic y ve los copys. Puedes descargarlo o enviárselo por email.</p>
           <div className="space-y-1.5">
             <Label className="text-xs">Enviar a</Label>
             <Input value={client?.email || ""} readOnly className="text-sm" />
@@ -284,13 +310,13 @@ function CopysDialog({ client, open, onClose }: { client: Client | null; open: b
             </select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Mensaje del email</Label>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={8} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+            <Label className="text-xs">Mensaje del email {preparing && <span className="text-primary">· generando enlace…</span>}</Label>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={9} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
           </div>
         </div>
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={download} disabled={!!busy} className="gap-1.5"><FileText className="h-4 w-4" /> {busy === "download" ? "Generando…" : "Descargar PDF"}</Button>
-          <Button onClick={send} disabled={!!busy} className="gap-1.5"><Send className="h-4 w-4" /> {busy === "send" ? "Enviando…" : "Enviar al cliente"}</Button>
+          <Button variant="outline" onClick={download} disabled={!pdfB64 || sending} className="gap-1.5"><FileText className="h-4 w-4" /> Descargar PDF</Button>
+          <Button onClick={send} disabled={preparing || sending} className="gap-1.5"><Send className="h-4 w-4" /> {sending ? "Enviando…" : "Enviar al cliente"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
