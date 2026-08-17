@@ -51,8 +51,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const allowedRoutes = profileData.allowed_routes;
   // Owner-only agency tools — never shown to clients/managers.
   const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
-  const OWNER_ONLY = new Set(["/onboarding", "/client-campaigns"]);
-  const visibleTools = toolsNav.filter((item) => !OWNER_ONLY.has(item.path) || isOwner);
+  // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
+  const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
+  const visibleTools = toolsNav.filter((item) => !OWNER_OR_MANAGER.has(item.path) || isOwner || isManager);
 
   useEffect(() => {
     setUnreadCount(readCachedUniboxUnread());

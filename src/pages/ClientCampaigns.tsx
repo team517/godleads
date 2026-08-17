@@ -521,13 +521,16 @@ export default function ClientCampaigns() {
 
   useEffect(() => {
     if (!user) return;
-    // Owner-only section — only hello@onepulso.blog.
-    const owner = (user.email || "").toLowerCase() === "hello@onepulso.blog";
-    setAccess(owner ? "yes" : "no");
-    if (owner) {
-      (supabase as any).from("profiles").select("campaign_skills").eq("user_id", user.id).single()
-        .then(({ data }: any) => { if (data?.campaign_skills) setSkills(data.campaign_skills); });
-    }
+    // The owner (full admin) AND client-managers (e.g. support@) may automate campaigns.
+    (async () => {
+      const [{ data: r }, { data: p }] = await Promise.all([
+        (supabase as any).from("user_roles").select("role").eq("user_id", user.id).single(),
+        (supabase as any).from("profiles").select("is_client_manager, campaign_skills").eq("user_id", user.id).single(),
+      ]);
+      const allowed = r?.role === "admin" || (p as any)?.is_client_manager;
+      setAccess(allowed ? "yes" : "no");
+      if (allowed && (p as any)?.campaign_skills) setSkills((p as any).campaign_skills);
+    })();
   }, [user]);
 
   const loadClients = useCallback(async () => {

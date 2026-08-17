@@ -46,7 +46,9 @@ serve(async (req) => {
     const action = body.action || "list";
 
     // A client manager is restricted to client CRUD — never the full-admin actions.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "delete", "list_client_accounts", "list_client_reports", "create_client_campaign", "client_campaign_copy"]);
+    // NOTE: "delete" is deliberately NOT here — only a full admin can delete clients.
+    // A client-manager (e.g. support@) can create/edit/list clients + campaigns, not delete.
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "list_client_accounts", "list_client_reports", "create_client_campaign", "client_campaign_copy"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {

@@ -124,7 +124,7 @@ function LogoField({ value, onChange, onColor }: { value: string; onChange: (url
   );
 }
 
-function ClientRow({ c, onEdit, onDelete, onTest, onCopys }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void }) {
+function ClientRow({ c, onEdit, onDelete, onTest, onCopys, canDelete }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void; canDelete: boolean }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string, key: string) => {
@@ -184,7 +184,7 @@ function ClientRow({ c, onEdit, onDelete, onTest, onCopys }: { c: Client; onEdit
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onTest} title="Generar un informe de prueba con tus campañas"><FlaskConical className="h-3.5 w-3.5 text-primary" /> Probar informe</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onCopys} title="Descargar o enviar al cliente el PDF con los copys de sus campañas"><FileText className="h-3.5 w-3.5 text-primary" /> Copys</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
-        <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>
+        {canDelete && <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>}
       </div>
     </div>
   );
@@ -469,7 +469,7 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => setCopysClient(c)} />
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => setCopysClient(c)} canDelete={isFullAdmin} />
               ))}
             </div>
           )}
