@@ -87,6 +87,17 @@ serve(async (req) => {
     const { data: metrics, error: mErr } = await admin.rpc("health_metrics");
     if (mErr) return new Response(JSON.stringify({ ok: false, error: mErr.message }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+    // MASTER GUARDS — before any check/email:
+    //  • Owner turned alerts OFF in their profile → send nothing.
+    //  • Nothing is running (no active campaigns / no accounts in a campaign) → send
+    //    nothing, not even errors ("si no hay envíos ni campañas, no avises").
+    if (metrics && metrics.alerts_enabled === false) {
+      return new Response(JSON.stringify({ ok: true, skipped: "alerts_disabled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (metrics && (Number(metrics.active_campaigns) === 0 || Number(metrics.accounts_in_use) === 0)) {
+      return new Response(JSON.stringify({ ok: true, skipped: "nothing_running" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const checks = evaluate(metrics);
     const failing = checks.filter((c) => c.failing);
     const failingKeys = new Set(failing.map((c) => c.key));

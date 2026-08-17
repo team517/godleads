@@ -145,6 +145,37 @@ export default function SettingsPage() {
     setPortalLoading(false);
   };
 
+  const HealthAlertsCard = () => {
+    const [enabled, setEnabled] = useState(true);
+    const [loaded, setLoaded] = useState(false);
+    useEffect(() => {
+      if (!user) return;
+      supabase.from("profiles").select("health_alerts_enabled").eq("user_id", user.id).single()
+        .then(({ data }) => { setEnabled((data as any)?.health_alerts_enabled ?? true); setLoaded(true); });
+    }, []);
+    const toggle = async (v: boolean) => {
+      if (!user) return;
+      setEnabled(v);
+      const { error } = await supabase.from("profiles").update({ health_alerts_enabled: v } as any).eq("user_id", user.id);
+      if (error) { toast.error("No se pudo guardar"); setEnabled(!v); }
+      else toast.success(v ? "Avisos del monitor activados" : "Avisos del monitor desactivados");
+    };
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-display text-base">Avisos del monitor</CardTitle>
+          <CardDescription>Emails automáticos cuando detectamos un problema real en el envío (motor parado, rebotes altos, etc.). Si lo apagas, no recibirás ninguno. Aunque esté activo, no se avisa si no hay campañas activas ni cuentas enviando.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <Label>Recibir avisos por email</Label>
+            <Switch checked={enabled} onCheckedChange={toggle} disabled={!loaded} />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   const KeepSessionCard = () => {
     const [keepEnabled, setKeepEnabled] = useState(isSessionKept());
     const [duration, setDuration] = useState<SessionDuration>(getSessionDuration());
@@ -438,6 +469,8 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground">Los límites diarios y horarios de envío se configuran por cuenta y por campaña.</p>
             </CardContent>
           </Card>
+
+          <HealthAlertsCard />
 
           <KeepSessionCard />
         </TabsContent>
