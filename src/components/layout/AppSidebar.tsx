@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ const toolsNav = [
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
   { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
+  { icon: Workflow, label: "Automatización", path: "/automatizacion" },
 ];
 
 interface AppSidebarProps {
@@ -52,8 +53,14 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Owner-only agency tools — never shown to clients/managers.
   const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
   // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
+  // Automatización: ONLY the owner (hello@onepulso.blog) — not managers.
   const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
-  const visibleTools = toolsNav.filter((item) => !OWNER_OR_MANAGER.has(item.path) || isOwner || isManager);
+  const OWNER_ONLY = new Set(["/automatizacion"]);
+  const visibleTools = toolsNav.filter((item) => {
+    if (OWNER_ONLY.has(item.path)) return isOwner;
+    if (OWNER_OR_MANAGER.has(item.path)) return isOwner || isManager;
+    return true;
+  });
 
   useEffect(() => {
     setUnreadCount(readCachedUniboxUnread());

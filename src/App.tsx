@@ -38,6 +38,7 @@ const Community = lazy(() => import("./pages/Community"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const OnboardingPortal = lazy(() => import("./pages/OnboardingPortal"));
 const ClientCampaigns = lazy(() => import("./pages/ClientCampaigns"));
+const AutomationFlow = lazy(() => import("./pages/AutomationFlow"));
 const GodTube = lazy(() => import("./pages/GodTube"));
 const Partners = lazy(() => import("./pages/Partners"));
 const Metrics = lazy(() => import("./pages/Metrics"));
@@ -83,6 +84,7 @@ const App = () => (
                 <Route path="/community" element={<Community />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/client-campaigns" element={<ClientCampaigns />} />
+                <Route path="/automatizacion" element={<AutomationFlow />} />
                 <Route path="/godtube" element={<GodTube />} />
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />
