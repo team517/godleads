@@ -1172,6 +1172,19 @@ serve(async (req) => {
         console.log(`Daily self-reset: zeroed sent_today for ${staleAccountIds.length} account(s) (new day, cron backup).`);
       }
 
+      // Warm-up ramp advances ONLY on days the account ACTUALLY sent — never on calendar
+      // days when the account had no active campaign / didn't send. So an idle mailbox
+      // keeps its ramp FROZEN (no sends → no ramp) and never "wakes up" at a high daily
+      // cap. Pre-compute distinct prior sending days per warm-up account (one query).
+      const accountPriorSendDays: Record<string, number> = {};
+      {
+        const warmupIds = accounts.filter((a: any) => a.warmup_enabled && a.warmup_started_at).map((a: any) => a.id);
+        if (warmupIds.length) {
+          const { data: sdRows } = await adminClient.rpc("account_sending_days", { p_account_ids: warmupIds, p_tz: tz });
+          for (const r of (sdRows || []) as any[]) accountPriorSendDays[r.account_id] = Number(r.days) || 0;
+        }
+      }
+
       // ═══ Per-account effective daily limit (slow ramp aware) — computed ONCE
       // per campaign per tick, not per lead. This also drives the campaign's
       // OWN daily limit below, so it grows automatically as ramp progresses day
@@ -1202,8 +1215,10 @@ serve(async (req) => {
         // freezes over the weekend / non-send days and resumes Monday exactly where
         // Friday left off — never jumping ahead for idle days.
         if (acc.warmup_enabled && acc.warmup_started_at) {
-          const startedAt = new Date(acc.warmup_started_at);
-          const days = countSendingDays(startedAt, now, sendDays, tz);
+          // Days the account ACTUALLY sent (not calendar sending days) → the ramp only
+          // climbs on real send days. No campaign / no sends → days=0 → it stays frozen at
+          // startBase and never jumps ahead for idle days.
+          const days = accountPriorSendDays[acc.id] ?? 0;
           const inc = acc.warmup_increment || 2;
           const target = acc.warmup_limit || limit;
           // warmup_day (repurposed) = the STARTING daily limit (day 1). 0/absent →
