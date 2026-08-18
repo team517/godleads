@@ -6,26 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Copy, Inbox, Code2 } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
-type FormResponse = { id: string; form_title: string | null; respondent_email: string | null; answers: Record<string, unknown> | null; received_at: string };
-
-const appsScript = (url: string) => `function onFormSubmit(e) {
-  var fr = e.response;
-  var form = FormApp.getActiveForm();
-  var items = fr.getItemResponses();
-  var answers = {};
-  for (var i = 0; i < items.length; i++) { answers[items[i].getItem().getTitle()] = items[i].getResponse(); }
-  var email = "";
-  try { email = fr.getRespondentEmail(); } catch (err) {}
-  if (!email) { email = answers["Email"] || answers["Correo"] || answers["Correo electrónico"] || ""; }
-  var payload = { formId: form.getId(), formTitle: form.getTitle(), email: email, answers: answers };
-  UrlFetchApp.fetch("${url}", { method: "post", contentType: "application/json", payload: JSON.stringify(payload), muteHttpExceptions: true });
-}`;
-
-const copy = (t: string) => { navigator.clipboard?.writeText(t).then(() => toast.success("Copiado")).catch(() => toast.error("No se pudo copiar")); };
+type FormResponse = { id: string; form_id: string | null; form_title: string | null; respondent_email: string | null; answers: Record<string, unknown> | null; received_at: string };
 
 // Match an incoming form response to a client in the flow by email, domain or company name.
 const norm = (s?: string | null) => (s || "").toLowerCase().trim();
@@ -135,25 +120,16 @@ export default function AutomationFlow() {
 
   const [forms, setForms] = useState<GForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState("");
   const [responses, setResponses] = useState<FormResponse[]>([]);
-  const [showScript, setShowScript] = useState(false);
   const [respMatch, setRespMatch] = useState<Record<string, string>>({});
 
-  const loadWebhook = async () => {
-    try {
-      const { data } = await supabase.rpc("my_form_webhook" as never);
-      const row = Array.isArray(data) ? (data[0] as any) : (data as any);
-      if (row?.key) setWebhookUrl(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/form-webhook?key=${row.key}`);
-    } catch { /* ignore */ }
-  };
   const loadResponses = async () => {
     try {
       const { data } = await (supabase as any)
         .from("form_responses")
-        .select("id, form_title, respondent_email, answers, received_at")
+        .select("id, form_id, form_title, respondent_email, answers, received_at")
         .order("received_at", { ascending: false })
-        .limit(20);
+        .limit(100);
       setResponses((data || []) as FormResponse[]);
     } catch { /* ignore */ }
   };
@@ -193,7 +169,6 @@ export default function AutomationFlow() {
     setClients(loadArr(CLIENTS_KEY, []));
     setAi(load(AI_KEY, DEFAULT_AI));
     checkGoogle();
-    loadWebhook();
     loadResponses();
     const onFocus = () => { checkGoogle(); loadResponses(); };
     window.addEventListener("focus", onFocus);
@@ -252,76 +227,6 @@ export default function AutomationFlow() {
         </div>
       </div>
 
-      {/* ── Receive form responses (easy path, no OAuth) ── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Inbox className="h-4 w-4 text-primary" /> Recibir respuestas del Form
-            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">Recomendado</span>
-          </CardTitle>
-          <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadResponses}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Pega un mini-script en el Google Form que tú elijas y sus respuestas llegan aquí al instante. Sin OAuth, sin secretos.
-          </p>
-
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowScript((s) => !s)}>
-              <Code2 className="h-4 w-4" /> {showScript ? "Ocultar" : "Ver"} cómo conectarlo
-            </Button>
-            {webhookUrl && <span className="text-xs text-emerald-600">● Tu enlace está listo</span>}
-          </div>
-
-          {showScript && (
-            <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-              <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-                <li>Abre <b className="text-foreground">el Google Form que quieras</b> → menú <b className="text-foreground">⋮ → Editor de secuencias de comandos</b> (Apps Script).</li>
-                <li>Borra lo que haya y <b className="text-foreground">pega este código</b>:</li>
-              </ol>
-              <div className="relative">
-                <pre className="max-h-52 overflow-auto rounded-md bg-background p-3 text-xs leading-relaxed"><code>{appsScript(webhookUrl || "TU_ENLACE")}</code></pre>
-                <Button size="sm" variant="outline" className="absolute right-2 top-2 h-7 gap-1" onClick={() => copy(appsScript(webhookUrl))} disabled={!webhookUrl}><Copy className="h-3.5 w-3.5" /> Copiar</Button>
-              </div>
-              <ol start={3} className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-                <li>Arriba, en <b className="text-foreground">Activadores</b> (icono del reloj) → <b className="text-foreground">Añadir activador</b> → función <code>onFormSubmit</code>, evento <b className="text-foreground">Al enviar el formulario</b> → Guardar (te pedirá autorizar tu propio script una vez).</li>
-                <li>¡Listo! Responde tú mismo el Form para probar y pulsa <b className="text-foreground">Actualizar</b>.</li>
-              </ol>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold text-muted-foreground">Respuestas recibidas</p>
-            {responses.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                Aún no hay respuestas. Cuando alguien responda tu Form, aparecerán aquí.
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {responses.map((r) => (
-                  <div key={r.id} className="rounded-lg border border-border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-medium">{r.respondent_email || "—"}</p>
-                      {respMatch[r.id]
-                        ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> {respMatch[r.id]} · el flujo sigue</span>
-                        : <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">sin cliente que cuadre</span>}
-                    </div>
-                    {r.form_title && <p className="mt-0.5 text-xs text-muted-foreground/70">{r.form_title}</p>}
-                    {r.answers && (
-                      <div className="mt-1.5 space-y-0.5">
-                        {Object.entries(r.answers).slice(0, 6).map(([k, v]) => (
-                          <p key={k} className="text-xs text-muted-foreground"><b className="text-foreground/80">{k}:</b> {String(v)}</p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
       {/* ── Google Forms connection status ── */}
       <Card className={google.connected ? "border-emerald-500/40" : ""}>
         <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
@@ -368,11 +273,11 @@ export default function AutomationFlow() {
               Tus Google Forms
               {ai.formId && <span className="ml-1 text-xs font-normal text-emerald-600">· elegido: {ai.formName}</span>}
             </CardTitle>
-            <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadForms} disabled={formsLoading}>
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => { loadForms(); loadResponses(); }} disabled={formsLoading}>
               <RefreshCw className={`h-4 w-4 ${formsLoading ? "animate-spin" : ""}`} /> Actualizar
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             {formsLoading ? (
               <p className="text-sm text-muted-foreground">Cargando tus formularios…</p>
             ) : forms.length === 0 ? (
@@ -382,7 +287,7 @@ export default function AutomationFlow() {
                 {forms.map((f) => {
                   const sel = ai.formId === f.id;
                   return (
-                    <button key={f.id} onClick={() => { const a = { ...ai, formId: f.id, formName: f.name, formUrl: f.url }; persistAi(a); toast.success(`Formulario elegido: ${f.name}`); }}
+                    <button key={f.id} onClick={() => { const a = { ...ai, formId: f.id, formName: f.name, formUrl: f.url }; persistAi(a); loadResponses(); toast.success(`Formulario elegido: ${f.name}`); }}
                       className={`flex w-full items-center justify-between rounded-lg border p-3 text-left transition ${sel ? "border-emerald-500/50 bg-emerald-500/5" : "border-border hover:border-primary/40 hover:bg-muted/40"}`}>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{f.name}</p>
@@ -394,6 +299,35 @@ export default function AutomationFlow() {
                 })}
               </div>
             )}
+
+            {/* Responses for the selected form — only the respondent (email); the system reads the answers. */}
+            {ai.formId && (() => {
+              const mine = responses.filter((r) => r.form_id === ai.formId);
+              return (
+                <div className="space-y-1.5 border-t border-border pt-3">
+                  <p className="text-xs font-semibold text-muted-foreground">Respuestas de "{ai.formName}" · {mine.length}</p>
+                  {mine.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
+                      Aún no hay respuestas de este formulario.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {mine.map((r) => (
+                        <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate text-sm">{r.respondent_email || "sin correo"}</span>
+                          </span>
+                          {respMatch[r.id]
+                            ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3 w-3" /> {respMatch[r.id]}</span>
+                            : <span className="shrink-0 text-xs text-muted-foreground/70">{r.received_at ? new Date(r.received_at).toLocaleDateString() : ""}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       )}
