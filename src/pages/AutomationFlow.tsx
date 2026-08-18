@@ -27,6 +27,19 @@ const appsScript = (url: string) => `function onFormSubmit(e) {
 
 const copy = (t: string) => { navigator.clipboard?.writeText(t).then(() => toast.success("Copiado")).catch(() => toast.error("No se pudo copiar")); };
 
+// Match an incoming form response to a client in the flow by email, domain or company name.
+const norm = (s?: string | null) => (s || "").toLowerCase().trim();
+const domainOf = (email?: string | null) => norm(email).split("@")[1] || "";
+function clientMatchesResponse(c: { email: string; company: string }, r: FormResponse): boolean {
+  const rEmail = norm(r.respondent_email), rDom = domainOf(r.respondent_email);
+  const ansText = norm(Object.values(r.answers || {}).map((v) => String(v)).join(" "));
+  const cEmail = norm(c.email), cDom = domainOf(c.email), cComp = norm(c.company);
+  if (rEmail && cEmail && rEmail === cEmail) return true;          // exact email
+  if (rDom && cDom && rDom === cDom) return true;                   // same domain
+  if (cComp && cComp.length >= 3 && (ansText.includes(cComp) || rEmail.includes(cComp.replace(/\s+/g, "")))) return true; // company name
+  return false;
+}
+
 // Owner-only automation module — an EDITABLE flow (N8N-style) of the auto-onboarding +
 // customer-service pipeline, organised as separate AI "agents" per phase. It runs on
 // DeepSeek (wired up once the backend deploy path is restored).
@@ -125,6 +138,7 @@ export default function AutomationFlow() {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [showScript, setShowScript] = useState(false);
+  const [respMatch, setRespMatch] = useState<Record<string, string>>({});
 
   const loadWebhook = async () => {
     try {
@@ -176,6 +190,26 @@ export default function AutomationFlow() {
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
   const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); };
   const persistAi = (a: AIConfig) => { setAi(a); save(AI_KEY, a); };
+
+  // When a form response matches a client (email / domain / company), advance that client
+  // past the "responde el Form" step so the flow continues on its own.
+  const RESPONDED_STEP = 3; // index of "IA genera la campaña"
+  useEffect(() => {
+    if (!responses.length || !clients.length) return;
+    const map: Record<string, string> = {};
+    let changed = false;
+    const next = clients.map((c) => ({ ...c }));
+    for (const r of responses) {
+      const idx = next.findIndex((c) => clientMatchesResponse(c, r));
+      if (idx >= 0) {
+        map[r.id] = next[idx].company || next[idx].name || next[idx].email;
+        if (next[idx].step < RESPONDED_STEP) { next[idx].step = RESPONDED_STEP; changed = true; }
+      }
+    }
+    setRespMatch(map);
+    if (changed) persistClients(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responses, clients]);
 
   if (!user) return null;
   if ((user.email || "").toLowerCase() !== "hello@onepulso.blog") return <Navigate to="/dashboard" replace />;
@@ -255,8 +289,11 @@ export default function AutomationFlow() {
                   <div key={r.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-sm font-medium">{r.respondent_email || "—"}</p>
-                      <span className="shrink-0 text-xs text-muted-foreground">{r.form_title || ""}</span>
+                      {respMatch[r.id]
+                        ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> {respMatch[r.id]} · el flujo sigue</span>
+                        : <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">sin cliente que cuadre</span>}
                     </div>
+                    {r.form_title && <p className="mt-0.5 text-xs text-muted-foreground/70">{r.form_title}</p>}
                     {r.answers && (
                       <div className="mt-1.5 space-y-0.5">
                         {Object.entries(r.answers).slice(0, 6).map(([k, v]) => (
