@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 // Owner-only automation module — an EDITABLE flow (N8N-style) of the auto-onboarding +
@@ -40,6 +40,12 @@ type AIConfig = {
 const FLOW_KEY = "op_automation_flow_v2";
 const CLIENTS_KEY = "op_automation_clients_v2";
 const AI_KEY = "op_automation_ai_v1";
+const GOOGLE_KEY = "op_automation_google_v1";
+
+// The connection status is written by the backend once OAuth completes. NEVER store the
+// client secret here — the secret lives only in Supabase edge-function secrets.
+type GoogleConn = { connected: boolean; account: string; connectedAt: string };
+const DEFAULT_GOOGLE: GoogleConn = { connected: false, account: "", connectedAt: "" };
 
 const DEFAULT_NODES: Node[] = [
   { id: "n1", label: "Datos del cliente", desc: "Nombre, correo, empresa y contexto. Su logo y colores ya vienen de su perfil.", agent: "manual" },
@@ -86,6 +92,7 @@ export default function AutomationFlow() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [clients, setClients] = useState<FlowClient[]>([]);
   const [ai, setAi] = useState<AIConfig>(DEFAULT_AI);
+  const [google, setGoogle] = useState<GoogleConn>(DEFAULT_GOOGLE);
   const [editNode, setEditNode] = useState<Node | null>(null);
   const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
   const [aiOpen, setAiOpen] = useState(false);
@@ -94,6 +101,7 @@ export default function AutomationFlow() {
     setNodes(loadArr(FLOW_KEY, DEFAULT_NODES));
     setClients(loadArr(CLIENTS_KEY, []));
     setAi(load(AI_KEY, DEFAULT_AI));
+    setGoogle(load(GOOGLE_KEY, DEFAULT_GOOGLE));
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
   const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); };
@@ -126,6 +134,35 @@ export default function AutomationFlow() {
           </span>
         </div>
       </div>
+
+      {/* ── Google Forms connection status ── */}
+      <Card className={google.connected ? "border-emerald-500/40" : ""}>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+          <div className="flex items-center gap-3">
+            <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${google.connected ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+              <Link2 className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                Conexión con Google Forms
+                {google.connected
+                  ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> Conectado</span>
+                  : <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"><XCircle className="h-3.5 w-3.5" /> No conectado</span>}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {google.connected
+                  ? `Cuenta: ${google.account || "—"}. La IA ya puede leer las respuestas del Form.`
+                  : "Aún no conectado. Se activará cuando cableemos el backend (OAuth). Te avisaré en cuanto quede conectado."}
+              </p>
+            </div>
+          </div>
+          {!google.connected && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.info("Falta desplegar el backend (OAuth de Google). En cuanto haya deploy, se conecta y esto pasa a Conectado.")}>
+              <Link2 className="h-4 w-4" /> Conectar con Google
+            </Button>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Editable flow ── */}
       <Card>
