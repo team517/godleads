@@ -45,7 +45,7 @@ export default function AutomationFlow() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [clients, setClients] = useState<FlowClient[]>([]);
   const [editNode, setEditNode] = useState<Node | null>(null);
-  const [newClient, setNewClient] = useState(false);
+  const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
 
   useEffect(() => { setNodes(load(FLOW_KEY, DEFAULT_NODES)); setClients(load(CLIENTS_KEY, [])); }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
@@ -194,19 +194,23 @@ function NewClientDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
     if (!email.trim()) { toast.error("El correo es obligatorio"); return; }
     onAdd({ name: name.trim(), email: email.trim(), company: company.trim() });
   };
+  const submitOnEnter = (e: React.KeyboardEvent) => { if (e.key === "Enter") submit(); };
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle className="font-display">Datos del cliente</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">Mete los datos y arranca el flujo. Empezará en el paso 1.</p>
-          <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
+        <DialogHeader>
+          <div className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><UserPlus className="h-5 w-5" /></div>
+          <DialogTitle className="text-center font-display text-xl">Comienza un nuevo flujo</DialogTitle>
+          <p className="text-center text-sm text-muted-foreground">Rellena los datos del cliente para arrancar. Empezará en el paso 1.</p>
+        </DialogHeader>
+        <div className="space-y-3 pt-1" onKeyDown={submitOnEnter}>
+          <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Correo *</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@empresa.com" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Nombre de la empresa" /></div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={submit} className="gap-1.5"><Plus className="h-4 w-4" /> Arrancar flujo</Button>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="ghost" onClick={onClose}>Ahora no</Button>
+          <Button onClick={submit} size="lg" className="gap-1.5"><ArrowRight className="h-4 w-4" /> Comenzar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
