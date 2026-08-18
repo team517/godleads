@@ -19,6 +19,9 @@ const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-oauth`;
 const SCOPES = [
   "https://www.googleapis.com/auth/forms.responses.readonly",
   "https://www.googleapis.com/auth/forms.body.readonly",
+  // Drive (metadata read-only) is what lets us LIST the user's Forms — the Forms API
+  // has no "list my forms" endpoint, so we list them via Drive files.
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
   "openid",
   "email",
 ].join(" ");

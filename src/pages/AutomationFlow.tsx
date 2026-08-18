@@ -31,12 +31,15 @@ type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
 type AIConfig = {
   globalMemory: string;
   formUrl: string;
+  formId: string;
+  formName: string;
   onboarding: string;
   campaign: string;
   replies: string;
   autoHandleRoutine: boolean;
   notifyEmail: string;
 };
+type GForm = { id: string; name: string; url: string; modifiedTime: string | null };
 
 const FLOW_KEY = "op_automation_flow_v2";
 const CLIENTS_KEY = "op_automation_clients_v2";
@@ -62,6 +65,8 @@ const DEFAULT_AI: AIConfig = {
   globalMemory:
     "Eres el asistente de OnePulso. Tono cercano, profesional y directo, en el idioma del cliente. Nunca prometas resultados garantizados. Marca (colores, logo, nombre) según el perfil de cada cliente. Ante la duda, escala al dueño en vez de improvisar.",
   formUrl: "",
+  formId: "",
+  formName: "",
   onboarding:
     "Al arrancar, envía un correo con el enlace del Google Form (preguntas para la campaña) y el enlace del onboarding (para que vea su campaña en tiempo real). Cuando termine una fase, actualiza el onboarding en silencio — NO envíes correos por cada fase.",
   campaign:
@@ -98,11 +103,22 @@ export default function AutomationFlow() {
   const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
   const [aiOpen, setAiOpen] = useState(false);
 
+  const [forms, setForms] = useState<GForm[]>([]);
+  const [formsLoading, setFormsLoading] = useState(false);
+
+  const loadForms = async () => {
+    setFormsLoading(true);
+    try {
+      const { data } = await supabase.functions.invoke("google-forms-list");
+      setForms(((data as any)?.forms || []) as GForm[]);
+    } catch { setForms([]); } finally { setFormsLoading(false); }
+  };
+
   const checkGoogle = async () => {
     try {
       const { data } = await supabase.rpc("my_google_connection" as never);
       const row = Array.isArray(data) ? (data[0] as any) : (data as any);
-      if (row && row.connected) setGoogle({ connected: true, account: row.email || "", connectedAt: row.connected_at || "" });
+      if (row && row.connected) { setGoogle({ connected: true, account: row.email || "", connectedAt: row.connected_at || "" }); loadForms(); }
       else setGoogle(DEFAULT_GOOGLE);
     } catch { /* ignore */ }
   };
@@ -186,6 +202,44 @@ export default function AutomationFlow() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Your Google Forms (only when connected) ── */}
+      {google.connected && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base">
+              Tus Google Forms
+              {ai.formId && <span className="ml-1 text-xs font-normal text-emerald-600">· elegido: {ai.formName}</span>}
+            </CardTitle>
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadForms} disabled={formsLoading}>
+              <RefreshCw className={`h-4 w-4 ${formsLoading ? "animate-spin" : ""}`} /> Actualizar
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {formsLoading ? (
+              <p className="text-sm text-muted-foreground">Cargando tus formularios…</p>
+            ) : forms.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No aparecen formularios aún. Si acabas de conectar, pulsa <b className="text-foreground">Actualizar</b>. Se listan los Google Forms de la cuenta conectada.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {forms.map((f) => {
+                  const sel = ai.formId === f.id;
+                  return (
+                    <button key={f.id} onClick={() => { const a = { ...ai, formId: f.id, formName: f.name, formUrl: f.url }; persistAi(a); toast.success(`Formulario elegido: ${f.name}`); }}
+                      className={`flex w-full items-center justify-between rounded-lg border p-3 text-left transition ${sel ? "border-emerald-500/50 bg-emerald-500/5" : "border-border hover:border-primary/40 hover:bg-muted/40"}`}>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{f.name}</p>
+                        <a href={f.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-muted-foreground hover:underline">Abrir en Google ↗</a>
+                      </div>
+                      {sel ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" /> : <span className="shrink-0 text-xs text-muted-foreground">Elegir</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Editable flow ── */}
       <Card>
