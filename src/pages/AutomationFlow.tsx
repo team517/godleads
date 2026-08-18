@@ -161,8 +161,21 @@ export default function AutomationFlow() {
   const loadForms = async () => {
     setFormsLoading(true);
     try {
-      const { data } = await supabase.functions.invoke("google-forms-list");
-      setForms(((data as any)?.forms || []) as GForm[]);
+      let list: GForm[] = [];
+      // Preferred: live list via the edge function (needs Google creds set).
+      try {
+        const { data } = await supabase.functions.invoke("google-forms-list");
+        list = ((data as any)?.forms || []) as GForm[];
+      } catch { /* ignore */ }
+      // Fallback: the server-synced snapshot table.
+      if (!list.length) {
+        const { data } = await (supabase as any)
+          .from("google_forms")
+          .select("form_id, name, url, modified_time")
+          .order("modified_time", { ascending: false });
+        list = ((data || []) as any[]).map((f) => ({ id: f.form_id, name: f.name, url: f.url, modifiedTime: f.modified_time }));
+      }
+      setForms(list);
     } catch { setForms([]); } finally { setFormsLoading(false); }
   };
 
