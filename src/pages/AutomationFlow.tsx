@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2 } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 // Owner-only automation module — an EDITABLE flow (N8N-style) of the auto-onboarding +
 // customer-service pipeline, organised as separate AI "agents" per phase. It runs on
@@ -97,11 +98,24 @@ export default function AutomationFlow() {
   const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
   const [aiOpen, setAiOpen] = useState(false);
 
+  const checkGoogle = async () => {
+    try {
+      const { data } = await supabase.rpc("my_google_connection" as never);
+      const row = Array.isArray(data) ? (data[0] as any) : (data as any);
+      if (row && row.connected) setGoogle({ connected: true, account: row.email || "", connectedAt: row.connected_at || "" });
+      else setGoogle(DEFAULT_GOOGLE);
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
     setNodes(loadArr(FLOW_KEY, DEFAULT_NODES));
     setClients(loadArr(CLIENTS_KEY, []));
     setAi(load(AI_KEY, DEFAULT_AI));
-    setGoogle(load(GOOGLE_KEY, DEFAULT_GOOGLE));
+    checkGoogle();
+    const onFocus = () => checkGoogle();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
   const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); };
@@ -156,11 +170,20 @@ export default function AutomationFlow() {
               </p>
             </div>
           </div>
-          {!google.connected && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.info("Falta desplegar el backend (OAuth de Google). En cuanto haya deploy, se conecta y esto pasa a Conectado.")}>
-              <Link2 className="h-4 w-4" /> Conectar con Google
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => { checkGoogle(); toast.info("Estado actualizado"); }}>
+              <RefreshCw className="h-4 w-4" /> Actualizar
             </Button>
-          )}
+            {!google.connected && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
+                if (!user?.id) return;
+                window.open(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-oauth?owner=${user.id}`, "_blank");
+                toast.info("Autoriza en la pestaña de Google. Al volver, pulsa Actualizar.");
+              }}>
+                <Link2 className="h-4 w-4" /> Conectar con Google
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
