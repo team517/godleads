@@ -172,7 +172,9 @@ export default function AutomationFlow() {
     loadResponses();
     const onFocus = () => { checkGoogle(); loadResponses(); };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    // Auto-refresh the responses list every minute (the DB cron pulls new ones every 2 min).
+    const iv = setInterval(() => loadResponses(), 60000);
+    return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
