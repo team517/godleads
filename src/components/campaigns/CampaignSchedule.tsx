@@ -23,7 +23,7 @@ const DAYS = [
 const TIMEZONES = [
   "UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
   "Europe/London", "Europe/Madrid", "Europe/Paris", "Europe/Berlin",
-  "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney",
+  "Asia/Dubai", "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney",
 ];
 
 export default function CampaignSchedule({ campaignId }: Props) {
