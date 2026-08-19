@@ -82,8 +82,9 @@ serve(async (req) => {
   if (!dkKey) return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY missing" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   // The owner (agency) whose inbox we watch. Passed in, or default to the known owner.
-  const { owner_user_id, account_id, limit } = await req.json().catch(() => ({} as any));
+  const { owner_user_id, account_id, limit, dry_run } = await req.json().catch(() => ({} as any));
   const ownerId = owner_user_id || "b94a0bdf-0120-44cd-8c7d-51126bfc2075";
+  const dryRun = !!dry_run; // dry_run: decide but NEVER send emails / edit campaigns / mark read
 
   // 1) Unprocessed inbound to the owner's connected mailboxes (skip warmup / our own sends).
   let q = admin.from("inbox_messages").select("*").eq("user_id", ownerId).eq("auto_replied", false).eq("is_sent", false).eq("is_warmup", false).order("received_at", { ascending: true }).limit(Math.min(limit || 15, 30));
@@ -100,7 +101,7 @@ serve(async (req) => {
   for (const m of msgs) {
     const fromEmail = (m.from_email || "").toLowerCase();
     const dom = domainOf(fromEmail);
-    if (!dom || !teamAcct) { await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id); continue; }
+    if (!dom || !teamAcct) { if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id); continue; }
 
     // 2) Match the sender to a CLIENT by the domain of the client's own mailboxes.
     const { data: domAccts } = await admin.from("email_accounts").select("user_id, email").ilike("email", `%@${dom}`).neq("user_id", ownerId).limit(1);
@@ -108,11 +109,10 @@ serve(async (req) => {
     const body = (m.body_text || m.body_html || "").slice(0, 2500);
 
     if (!clientId) {
-      // Unknown sender → escalate to the team, don't guess.
-      const html = textToHtml(`Correo de un remitente no reconocido en atención al cliente.\n\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\n${body}`);
-      if (teamAcct) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] Remitente desconocido: ${m.from_email}`, html);
-      await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
-      results.push({ id: m.id, action: "escalate_unknown" }); processed++; continue;
+      // Not from a known client (newsletter, lead reply, tool notification…) → IGNORE.
+      // Only emails whose domain matches a client's own mailboxes are handled.
+      if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
+      results.push({ id: m.id, from: m.from_email, action: "skip_unknown" }); continue;
     }
 
     // Client context: profile + their draft campaigns (+ steps for possible copy edits).
@@ -127,29 +127,36 @@ serve(async (req) => {
     let d: any = {};
     try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "escalate", summary: "fallo IA" }; }
 
+    const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
+
     if (d.action === "copy_change" && draft && steps?.length && (d.new_subject || d.new_body) && d.step_order != null) {
       const target = (steps as any[]).find((s: any) => s.step_order === Number(d.step_order));
       if (target) {
-        const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body));
-        await admin.from("campaign_steps").update(upd).eq("id", target.id);
-        const html = textToHtml(d.reply || `¡Hecho! Los cambios ya están aplicados en tu campaña. Puedes verlos entrando en tu cuenta. Cualquier otra cosa, aquí estamos.`);
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, html);
-        results.push({ id: m.id, action: "copy_change", step: d.step_order });
+        if (!dryRun) {
+          const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body));
+          await admin.from("campaign_steps").update(upd).eq("id", target.id);
+          const html = textToHtml(d.reply || `¡Hecho! Los cambios ya están aplicados en tu campaña. Puedes verlos entrando en tu cuenta. Cualquier otra cosa, aquí estamos.`);
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, html);
+        }
+        results.push({ ...base, action: "copy_change", step: d.step_order }); processed++;
       } else { d.action = "escalate"; }
     }
     if (d.action === "reply") {
-      const html = textToHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
-      await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
-      results.push({ id: m.id, action: "reply" });
+      if (!dryRun) {
+        const html = textToHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
+      }
+      results.push({ ...base, action: "reply" }); processed++;
     }
     if (d.action === "escalate" || (!["reply", "copy_change"].includes(d.action))) {
-      const html = textToHtml(`Atención al cliente — requiere tu decisión.\n\nCliente: ${prof?.company_name || dom}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
-      await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] ${prof?.company_name || m.from_email}`, html);
-      results.push({ id: m.id, action: "escalate" });
+      if (!dryRun) {
+        const html = textToHtml(`Atención al cliente — requiere tu decisión.\n\nCliente: ${prof?.company_name || dom}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] ${prof?.company_name || m.from_email}`, html);
+      }
+      results.push({ ...base, action: "escalate" }); processed++;
     }
 
-    await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
-    processed++;
+    if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
   }
 
   return new Response(JSON.stringify({ processed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
