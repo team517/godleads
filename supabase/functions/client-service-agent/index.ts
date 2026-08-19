@@ -38,6 +38,17 @@ const DEFAULT_ATENCION = `Eres la atención al cliente de OnePulso (agencia de c
 
 const domainOf = (email: string) => (email || "").toLowerCase().split("@")[1]?.trim() || "";
 
+// Strip quoted history + MIME/header noise so the model reads ONLY the client's new message.
+function cleanBody(raw: string): string {
+  let t = (raw || "").replace(/\r/g, "");
+  const markers = [/\nOn .+ wrote:/i, /\nEl .+ escribi[oó]:/i, /\n-{2,}\s*Forwarded/i, /\n_{5,}/, /\nDe: .+\nEnviado:/i, /\nFrom: .+\nSent:/i];
+  for (const rx of markers) { const mm = t.match(rx); if (mm && mm.index != null && mm.index > 20) t = t.slice(0, mm.index); }
+  t = t.split("\n")
+    .filter((l) => !/^--[0-9a-f]{8,}/i.test(l) && !/^BODY\[/i.test(l) && !/^Content-(Type|Transfer|Disposition)/i.test(l) && !/^>+/.test(l.trim()))
+    .join("\n");
+  return t.trim().slice(0, 2500);
+}
+
 function textToHtml(text: string): string {
   if (/<(p|div|br)\b/i.test(text)) return text;
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
@@ -124,25 +135,15 @@ serve(async (req) => {
     const dom = domainOf(fromEmail);
     if (!dom || !teamAcct) { if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id); continue; }
 
-    // 2) Match the sender to a CLIENT by the domain of the client's own mailboxes.
-    const { data: domAccts } = await admin.from("email_accounts").select("user_id, email").ilike("email", `%@${dom}`).neq("user_id", ownerId).limit(1);
-    const clientId = (domAccts || [])[0]?.user_id;
-    const body = (m.body_text || m.body_html || "").slice(0, 2500);
-
-    if (!clientId) {
-      // On the dedicated support inbox (account_id set) an unknown sender is worth a human
-      // look → escalate to team@. On the general inbox, ignore (avoids escalating newsletters).
-      if (account_id) {
-        if (!dryRun) {
-          const html = textToHtml(`Alguien escribió a atención al cliente y no es un cliente reconocido (por dominio).\n\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\n${body}`);
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] ${m.from_email}`, html);
-          await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
-        }
-        results.push({ id: m.id, from: m.from_email, action: "escalate_unknown" }); processed++; continue;
-      }
-      if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
-      results.push({ id: m.id, from: m.from_email, action: "skip_unknown" }); continue;
-    }
+    // 2) Match the sender to a CLIENT. A client may write from a personal address (gmail…),
+    //    so try, in order: (a) their registered account/login email; (b) their profile contact
+    //    email; (c) the domain of their own mailboxes. First hit wins.
+    let clientId: string | null = null;
+    try { const { data: byMail } = await admin.rpc("automation_client_by_email", { p_email: fromEmail }); if (byMail) clientId = byMail as any; } catch { /* rpc optional */ }
+    if (!clientId) { const { data: byContact } = await admin.from("profiles").select("user_id").ilike("contact_email", fromEmail).neq("user_id", ownerId).limit(1); clientId = (byContact || [])[0]?.user_id || null; }
+    if (!clientId && dom) { const { data: domAccts } = await admin.from("email_accounts").select("user_id").ilike("email", `%@${dom}`).neq("user_id", ownerId).limit(1); clientId = (domAccts || [])[0]?.user_id || null; }
+    const known = !!clientId;
+    const body = cleanBody(m.body_text || m.body_html || "");
 
     // Client context: profile + their draft campaigns (+ steps for possible copy edits).
     const { data: prof } = await admin.from("profiles").select("company_name, ai_reply_prompt").eq("user_id", clientId).maybeSingle();
@@ -156,43 +157,78 @@ serve(async (req) => {
 
     const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION)
       + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
-      + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","summary":"<qué pide, para el equipo>"}. Usa copy_change cuando el cliente pida cambiar el asunto o el cuerpo de un email: si te da el texto, úsalo; si no, redacta tú una versión buena y coherente con lo que pide y aplícala (NO pidas más datos, NO le preguntes el email). En "reply" de un copy_change, confirma que YA lo has aplicado y que puede verlo en su campaña. Escala solo si es dudoso o no es un cambio de copy.`;
-    const userMsg = `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\nCORREO DEL CLIENTE:\nDe: ${m.from_email}\nAsunto: ${m.subject}\n${body}`;
+      + `\n\n${known ? "Este remitente ES un cliente conocido (su dominio cuadra con una cuenta registrada)." : "Este remitente NO es un cliente conocido (su dominio no cuadra con ninguna cuenta registrada)."}`
+      + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate|ignore","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","summary":"<qué pide, para el equipo>"}.
+- "reply": SOLO si es un cliente conocido con una duda/objeción/consulta rutinaria → respóndele tú con naturalidad y resuélvelo.
+- "copy_change": cliente conocido pide cambiar el asunto/cuerpo/nombre/firma de su campaña → aplícalo tú (NO pidas datos ni el email). Para cambiar UN email concreto usa step_order + new_subject/new_body. Para un cambio que afecta a TODOS los emails (p.ej. cambiar un nombre o firma como "Xavi" por "José", un enlace o una palabra) usa find + replace_with con el texto EXACTO tal cual aparece. En "reply" confirma que YA está aplicado.
+- "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online.
+- "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
+REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE para lo esencial (reunión/devolución/dinero/cancelación/legal/queja seria). Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore" — nunca "reply" ni "copy_change".`;
+    const userMsg = (known
+      ? `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
+      : `REMITENTE DESCONOCIDO (no es un cliente registrado).\n\n`)
+      + `CORREO RECIBIDO:\nDe: ${m.from_email}\nAsunto: ${m.subject}\n${body}`;
 
     let d: any = {};
-    try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "escalate", summary: "fallo IA" }; }
+    try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "ignore", summary: "fallo IA" }; }
+    // A non-client can only be escalated (if essential) or ignored — never auto-replied or copy-edited.
+    if (!known && (d.action === "reply" || d.action === "copy_change")) d.action = "ignore";
 
     const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
 
-    if (d.action === "copy_change" && draft && steps?.length && (d.new_subject || d.new_body) && d.step_order != null) {
-      const target = (steps as any[]).find((s: any) => s.step_order === Number(d.step_order));
-      if (target) {
-        if (!dryRun) {
-          const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body));
-          await admin.from("campaign_steps").update(upd).eq("id", target.id);
-          const html = textToHtml(d.reply || `¡Hecho! Los cambios ya están aplicados en tu campaña. Puedes verlos entrando en tu cuenta. Cualquier otra cosa, aquí estamos.`);
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, html);
+    let handled = false;
+    if (d.action === "copy_change" && known) {
+      // Apply the change to the client's DRAFT campaign. Two shapes: a global find/replace
+      // across ALL steps (name/signature/word), or a specific step's subject/body.
+      let applied = false;
+      if (steps?.length) {
+        const doGlobal = d.find && d.replace_with != null;
+        const doStep = d.step_order != null && (d.new_subject || d.new_body);
+        if (dryRun) {
+          applied = !!(doGlobal || doStep);
+        } else if (doGlobal) {
+          const find = String(d.find);
+          for (const s of steps as any[]) {
+            const ns = String(s.subject || "").split(find).join(String(d.replace_with));
+            const nb = String(s.body || "").split(find).join(String(d.replace_with));
+            if (ns !== s.subject || nb !== s.body) { await admin.from("campaign_steps").update({ subject: ns, body: nb }).eq("id", s.id); applied = true; }
+          }
+        } else if (doStep) {
+          const target = (steps as any[]).find((s: any) => s.step_order === Number(d.step_order));
+          if (target) { const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body)); await admin.from("campaign_steps").update(upd).eq("id", target.id); applied = true; }
         }
-        results.push({ ...base, action: "copy_change", step: d.step_order }); processed++;
-      } else { d.action = "escalate"; }
+      }
+      // ALWAYS answer the client — never go silent on a change request.
+      const reply = applied
+        ? (d.reply || "¡Hecho! Ya he aplicado el cambio en los mensajes de tu campaña. Puedes verlo entrando en tu cuenta. Cualquier otra cosa, aquí estamos.")
+        : "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
+      if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(reply));
+      d.reply = reply;
+      results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
     }
-    if (d.action === "reply") {
+    if (!handled && d.action === "reply" && known) {
       if (!dryRun) {
         const html = textToHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
         await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
       }
-      results.push({ ...base, action: "reply" }); processed++;
+      results.push({ ...base, action: "reply" }); processed++; handled = true;
     }
-    if (d.action === "escalate" || (!["reply", "copy_change"].includes(d.action))) {
+    if (!handled && d.action === "escalate") {
+      // ESSENTIAL only (meeting/refund/money/cancellation/legal/serious complaint) → notify team@.
       if (!dryRun) {
-        const html = textToHtml(`Atención al cliente — requiere tu decisión.\n\nCliente: ${prof?.company_name || dom}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] ${prof?.company_name || m.from_email}`, html);
+        const html = textToHtml(`Atención al cliente — ESENCIAL, requiere tu decisión.\n\n${known ? `Cliente: ${prof?.company_name || dom}` : `Remitente (no es cliente): ${m.from_email}`}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención · esencial] ${prof?.company_name || m.from_email}`, html);
       }
-      results.push({ ...base, action: "escalate" }); processed++;
+      results.push({ ...base, action: "escalate" }); processed++; handled = true;
+    }
+    if (!handled) {
+      // Non-essential / noise → do nothing, notify nobody. Just mark it processed.
+      d.action = "ignore";
+      results.push({ ...base, action: "ignore" });
     }
 
     if (!dryRun) {
-      await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: d.action || "escalate", inbound: body.slice(0, 1200), reply: (d.reply || "").slice(0, 1200) });
+      await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: d.action || "ignore", inbound: body.slice(0, 1200), reply: (d.reply || "").slice(0, 1200) });
       await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
     }
    } catch (e) {

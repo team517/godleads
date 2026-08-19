@@ -26,6 +26,18 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
   return false;
 }
 
+// Clean an inbound email body for display: strip quoted history + MIME/header noise, keep the
+// person's actual message. Mirrors the cleaner the client-service-agent applies server-side.
+function cleanInbound(raw?: string | null): string {
+  let t = (raw || "").replace(/\r/g, "");
+  const markers = [/\nOn .+ wrote:/i, /\nEl .+ escribi[oó]:/i, /\n-{2,}\s*Forwarded/i, /\n_{5,}/, /\nDe: .+\nEnviado:/i, /\nFrom: .+\nSent:/i];
+  for (const rx of markers) { const mm = t.match(rx); if (mm && mm.index != null && mm.index > 20) t = t.slice(0, mm.index); }
+  t = t.split("\n").filter((l) => !/^--[0-9a-f]{8,}/i.test(l) && !/^BODY\[/i.test(l) && !/^Content-(Type|Transfer|Disposition)/i.test(l) && !/^>+/.test(l.trim())).join("\n");
+  return t.replace(/\n{3,}/g, "\n\n").trim();
+}
+const ACTION_LABEL: Record<string, string> = { reply: "Respondido", copy_change: "Copy cambiado", escalate: "Escalado a team@", ignore: "Sin acción", error: "Error", skip_unknown: "Sin acción", escalate_unknown: "Escalado" };
+const ACTION_STYLE = (a: string) => a === "error" ? "bg-destructive/10 text-destructive" : a === "copy_change" ? "bg-emerald-500/10 text-emerald-600" : a === "reply" ? "bg-blue-500/10 text-blue-600" : /escalate/.test(a) ? "bg-amber-500/10 text-amber-600" : "bg-muted text-muted-foreground";
+
 // Owner-only automation module — an EDITABLE flow (N8N-style) of the auto-onboarding +
 // customer-service pipeline, organised as separate AI "agents" per phase. It runs on
 // DeepSeek (wired up once the backend deploy path is restored).
@@ -304,17 +316,33 @@ export default function AutomationFlow() {
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [respMatch, setRespMatch] = useState<Record<string, string>>({});
   const [serviceActivity, setServiceActivity] = useState<any[]>([]);
+  const [supportInbox, setSupportInbox] = useState<any[]>([]);
+  const [expandedMsg, setExpandedMsg] = useState<Record<string, boolean>>({});
   const [agentRunning, setAgentRunning] = useState(false);
   const campaignStartedRef = useRef<Set<string>>(new Set());
   const SUPPORT_ACCOUNT = "7b97ced3-007b-44b4-846b-49dfb78d8454"; // support@onepulso.online mailbox
 
   const loadServiceActivity = async () => { try { const { data } = await supabase.rpc("my_service_activity" as never); setServiceActivity((data as any[]) || []); } catch { /* */ } };
+  // Real Unibox of support@onepulso.online — the chatbot's mailbox. Reads inbox_messages
+  // directly (owner RLS), newest first, full message. Refreshes every 2 min like the campaigns Unibox.
+  const loadSupportInbox = async () => {
+    try {
+      const { data } = await (supabase as any)
+        .from("inbox_messages")
+        .select("id, from_email, from_name, subject, body_text, body_html, received_at, auto_replied")
+        .eq("account_id", SUPPORT_ACCOUNT).eq("is_sent", false).eq("is_warmup", false)
+        .order("received_at", { ascending: false }).limit(40);
+      setSupportInbox((data as any[]) || []);
+    } catch { /* */ }
+  };
+  // Latest agent action for a given sender (overlay on each inbox message).
+  const actionFor = (fromEmail: string) => serviceActivity.find((a) => (a.from_email || "").toLowerCase() === (fromEmail || "").toLowerCase());
   const runAgent = async (dry: boolean) => {
     setAgentRunning(true);
     try {
       const { data } = await supabase.functions.invoke("client-service-agent", { body: { account_id: SUPPORT_ACCOUNT, dry_run: dry, limit: 10 } });
       toast.success(`Agente: ${(data as any)?.processed ?? 0} correo(s) ${dry ? "analizados (prueba)" : "procesados"}`);
-      loadServiceActivity();
+      loadServiceActivity(); loadSupportInbox();
     } catch { toast.error("No se pudo ejecutar el agente"); }
     setAgentRunning(false);
   }; // flow clients whose campaign generation already started
@@ -367,11 +395,14 @@ export default function AutomationFlow() {
     checkGoogle();
     loadResponses();
     loadServiceActivity();
-    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); };
+    loadSupportInbox();
+    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); loadSupportInbox(); };
     window.addEventListener("focus", onFocus);
-    // Auto-refresh the responses list every minute (the DB cron pulls new ones every 2 min).
+    // Auto-refresh like the campaigns Unibox: responses every min; the support@ inbox +
+    // agent activity every 2 min (the fetch-inbox cron pulls new mail every minute).
     const iv = setInterval(() => loadResponses(), 60000);
-    return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); };
+    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); }, 120000);
+    return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); clearInterval(iv2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
@@ -710,28 +741,56 @@ export default function AutomationFlow() {
             <MessageSquare className="h-4 w-4 text-primary" /> Agente de atención al cliente
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> Activo</span>
           </CardTitle>
-          <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadServiceActivity}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
+          <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => { loadSupportInbox(); loadServiceActivity(); }}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            El chatbot vive en <b className="text-foreground">support@onepulso.online</b>. Lee los correos, cuadra al cliente por su dominio, responde y aplica cambios de copy, y escala lo dudoso a team@. Corre cada 3 min y responde a los <b className="text-foreground">~5 min</b> (humano).
+            El chatbot vive SOLO en <b className="text-foreground">support@onepulso.online</b>. Lee cada correo, cuadra al cliente por su <b className="text-foreground">cuenta o dominio</b>, responde y aplica cambios de copy automáticamente, e ignora el ruido. Solo avisa a <b className="text-foreground">team@onepulso.online</b> lo <b className="text-foreground">esencial</b> (reuniones, devoluciones, dinero, cancelaciones, legal). Corre cada 3 min y responde a los <b className="text-foreground">~5 min</b> (humano).
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" className="gap-1.5" onClick={() => runAgent(false)} disabled={agentRunning}>{agentRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquare className="h-4 w-4" />} Ejecutar ahora</Button>
             <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => runAgent(true)} disabled={agentRunning}>Ver qué haría (prueba)</Button>
           </div>
           <div>
-            <p className="mb-1 text-xs font-semibold text-muted-foreground">Actividad reciente {serviceActivity.some((a) => a.action === "error") && <span className="text-destructive">· hay errores</span>}</p>
-            {serviceActivity.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Sin actividad todavía. Cuando un cliente escriba a support@, aparecerá aquí.</p>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Mail className="h-3.5 w-3.5" /> Bandeja de support@onepulso.online
+              {serviceActivity.some((a) => a.action === "error") && <span className="text-destructive">· hay errores</span>}
+              <span className="ml-auto font-normal">se refresca solo cada 2 min</span>
+            </p>
+            {supportInbox.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Aún no hay correos en support@. Cuando alguien escriba, el mensaje completo aparecerá aquí y el bot actuará solo.</p>
             ) : (
-              <div className="space-y-1">
-                {serviceActivity.slice(0, 12).map((a, i) => (
-                  <div key={i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-xs ${a.action === "error" ? "border-destructive/40 bg-destructive/5" : "border-border"}`}>
-                    <span className="min-w-0 truncate"><b>{a.from_email}</b>{a.reply ? ` · ${a.reply.slice(0, 70)}` : ""}</span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${a.action === "error" ? "bg-destructive/10 text-destructive" : a.action === "copy_change" ? "bg-emerald-500/10 text-emerald-600" : /escalate/.test(a.action) ? "bg-amber-500/10 text-amber-600" : "bg-muted text-muted-foreground"}`}>{a.action === "escalate_unknown" ? "escalado" : a.action}</span>
-                  </div>
-                ))}
+              <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">
+                {supportInbox.map((m) => {
+                  const act = actionFor(m.from_email);
+                  const bodyFull = cleanInbound(m.body_text || m.body_html);
+                  const isOpen = !!expandedMsg[m.id];
+                  const long = bodyFull.length > 240;
+                  return (
+                    <div key={m.id} className="rounded-lg border border-border p-3 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">{m.from_name ? `${m.from_name} · ` : ""}{m.from_email}</p>
+                          <p className="truncate text-muted-foreground">{m.subject || "(sin asunto)"}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="text-[10px] text-muted-foreground">{m.received_at ? new Date(m.received_at).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                          {act
+                            ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ACTION_STYLE(act.action)}`}>{ACTION_LABEL[act.action] || act.action}</span>
+                            : <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{m.auto_replied ? "Procesado" : "En cola"}</span>}
+                        </div>
+                      </div>
+                      {bodyFull && (
+                        <div className="mt-2 whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-foreground/90">
+                          {isOpen || !long ? bodyFull : bodyFull.slice(0, 240) + "…"}
+                          {long && <button className="ml-1 font-medium text-primary" onClick={() => setExpandedMsg((p) => ({ ...p, [m.id]: !isOpen }))}>{isOpen ? "Ver menos" : "Ver más"}</button>}
+                        </div>
+                      )}
+                      {act?.reply && act.action !== "error" && <p className="mt-1.5 break-words text-muted-foreground"><b className="text-foreground">Respuesta del bot:</b> {act.reply.slice(0, 280)}</p>}
+                      {act?.action === "error" && <p className="mt-1.5 break-words text-destructive"><b>Error:</b> {(act.reply || "").slice(0, 200)} · se reintenta solo en la próxima pasada.</p>}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
