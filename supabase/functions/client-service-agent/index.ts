@@ -111,13 +111,15 @@ serve(async (req) => {
   const { data: msgs } = await q;
   if (!msgs?.length) return new Response(JSON.stringify({ processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-  // Sending mailbox = the owner's team@ account (to reply/notify from).
+  // Sending mailbox = the configured service inbox (account_id) if given, else team@/support@.
   const { data: ownerAccts } = await admin.from("email_accounts").select("id, email, smtp_host, smtp_port, smtp_username, smtp_password, status").eq("user_id", ownerId).eq("status", "connected");
-  const teamAcct = (ownerAccts || []).find((a: any) => /team@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
+  const teamAcct = (account_id ? (ownerAccts || []).find((a: any) => a.id === account_id) : null)
+    || (ownerAccts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
 
   let processed = 0;
   const results: any[] = [];
   for (const m of msgs) {
+   try {
     const fromEmail = (m.from_email || "").toLowerCase();
     const dom = domainOf(fromEmail);
     if (!dom || !teamAcct) { if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id); continue; }
@@ -128,8 +130,16 @@ serve(async (req) => {
     const body = (m.body_text || m.body_html || "").slice(0, 2500);
 
     if (!clientId) {
-      // Not from a known client (newsletter, lead reply, tool notification…) → IGNORE.
-      // Only emails whose domain matches a client's own mailboxes are handled.
+      // On the dedicated support inbox (account_id set) an unknown sender is worth a human
+      // look → escalate to team@. On the general inbox, ignore (avoids escalating newsletters).
+      if (account_id) {
+        if (!dryRun) {
+          const html = textToHtml(`Alguien escribió a atención al cliente y no es un cliente reconocido (por dominio).\n\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\n${body}`);
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención] ${m.from_email}`, html);
+          await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
+        }
+        results.push({ id: m.id, from: m.from_email, action: "escalate_unknown" }); processed++; continue;
+      }
       if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
       results.push({ id: m.id, from: m.from_email, action: "skip_unknown" }); continue;
     }
@@ -185,6 +195,11 @@ serve(async (req) => {
       await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: d.action || "escalate", inbound: body.slice(0, 1200), reply: (d.reply || "").slice(0, 1200) });
       await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
     }
+   } catch (e) {
+     // Error is logged for the owner (visible in Automatización) — the client is told nothing.
+     if (!dryRun) { try { await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: "error", reply: String((e as Error).message).slice(0, 500) }); } catch { /* */ } }
+     results.push({ id: m.id, from: m.from_email, action: "error", error: String((e as Error).message) });
+   }
   }
 
   return new Response(JSON.stringify({ processed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
