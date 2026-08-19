@@ -503,6 +503,24 @@ export default function AutomationFlow() {
   };
   const approveClient = (fc: FlowClient) => { advance(fc); sendCopysToClient(fc); };
 
+  // TEST: simulate a Form answer for a client so you can run the generation step without
+  // filling the real Google Form. Uses the client's company + context as the briefing.
+  const simulateForm = (c: FlowClient) => {
+    if (!c.clientId) { toast.error("Este cliente no tiene cuenta creada (créalo desde 'Nuevo cliente')"); return; }
+    const testResp: FormResponse = {
+      id: "test-" + uid(), form_id: "test", form_title: "Prueba",
+      respondent_email: c.email,
+      answers: { "Empresa": c.company || c.name || "", "Contexto para la campaña": c.context || "Campaña de prueba para ver el proceso" },
+      received_at: new Date().toISOString(),
+    };
+    const respondedStep = Math.min(formNodeIdx(nodes) + 1, nodes.length - 1);
+    campaignStartedRef.current.delete(c.id);
+    updateFlowClient(c.id, { step: respondedStep, campaignStatus: undefined, campaignError: undefined });
+    syncOnboarding(c.clientId, respondedStep);
+    toast.info("Simulando respuesta del Form…");
+    generateCampaignFor({ ...c, step: respondedStep }, testResp);
+  };
+
   // The client whose run is being visualised on the flow (defaults to the most recent).
   const activeClient = clients.find((c) => c.id === activeClientId) || clients[0] || null;
   const activeStep = activeClient ? activeClient.step : -1;
@@ -738,6 +756,8 @@ export default function AutomationFlow() {
                         {isApproval
                           ? <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setReviewClient(c)}><CheckCircle2 className="h-3.5 w-3.5" /> Revisar y aprobar</Button>
                           : <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>}
+                        {c.campaignStatus === "done" && <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => setReviewClient(c)}><FileText className="h-3.5 w-3.5" /> Ver mensajes</Button>}
+                        {c.clientId && <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => simulateForm(c)} title="Probar: simula la respuesta del Form y genera la campaña"><RefreshCw className="h-3.5 w-3.5" /> Probar Form</Button>}
                         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </div>
