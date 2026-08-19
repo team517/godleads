@@ -126,12 +126,13 @@ const genPassword = () => Math.random().toString(36).slice(2, 10) + "Aa1!" + Mat
 // Maps the flow step to the 6 onboarding phases (kickoff, dominios, calentamiento, listas,
 // copywriting, lanzamiento) so the client's onboarding fills in ON ITS OWN as the flow runs.
 function onboardingStatusForFlow(step: number): ("pending" | "in_progress" | "done")[] {
+  // Phases: 0 kickoff/estrategia · 1 dominios · 2 calentamiento · 3 listas · 4 copywriting · 5 lanzamiento
   const s: ("pending" | "in_progress" | "done")[] = ["pending", "pending", "pending", "pending", "pending", "pending"];
-  if (step >= 1) s[0] = "in_progress";                                     // arranque → kickoff en curso
-  if (step >= 3) { s[0] = "done"; s[1] = "in_progress"; }                  // form respondido → estrategia lista
-  if (step >= 4) { s[1] = "done"; s[2] = "done"; s[3] = "done"; s[4] = "in_progress"; } // IA genera → dominios/calentamiento/listas ok, copys en curso
-  if (step >= 5) { s[4] = "done"; s[5] = "in_progress"; }                  // aprobado/activa → copys listos, lanzamiento
-  if (step >= 6) { s[5] = "done"; }                                        // atención → lanzamiento hecho
+  if (step >= 1) s[0] = "in_progress";                                       // arranque → kickoff en curso
+  if (step >= 3) { s[0] = "done"; s[1] = "done"; s[2] = "done"; s[3] = "in_progress"; } // form respondido → estrategia + dominios + calentamiento hechos, listas en curso
+  if (step >= 4) { s[3] = "done"; s[4] = "in_progress"; }                    // IA genera → listas ok, copys en curso
+  if (step >= 5) { s[4] = "done"; s[5] = "in_progress"; }                    // aprobado/activa → copys listos, lanzamiento
+  if (step >= 6) { s[5] = "done"; }                                          // atención → lanzamiento hecho
   return s;
 }
 
