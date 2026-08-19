@@ -135,6 +135,12 @@ function onboardingStatusForFlow(step: number): ("pending" | "in_progress" | "do
   return s;
 }
 
+// The flow is editable, so we locate the key steps by their node (never a hard-coded index):
+// the "Correo de arranque" node and the "Cliente responde el Form" node. Fall back to the
+// default positions (1, 2) only if a matching node isn't found.
+const emailNodeIdx = (ns: Node[]) => { const i = ns.findIndex((n) => /correo|arranque/i.test(n.label)); return i >= 0 ? i : 1; };
+const formNodeIdx = (ns: Node[]) => { const i = ns.findIndex((n) => /responde/i.test(n.label) && /form/i.test(n.label)); return i >= 0 ? i : 2; };
+
 // Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
 // touch daily limits / the sent log). Same send-email fn the Onboarding page uses.
 async function sendIntroEmail(accountId: string, to: string, subject: string, html: string) {
@@ -237,10 +243,10 @@ export default function AutomationFlow() {
   const persistAi = (a: AIConfig) => { setAi(a); save(AI_KEY, a); };
 
   // When a form response matches a client (email / domain / company), advance that client
-  // past the "responde el Form" step so the flow continues on its own.
-  const RESPONDED_STEP = 3; // index of "IA genera la campaña"
+  // to the step AFTER "responde el Form" so the flow continues on its own.
   useEffect(() => {
     if (!responses.length || !clients.length) return;
+    const respondedStep = Math.min(formNodeIdx(nodes) + 1, nodes.length - 1); // node right after "responde Form"
     const map: Record<string, string> = {};
     let changed = false;
     const next = clients.map((c) => ({ ...c }));
@@ -248,13 +254,13 @@ export default function AutomationFlow() {
       const idx = next.findIndex((c) => clientMatchesResponse(c, r));
       if (idx >= 0) {
         map[r.id] = next[idx].company || next[idx].name || next[idx].email;
-        if (next[idx].step < RESPONDED_STEP) { next[idx].step = RESPONDED_STEP; changed = true; syncOnboarding(next[idx].clientId, RESPONDED_STEP); }
+        if (next[idx].step < respondedStep) { next[idx].step = respondedStep; changed = true; syncOnboarding(next[idx].clientId, respondedStep); }
       }
     }
     setRespMatch(map);
     if (changed) persistClients(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [responses, clients]);
+  }, [responses, clients, nodes]);
 
   if (!user) return null;
   if ((user.email || "").toLowerCase() !== "hello@onepulso.blog") return <Navigate to="/dashboard" replace />;
@@ -580,7 +586,8 @@ export default function AutomationFlow() {
           // 3) Add to the flow at the "Correo de arranque" step, marked as SENDING (the node
           //    stays loading until the email is REALLY sent — no jumping ahead).
           const flowId = uid();
-          persistClients([{ id: flowId, step: 1, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, emailStatus: "sending", ...data }, ...clients]);
+          const emailStep = emailNodeIdx(nodes);
+          persistClients([{ id: flowId, step: emailStep, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, emailStatus: "sending", ...data }, ...clients]);
           setNewClient(false);
           toast.success(`Cliente creado con onboarding: /o/${slug}`);
           // 4) Send the intro email IN THE BACKGROUND, then reflect the REAL result on the flow.
@@ -606,8 +613,9 @@ export default function AutomationFlow() {
               const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor });
               const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
               if (r?.success) {
-                updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: 2 });
-                syncOnboarding(cr.user_id, 2);
+                const formStep = formNodeIdx(nodes);
+                updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: formStep });
+                syncOnboarding(cr.user_id, formStep);
                 toast.success(`Correo enviado desde ${fromEmail}`);
               } else {
                 updateFlowClient(flowId, { emailStatus: "failed", emailError: r?.error || "error de envío" });
