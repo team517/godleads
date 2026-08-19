@@ -303,7 +303,21 @@ export default function AutomationFlow() {
   const [formsLoading, setFormsLoading] = useState(false);
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [respMatch, setRespMatch] = useState<Record<string, string>>({});
-  const campaignStartedRef = useRef<Set<string>>(new Set()); // flow clients whose campaign generation already started
+  const [serviceActivity, setServiceActivity] = useState<any[]>([]);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const campaignStartedRef = useRef<Set<string>>(new Set());
+  const SUPPORT_ACCOUNT = "7b97ced3-007b-44b4-846b-49dfb78d8454"; // support@onepulso.online mailbox
+
+  const loadServiceActivity = async () => { try { const { data } = await supabase.rpc("my_service_activity" as never); setServiceActivity((data as any[]) || []); } catch { /* */ } };
+  const runAgent = async (dry: boolean) => {
+    setAgentRunning(true);
+    try {
+      const { data } = await supabase.functions.invoke("client-service-agent", { body: { account_id: SUPPORT_ACCOUNT, dry_run: dry, limit: 10 } });
+      toast.success(`Agente: ${(data as any)?.processed ?? 0} correo(s) ${dry ? "analizados (prueba)" : "procesados"}`);
+      loadServiceActivity();
+    } catch { toast.error("No se pudo ejecutar el agente"); }
+    setAgentRunning(false);
+  }; // flow clients whose campaign generation already started
 
   const loadResponses = async () => {
     try {
@@ -352,7 +366,8 @@ export default function AutomationFlow() {
     setAi(load(AI_KEY, DEFAULT_AI));
     checkGoogle();
     loadResponses();
-    const onFocus = () => { checkGoogle(); loadResponses(); };
+    loadServiceActivity();
+    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); };
     window.addEventListener("focus", onFocus);
     // Auto-refresh the responses list every minute (the DB cron pulls new ones every 2 min).
     const iv = setInterval(() => loadResponses(), 60000);
@@ -687,6 +702,41 @@ export default function AutomationFlow() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Customer-service agent ── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <MessageSquare className="h-4 w-4 text-primary" /> Agente de atención al cliente
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> Activo</span>
+          </CardTitle>
+          <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadServiceActivity}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            El chatbot vive en <b className="text-foreground">support@onepulso.online</b>. Lee los correos, cuadra al cliente por su dominio, responde y aplica cambios de copy, y escala lo dudoso a team@. Corre cada 3 min y responde a los <b className="text-foreground">~5 min</b> (humano).
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => runAgent(false)} disabled={agentRunning}>{agentRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquare className="h-4 w-4" />} Ejecutar ahora</Button>
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => runAgent(true)} disabled={agentRunning}>Ver qué haría (prueba)</Button>
+          </div>
+          <div>
+            <p className="mb-1 text-xs font-semibold text-muted-foreground">Actividad reciente {serviceActivity.some((a) => a.action === "error") && <span className="text-destructive">· hay errores</span>}</p>
+            {serviceActivity.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Sin actividad todavía. Cuando un cliente escriba a support@, aparecerá aquí.</p>
+            ) : (
+              <div className="space-y-1">
+                {serviceActivity.slice(0, 12).map((a, i) => (
+                  <div key={i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-xs ${a.action === "error" ? "border-destructive/40 bg-destructive/5" : "border-border"}`}>
+                    <span className="min-w-0 truncate"><b>{a.from_email}</b>{a.reply ? ` · ${a.reply.slice(0, 70)}` : ""}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${a.action === "error" ? "bg-destructive/10 text-destructive" : a.action === "copy_change" ? "bg-emerald-500/10 text-emerald-600" : /escalate/.test(a.action) ? "bg-amber-500/10 text-amber-600" : "bg-muted text-muted-foreground"}`}>{a.action === "escalate_unknown" ? "escalado" : a.action}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ── Editable flow ── */}
       <Card>
