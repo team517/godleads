@@ -409,8 +409,14 @@ export default function AutomationFlow() {
   };
   const advance = (c: FlowClient) => {
     const ns = Math.min(c.step + 1, nodes.length - 1);
+    const node = nodes[ns];
+    const isActiveStep = !!node && /campa\w*\s+activ|activa/i.test(node.label);
+    if (isActiveStep && c.clientId) {
+      if (!confirm("¿La campaña ya tiene los leads cargados y está activa? Se le enviará al cliente un correo avisando de que su campaña ya está activa.")) return;
+    }
     persistClients(clients.map((x) => x.id === c.id ? { ...x, step: ns } : x));
     syncOnboarding(c.clientId, ns);
+    if (isActiveStep && c.clientId) sendCampaignActiveEmail(c);
   };
   const removeClient = (id: string) => persistClients(clients.filter((x) => x.id !== id));
 
@@ -510,7 +516,7 @@ export default function AutomationFlow() {
       const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
       const fromAcc = ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
       if (!fromAcc) throw new Error("no hay cuenta de envío");
-      const message = `Hola ${fc.name || fc.company || ""},\n\nAquí tienes los mensajes de tu campaña para que les des el visto bueno:\n${ur.link}\n\nEn cuanto los confirmes, arrancamos. Si quieres retocar algo, dínoslo por aquí.\n\nUn saludo,\nEl equipo de OnePulso`;
+      const message = `Hola ${fc.name || fc.company || ""},\n\nAquí tienes los mensajes de tu campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEl equipo de OnePulso`;
       const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: fc.email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
       const sr = await send.json();
       if (!sr.ok) throw new Error(sr.error || "no se pudo enviar");
@@ -518,6 +524,23 @@ export default function AutomationFlow() {
     } catch (e: any) { toast.error(`No se pudieron enviar los copys: ${e?.message || e}`); }
   };
   const approveClient = (fc: FlowClient) => { advance(fc); sendCopysToClient(fc); };
+
+  // When the campaign is live WITH leads, tell the client it's active (with the live-tracking link).
+  const sendCampaignActiveEmail = async (fc: FlowClient) => {
+    if (!fc.clientId || !fc.email) return;
+    try {
+      const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
+      let fromAcc: string | null = prof?.onboarding_from_account_id || null;
+      if (!fromAcc) { const { data: acc } = await (supabase as any).from("email_accounts").select("id").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle(); fromAcc = acc?.id || null; }
+      if (!fromAcc) { toast.error("Sin cuenta de envío para el aviso"); return; }
+      const col = fc.brandColor || "#6E58F1";
+      const hi = fc.name ? `Hola ${fc.name}` : (fc.company ? `Hola ${fc.company}` : "Hola");
+      const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.6"><p>${hi} 🚀</p><p>¡Buenas noticias! Tu <b>campaña ya está activa</b> y hemos empezado a enviar los mensajes a tus leads.</p>${fc.onboardingSlug ? `<p>Puedes seguir el progreso en tiempo real aquí:</p><p style="margin:16px 0"><a href="${window.location.origin}/o/${fc.onboardingSlug}" style="background:${col};color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Ver mi campaña en directo →</a></p>` : ""}<p>Cualquier cosa, aquí estamos.</p><p>Un saludo,<br/>El equipo de OnePulso</p></div>`;
+      const r = await sendIntroEmail(fromAcc, fc.email, "Tu campaña ya está activa 🚀", html);
+      if (r?.success) toast.success(`Aviso de campaña activa enviado a ${fc.email}`);
+      else toast.error(`No se pudo enviar el aviso: ${r?.error || ""}`);
+    } catch (e: any) { toast.error(String(e?.message || e)); }
+  };
 
   // TEST: simulate a Form answer for a client so you can run the generation step without
   // filling the real Google Form. Uses the client's company + context as the briefing.
