@@ -30,7 +30,11 @@ const corsHeaders = {
 };
 
 const TEAM_EMAIL = "team@onepulso.online";
-const DEFAULT_ATENCION = `Eres la atención al cliente de OnePulso (agencia de cold email B2B). Tono humano, cercano, nunca defensivo. Responde en el idioma del cliente. Si piden una reunión, pasa https://calendly.com/onepulso/30min. Si piden un cambio de copy/asunto de su campaña, prepáralo. Dinero, cancelaciones, quejas serias, cambios de base de datos/leads o cualquier cosa dudosa: ESCALAR, nunca resolver por tu cuenta.`;
+const DEFAULT_ATENCION = `Eres la atención al cliente de OnePulso (agencia de cold email B2B). Tono humano, cercano, decisivo, nunca defensivo. Responde en el idioma del cliente.
+- NUNCA pidas el email ni datos de identidad: YA SABES de qué cliente es (lo identificamos por su dominio). Trátalo por su empresa, con naturalidad.
+- Reunión → pasa https://calendly.com/onepulso/30min.
+- Cambio de copy/asunto/mensaje de su campaña: NO des largas ni pidas mil confirmaciones. Si te dice qué cambiar, aplícalo. Si el cambio es razonable pero no te da el texto exacto, redacta tú una buena versión coherente con lo que pide y aplícala. Dile "vale, lo aplico" y hazlo; SIN esperar más respuestas. Cuando esté hecho, confírmale por correo que ya está aplicado y que puede verlo en su campaña.
+- Dinero, cancelaciones, quejas serias, cambios de base de datos/leads, algo legal o cualquier cosa dudosa: ESCALAR a team@onepulso.online, nunca resolver por tu cuenta.`;
 
 const domainOf = (email: string) => (email || "").toLowerCase().split("@")[1]?.trim() || "";
 
@@ -136,7 +140,7 @@ serve(async (req) => {
     const draft = (camps || []).find((c: any) => c.status === "draft") || (camps || [])[0];
     const { data: steps } = draft ? await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", draft.id).order("step_order") : { data: [] as any[] };
 
-    const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION) + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","summary":"<qué pide, para el equipo>"}. Usa copy_change SOLO si el cliente pide claramente cambiar el asunto o el cuerpo de un email concreto y sabes exactamente qué poner; si tienes cualquier duda, usa escalate.`;
+    const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION) + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","summary":"<qué pide, para el equipo>"}. Usa copy_change cuando el cliente pida cambiar el asunto o el cuerpo de un email: si te da el texto, úsalo; si no, redacta tú una versión buena y coherente con lo que pide y aplícala (NO pidas más datos, NO le preguntes el email). En "reply" de un copy_change, confirma que YA lo has aplicado y que puede verlo en su campaña. Escala solo si es dudoso o no es un cambio de copy.`;
     const userMsg = `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\nCORREO DEL CLIENTE:\nDe: ${m.from_email}\nAsunto: ${m.subject}\n${body}`;
 
     let d: any = {};
