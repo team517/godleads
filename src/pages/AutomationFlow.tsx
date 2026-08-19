@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -380,6 +380,8 @@ export default function AutomationFlow() {
               {clients.map((c) => {
                 const node = nodes[c.step] || nodes[0];
                 const pct = Math.round(((c.step + 1) / nodes.length) * 100);
+                const isFinal = c.step >= nodes.length - 1;
+                const waitingForm = /responde/i.test(node?.label || "") && /form/i.test(node?.label || "");
                 return (
                   <div key={c.id} className="rounded-lg border border-border p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -389,11 +391,20 @@ export default function AutomationFlow() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[node?.agent || "manual"].color}`}>
+                          {!isFinal && <Loader2 className="h-3 w-3 animate-spin" />}
                           {c.step + 1}. {node?.label}
                         </span>
-                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={c.step >= nodes.length - 1}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>
+                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>
                         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
+                    </div>
+                    {/* Real-time status line — the "ruedecita" while it waits/works on this step */}
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {waitingForm
+                        ? <><Loader2 className="h-3 w-3 animate-spin text-primary" /> Esperando la respuesta del Form…</>
+                        : isFinal
+                          ? <><CheckCircle2 className="h-3 w-3 text-emerald-600" /> Atención al cliente activa</>
+                          : <><Loader2 className="h-3 w-3 animate-spin text-primary" /> {node?.desc}</>}
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                       <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
