@@ -294,6 +294,7 @@ export default function AutomationFlow() {
   const [editNode, setEditNode] = useState<Node | null>(null);
   const [newClient, setNewClient] = useState(false); // se abre solo al pulsar "Nuevo cliente", no al entrar
   const [aiOpen, setAiOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [reviewClient, setReviewClient] = useState<FlowClient | null>(null);
 
@@ -550,6 +551,7 @@ export default function AutomationFlow() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setChatOpen(true)}><MessageSquare className="h-4 w-4" /> Probar chat</Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAiOpen(true)}><Brain className="h-4 w-4" /> Cómo actúa la IA</Button>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
             <Sparkles className="h-3.5 w-3.5" /> DeepSeek
@@ -902,6 +904,9 @@ export default function AutomationFlow() {
 
       {/* Review the generated copys before approving */}
       <ReviewDialog client={reviewClient} onClose={() => setReviewClient(null)} onApprove={() => { if (reviewClient) approveClient(reviewClient); setReviewClient(null); }} />
+
+      {/* Test a conversation with the customer-service agent */}
+      <ChatTestDialog open={chatOpen} onClose={() => setChatOpen(false)} prompt={ai.replies} />
     </div>
   );
 }
@@ -983,6 +988,57 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
             {creating ? <><Loader2 className="h-4 w-4 animate-spin" /> Creando…</> : <><ArrowRight className="h-4 w-4" /> Crear y arrancar</>}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Chat to TEST a conversation with the customer-service agent (no email/campaign effects).
+function ChatTestDialog({ open, onClose, prompt }: { open: boolean; onClose: () => void; prompt: string }) {
+  const [messages, setMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  const [input, setInput] = useState("");
+  const [company, setCompany] = useState("");
+  const [typing, setTyping] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (open) { setMessages([]); setInput(""); setTyping(false); } }, [open]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, typing]);
+  const send = async () => {
+    const text = input.trim();
+    if (!text || typing) return;
+    const next = [...messages, { role: "user" as const, text }];
+    setMessages(next); setInput(""); setTyping(true);
+    try {
+      const { data } = await supabase.functions.invoke("client-service-agent", { body: { action: "chat", company, message: text, history: messages, prompt } });
+      await new Promise((r) => setTimeout(r, 1200)); // pequeño retardo humano
+      setMessages([...next, { role: "assistant" as const, text: (data as any)?.reply || "…" }]);
+    } catch { setMessages([...next, { role: "assistant" as const, text: "(no se pudo responder)" }]); }
+    setTyping(false);
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex max-h-[85vh] max-w-lg flex-col">
+        <DialogHeader>
+          <DialogTitle className="font-display flex items-center gap-2"><MessageSquare className="h-5 w-5 text-primary" /> Probar conversación</DialogTitle>
+          <p className="text-sm text-muted-foreground">Habla con el agente como si fueras el cliente. (El agente real de correos responde a los ~5 min, más humano.)</p>
+        </DialogHeader>
+        <div className="flex items-center gap-2">
+          <Label className="shrink-0 text-xs">Empresa del cliente</Label>
+          <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="ej. iqcode" className="h-8 text-sm" />
+        </div>
+        <div className="min-h-[240px] flex-1 space-y-2 overflow-y-auto rounded-lg border border-border bg-muted/20 p-3">
+          {messages.length === 0 && <p className="text-center text-xs text-muted-foreground">Escribe un mensaje para empezar…</p>}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${m.role === "user" ? "bg-primary text-primary-foreground" : "border border-border bg-background"}`}>{m.text}</div>
+            </div>
+          ))}
+          {typing && <div className="flex justify-start"><div className="rounded-2xl border border-border bg-background px-3 py-2 text-sm text-muted-foreground"><Loader2 className="inline h-3 w-3 animate-spin" /> escribiendo…</div></div>}
+          <div ref={endRef} />
+        </div>
+        <div className="flex items-center gap-2">
+          <Input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Escribe como el cliente…" disabled={typing} />
+          <Button onClick={send} disabled={typing || !input.trim()} className="gap-1.5"><ArrowRight className="h-4 w-4" /></Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

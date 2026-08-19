@@ -82,7 +82,19 @@ serve(async (req) => {
   if (!dkKey) return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY missing" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   // The owner (agency) whose inbox we watch. Passed in, or default to the known owner.
-  const { owner_user_id, account_id, limit, dry_run } = await req.json().catch(() => ({} as any));
+  const input = await req.json().catch(() => ({} as any));
+
+  // ── CHAT: test a conversation with the agent (no email / campaign side effects) ──
+  if (input.action === "chat") {
+    const system = (input.prompt || DEFAULT_ATENCION) + `\n\nEres el asistente de atención de OnePulso hablando directamente con un cliente por chat. Responde de forma natural, humana y conversacional, en su idioma. Devuelve SOLO JSON: {"reply":"tu respuesta"}.`;
+    const hist = Array.isArray(input.history) ? input.history.map((h: any) => `${h.role === "user" ? "Cliente" : "Tú"}: ${h.text}`).join("\n") : "";
+    const user = `${input.company ? `Empresa del cliente: ${input.company}\n` : ""}${hist ? hist + "\n" : ""}Cliente: ${input.message || ""}`;
+    let d: any = {};
+    try { d = await decide(dkKey, system, user); } catch { /* */ }
+    return new Response(JSON.stringify({ reply: d.reply || "Perdona, ¿me lo repites?" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  const { owner_user_id, account_id, limit, dry_run } = input;
   const ownerId = owner_user_id || "b94a0bdf-0120-44cd-8c7d-51126bfc2075";
   const dryRun = !!dry_run; // dry_run: decide but NEVER send emails / edit campaigns / mark read
 
