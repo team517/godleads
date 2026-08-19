@@ -42,7 +42,7 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
 // everything now. Real persistence + execution plug in on the backend later.
 
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
-type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string };
+type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string };
 type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
 type AIConfig = {
   globalMemory: string;
@@ -221,6 +221,7 @@ export default function AutomationFlow() {
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
   const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); };
+  const updateFlowClient = (id: string, patch: Partial<FlowClient>) => setClients((prev) => { const next = prev.map((c) => c.id === id ? { ...c, ...patch } : c); save(CLIENTS_KEY, next); return next; });
   const persistAi = (a: AIConfig) => { setAi(a); save(AI_KEY, a); };
 
   // When a form response matches a client (email / domain / company), advance that client
@@ -422,7 +423,12 @@ export default function AutomationFlow() {
                       </div>
                       <p className="text-sm font-semibold">{i + 1}. {s.label}</p>
                       <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                        {state === "current" ? (waitForm ? "Esperando la respuesta del Form…" : "En curso…") : s.desc}
+                        {state === "current"
+                          ? (waitForm ? "Esperando la respuesta del Form…"
+                            : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "sending") ? "Enviando el correo…"
+                            : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "failed") ? "⚠ No se pudo enviar el correo"
+                            : "En curso…")
+                          : s.desc}
                       </p>
                     </button>
                     {i < nodes.length - 1 && <div className={`flex items-center px-0.5 ${activeClient && i < activeStep ? "text-emerald-500" : "text-muted-foreground/30"}`}><ArrowRight className="h-4 w-4" /></div>}
@@ -458,7 +464,10 @@ export default function AutomationFlow() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{c.company || c.name || c.email}</p>
                         <p className="truncate text-xs text-muted-foreground">{c.email}{c.context ? ` · ${c.context}` : ""}</p>
-                        {c.onboardingSlug && <a href={`/o/${c.onboardingSlug}`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Onboarding: /o/{c.onboardingSlug} ↗</a>}
+                        {c.onboardingSlug && <a href={`/o/${c.onboardingSlug}`} target="_blank" rel="noreferrer" className="block text-xs text-primary hover:underline">Onboarding: /o/{c.onboardingSlug} ↗</a>}
+                        {c.emailStatus === "sending" && <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Enviando el correo…</p>}
+                        {c.emailStatus === "sent" && <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Correo enviado desde {c.emailFrom || "la cuenta de envío"}</p>}
+                        {c.emailStatus === "failed" && <p className="text-xs text-destructive">⚠ Correo no enviado{c.emailError ? `: ${c.emailError}` : ""}</p>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[node?.agent || "manual"].color}`}>
@@ -544,29 +553,45 @@ export default function AutomationFlow() {
           const base = slugify(data.company || data.name || data.email.split("@")[0]) || "cliente";
           const slug = `${base}-${Math.random().toString(36).slice(2, 5)}`;
           await callAdmin({ action: "update_client", user_id: cr.user_id, onboarding_slug: slug });
-          // 3) Send the intro email: the Google Form (campaign questions) + the onboarding link.
-          const onboardingUrl = `${window.location.origin}/o/${slug}`;
-          const formUrl = ai.formUrl || "https://forms.gle/QuZsPwTcwkmB6qoF7";
-          let emailNote = "";
-          try {
-            const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
-            let fromAcc: string | null = prof?.onboarding_from_account_id || null;
-            if (!fromAcc) {
-              const { data: acc } = await (supabase as any).from("email_accounts").select("id").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle();
-              fromAcc = acc?.id || null;
-            }
-            if (fromAcc) {
+          // 3) Add to the flow at the "Correo de arranque" step, marked as SENDING (the node
+          //    stays loading until the email is REALLY sent — no jumping ahead).
+          const flowId = uid();
+          persistClients([{ id: flowId, step: 1, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, emailStatus: "sending", ...data }, ...clients]);
+          setNewClient(false);
+          toast.success(`Cliente creado con onboarding: /o/${slug}`);
+          // 4) Send the intro email IN THE BACKGROUND, then reflect the REAL result on the flow.
+          (async () => {
+            try {
+              const onboardingUrl = `${window.location.origin}/o/${slug}`;
+              const formUrl = ai.formUrl || "https://forms.gle/QuZsPwTcwkmB6qoF7";
+              const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
+              let fromAcc: string | null = prof?.onboarding_from_account_id || null;
+              let fromEmail = "";
+              if (fromAcc) {
+                const { data: a } = await (supabase as any).from("email_accounts").select("email").eq("id", fromAcc).maybeSingle();
+                fromEmail = a?.email || "";
+              } else {
+                const { data: acc } = await (supabase as any).from("email_accounts").select("id, email").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle();
+                fromAcc = acc?.id || null; fromEmail = acc?.email || "";
+              }
+              if (!fromAcc) {
+                updateFlowClient(flowId, { emailStatus: "failed", emailError: "sin cuenta de envío" });
+                toast.error("Cliente creado, pero no hay cuenta de envío (Onboarding → Avisos al cliente).");
+                return;
+              }
               const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor });
               const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
-              emailNote = r?.success ? " · correo enviado ✉️" : " · (no se pudo enviar el correo)";
-            } else {
-              emailNote = " · (sin cuenta de envío: configúrala en Onboarding)";
+              if (r?.success) {
+                updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: 2 });
+                toast.success(`Correo enviado desde ${fromEmail}`);
+              } else {
+                updateFlowClient(flowId, { emailStatus: "failed", emailError: r?.error || "error de envío" });
+                toast.error(`No se pudo enviar el correo: ${r?.error || "error"}`);
+              }
+            } catch (e) {
+              updateFlowClient(flowId, { emailStatus: "failed", emailError: String(e) });
             }
-          } catch { emailNote = " · (no se pudo enviar el correo)"; }
-          // 4) Add it to the flow — already at the "esperando respuesta del Form" step.
-          persistClients([{ id: uid(), step: 2, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, ...data }, ...clients]);
-          toast.success(`Cliente creado con onboarding: /o/${slug}${emailNote}`);
-          setNewClient(false);
+          })();
           return true;
         }}
       />
