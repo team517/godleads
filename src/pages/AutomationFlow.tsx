@@ -1,14 +1,15 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2 } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { extractLogoColor } from "@/lib/logoColor";
 
 type FormResponse = { id: string; form_id: string | null; form_title: string | null; respondent_email: string | null; answers: Record<string, unknown> | null; received_at: string };
 
@@ -480,6 +481,7 @@ export default function AutomationFlow() {
             password: genPassword(),
             company_name: data.company || null,
             brand_color: data.brandColor || null,
+            logo_url: data.logoUrl || null,
             allowed_routes: ["/dashboard", "/campaigns", "/unibox", "/stats"],
           });
           if (cr.error || !cr.user_id) { toast.error(cr.error || "No se pudo crear el cliente"); return false; }
@@ -501,18 +503,39 @@ export default function AutomationFlow() {
   );
 }
 
-function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (d: { name: string; email: string; company: string; context: string; brandColor: string }) => Promise<boolean> }) {
+function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (d: { name: string; email: string; company: string; context: string; brandColor: string; logoUrl: string }) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [company, setCompany] = useState("");
   const [context, setContext] = useState("");
   const [brandColor, setBrandColor] = useState("#6E58F1");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [creating, setCreating] = useState(false);
-  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); setBrandColor("#6E58F1"); setCreating(false); } }, [open]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); setBrandColor("#6E58F1"); setLogoUrl(""); setUploading(false); setCreating(false); } }, [open]);
+
+  const uploadLogo = async (file: File) => {
+    if (file.size > 3 * 1024 * 1024) { toast.error("El logo debe pesar menos de 3 MB"); return; }
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "png").toLowerCase();
+      const path = `client-logos/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+      const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      setLogoUrl(supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl);
+      const color = await extractLogoColor(file);   // auto brand color from the logo
+      if (color) setBrandColor(color);
+      toast.success("Logo subido");
+    } catch (e: any) { toast.error(e?.message || "Error al subir el logo"); }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   const submit = async () => {
     if (!email.trim()) { toast.error("El correo es obligatorio"); return; }
     setCreating(true);
-    await onCreate({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim(), brandColor });
+    await onCreate({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim(), brandColor, logoUrl });
     setCreating(false);
   };
   return (
@@ -527,8 +550,21 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Correo *</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@empresa.com" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Nombre de la empresa" /></div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Logo</Label>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/40">
+                {logoUrl ? <img src={logoUrl} alt="logo" className="h-full w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-muted-foreground" />}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); }} />
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()} disabled={uploading}>
+                {uploading ? <><Loader2 className="h-4 w-4 animate-spin" /> Subiendo…</> : <><ImagePlus className="h-4 w-4" /> {logoUrl ? "Cambiar logo" : "Subir logo"}</>}
+              </Button>
+              {logoUrl && <button type="button" onClick={() => setLogoUrl("")} className="text-xs text-muted-foreground hover:text-destructive">Quitar</button>}
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs">Color de marca</Label>
+            <Label className="text-xs">Color de marca <span className="text-muted-foreground">(auto del logo)</span></Label>
             <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-8 w-14 cursor-pointer rounded border border-border bg-background" />
           </div>
           <div className="space-y-1.5"><Label className="text-xs">Contexto para la IA <span className="text-muted-foreground">(opcional)</span></Label>
