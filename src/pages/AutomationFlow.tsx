@@ -123,6 +123,18 @@ async function callAdmin(payload: Record<string, unknown>) {
 const slugify = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const genPassword = () => Math.random().toString(36).slice(2, 10) + "Aa1!" + Math.random().toString(36).slice(2, 5);
 
+// Maps the flow step to the 6 onboarding phases (kickoff, dominios, calentamiento, listas,
+// copywriting, lanzamiento) so the client's onboarding fills in ON ITS OWN as the flow runs.
+function onboardingStatusForFlow(step: number): ("pending" | "in_progress" | "done")[] {
+  const s: ("pending" | "in_progress" | "done")[] = ["pending", "pending", "pending", "pending", "pending", "pending"];
+  if (step >= 1) s[0] = "in_progress";                                     // arranque → kickoff en curso
+  if (step >= 3) { s[0] = "done"; s[1] = "in_progress"; }                  // form respondido → estrategia lista
+  if (step >= 4) { s[1] = "done"; s[2] = "done"; s[3] = "done"; s[4] = "in_progress"; } // IA genera → dominios/calentamiento/listas ok, copys en curso
+  if (step >= 5) { s[4] = "done"; s[5] = "in_progress"; }                  // aprobado/activa → copys listos, lanzamiento
+  if (step >= 6) { s[5] = "done"; }                                        // atención → lanzamiento hecho
+  return s;
+}
+
 // Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
 // touch daily limits / the sent log). Same send-email fn the Onboarding page uses.
 async function sendIntroEmail(accountId: string, to: string, subject: string, html: string) {
@@ -236,7 +248,7 @@ export default function AutomationFlow() {
       const idx = next.findIndex((c) => clientMatchesResponse(c, r));
       if (idx >= 0) {
         map[r.id] = next[idx].company || next[idx].name || next[idx].email;
-        if (next[idx].step < RESPONDED_STEP) { next[idx].step = RESPONDED_STEP; changed = true; }
+        if (next[idx].step < RESPONDED_STEP) { next[idx].step = RESPONDED_STEP; changed = true; syncOnboarding(next[idx].clientId, RESPONDED_STEP); }
       }
     }
     setRespMatch(map);
@@ -251,7 +263,16 @@ export default function AutomationFlow() {
   const saveNode = (node: Node) => { persistNodes(nodes.map((n) => n.id === node.id ? node : n)); setEditNode(null); };
   const deleteNode = (id: string) => { persistNodes(nodes.filter((n) => n.id !== id)); setEditNode(null); };
 
-  const advance = (c: FlowClient) => persistClients(clients.map((x) => x.id === c.id ? { ...x, step: Math.min(x.step + 1, nodes.length - 1) } : x));
+  // Push the client's onboarding phases to match the flow step (fire-and-forget).
+  const syncOnboarding = (clientId: string | undefined, step: number) => {
+    if (!clientId) return;
+    callAdmin({ action: "update_client", user_id: clientId, onboarding_status: onboardingStatusForFlow(step) }).catch(() => {});
+  };
+  const advance = (c: FlowClient) => {
+    const ns = Math.min(c.step + 1, nodes.length - 1);
+    persistClients(clients.map((x) => x.id === c.id ? { ...x, step: ns } : x));
+    syncOnboarding(c.clientId, ns);
+  };
   const removeClient = (id: string) => persistClients(clients.filter((x) => x.id !== id));
 
   // The client whose run is being visualised on the flow (defaults to the most recent).
@@ -458,6 +479,7 @@ export default function AutomationFlow() {
                 const pct = Math.round(((c.step + 1) / nodes.length) * 100);
                 const isFinal = c.step >= nodes.length - 1;
                 const waitingForm = /responde/i.test(node?.label || "") && /form/i.test(node?.label || "");
+                const isApproval = /aprobaci|aprobar|revis/i.test(node?.label || "");
                 return (
                   <div key={c.id} className="rounded-lg border border-border p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -474,7 +496,9 @@ export default function AutomationFlow() {
                           {!isFinal && <Loader2 className="h-3 w-3 animate-spin" />}
                           {c.step + 1}. {node?.label}
                         </span>
-                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>
+                        {isApproval
+                          ? <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => { advance(c); toast.success("Aprobado — se envían los copys al cliente"); }}><CheckCircle2 className="h-3.5 w-3.5" /> Revisar y aprobar</Button>
+                          : <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>}
                         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </div>
@@ -583,6 +607,7 @@ export default function AutomationFlow() {
               const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
               if (r?.success) {
                 updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: 2 });
+                syncOnboarding(cr.user_id, 2);
                 toast.success(`Correo enviado desde ${fromEmail}`);
               } else {
                 updateFlowClient(flowId, { emailStatus: "failed", emailError: r?.error || "error de envío" });
