@@ -41,7 +41,7 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
 // everything now. Real persistence + execution plug in on the backend later.
 
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
-type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string };
+type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string };
 type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
 type AIConfig = {
   globalMemory: string;
@@ -107,6 +107,20 @@ const loadArr = <T,>(key: string, fallback: T[]): T[] => {
 };
 const save = (key: string, v: unknown) => { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ } };
 const uid = () => "x" + Math.random().toString(36).slice(2, 9);
+
+// Calls the (already deployed) admin-users edge function with the owner's session — used
+// to create the real client account + its onboarding profile straight from this flow.
+async function callAdmin(payload: Record<string, unknown>) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify(payload),
+  });
+  return resp.json().catch(() => ({ error: "bad response" }));
+}
+const slugify = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+const genPassword = () => Math.random().toString(36).slice(2, 10) + "Aa1!" + Math.random().toString(36).slice(2, 5);
 
 export default function AutomationFlow() {
   const { user } = useAuth();
@@ -388,6 +402,7 @@ export default function AutomationFlow() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{c.company || c.name || c.email}</p>
                         <p className="truncate text-xs text-muted-foreground">{c.email}{c.context ? ` · ${c.context}` : ""}</p>
+                        {c.onboardingSlug && <a href={`/o/${c.onboardingSlug}`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Onboarding: /o/{c.onboardingSlug} ↗</a>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[node?.agent || "manual"].color}`}>
@@ -453,14 +468,30 @@ export default function AutomationFlow() {
         </DialogContent>
       </Dialog>
 
-      {/* New client dialog */}
+      {/* New client dialog — creates the REAL client account + its onboarding profile */}
       <NewClientDialog
         open={newClient}
         onClose={() => setNewClient(false)}
-        onAdd={(data) => {
-          persistClients([{ id: uid(), step: 0, startedAt: new Date().toISOString(), ...data }, ...clients]);
+        onCreate={async (data) => {
+          // 1) Create the real client account (login + branding).
+          const cr = await callAdmin({
+            action: "create_user",
+            email: data.email.toLowerCase(),
+            password: genPassword(),
+            company_name: data.company || null,
+            brand_color: data.brandColor || null,
+            allowed_routes: ["/dashboard", "/campaigns", "/unibox", "/stats"],
+          });
+          if (cr.error || !cr.user_id) { toast.error(cr.error || "No se pudo crear el cliente"); return false; }
+          // 2) Auto-create its onboarding profile (a stable /o/:slug portal + 6 phases).
+          const base = slugify(data.company || data.name || data.email.split("@")[0]) || "cliente";
+          const slug = `${base}-${Math.random().toString(36).slice(2, 5)}`;
+          await callAdmin({ action: "update_client", user_id: cr.user_id, onboarding_slug: slug });
+          // 3) Add it to the flow, linked to the real client + its onboarding.
+          persistClients([{ id: uid(), step: 0, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, ...data }, ...clients]);
+          toast.success(`Cliente creado con onboarding: /o/${slug}`);
           setNewClient(false);
-          toast.success("Cliente añadido al flujo");
+          return true;
         }}
       />
 
@@ -470,35 +501,45 @@ export default function AutomationFlow() {
   );
 }
 
-function NewClientDialog({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (d: { name: string; email: string; company: string; context: string }) => void }) {
+function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (d: { name: string; email: string; company: string; context: string; brandColor: string }) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [company, setCompany] = useState("");
   const [context, setContext] = useState("");
-  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); } }, [open]);
-  const submit = () => {
+  const [brandColor, setBrandColor] = useState("#6E58F1");
+  const [creating, setCreating] = useState(false);
+  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); setBrandColor("#6E58F1"); setCreating(false); } }, [open]);
+  const submit = async () => {
     if (!email.trim()) { toast.error("El correo es obligatorio"); return; }
-    onAdd({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim() });
+    setCreating(true);
+    await onCreate({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim(), brandColor });
+    setCreating(false);
   };
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && !creating && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><UserPlus className="h-5 w-5" /></div>
-          <DialogTitle className="text-center font-display text-xl">Comienza un nuevo flujo</DialogTitle>
-          <p className="text-center text-sm text-muted-foreground">Rellena los datos del cliente para arrancar. Empezará en el paso 1.</p>
+          <DialogTitle className="text-center font-display text-xl">Crear cliente y arrancar</DialogTitle>
+          <p className="text-center text-sm text-muted-foreground">Se crea la cuenta del cliente <b>y su perfil de onboarding</b> automáticamente.</p>
         </DialogHeader>
         <div className="space-y-3 pt-1">
           <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Correo *</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@empresa.com" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Nombre de la empresa" /></div>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs">Color de marca</Label>
+            <input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="h-8 w-14 cursor-pointer rounded border border-border bg-background" />
+          </div>
           <div className="space-y-1.5"><Label className="text-xs">Contexto para la IA <span className="text-muted-foreground">(opcional)</span></Label>
             <textarea value={context} onChange={(e) => setContext(e.target.value)} rows={2} placeholder="Sector, oferta, tono, a quién quiere llegar…" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
           </div>
         </div>
         <DialogFooter className="sm:justify-between">
-          <Button variant="ghost" onClick={onClose}>Ahora no</Button>
-          <Button onClick={submit} size="lg" className="gap-1.5"><ArrowRight className="h-4 w-4" /> Comenzar</Button>
+          <Button variant="ghost" onClick={onClose} disabled={creating}>Ahora no</Button>
+          <Button onClick={submit} size="lg" className="gap-1.5" disabled={creating}>
+            {creating ? <><Loader2 className="h-4 w-4 animate-spin" /> Creando…</> : <><ArrowRight className="h-4 w-4" /> Crear y arrancar</>}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
