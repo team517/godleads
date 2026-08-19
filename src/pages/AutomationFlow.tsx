@@ -119,7 +119,7 @@ SEGUIMIENTO:
 
 VOZ: directo, personal, sin jerga corporate, como un colega senior que sabe lo que hace. Sin humo ni promesas vacías.
 IDIOMA: español por defecto; si el público objetivo es de un país NO hispanohablante, escribe TODO en inglés (ni una palabra en otro idioma).
-APERTURA: empieza SIEMPRE conectando con el prospecto — menciona {{companyName}} y su sector {{industry}} (retos/tendencias típicas del sector, sin inventar datos internos suyos). Ej: "Estuve mirando {{companyName}} y cómo trabajáis en {{industry}}…".
+APERTURA: empieza SIEMPRE con un saludo personal "Hola {{firstName}}, soy [nombre]". Habla más de la EMPRESA ({{companyName}}) que de la industria — cosas generales pero que PAREZCAN muy personalizadas apoyándote en las variables. Ej: "Hola {{firstName}}, soy Xavi. Estuve mirando {{companyName}}…".
 CTA: termina SIEMPRE con una llamada clara a agendar una reunión/llamada.
 
 DOS MODOS:
@@ -409,7 +409,7 @@ export default function AutomationFlow() {
 
   // When the Form is answered, GENERATE the campaign for real (deployed generate-campaign +
   // create_client_campaign) as a DRAFT in the client's account, then move to the approval step.
-  const generateCampaignFor = async (fc: FlowClient, resp: FormResponse) => {
+  const generateCampaignFor = async (fc: FlowClient, resp: FormResponse, test = false) => {
     if (!fc.clientId || campaignStartedRef.current.has(fc.id)) return;
     campaignStartedRef.current.add(fc.id);
     updateFlowClient(fc.id, { campaignStatus: "generating" });
@@ -420,7 +420,7 @@ export default function AutomationFlow() {
       // Short, safe steer — passing the FULL campaign memory as skills made the AI output huge
       // and its JSON broke. The generate-campaign fn has its own robust prompt; this just nudges it.
       const campaignLang = detectCampaignLanguage(briefing);
-      const shortSkills = "Empieza cada email conectando con el prospecto: menciona {{companyName}} y su sector {{industry}} (en general, sin inventar datos internos suyos). Usa MUCHO las variables {{firstName}} {{companyName}} {{industry}} {{city}} para que suene muy personalizado y a medida. Voz cercana y directa, sin corporativismo. Termina SIEMPRE con un CTA claro para agendar una reunión/llamada. Follow-ups a 1-2 días, emails cortos, un solo enlace, sin promesas numéricas.";
+      const shortSkills = "Empieza SIEMPRE con un saludo personal: 'Hola {{firstName}}, soy [nombre del que firma]'. Habla más de la EMPRESA del prospecto ({{companyName}}) que de la industria — cosas generales pero que PAREZCAN muy personalizadas, apoyándote en las variables {{firstName}} {{companyName}} {{industry}} {{city}} por todo el correo. Voz cercana y directa, sin corporativismo. Termina SIEMPRE con un CTA claro para agendar una reunión/llamada. Follow-ups a 1-2 días, emails cortos, un solo enlace, sin promesas numéricas.";
       const genOnce = async (variants: number) => {
         const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
           method: "POST",
@@ -442,20 +442,23 @@ export default function AutomationFlow() {
         delay_days: i === 0 ? 0 : 2, // 1-2 días entre follow-ups
         variants: Array.isArray(s.variants) ? s.variants.filter((v: any) => (v.subject || v.body)).map((v: any) => ({ subject: (v.subject || "").trim(), body: v.body || "" })) : [],
       }));
-      const campaignName = `Automatización · ${fc.company || fc.name || fc.email}`;
-      const res = await callAdmin({
-        action: "create_client_campaign",
-        client_user_id: fc.clientId,
-        name: campaignName,
-        options: { stop_on_reply: true, first_email_text_only: false, text_only_emails: false, break_thread_after: 0, include_unsubscribe: false },
-        steps,
-        leads: [], // sin leads cargados — se aprueba en borrador
-      });
-      if (res.error) throw new Error(res.error);
+      const campaignName = `${test ? "PRUEBA · " : "Automatización · "}${fc.company || fc.name || fc.email}`;
+      // TEST mode: NO crea la campaña en la cuenta del cliente — solo genera los copys para verlos.
+      if (!test) {
+        const res = await callAdmin({
+          action: "create_client_campaign",
+          client_user_id: fc.clientId,
+          name: campaignName,
+          options: { stop_on_reply: true, first_email_text_only: false, text_only_emails: false, break_thread_after: 0, include_unsubscribe: false },
+          steps,
+          leads: [], // sin leads cargados — se aprueba en borrador
+        });
+        if (res.error) throw new Error(res.error);
+      }
       const approvalStep = Math.min(formNodeIdx(nodes) + 2, nodes.length - 1); // "Tu aprobación"
       updateFlowClient(fc.id, { campaignStatus: "done", campaignName, campaignSteps: steps, step: approvalStep });
       syncOnboarding(fc.clientId, approvalStep);
-      toast.success(`Campaña generada en borrador para ${fc.company || fc.email}`);
+      toast.success(test ? "Simulación lista — copys generados (sin crear la campaña en la cuenta)" : `Campaña generada en borrador para ${fc.company || fc.email}`);
     } catch (e: any) {
       updateFlowClient(fc.id, { campaignStatus: "failed", campaignError: String(e?.message || e) });
       toast.error(`No se pudo generar la campaña: ${e?.message || e}`);
@@ -471,18 +474,24 @@ export default function AutomationFlow() {
   // On approval: build the copys as a nice PDF (OnePulso logo) and email the client the link
   // for sign-off — same proven mechanism as the Portal's "Enviar copys".
   const sendCopysToClient = async (fc: FlowClient) => {
-    if (!fc.clientId) return;
+    if (!fc.email) return;
+    const steps = fc.campaignSteps || [];
+    if (!steps.length) { toast.error("No hay copys para enviar"); return; }
     try {
-      const cc = await callAdmin({ action: "client_campaign_copy", user_id: fc.clientId });
-      if (cc.error) throw new Error(cc.error);
-      if (!cc.campaigns?.length) throw new Error("el cliente no tiene campañas");
       const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
         import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
       ]);
+      // Build the PDF from the generated copys in memory — works for a real campaign AND for a
+      // TEST run (no real campaign in the client's account).
+      const campaigns = [{
+        name: fc.campaignName || `Campaña · ${fc.company || fc.email}`,
+        status: "draft",
+        steps: steps.map((s, i) => ({ step_order: i, subject: s.subject, body: s.body, variants: s.variants, delay_days: s.delay_days })),
+      }];
       const doc = buildCopyDoc(jsPDF, {
         clientName: fc.company || fc.name || fc.email,
         generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
-        campaigns: cc.campaigns, sampleLead: cc.sampleLead || null,
+        campaigns, sampleLead: null,
         agencyLogoDataUrl: logo?.dataUrl || null, agencyLogoRatio: logo?.ratio || null,
       });
       const uri: string = doc.output("datauristring");
@@ -517,8 +526,8 @@ export default function AutomationFlow() {
     campaignStartedRef.current.delete(c.id);
     updateFlowClient(c.id, { step: respondedStep, campaignStatus: undefined, campaignError: undefined });
     syncOnboarding(c.clientId, respondedStep);
-    toast.info("Simulando respuesta del Form…");
-    generateCampaignFor({ ...c, step: respondedStep }, testResp);
+    toast.info("Simulando respuesta del Form… (no se crea la campaña)");
+    generateCampaignFor({ ...c, step: respondedStep }, testResp, true); // test = no crea la campaña real
   };
 
   // The client whose run is being visualised on the flow (defaults to the most recent).
@@ -982,9 +991,18 @@ function ReviewDialog({ client, onClose, onApprove }: { client: FlowClient | nul
       <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> Revisar campaña · {client?.company || client?.name || client?.email}</DialogTitle>
-          <p className="text-sm text-muted-foreground">Estos son los correos que ha creado la IA (en borrador, en la cuenta del cliente). Revísalos y aprueba.</p>
+          <p className="text-sm text-muted-foreground">Estos son los correos que ha creado la IA. Revísalos y aprueba.</p>
         </DialogHeader>
         <div className="space-y-4 py-1">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+            <p className="mb-1 font-semibold text-foreground">Notas a tener en cuenta</p>
+            <ul className="ml-4 list-disc space-y-0.5">
+              <li>Empieza siempre con <b className="text-foreground">{"Hola {{firstName}}, soy [persona]"}</b>.</li>
+              <li>Habla más de la <b className="text-foreground">empresa ({"{{companyName}}"})</b> que de la industria — general, pero que parezca muy personalizado con las variables.</li>
+              <li>Usa bastante las variables en todo el correo para que suene a medida.</li>
+              <li>Termina con un <b className="text-foreground">CTA claro para agendar una reunión</b>.</li>
+            </ul>
+          </div>
           {steps.length === 0 ? (
             <p className="text-sm text-muted-foreground">No hay copys guardados para mostrar aquí. Puedes verlos en la cuenta del cliente → Campañas.</p>
           ) : steps.map((s, i) => (
