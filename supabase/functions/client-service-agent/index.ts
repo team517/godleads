@@ -90,7 +90,7 @@ serve(async (req) => {
 
   // ── CHAT: test a conversation with the agent (no email / campaign side effects) ──
   if (input.action === "chat") {
-    const system = (input.prompt || DEFAULT_ATENCION) + `\n\nEres el asistente de atención de OnePulso hablando directamente con un cliente por chat. Responde de forma natural, humana y conversacional, en su idioma. Devuelve SOLO JSON: {"reply":"tu respuesta"}.`;
+    const system = (input.prompt || DEFAULT_ATENCION) + `\n\nEres el asistente de atención de OnePulso hablando directamente con un cliente por chat. Responde de forma natural, humana y conversacional, en su idioma. Ten en cuenta TODA la conversación de arriba y NO repitas respuestas anteriores: si el cliente insiste en algo ya tratado, gestiónalo de forma DIFERENTE. Devuelve SOLO JSON: {"reply":"tu respuesta"}.`;
     const hist = Array.isArray(input.history) ? input.history.map((h: any) => `${h.role === "user" ? "Cliente" : "Tú"}: ${h.text}`).join("\n") : "";
     const user = `${input.company ? `Empresa del cliente: ${input.company}\n` : ""}${hist ? hist + "\n" : ""}Cliente: ${input.message || ""}`;
     let d: any = {};
@@ -140,7 +140,13 @@ serve(async (req) => {
     const draft = (camps || []).find((c: any) => c.status === "draft") || (camps || [])[0];
     const { data: steps } = draft ? await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", draft.id).order("step_order") : { data: [] as any[] };
 
-    const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION) + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","summary":"<qué pide, para el equipo>"}. Usa copy_change cuando el cliente pida cambiar el asunto o el cuerpo de un email: si te da el texto, úsalo; si no, redacta tú una versión buena y coherente con lo que pide y aplícala (NO pidas más datos, NO le preguntes el email). En "reply" de un copy_change, confirma que YA lo has aplicado y que puede verlo en su campaña. Escala solo si es dudoso o no es un cambio de copy.`;
+    // Conversation memory with THIS client — so it never repeats an answer.
+    const { data: logRows } = await admin.from("client_service_log").select("action, inbound, reply").eq("client_user_id", clientId).order("created_at", { ascending: false }).limit(8);
+    const convPrev = (logRows || []).reverse().map((r: any) => `Cliente: ${(r.inbound || "").slice(0, 220)}\nTú (${r.action}): ${(r.reply || "").slice(0, 220)}`).join("\n---\n");
+
+    const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION)
+      + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
+      + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","summary":"<qué pide, para el equipo>"}. Usa copy_change cuando el cliente pida cambiar el asunto o el cuerpo de un email: si te da el texto, úsalo; si no, redacta tú una versión buena y coherente con lo que pide y aplícala (NO pidas más datos, NO le preguntes el email). En "reply" de un copy_change, confirma que YA lo has aplicado y que puede verlo en su campaña. Escala solo si es dudoso o no es un cambio de copy.`;
     const userMsg = `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\nCORREO DEL CLIENTE:\nDe: ${m.from_email}\nAsunto: ${m.subject}\n${body}`;
 
     let d: any = {};
@@ -175,7 +181,10 @@ serve(async (req) => {
       results.push({ ...base, action: "escalate" }); processed++;
     }
 
-    if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
+    if (!dryRun) {
+      await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: d.action || "escalate", inbound: body.slice(0, 1200), reply: (d.reply || "").slice(0, 1200) });
+      await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
+    }
   }
 
   return new Response(JSON.stringify({ processed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
