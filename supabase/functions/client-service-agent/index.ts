@@ -120,14 +120,15 @@ serve(async (req) => {
 
   // ── Step 2 of a copy change: send the queued "ya está aplicado" confirmation ────────
   // A copy_change first sends a quick "vale, lo aplicamos" ack and queues the confirmation
-  // (pending=true). Here, on a LATER run (≥90s after), we send that confirmation — so the
-  // client gets two natural, separated emails instead of two at once.
+  // (pending=true). Here, on a LATER run, once the change has been applied and ~2-3 min have
+  // passed, we send that confirmation — two natural, separated emails, never two at once.
+  // Gate = 2 min; with the 1-min cron the confirmation lands reliably 2-3 min after the ack.
   let confirmed = 0;
   if (!dryRun && teamAcct) {
     const { data: pend } = await admin.from("client_service_log")
       .select("id, from_email, subject, reply")
       .eq("owner_id", ownerId).eq("pending", true)
-      .lt("created_at", new Date(Date.now() - 90 * 1000).toISOString())
+      .lt("created_at", new Date(Date.now() - 120 * 1000).toISOString())
       .order("created_at", { ascending: true }).limit(10);
     for (const p of (pend as any[]) || []) {
       try {
