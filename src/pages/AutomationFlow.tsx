@@ -42,7 +42,7 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
 // everything now. Real persistence + execution plug in on the backend later.
 
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
-type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string; campaignStatus?: "generating" | "done" | "failed"; campaignError?: string; campaignName?: string };
+type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string; campaignStatus?: "generating" | "done" | "failed"; campaignError?: string; campaignName?: string; campaignSteps?: { subject: string; body: string; delay_days: number; variants: { subject: string; body: string }[] }[] };
 type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
 type AIFile = { name: string; url: string };
 type AIConfig = {
@@ -230,15 +230,22 @@ async function sendIntroEmail(accountId: string, to: string, subject: string, ht
   return resp.json().catch(() => ({ error: "bad response" }));
 }
 const escHtml = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-function introEmailHtml(opts: { name: string; company: string; formUrl: string; onboardingUrl: string; color: string }) {
+function introEmailHtml(opts: { name: string; company: string; formUrl: string; onboardingUrl: string; color: string; email?: string; password?: string; loginUrl?: string }) {
   const hi = opts.name ? `Hola ${escHtml(opts.name)}` : (opts.company ? `Hola ${escHtml(opts.company)}` : "Hola");
   const c = opts.color || "#6E58F1";
+  const creds = (opts.email && opts.password) ? `<p style="margin:20px 0;padding:12px 14px;background:#f5f5fb;border-radius:10px;font-size:14px;line-height:1.7">
+  <b>Tus accesos a la plataforma:</b><br/>
+  Entrar: <a href="${escHtml(opts.loginUrl || "")}" style="color:${c}">${escHtml(opts.loginUrl || "")}</a><br/>
+  Usuario: <b>${escHtml(opts.email!)}</b><br/>
+  Contraseña: <b>${escHtml(opts.password!)}</b>
+</p>` : "";
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.6">
   <p>${hi} 👋</p>
   <p>¡Encantados de empezar! Para preparar tu campaña necesitamos que respondas unas preguntas rápidas:</p>
   <p style="margin:20px 0"><a href="${escHtml(opts.formUrl)}" style="background:${c};color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Responder el formulario →</a></p>
   <p>Y aquí tienes tu <b>portal de seguimiento</b>, donde podrás ver el progreso de tu proyecto <b>en directo</b>:</p>
   <p style="margin:20px 0"><a href="${escHtml(opts.onboardingUrl)}" style="border:1px solid ${c};color:${c};text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Ver mi proyecto en directo →</a></p>
+  ${creds}
   <p>En cuanto respondas el formulario, nos ponemos con tu campaña. Cualquier duda, responde a este correo.</p>
   <p>Un saludo,<br/>El equipo de OnePulso</p>
 </div>`;
@@ -254,6 +261,7 @@ export default function AutomationFlow() {
   const [newClient, setNewClient] = useState(false); // se abre solo al pulsar "Nuevo cliente", no al entrar
   const [aiOpen, setAiOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [reviewClient, setReviewClient] = useState<FlowClient | null>(null);
 
   const [forms, setForms] = useState<GForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
@@ -415,7 +423,7 @@ export default function AutomationFlow() {
       });
       if (res.error) throw new Error(res.error);
       const approvalStep = Math.min(formNodeIdx(nodes) + 2, nodes.length - 1); // "Tu aprobación"
-      updateFlowClient(fc.id, { campaignStatus: "done", campaignName, step: approvalStep });
+      updateFlowClient(fc.id, { campaignStatus: "done", campaignName, campaignSteps: steps, step: approvalStep });
       syncOnboarding(fc.clientId, approvalStep);
       toast.success(`Campaña generada en borrador para ${fc.company || fc.email}`);
     } catch (e: any) {
@@ -657,7 +665,7 @@ export default function AutomationFlow() {
                           {c.step + 1}. {node?.label}
                         </span>
                         {isApproval
-                          ? <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => { advance(c); toast.success("Aprobado — se envían los copys al cliente"); }}><CheckCircle2 className="h-3.5 w-3.5" /> Revisar y aprobar</Button>
+                          ? <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => setReviewClient(c)}><CheckCircle2 className="h-3.5 w-3.5" /> Revisar y aprobar</Button>
                           : <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>}
                         <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
@@ -723,10 +731,11 @@ export default function AutomationFlow() {
         onClose={() => setNewClient(false)}
         onCreate={async (data) => {
           // 1) Create the real client account (login + branding).
+          const password = data.password?.trim() || genPassword();
           const cr = await callAdmin({
             action: "create_user",
             email: data.email.toLowerCase(),
-            password: genPassword(),
+            password,
             company_name: data.company || null,
             brand_color: data.brandColor || null,
             logo_url: data.logoUrl || null,
@@ -764,7 +773,7 @@ export default function AutomationFlow() {
                 toast.error("Cliente creado, pero no hay cuenta de envío (Onboarding → Avisos al cliente).");
                 return;
               }
-              const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor });
+              const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor, email: data.email.toLowerCase(), password, loginUrl: `${window.location.origin}/auth` });
               const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
               if (r?.success) {
                 const formStep = formNodeIdx(nodes);
@@ -785,21 +794,25 @@ export default function AutomationFlow() {
 
       {/* AI brain / memory dialog */}
       <AIConfigDialog open={aiOpen} onClose={() => setAiOpen(false)} value={ai} onSave={(a) => { persistAi(a); setAiOpen(false); toast.success("Memoria de la IA guardada"); }} />
+
+      {/* Review the generated copys before approving */}
+      <ReviewDialog client={reviewClient} onClose={() => setReviewClient(null)} onApprove={() => { if (reviewClient) { advance(reviewClient); toast.success("Aprobado — la campaña sigue el flujo"); } setReviewClient(null); }} />
     </div>
   );
 }
 
-function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (d: { name: string; email: string; company: string; context: string; brandColor: string; logoUrl: string }) => Promise<boolean> }) {
+function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (d: { name: string; email: string; company: string; context: string; brandColor: string; logoUrl: string; password: string }) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [company, setCompany] = useState("");
   const [context, setContext] = useState("");
+  const [password, setPassword] = useState("");
   const [brandColor, setBrandColor] = useState("#6E58F1");
   const [logoUrl, setLogoUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [creating, setCreating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); setBrandColor("#6E58F1"); setLogoUrl(""); setUploading(false); setCreating(false); } }, [open]);
+  useEffect(() => { if (open) { setName(""); setEmail(""); setCompany(""); setContext(""); setPassword(""); setBrandColor("#6E58F1"); setLogoUrl(""); setUploading(false); setCreating(false); } }, [open]);
 
   const uploadLogo = async (file: File) => {
     if (file.size > 3 * 1024 * 1024) { toast.error("El logo debe pesar menos de 3 MB"); return; }
@@ -820,8 +833,9 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
 
   const submit = async () => {
     if (!email.trim()) { toast.error("El correo es obligatorio"); return; }
+    if (password.trim() && password.trim().length < 6) { toast.error("La contraseña debe tener al menos 6 caracteres"); return; }
     setCreating(true);
-    await onCreate({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim(), brandColor, logoUrl });
+    await onCreate({ name: name.trim(), email: email.trim(), company: company.trim(), context: context.trim(), brandColor, logoUrl, password: password.trim() });
     setCreating(false);
   };
   return (
@@ -836,6 +850,7 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Correo *</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@empresa.com" /></div>
           <div className="space-y-1.5"><Label className="text-xs">Empresa</Label><Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Nombre de la empresa" /></div>
+          <div className="space-y-1.5"><Label className="text-xs">Contraseña <span className="text-muted-foreground">(opcional; vacía = se genera sola)</span></Label><Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña de acceso del cliente" /></div>
           <div className="space-y-1.5">
             <Label className="text-xs">Logo</Label>
             <div className="flex items-center gap-3">
@@ -862,6 +877,47 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           <Button onClick={submit} size="lg" className="gap-1.5" disabled={creating}>
             {creating ? <><Loader2 className="h-4 w-4 animate-spin" /> Creando…</> : <><ArrowRight className="h-4 w-4" /> Crear y arrancar</>}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Review popup: shows the emails the AI generated (with A/B/C variants) before approving.
+function ReviewDialog({ client, onClose, onApprove }: { client: FlowClient | null; onClose: () => void; onApprove: () => void }) {
+  const steps = client?.campaignSteps || [];
+  return (
+    <Dialog open={!!client} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> Revisar campaña · {client?.company || client?.name || client?.email}</DialogTitle>
+          <p className="text-sm text-muted-foreground">Estos son los correos que ha creado la IA (en borrador, en la cuenta del cliente). Revísalos y aprueba.</p>
+        </DialogHeader>
+        <div className="space-y-4 py-1">
+          {steps.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay copys guardados para mostrar aquí. Puedes verlos en la cuenta del cliente → Campañas.</p>
+          ) : steps.map((s, i) => (
+            <div key={i} className="rounded-lg border border-border p-3">
+              <p className="mb-1 text-xs font-semibold text-muted-foreground">Email {i + 1}{i === 0 ? " · inicial" : ` · +${s.delay_days} día(s)`}</p>
+              <p className="text-sm font-semibold">Asunto: {s.subject || "(vacío — sigue el hilo)"}</p>
+              <div className="mt-1 rounded bg-muted/40 p-2 text-sm [&_p]:my-1" dangerouslySetInnerHTML={{ __html: s.body || "" }} />
+              {(s.variants || []).length > 0 && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground">Variantes</p>
+                  {s.variants.map((v, vi) => (
+                    <div key={vi} className="rounded border border-border/60 p-2">
+                      <p className="text-xs font-medium">Variante {String.fromCharCode(65 + vi)}{v.subject ? ` — ${v.subject}` : ""}</p>
+                      <div className="mt-1 text-xs text-muted-foreground [&_p]:my-1" dangerouslySetInnerHTML={{ __html: v.body || "" }} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={onClose}>Cerrar</Button>
+          <Button className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700" onClick={onApprove}><CheckCircle2 className="h-4 w-4" /> Aprobar y continuar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
