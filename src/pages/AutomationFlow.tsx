@@ -885,7 +885,7 @@ function AgentBlock({ icon, title, hint, value, onChange, files, onFilesChange }
     <div className="space-y-1.5 rounded-lg border border-border p-3">
       <div className="flex items-center gap-2"><span className="text-primary">{icon}</span><Label className="text-sm font-semibold">{title}</Label></div>
       <p className="text-xs text-muted-foreground">{hint}</p>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={9} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
       <MemoryFiles files={files} onChange={onFilesChange} />
     </div>
   );
@@ -908,7 +908,7 @@ function AIConfigDialog({ open, onClose, value, onSave }: { open: boolean; onClo
           <div className="space-y-1.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
             <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /><Label className="text-sm font-semibold">Memoria general</Label></div>
             <p className="text-xs text-muted-foreground">Cómo debe actuar siempre: tono, marca, principios. Aquí subes tu "memoria" de cómo hacerlo.</p>
-            <textarea value={cfg.globalMemory} onChange={(e) => set({ globalMemory: e.target.value })} rows={4} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+            <textarea value={cfg.globalMemory} onChange={(e) => set({ globalMemory: e.target.value })} rows={10} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
             <MemoryFiles files={f.global} onChange={(v) => setFilesFor("global", v)} />
           </div>
 
