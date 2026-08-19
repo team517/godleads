@@ -243,6 +243,22 @@ async function sendIntroEmail(accountId: string, to: string, subject: string, ht
   return resp.json().catch(() => ({ error: "bad response" }));
 }
 const escHtml = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Loads + downscales a PNG to a data URL (for the copy PDF logo). Mirrors ClientPortal.
+async function loadPngDataUrl(url: string, maxW = 340): Promise<{ dataUrl: string; ratio: number } | null> {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const src = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(blob); });
+    const img = await new Promise<HTMLImageElement>((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+    const ratio = img.naturalWidth / img.naturalHeight || 4;
+    const w = Math.min(maxW, img.naturalWidth), h = Math.max(1, Math.round(w / ratio));
+    const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { dataUrl: src, ratio };
+    ctx.drawImage(img, 0, 0, w, h);
+    return { dataUrl: canvas.toDataURL("image/png"), ratio };
+  } catch { return null; }
+}
+
 function introEmailHtml(opts: { name: string; company: string; formUrl: string; onboardingUrl: string; color: string; email?: string; password?: string; loginUrl?: string }) {
   const hi = opts.name ? `Hola ${escHtml(opts.name)}` : (opts.company ? `Hola ${escHtml(opts.company)}` : "Hola");
   const c = opts.color || "#6E58F1";
@@ -452,6 +468,41 @@ export default function AutomationFlow() {
     generateCampaignFor(c, resp);
   };
 
+  // On approval: build the copys as a nice PDF (OnePulso logo) and email the client the link
+  // for sign-off — same proven mechanism as the Portal's "Enviar copys".
+  const sendCopysToClient = async (fc: FlowClient) => {
+    if (!fc.clientId) return;
+    try {
+      const cc = await callAdmin({ action: "client_campaign_copy", user_id: fc.clientId });
+      if (cc.error) throw new Error(cc.error);
+      if (!cc.campaigns?.length) throw new Error("el cliente no tiene campañas");
+      const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
+        import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
+      ]);
+      const doc = buildCopyDoc(jsPDF, {
+        clientName: fc.company || fc.name || fc.email,
+        generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
+        campaigns: cc.campaigns, sampleLead: cc.sampleLead || null,
+        agencyLogoDataUrl: logo?.dataUrl || null, agencyLogoRatio: logo?.ratio || null,
+      });
+      const uri: string = doc.output("datauristring");
+      const b64 = uri.substring(uri.indexOf("base64,") + 7);
+      const { data: { session } } = await supabase.auth.getSession();
+      const up = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "upload_copys", pdf_base64: b64 }) });
+      const ur = await up.json();
+      if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
+      const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
+      const fromAcc = ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      if (!fromAcc) throw new Error("no hay cuenta de envío");
+      const message = `Hola ${fc.name || fc.company || ""},\n\nAquí tienes los mensajes de tu campaña para que les des el visto bueno:\n${ur.link}\n\nEn cuanto los confirmes, arrancamos. Si quieres retocar algo, dínoslo por aquí.\n\nUn saludo,\nEl equipo de OnePulso`;
+      const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: fc.email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
+      const sr = await send.json();
+      if (!sr.ok) throw new Error(sr.error || "no se pudo enviar");
+      toast.success(`Copys enviados a ${fc.email} para su visto bueno`);
+    } catch (e: any) { toast.error(`No se pudieron enviar los copys: ${e?.message || e}`); }
+  };
+  const approveClient = (fc: FlowClient) => { advance(fc); sendCopysToClient(fc); };
+
   // The client whose run is being visualised on the flow (defaults to the most recent).
   const activeClient = clients.find((c) => c.id === activeClientId) || clients[0] || null;
   const activeStep = activeClient ? activeClient.step : -1;
@@ -603,25 +654,31 @@ export default function AutomationFlow() {
               {nodes.map((s, i) => {
                 const state = !activeClient ? "idle" : i < activeStep ? "done" : i === activeStep ? "current" : "pending";
                 const waitForm = /responde/i.test(s.label) && /form/i.test(s.label);
+                // "Atención al cliente" is an ONGOING state, not a task in progress — show it as
+                // active/green (not a spinner) once the client is on it.
+                const isReplies = s.agent === "replies" || i === nodes.length - 1;
+                const activeReplies = state === "current" && isReplies;
+                const doneLike = state === "done" || activeReplies;
                 return (
                   <div key={s.id} className="flex items-stretch gap-1">
                     <button
                       onClick={() => setEditNode(s)}
                       className={`group flex w-48 flex-col rounded-xl border p-3 text-left transition-all ${
-                        state === "done" ? "border-emerald-500/50 bg-emerald-500/10"
+                        doneLike ? "border-emerald-500/50 bg-emerald-500/10"
                         : state === "current" ? "border-primary bg-primary/5 ring-2 ring-primary/40"
                         : state === "pending" ? "border-border bg-muted/20 opacity-60"
                         : "border-border bg-muted/30 hover:border-primary/50 hover:bg-primary/5"}`}
                     >
                       <div className="mb-2 flex items-center justify-between">
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${AGENT_META[s.agent].color}`}>{AGENT_META[s.agent].label}</span>
-                        {state === "done" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        {doneLike ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                           : state === "current" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                           : <Pencil className="h-3 w-3 text-muted-foreground/0 transition-colors group-hover:text-primary" />}
                       </div>
                       <p className="text-sm font-semibold">{i + 1}. {s.label}</p>
                       <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                        {state === "current"
+                        {activeReplies ? "Activa · la IA responde a los leads"
+                          : state === "current"
                           ? (waitForm ? "Esperando la respuesta del Form…"
                             : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "sending") ? "Enviando el correo…"
                             : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "failed") ? "⚠ No se pudo enviar el correo"
@@ -810,7 +867,7 @@ export default function AutomationFlow() {
       <AIConfigDialog open={aiOpen} onClose={() => setAiOpen(false)} value={ai} onSave={(a) => { persistAi(a); setAiOpen(false); toast.success("Memoria de la IA guardada"); }} />
 
       {/* Review the generated copys before approving */}
-      <ReviewDialog client={reviewClient} onClose={() => setReviewClient(null)} onApprove={() => { if (reviewClient) { advance(reviewClient); toast.success("Aprobado — la campaña sigue el flujo"); } setReviewClient(null); }} />
+      <ReviewDialog client={reviewClient} onClose={() => setReviewClient(null)} onApprove={() => { if (reviewClient) approveClient(reviewClient); setReviewClient(null); }} />
     </div>
   );
 }
