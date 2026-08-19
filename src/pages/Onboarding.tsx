@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
-  ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil, KeyRound,
+  ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil, KeyRound, Trash2,
 } from "lucide-react";
 import { PHASES, STATE_META, NEXT_STATE, normalizeStatus, progressPct, phaseEmailDraft, credentialsEmailDraft, type PhaseState } from "@/lib/onboarding";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -49,7 +49,7 @@ const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]
 const cleanSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
 
 // ── One client's onboarding card: editable slug + 6 phases + progress ──
-function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: Client; fromAccountId: string; expanded: boolean; onToggle: () => void; onSaved: () => void }) {
+function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved, canDelete, onDelete }: { c: Client; fromAccountId: string; expanded: boolean; onToggle: () => void; onSaved: () => void; canDelete: boolean; onDelete: () => void }) {
   const [slug, setSlug] = useState(c.onboarding_slug || "");
   const [status, setStatus] = useState<PhaseState[]>(() => normalizeStatus(c.onboarding_status));
   const [serverSlug, setServerSlug] = useState(c.onboarding_slug || "");
@@ -142,24 +142,31 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved }: { c: 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <button onClick={onToggle} className="flex w-full items-start justify-between gap-3 text-left" title={expanded ? "Contraer" : "Desplegar"}>
-          <div className="flex min-w-0 items-center gap-3">
-            {c.logo_url
-              ? <img src={c.logo_url} alt="" className="h-10 w-10 rounded-lg border object-contain" />
-              : <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-5 w-5" /></span>}
-            <div className="min-w-0">
-              <CardTitle className="truncate text-base">{c.company_name || c.full_name || c.email}</CardTitle>
-              <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+        <div className="flex items-start gap-2">
+          <button onClick={onToggle} className="flex flex-1 items-start justify-between gap-3 text-left" title={expanded ? "Contraer" : "Desplegar"}>
+            <div className="flex min-w-0 items-center gap-3">
+              {c.logo_url
+                ? <img src={c.logo_url} alt="" className="h-10 w-10 rounded-lg border object-contain" />
+                : <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-5 w-5" /></span>}
+              <div className="min-w-0">
+                <CardTitle className="truncate text-base">{c.company_name || c.full_name || c.email}</CardTitle>
+                <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+              </div>
             </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <div className="text-right">
-              <p className="font-display text-xl font-bold leading-none text-primary">{pct}%</p>
-              <p className="text-[10px] text-muted-foreground">completado</p>
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="text-right">
+                <p className="font-display text-xl font-bold leading-none text-primary">{pct}%</p>
+                <p className="text-[10px] text-muted-foreground">completado</p>
+              </div>
+              <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
             </div>
-            <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
-          </div>
-        </button>
+          </button>
+          {canDelete && (
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 text-destructive hover:text-destructive" onClick={onDelete} title="Eliminar cliente">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
         {/* progress bar */}
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
@@ -419,6 +426,7 @@ function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[];
 export default function Onboarding() {
   const { user } = useAuth();
   const [access, setAccess] = useState<"loading" | "yes" | "no">("loading");
+  const [isFullAdmin, setIsFullAdmin] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
@@ -437,6 +445,7 @@ export default function Onboarding() {
         supabase.from("user_roles").select("role").eq("user_id", user.id).single(),
         (supabase as any).from("profiles").select("is_client_manager, onboarding_from_account_id").eq("user_id", user.id).single(),
       ]);
+      setIsFullAdmin(r?.role === "admin");
       setAccess(r?.role === "admin" || (p as any)?.is_client_manager ? "yes" : "no");
       if ((p as any)?.onboarding_from_account_id) setFromAccountId((p as any).onboarding_from_account_id);
     })();
@@ -449,6 +458,14 @@ export default function Onboarding() {
     else setClients(res.clients || []);
     setLoading(false);
   }, []);
+
+  // Delete a client (full admin only — the admin-users fn also enforces it).
+  const removeClient = async (c: Client) => {
+    if (!confirm(`¿Eliminar el cliente ${c.email}? Esto borra su cuenta y su onboarding.`)) return;
+    const res = await callAdmin({ action: "delete", user_id: c.id });
+    if (res.error) toast.error(res.error);
+    else { toast.success("Cliente eliminado"); loadClients(); }
+  };
 
   useEffect(() => {
     if (access !== "yes") return;
@@ -529,6 +546,8 @@ export default function Onboarding() {
               expanded={expandedIds.has(c.id)}
               onToggle={() => toggleCard(c.id)}
               onSaved={loadClients}
+              canDelete={isFullAdmin}
+              onDelete={() => removeClient(c)}
             />
           ))}
         </div>
