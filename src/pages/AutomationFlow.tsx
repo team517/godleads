@@ -175,7 +175,7 @@ export default function AutomationFlow() {
   const [ai, setAi] = useState<AIConfig>(DEFAULT_AI);
   const [google, setGoogle] = useState<GoogleConn>(DEFAULT_GOOGLE);
   const [editNode, setEditNode] = useState<Node | null>(null);
-  const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
+  const [newClient, setNewClient] = useState(false); // se abre solo al pulsar "Nuevo cliente", no al entrar
   const [aiOpen, setAiOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
 
