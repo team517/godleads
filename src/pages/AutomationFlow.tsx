@@ -117,7 +117,10 @@ SEGUIMIENTO:
 - Si el briefing llega con huecos críticos (sector, cargo objetivo o servicio sin definir) → no lances nada: prepara en borrador las preguntas de aclaración y avisa.`,
   campaign: `Eres el generador de campañas de cold email de OnePulso. A partir de un nicho o empresa, devuelves una campaña COMPLETA lista para enviar, en la voz de Xavi.
 
-VOZ: Xavi, dueño de OnePulso. Castellano de España. Directo, personal, sin jerga corporate, como un colega senior que sabe lo que hace. Sin humo ni promesas vacías. Firma: step 1 "Xavi Riera"; follow-ups "Xavi".
+VOZ: directo, personal, sin jerga corporate, como un colega senior que sabe lo que hace. Sin humo ni promesas vacías.
+IDIOMA: español por defecto; si el público objetivo es de un país NO hispanohablante, escribe TODO en inglés (ni una palabra en otro idioma).
+APERTURA: empieza SIEMPRE conectando con el prospecto — menciona {{companyName}} y su sector {{industry}} (retos/tendencias típicas del sector, sin inventar datos internos suyos). Ej: "Estuve mirando {{companyName}} y cómo trabajáis en {{industry}}…".
+CTA: termina SIEMPRE con una llamada clara a agendar una reunión/llamada.
 
 DOS MODOS:
 - MODO A (OnePulso): promocionas los servicios de lead gen de OnePulso.
@@ -217,6 +220,16 @@ function onboardingStatusForFlow(step: number): ("pending" | "in_progress" | "do
 // default positions (1, 2) only if a matching node isn't found.
 const emailNodeIdx = (ns: Node[]) => { const i = ns.findIndex((n) => /correo|arranque/i.test(n.label)); return i >= 0 ? i : 1; };
 const formNodeIdx = (ns: Node[]) => { const i = ns.findIndex((n) => /responde/i.test(n.label) && /form/i.test(n.label)); return i >= 0 ? i : 2; };
+
+// Language for the campaign: Spanish by default; English if the target market in the briefing
+// is clearly a NON-Spanish-speaking country (and no Spanish-speaking market is mentioned).
+const detectCampaignLanguage = (text: string): string => {
+  const t = (text || "").toLowerCase();
+  const es = /(espa[ñn]a|spain|m[ée]xico|argentina|colombia|chile|per[uú]|ecuador|uruguay|paraguay|bolivia|venezuela|guatemala|rep[uú]blica dominicana|latinoam|latam|hispano|castellano|espa[ñn]ol|habla\s*hispana)/;
+  const en = /(estados\s*unidos|united\s*states|\busa\b|\bu\.s\.a?\b|\buk\b|reino\s*unido|inglaterra|england|londres|london|nueva\s*york|new\s*york|alemania|germany|francia|france|italia|italy|holanda|netherlands|b[ée]lgica|belgium|suecia|sweden|noruega|dinamarca|europa\b|internacional|global|english|ingl[ée]s|angloparlante|non[-\s]?spanish)/;
+  if (en.test(t) && !es.test(t)) return "Inglés";
+  return "Español";
+};
 
 // Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
 // touch daily limits / the sent log). Same send-email fn the Onboarding page uses.
@@ -390,12 +403,13 @@ export default function AutomationFlow() {
       const { data: { session } } = await supabase.auth.getSession();
       // Short, safe steer — passing the FULL campaign memory as skills made the AI output huge
       // and its JSON broke. The generate-campaign fn has its own robust prompt; this just nudges it.
-      const shortSkills = "Voz de Xavi: directo, cercano, sin corporativismo. Follow-ups a 1-2 días. Usa bastante las variables {{firstName}} {{companyName}} {{industry}} {{city}}. Emails cortos, un solo enlace como mucho, sin promesas numéricas.";
+      const campaignLang = detectCampaignLanguage(briefing);
+      const shortSkills = "Empieza cada email conectando con el prospecto: menciona {{companyName}} y su sector {{industry}} (en general, sin inventar datos internos suyos). Usa MUCHO las variables {{firstName}} {{companyName}} {{industry}} {{city}} para que suene muy personalizado y a medida. Voz cercana y directa, sin corporativismo. Termina SIEMPRE con un CTA claro para agendar una reunión/llamada. Follow-ups a 1-2 días, emails cortos, un solo enlace, sin promesas numéricas.";
       const genOnce = async (variants: number) => {
         const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ briefing, website: "", company: fc.company || "", sender: "Xavi", language: "Español", tone: "cercano y directo, voz de Xavi", goal: "conseguir una reunión / llamada", num_steps: 3, num_variants: variants, skills: shortSkills }),
+          body: JSON.stringify({ briefing, website: "", company: fc.company || "", sender: "Xavi", language: campaignLang, tone: "cercano y directo", goal: "conseguir una reunión / llamada", num_steps: 3, num_variants: variants, skills: shortSkills }),
         });
         const gj = await gen.json();
         if (gj.error) throw new Error(gj.error);
