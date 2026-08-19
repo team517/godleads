@@ -101,6 +101,9 @@ serve(async (req) => {
   // 1) Unprocessed inbound to the owner's connected mailboxes (skip warmup / our own sends).
   let q = admin.from("inbox_messages").select("*").eq("user_id", ownerId).eq("auto_replied", false).eq("is_sent", false).eq("is_warmup", false).order("received_at", { ascending: true }).limit(Math.min(limit || 15, 30));
   if (account_id) q = q.eq("account_id", account_id);
+  // Human-like delay: only reply to emails that arrived ≥5 min ago (skipped in dry_run so you
+  // can test immediately). Combined with the cron cadence, the reply goes out ~5 min later.
+  if (!dryRun) q = q.lte("received_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const { data: msgs } = await q;
   if (!msgs?.length) return new Response(JSON.stringify({ processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
