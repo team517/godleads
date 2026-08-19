@@ -290,25 +290,34 @@ export default function EmailAccounts() {
   useEffect(() => {
     const now = Date.now();
     const RECENT = 30 * 60 * 1000;
-    const toVerify: string[] = [];
+    const toVerify: string[] = [];        // not-connected accounts — these genuinely need a live check
+    const staleConnected: string[] = [];  // connected-but-stale — re-confirm only a small sample
     const seed: Record<string, ImapCheck> = {};
     for (const a of accounts) {
       if (requestedImapRef.current.has(a.id)) continue;
       requestedImapRef.current.add(a.id);
       const lhc = a.last_health_check ? new Date(a.last_health_check).getTime() : 0;
       const recent = lhc && now - lhc < RECENT;
-      // Paint the STORED status immediately: a connected account shows green on entry, no
-      // "conectando" spinner. Re-verify in the background (silently) only if stale.
-      if (a.status === "connected") seed[a.id] = { loading: false, ok: true };
-      if (a.status !== "connected" || !recent) toVerify.push(a.id);
+      // A stored-connected account is TRUSTED: paint it green instantly (no spinner) and do
+      // NOT fire a live IMAP login for it. With 100+ accounts, one login per account crawled
+      // the page and hammered IONOS. The server-side health monitor (cron every 5 min) keeps
+      // the stored status fresh; here we only re-confirm a small SAMPLE live for reassurance.
+      if (a.status === "connected") {
+        seed[a.id] = { loading: false, ok: true };
+        if (!recent) staleConnected.push(a.id);
+      } else {
+        toVerify.push(a.id);
+      }
     }
     if (Object.keys(seed).length) setImapChecks(prev => ({ ...prev, ...seed }));
-    if (toVerify.length === 0) return;
+    const CONFIRM_CAP = 10; // re-confirm at most this many already-green accounts per load
+    const finalVerify = [...toVerify, ...staleConnected.slice(0, CONFIRM_CAP)];
+    if (finalVerify.length === 0) return;
     let cancelled = false;
     (async () => {
       const CONC = 2;
-      for (let i = 0; i < toVerify.length && !cancelled; i += CONC) {
-        await Promise.all(toVerify.slice(i, i + CONC).map((id: string) => checkImap(id)));
+      for (let i = 0; i < finalVerify.length && !cancelled; i += CONC) {
+        await Promise.all(finalVerify.slice(i, i + CONC).map((id: string) => checkImap(id)));
       }
     })();
     return () => { cancelled = true; };
