@@ -333,7 +333,13 @@ export default function AutomationFlow() {
       const idx = next.findIndex((c) => clientMatchesResponse(c, r));
       if (idx >= 0) {
         map[r.id] = next[idx].company || next[idx].name || next[idx].email;
-        if (next[idx].step < respondedStep) {
+        // Only a response that arrived AFTER the client entered the flow advances it. An old
+        // response (same email/domain, from a previous test) must NEVER make a new client jump —
+        // it stays "Esperando la respuesta del Form…" until a fresh answer comes in.
+        const respTime = r.received_at ? new Date(r.received_at).getTime() : 0;
+        const startTime = next[idx].startedAt ? new Date(next[idx].startedAt).getTime() : 0;
+        const fresh = respTime > startTime;
+        if (fresh && next[idx].step < respondedStep) {
           next[idx].step = respondedStep; changed = true; syncOnboarding(next[idx].clientId, respondedStep);
           if (next[idx].clientId && !campaignStartedRef.current.has(next[idx].id)) toGenerate.push({ fc: next[idx], resp: r });
         }
@@ -374,14 +380,25 @@ export default function AutomationFlow() {
       const briefing = Object.entries(resp.answers || {}).map(([k, v]) => `${k}: ${String(v)}`).join("\n")
         + (fc.context ? `\n\nContexto del dueño de cuenta: ${fc.context}` : "");
       const { data: { session } } = await supabase.auth.getSession();
-      const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ briefing, website: "", company: fc.company || "", sender: "Xavi", language: "Español", tone: "cercano y directo, voz de Xavi", goal: "conseguir una reunión / llamada", num_steps: 3, num_variants: 3, skills: ai.campaign }),
-      });
-      const gj = await gen.json();
-      if (gj.error || !Array.isArray(gj.steps) || gj.steps.length === 0) throw new Error(gj.error || "no se generó la secuencia");
-      const steps = gj.steps.map((s: any, i: number) => ({
+      // Short, safe steer — passing the FULL campaign memory as skills made the AI output huge
+      // and its JSON broke. The generate-campaign fn has its own robust prompt; this just nudges it.
+      const shortSkills = "Voz de Xavi: directo, cercano, sin corporativismo. Follow-ups a 1-2 días. Usa bastante las variables {{firstName}} {{companyName}} {{industry}} {{city}}. Emails cortos, un solo enlace como mucho, sin promesas numéricas.";
+      const genOnce = async (variants: number) => {
+        const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+          body: JSON.stringify({ briefing, website: "", company: fc.company || "", sender: "Xavi", language: "Español", tone: "cercano y directo, voz de Xavi", goal: "conseguir una reunión / llamada", num_steps: 3, num_variants: variants, skills: shortSkills }),
+        });
+        const gj = await gen.json();
+        if (gj.error) throw new Error(gj.error);
+        if (!Array.isArray(gj.steps) || gj.steps.length === 0) throw new Error("no se generó la secuencia");
+        return gj.steps as any[];
+      };
+      // The AI's JSON occasionally breaks with many variants — retry twice, then fall back to 1.
+      let rawSteps: any[] | null = null;
+      for (const v of [3, 3, 1]) { try { rawSteps = await genOnce(v); break; } catch { /* siguiente intento */ } }
+      if (!rawSteps) throw new Error("la IA no devolvió una secuencia válida tras varios intentos");
+      const steps = rawSteps.map((s: any, i: number) => ({
         subject: (s.subject || "").trim(),
         body: s.body || "",
         delay_days: i === 0 ? 0 : 2, // 1-2 días entre follow-ups
@@ -405,6 +422,12 @@ export default function AutomationFlow() {
       updateFlowClient(fc.id, { campaignStatus: "failed", campaignError: String(e?.message || e) });
       toast.error(`No se pudo generar la campaña: ${e?.message || e}`);
     }
+  };
+  const retryCampaign = (c: FlowClient) => {
+    const resp = responses.find((r) => clientMatchesResponse(c, r));
+    if (!resp) { toast.error("No hay respuesta del Form para regenerar"); return; }
+    campaignStartedRef.current.delete(c.id);
+    generateCampaignFor(c, resp);
   };
 
   // The client whose run is being visualised on the flow (defaults to the most recent).
@@ -626,7 +649,7 @@ export default function AutomationFlow() {
                         {c.emailStatus === "failed" && <p className="text-xs text-destructive">⚠ Correo no enviado{c.emailError ? `: ${c.emailError}` : ""}</p>}
                         {c.campaignStatus === "generating" && <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Generando la campaña con IA…</p>}
                         {c.campaignStatus === "done" && <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Campaña en borrador creada</p>}
-                        {c.campaignStatus === "failed" && <p className="text-xs text-destructive">⚠ Campaña no generada{c.campaignError ? `: ${c.campaignError}` : ""}</p>}
+                        {c.campaignStatus === "failed" && <p className="text-xs text-destructive">⚠ Campaña no generada{c.campaignError ? `: ${c.campaignError}` : ""} <button type="button" onClick={() => retryCampaign(c)} className="underline hover:text-foreground">Reintentar</button></p>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[node?.agent || "manual"].color}`}>
