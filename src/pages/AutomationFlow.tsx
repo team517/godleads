@@ -133,6 +133,7 @@ FORMATO (no negociable):
 - HTML: cada bloque en su propio <p>. NUNCA dos bloques en un mismo <p>.
 - <strong> solo en 3-4 cosas: concepto core, número/resultado, lo que ofreces, tiempo del CTA. Nunca en "hola/gracias/saludos" ni sobre frases enteras.
 - Frases ≤20 palabras. Bloques ≤3 líneas. Sin emojis. Sin "estimado", "saludos cordiales", "atte.", "espero que estés bien".
+- LONGITUD: el email inicial entre 150 y 170 palabras; cada follow-up entre 125 y 135 palabras. Respeta estos rangos.
 - Variables: {{firstName}} {{companyName}} {{industry}} {{city}}. ÚSALAS BASTANTE para que suene real: ≥3 de las 4 en cada variante, {{companyName}} siempre.
 - Investigación REAL del nicho (números, casos). Cero copy genérico reutilizable entre nichos.
 
@@ -161,6 +162,7 @@ QUÉ RESUELVES SOLO:
 - Preguntas informativas y objeciones estándar sobre cómo trabajamos.
 - Peticiones de reunión: pasa el Calendly (https://calendly.com/onepulso/30min) sin insistir ni forzar.
 - Revisión de campaña / métricas: comprueba que el correo o dominio del que escribe cuadra con una cuenta existente; entra en el panel de esa campaña, coge los datos y explícale en lenguaje llano cómo va (envíos, aperturas, respuestas, reuniones y qué estamos ajustando). Si el email o dominio NO cuadra con ninguna cuenta, no des ningún dato: pide que escriba desde el correo de la cuenta.
+- Cambios en la campaña (copy, asunto, ángulo, un mensaje…): analiza lo que pide, aplícalo en su campaña y, cuando esté hecho, envíale un correo confirmando que "los cambios ya están aplicados y puedes verlos en tu campaña". Mantén una conversación natural y cercana. Si el cambio NO es de copy (cambiar la base de datos/leads, ampliar el alcance, algo delicado…), NO lo hagas por tu cuenta: avisa a team@onepulso.online.
 
 QUÉ DEJAS SIEMPRE EN BORRADOR (redáctalo y avisa a team@onepulso.online): dinero, cancelaciones, quejas serias, cualquier mención legal, y cualquier caso donde no estés seguro.
 
@@ -230,6 +232,9 @@ const detectCampaignLanguage = (text: string): string => {
   if (en.test(t) && !es.test(t)) return "Inglés";
   return "Español";
 };
+
+// Steer passed to generate-campaign (short on purpose — the full memory broke its JSON).
+const CAMPAIGN_SKILLS = "Empieza SIEMPRE con un saludo personal: 'Hola {{firstName}}, soy [nombre del que firma]'. Habla más de la EMPRESA del prospecto ({{companyName}}) que de la industria — cosas generales pero que PAREZCAN muy personalizadas, apoyándote en las variables {{firstName}} {{companyName}} {{industry}} {{city}} por todo el correo. LONGITUD: el email inicial entre 150 y 170 palabras; cada follow-up entre 125 y 135 palabras (respeta estos rangos). Voz cercana y directa, sin corporativismo. Termina SIEMPRE con un CTA claro para agendar una reunión/llamada. Follow-ups a 1-2 días, un solo enlace, sin promesas numéricas.";
 
 // Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
 // touch daily limits / the sent log). Same send-email fn the Onboarding page uses.
@@ -420,7 +425,7 @@ export default function AutomationFlow() {
       // Short, safe steer — passing the FULL campaign memory as skills made the AI output huge
       // and its JSON broke. The generate-campaign fn has its own robust prompt; this just nudges it.
       const campaignLang = detectCampaignLanguage(briefing);
-      const shortSkills = "Empieza SIEMPRE con un saludo personal: 'Hola {{firstName}}, soy [nombre del que firma]'. Habla más de la EMPRESA del prospecto ({{companyName}}) que de la industria — cosas generales pero que PAREZCAN muy personalizadas, apoyándote en las variables {{firstName}} {{companyName}} {{industry}} {{city}} por todo el correo. Voz cercana y directa, sin corporativismo. Termina SIEMPRE con un CTA claro para agendar una reunión/llamada. Follow-ups a 1-2 días, emails cortos, un solo enlace, sin promesas numéricas.";
+      const shortSkills = CAMPAIGN_SKILLS;
       const genOnce = async (variants: number) => {
         const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
           method: "POST",
