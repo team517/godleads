@@ -80,7 +80,7 @@ const DEFAULT_NODES: Node[] = [
 const DEFAULT_AI: AIConfig = {
   globalMemory:
     "Eres el asistente de OnePulso. Tono cercano, profesional y directo, en el idioma del cliente. Nunca prometas resultados garantizados. Marca (colores, logo, nombre) según el perfil de cada cliente. Ante la duda, escala al dueño en vez de improvisar.",
-  formUrl: "",
+  formUrl: "https://forms.gle/QuZsPwTcwkmB6qoF7",
   formId: "",
   formName: "",
   onboarding:
@@ -122,6 +122,32 @@ async function callAdmin(payload: Record<string, unknown>) {
 }
 const slugify = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const genPassword = () => Math.random().toString(36).slice(2, 10) + "Aa1!" + Math.random().toString(36).slice(2, 5);
+
+// Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
+// touch daily limits / the sent log). Same send-email fn the Onboarding page uses.
+async function sendIntroEmail(accountId: string, to: string, subject: string, html: string) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ account_id: accountId, to_email: to, subject, body: html, is_test: true }),
+  });
+  return resp.json().catch(() => ({ error: "bad response" }));
+}
+const escHtml = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function introEmailHtml(opts: { name: string; company: string; formUrl: string; onboardingUrl: string; color: string }) {
+  const hi = opts.name ? `Hola ${escHtml(opts.name)}` : (opts.company ? `Hola ${escHtml(opts.company)}` : "Hola");
+  const c = opts.color || "#6E58F1";
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.6">
+  <p>${hi} 👋</p>
+  <p>¡Encantados de empezar! Para preparar tu campaña necesitamos que respondas unas preguntas rápidas:</p>
+  <p style="margin:20px 0"><a href="${escHtml(opts.formUrl)}" style="background:${c};color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Responder el formulario →</a></p>
+  <p>Y aquí tienes tu <b>portal de seguimiento</b>, donde podrás ver el progreso de tu proyecto <b>en directo</b>:</p>
+  <p style="margin:20px 0"><a href="${escHtml(opts.onboardingUrl)}" style="border:1px solid ${c};color:${c};text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Ver mi proyecto en directo →</a></p>
+  <p>En cuanto respondas el formulario, nos ponemos con tu campaña. Cualquier duda, responde a este correo.</p>
+  <p>Un saludo,<br/>El equipo de OnePulso</p>
+</div>`;
+}
 
 export default function AutomationFlow() {
   const { user } = useAuth();
@@ -489,9 +515,28 @@ export default function AutomationFlow() {
           const base = slugify(data.company || data.name || data.email.split("@")[0]) || "cliente";
           const slug = `${base}-${Math.random().toString(36).slice(2, 5)}`;
           await callAdmin({ action: "update_client", user_id: cr.user_id, onboarding_slug: slug });
-          // 3) Add it to the flow, linked to the real client + its onboarding.
-          persistClients([{ id: uid(), step: 0, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, ...data }, ...clients]);
-          toast.success(`Cliente creado con onboarding: /o/${slug}`);
+          // 3) Send the intro email: the Google Form (campaign questions) + the onboarding link.
+          const onboardingUrl = `${window.location.origin}/o/${slug}`;
+          const formUrl = ai.formUrl || "https://forms.gle/QuZsPwTcwkmB6qoF7";
+          let emailNote = "";
+          try {
+            const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
+            let fromAcc: string | null = prof?.onboarding_from_account_id || null;
+            if (!fromAcc) {
+              const { data: acc } = await (supabase as any).from("email_accounts").select("id").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle();
+              fromAcc = acc?.id || null;
+            }
+            if (fromAcc) {
+              const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor });
+              const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
+              emailNote = r?.success ? " · correo enviado ✉️" : " · (no se pudo enviar el correo)";
+            } else {
+              emailNote = " · (sin cuenta de envío: configúrala en Onboarding)";
+            }
+          } catch { emailNote = " · (no se pudo enviar el correo)"; }
+          // 4) Add it to the flow — already at the "esperando respuesta del Form" step.
+          persistClients([{ id: uid(), step: 2, startedAt: new Date().toISOString(), clientId: cr.user_id, onboardingSlug: slug, ...data }, ...clients]);
+          toast.success(`Cliente creado con onboarding: /o/${slug}${emailNote}`);
           setNewClient(false);
           return true;
         }}
@@ -544,7 +589,7 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
         <DialogHeader>
           <div className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><UserPlus className="h-5 w-5" /></div>
           <DialogTitle className="text-center font-display text-xl">Crear cliente y arrancar</DialogTitle>
-          <p className="text-center text-sm text-muted-foreground">Se crea la cuenta del cliente <b>y su perfil de onboarding</b> automáticamente.</p>
+          <p className="text-center text-sm text-muted-foreground">Se crea la cuenta + su <b>onboarding</b>, y se le <b>envía el correo</b> con el formulario y el enlace de seguimiento en directo.</p>
         </DialogHeader>
         <div className="space-y-3 pt-1">
           <div className="space-y-1.5"><Label className="text-xs">Nombre</Label><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del contacto" /></div>
