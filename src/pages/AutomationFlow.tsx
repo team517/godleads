@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -44,6 +44,7 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
 type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string };
 type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
+type AIFile = { name: string; url: string };
 type AIConfig = {
   globalMemory: string;
   formUrl: string;
@@ -54,6 +55,7 @@ type AIConfig = {
   replies: string;
   autoHandleRoutine: boolean;
   notifyEmail: string;
+  files: { global: AIFile[]; onboarding: AIFile[]; campaign: AIFile[]; replies: AIFile[] };
 };
 type GForm = { id: string; name: string; url: string; modifiedTime: string | null };
 
@@ -91,6 +93,7 @@ const DEFAULT_AI: AIConfig = {
     "Cuando responda un lead, lee el perfil del cliente (propuesta, tono, oferta). Clasifica: interesado, pregunta, objeción, no interesado. Responde desde ese perfil. Si es importante o dudoso, prepara un borrador y avisa al dueño con un resumen. Solo respondes tú lo rutinario.",
   autoHandleRoutine: true,
   notifyEmail: "team@onepulso.online",
+  files: { global: [], onboarding: [], campaign: [], replies: [] },
 };
 
 const AGENT_META: Record<AgentKey, { label: string; color: string }> = {
@@ -715,12 +718,48 @@ function NewClientDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
   );
 }
 
-function AgentBlock({ icon, title, hint, value, onChange }: { icon: React.ReactNode; title: string; hint: string; value: string; onChange: (v: string) => void }) {
+// Attach memory / behaviour files (uploaded to storage; the URL+name is kept in the AI config).
+function MemoryFiles({ files, onChange }: { files: AIFile[]; onChange: (f: AIFile[]) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const upload = async (file: File) => {
+    if (file.size > 8 * 1024 * 1024) { toast.error("El archivo debe pesar menos de 8 MB"); return; }
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+      const path = `ai-memory/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const url = supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl;
+      onChange([...(files || []), { name: file.name, url }]);
+      toast.success("Archivo adjuntado");
+    } catch (e: any) { toast.error(e?.message || "Error al subir el archivo"); }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+  return (
+    <div className="space-y-1">
+      {(files || []).map((f, i) => (
+        <div key={i} className="flex items-center justify-between gap-2 rounded border border-border/60 bg-muted/30 px-2 py-1 text-xs">
+          <a href={f.url} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1 truncate text-foreground hover:underline"><Paperclip className="h-3 w-3 shrink-0" /><span className="truncate">{f.name}</span></a>
+          <button type="button" onClick={() => onChange((files || []).filter((_, j) => j !== i))} className="shrink-0 text-muted-foreground hover:text-destructive">Quitar</button>
+        </div>
+      ))}
+      <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+      <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => fileRef.current?.click()} disabled={uploading}>
+        {uploading ? <><Loader2 className="h-3 w-3 animate-spin" /> Subiendo…</> : <><Paperclip className="h-3 w-3" /> Adjuntar memoria/comportamiento</>}
+      </Button>
+    </div>
+  );
+}
+
+function AgentBlock({ icon, title, hint, value, onChange, files, onFilesChange }: { icon: React.ReactNode; title: string; hint: string; value: string; onChange: (v: string) => void; files: AIFile[]; onFilesChange: (f: AIFile[]) => void }) {
   return (
     <div className="space-y-1.5 rounded-lg border border-border p-3">
       <div className="flex items-center gap-2"><span className="text-primary">{icon}</span><Label className="text-sm font-semibold">{title}</Label></div>
       <p className="text-xs text-muted-foreground">{hint}</p>
       <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+      <MemoryFiles files={files} onChange={onFilesChange} />
     </div>
   );
 }
@@ -729,6 +768,8 @@ function AIConfigDialog({ open, onClose, value, onSave }: { open: boolean; onClo
   const [cfg, setCfg] = useState<AIConfig>(value);
   useEffect(() => { if (open) setCfg(value); }, [open, value]);
   const set = (patch: Partial<AIConfig>) => setCfg((c) => ({ ...c, ...patch }));
+  const f = cfg.files || { global: [], onboarding: [], campaign: [], replies: [] };
+  const setFilesFor = (k: keyof AIConfig["files"], v: AIFile[]) => set({ files: { global: f.global || [], onboarding: f.onboarding || [], campaign: f.campaign || [], replies: f.replies || [], [k]: v } });
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto">
@@ -741,6 +782,7 @@ function AIConfigDialog({ open, onClose, value, onSave }: { open: boolean; onClo
             <div className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /><Label className="text-sm font-semibold">Memoria general</Label></div>
             <p className="text-xs text-muted-foreground">Cómo debe actuar siempre: tono, marca, principios. Aquí subes tu "memoria" de cómo hacerlo.</p>
             <textarea value={cfg.globalMemory} onChange={(e) => set({ globalMemory: e.target.value })} rows={4} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+            <MemoryFiles files={f.global} onChange={(v) => setFilesFor("global", v)} />
           </div>
 
           <div className="space-y-1.5">
@@ -749,9 +791,9 @@ function AIConfigDialog({ open, onClose, value, onSave }: { open: boolean; onClo
             <p className="text-xs text-muted-foreground">Es el que la IA envía al cliente para recoger la info de la campaña.</p>
           </div>
 
-          <AgentBlock icon={<Mail className="h-4 w-4" />} title="Agente Onboarding" hint="Envía el correo de arranque (Form + onboarding) y actualiza las fases en silencio." value={cfg.onboarding} onChange={(v) => set({ onboarding: v })} />
-          <AgentBlock icon={<FileText className="h-4 w-4" />} title="Agente Campaña" hint="Analiza el Form + tu contexto y crea la campaña en borrador con los copys. Nunca la activa." value={cfg.campaign} onChange={(v) => set({ campaign: v })} />
-          <AgentBlock icon={<MessageSquare className="h-4 w-4" />} title="Agente Atención al cliente" hint="Lee el perfil de quien responde y contesta. Lo importante lo deja en borrador y te avisa." value={cfg.replies} onChange={(v) => set({ replies: v })} />
+          <AgentBlock icon={<Mail className="h-4 w-4" />} title="Agente Onboarding" hint="Envía el correo de arranque (Form + onboarding) y actualiza las fases en silencio." value={cfg.onboarding} onChange={(v) => set({ onboarding: v })} files={f.onboarding} onFilesChange={(v) => setFilesFor("onboarding", v)} />
+          <AgentBlock icon={<FileText className="h-4 w-4" />} title="Agente Campaña" hint="Analiza el Form + tu contexto y crea la campaña en borrador con los copys. Nunca la activa." value={cfg.campaign} onChange={(v) => set({ campaign: v })} files={f.campaign} onFilesChange={(v) => setFilesFor("campaign", v)} />
+          <AgentBlock icon={<MessageSquare className="h-4 w-4" />} title="Agente Atención al cliente" hint="Lee el perfil de quien responde y contesta. Lo importante lo deja en borrador y te avisa." value={cfg.replies} onChange={(v) => set({ replies: v })} files={f.replies} onFilesChange={(v) => setFilesFor("replies", v)} />
 
           <div className="space-y-2 rounded-lg border border-border p-3">
             <label className="flex items-start gap-2 text-sm">
