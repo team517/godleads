@@ -112,7 +112,10 @@ const NOT_INTERESTED = [
   /no\s+ens\s+interessa/i,
   /(no|not).{0,15}(a\s+)?(fit|good fit|match|lo que (buscamos|necesitamos))/i,
   /ya\s+(tenemos|contamos con|trabajamos con|disponemos)/i, /already\s+(have|work with|use|using|got)/i,
-  /(lo hacemos|lo llevamos|lo gestionamos|ho fem|ho gestionem|ho portem)\s+(internamente|internament|in[- ]?house|nosotros|nosaltres)/i, /(in[- ]?house|internament(e)?)\b/i,
+  /(lo hacemos|lo llevamos|lo gestionamos|ho fem|ho gestionem|ho portem)\s+(internamente|internament|in[- ]?house|nosotros|nosaltres)/i, /\bin[- ]?house\b/i,
+  // NOTE: bare "internamente" was REMOVED here — corporate legal disclaimers ("este correo
+  // solo puede distribuirse internamente…") made real referrals/replies read as not_interested.
+  // "lo hacemos internamente" is still caught by the contextual pattern just above.
   /(no hay|sin)\s+(presupuesto|budget)/i, /(no es el|not the right)\s+momento/i, /(ahora|now)\s+no\s+(es el momento|toca)/i, /not?\s+(right\s+)?now/i,
   /no\s+es\s+(una\s+)?prioridad/i, /not\s+a\s+priority/i, /no\s+(es\s+)?prioritari/i,
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
@@ -168,7 +171,11 @@ const REFERRAL = [
   /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
   /reach out to\s+/i, /you (should|can|may want to)\s+(contact|reach|talk to|speak with)\s+/i,
   /(is|es)\s+the\s+(right|best)\s+person/i, /(qui[ée]n|who)\s+(lo\s+)?(lleva|gestiona|se encarga|handles)/i,
-  /(competencia|responsabilidad|cosa)\s+de\s+\w+/i, /(reenv[íi]|forward)(o|ando|ed|ing|é)?\s+(tu|este|su|el|your|to)/i,
+  /(competencia|responsabilidad|cosa)\s+de\s+\w+/i, /(reenv[íi]|forward)\w*\s+(tu|este|esta|su|el|la|los|las|your|to)/i,
+  // "He reenviado tu correo al área de compras / al departamento / al responsable" — a
+  // referral to the right team, NOT a rejection (the disclaimer word "internamente" used
+  // to leak these to not_interested).
+  /reenvi\w+[^.?!]{0,30}\b(compras|departament\w*|[áa]rea|responsable|direcci[óo]n|equipo)\b/i,
   // "No decido nada" / "no soy quien decide" — not the decision-maker → redirect, not a no.
   /\bno\s+decido\b/i, /no\s+soy\s+qui[ée]n\s+(decide|lo\s+decide)/i, /no\s+(soy\s+el\s+que\s+)?tom[oa]\s+(la|las|esa|estas)\s+decisi/i,
 ];

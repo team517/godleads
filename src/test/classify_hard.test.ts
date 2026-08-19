@@ -26,6 +26,9 @@ const CASES: Array<[string[], string]> = [
   // referral without a name
   [["derivado"], "Esto lo lleva otro departamento."],
   [["derivado", "interested", "neutral"], "Se lo paso a mi jefe."], // ambiguo: reenvío interno
+  // REAL (Oesia): forwarded to the purchasing dept + a corporate legal disclaimer whose
+  // word "internamente" used to leak this to not_interested. It's a referral → derivado.
+  [["derivado"], "Hola John, He reenviado tu correo al área de compras por si tu ofrecimiento es de interés. Si fuera así, ellos se pondrían en contacto contigo directamente. Un saludo, Francisco. ESTE CORREO ELECTRÓNICO Y SUS ANEXOS SON DE USO INTERNO, POR LO QUE SOLAMENTE SE PUEDE DISTRIBUIR INTERNAMENTE EN EL GRUPO OESÍA Y TAMBIÉN A CLIENTES, PROVEEDORES Y PARTNERS SI ES ESTRICTAMENTE NECESARIO."],
   // OOO must beat everything, even "urgent contact X"
   [["out_of_office"], "Estoy de vacaciones. Para urgencias, contacta con soporte@empresa.com."],
   [["out_of_office"], "Estoy de baja médica hasta septiembre."],
