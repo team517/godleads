@@ -252,6 +252,7 @@ export default function EmailAccounts() {
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
   type ImapCheck = { loading: boolean; ok?: boolean; error?: string; reverifying?: boolean };
   const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>(() => cacheGet<Record<string, ImapCheck>>("accounts:imapChecks") || {});
+  const [verifyingAll, setVerifyingAll] = useState<{ running: boolean; done: number; total: number }>({ running: false, done: 0, total: 0 });
 
   // Persist the SETTLED IMAP/DNS results so the next visit paints them instantly (no spinner).
   useEffect(() => {
@@ -315,12 +316,16 @@ export default function EmailAccounts() {
     if (finalVerify.length === 0) return;
     let cancelled = false;
     (async () => {
-      const CONC = 2;
+      const CONC = 3;
       for (let i = 0; i < finalVerify.length && !cancelled; i += CONC) {
         await Promise.all(finalVerify.slice(i, i + CONC).map((id: string) => checkImap(id)));
       }
+      // Pending accounts that just verified now have a fresh DB status (connected/error) —
+      // refresh the list so they show correctly here AND become available to campaigns.
+      if (!cancelled && toVerify.length > 0) loadAccounts();
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts, checkImap]);
 
   const recheckImap = (accountId: string) => { requestedImapRef.current.add(accountId); checkImap(accountId); };
@@ -694,8 +699,22 @@ export default function EmailAccounts() {
   const handleVerifyAll = async () => {
     const pending = accounts.filter(a => a.status === "pending" || a.status === "error");
     if (pending.length === 0) { toast.info("No hay cuentas pendientes de verificar"); return; }
-    toast.info(`Verificando ${pending.length} cuentas...`);
-    for (const account of pending) { await handleVerify(account.id); }
+    // Concurrent (was one-by-one with a full reload after EACH — crawled with 100+ accounts).
+    // CONC=4 stays gentle on IONOS; a single reload at the end; inbox sync is left to the cron.
+    setVerifyingAll({ running: true, done: 0, total: pending.length });
+    const ids = pending.map(a => a.id);
+    let done = 0;
+    const verifyOne = async (id: string) => {
+      try { await supabase.functions.invoke("verify-email-connection", { body: { account_id: id } }); } catch { /* status stays */ }
+      done += 1; setVerifyingAll(v => ({ ...v, done }));
+    };
+    const CONC = 4;
+    for (let i = 0; i < ids.length; i += CONC) {
+      await Promise.all(ids.slice(i, i + CONC).map(verifyOne));
+    }
+    setVerifyingAll({ running: false, done: pending.length, total: pending.length });
+    await loadAccounts();
+    toast.success(`Verificación completada: ${pending.length} cuentas revisadas.`);
   };
 
 
@@ -1003,8 +1022,10 @@ export default function EmailAccounts() {
         </div>
         <div className="flex flex-wrap gap-2">
           {accounts.length > 0 && (
-            <Button variant="outline" size="sm" className="gap-2" onClick={handleVerifyAll}>
-              <Wifi className="h-4 w-4" /> <span className="hidden sm:inline">Verificar todas</span><span className="sm:hidden">Verificar</span>
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleVerifyAll} disabled={verifyingAll.running}>
+              {verifyingAll.running
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> {verifyingAll.done}/{verifyingAll.total}</>
+                : <><Wifi className="h-4 w-4" /> <span className="hidden sm:inline">Verificar todas</span><span className="sm:hidden">Verificar</span></>}
             </Button>
           )}
           {accounts.length > 0 && (
