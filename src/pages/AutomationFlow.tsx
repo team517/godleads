@@ -158,6 +158,7 @@ export default function AutomationFlow() {
   const [editNode, setEditNode] = useState<Node | null>(null);
   const [newClient, setNewClient] = useState(true); // el flujo arranca pidiendo los datos del cliente
   const [aiOpen, setAiOpen] = useState(false);
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
 
   const [forms, setForms] = useState<GForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
@@ -251,6 +252,10 @@ export default function AutomationFlow() {
 
   const advance = (c: FlowClient) => persistClients(clients.map((x) => x.id === c.id ? { ...x, step: Math.min(x.step + 1, nodes.length - 1) } : x));
   const removeClient = (id: string) => persistClients(clients.filter((x) => x.id !== id));
+
+  // The client whose run is being visualised on the flow (defaults to the most recent).
+  const activeClient = clients.find((c) => c.id === activeClientId) || clients[0] || null;
+  const activeStep = activeClient ? activeClient.step : -1;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4">
@@ -378,28 +383,52 @@ export default function AutomationFlow() {
       {/* ── Editable flow ── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-base">El flujo <span className="ml-1 text-xs font-normal text-muted-foreground">· haz clic en un paso para editarlo</span></CardTitle>
+          <CardTitle className="text-base">El flujo <span className="ml-1 text-xs font-normal text-muted-foreground">· clic en un paso para editarlo</span></CardTitle>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={addNode}><Plus className="h-4 w-4" /> Añadir paso</Button>
         </CardHeader>
         <CardContent>
+          {/* Which client's run we're watching — the flow lights up for this one, like N8N */}
+          {clients.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Viendo:</span>
+              {clients.map((c) => (
+                <button key={c.id} onClick={() => setActiveClientId(c.id)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${activeClient?.id === c.id ? "bg-primary text-primary-foreground" : "bg-muted text-foreground hover:bg-muted/70"}`}>
+                  {c.company || c.name || c.email}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="overflow-x-auto pb-2">
             <div className="flex w-max items-stretch gap-1">
-              {nodes.map((s, i) => (
-                <div key={s.id} className="flex items-stretch gap-1">
-                  <button
-                    onClick={() => setEditNode(s)}
-                    className="group flex w-48 flex-col rounded-xl border border-border bg-muted/30 p-3 text-left transition-colors hover:border-primary/50 hover:bg-primary/5"
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${AGENT_META[s.agent].color}`}>{AGENT_META[s.agent].label}</span>
-                      <Pencil className="h-3 w-3 text-muted-foreground/0 transition-colors group-hover:text-primary" />
-                    </div>
-                    <p className="text-sm font-semibold">{i + 1}. {s.label}</p>
-                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{s.desc}</p>
-                  </button>
-                  {i < nodes.length - 1 && <div className="flex items-center px-0.5 text-muted-foreground/30"><ArrowRight className="h-4 w-4" /></div>}
-                </div>
-              ))}
+              {nodes.map((s, i) => {
+                const state = !activeClient ? "idle" : i < activeStep ? "done" : i === activeStep ? "current" : "pending";
+                const waitForm = /responde/i.test(s.label) && /form/i.test(s.label);
+                return (
+                  <div key={s.id} className="flex items-stretch gap-1">
+                    <button
+                      onClick={() => setEditNode(s)}
+                      className={`group flex w-48 flex-col rounded-xl border p-3 text-left transition-all ${
+                        state === "done" ? "border-emerald-500/50 bg-emerald-500/10"
+                        : state === "current" ? "border-primary bg-primary/5 ring-2 ring-primary/40"
+                        : state === "pending" ? "border-border bg-muted/20 opacity-60"
+                        : "border-border bg-muted/30 hover:border-primary/50 hover:bg-primary/5"}`}
+                    >
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${AGENT_META[s.agent].color}`}>{AGENT_META[s.agent].label}</span>
+                        {state === "done" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                          : state === "current" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                          : <Pencil className="h-3 w-3 text-muted-foreground/0 transition-colors group-hover:text-primary" />}
+                      </div>
+                      <p className="text-sm font-semibold">{i + 1}. {s.label}</p>
+                      <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                        {state === "current" ? (waitForm ? "Esperando la respuesta del Form…" : "En curso…") : s.desc}
+                      </p>
+                    </button>
+                    {i < nodes.length - 1 && <div className={`flex items-center px-0.5 ${activeClient && i < activeStep ? "text-emerald-500" : "text-muted-foreground/30"}`}><ArrowRight className="h-4 w-4" /></div>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </CardContent>
