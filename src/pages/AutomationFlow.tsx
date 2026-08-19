@@ -42,7 +42,7 @@ function clientMatchesResponse(c: { email: string; company: string }, r: FormRes
 // everything now. Real persistence + execution plug in on the backend later.
 
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
-type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string };
+type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string; campaignStatus?: "generating" | "done" | "failed"; campaignError?: string; campaignName?: string };
 type AgentKey = "onboarding" | "campaign" | "replies" | "manual";
 type AIFile = { name: string; url: string };
 type AIConfig = {
@@ -259,6 +259,7 @@ export default function AutomationFlow() {
   const [formsLoading, setFormsLoading] = useState(false);
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [respMatch, setRespMatch] = useState<Record<string, string>>({});
+  const campaignStartedRef = useRef<Set<string>>(new Set()); // flow clients whose campaign generation already started
 
   const loadResponses = async () => {
     try {
@@ -327,15 +328,20 @@ export default function AutomationFlow() {
     const map: Record<string, string> = {};
     let changed = false;
     const next = clients.map((c) => ({ ...c }));
+    const toGenerate: { fc: FlowClient; resp: FormResponse }[] = [];
     for (const r of responses) {
       const idx = next.findIndex((c) => clientMatchesResponse(c, r));
       if (idx >= 0) {
         map[r.id] = next[idx].company || next[idx].name || next[idx].email;
-        if (next[idx].step < respondedStep) { next[idx].step = respondedStep; changed = true; syncOnboarding(next[idx].clientId, respondedStep); }
+        if (next[idx].step < respondedStep) {
+          next[idx].step = respondedStep; changed = true; syncOnboarding(next[idx].clientId, respondedStep);
+          if (next[idx].clientId && !campaignStartedRef.current.has(next[idx].id)) toGenerate.push({ fc: next[idx], resp: r });
+        }
       }
     }
     setRespMatch(map);
     if (changed) persistClients(next);
+    toGenerate.forEach(({ fc, resp }) => generateCampaignFor(fc, resp)); // genera la campaña de verdad (borrador)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [responses, clients, nodes]);
 
@@ -357,6 +363,49 @@ export default function AutomationFlow() {
     syncOnboarding(c.clientId, ns);
   };
   const removeClient = (id: string) => persistClients(clients.filter((x) => x.id !== id));
+
+  // When the Form is answered, GENERATE the campaign for real (deployed generate-campaign +
+  // create_client_campaign) as a DRAFT in the client's account, then move to the approval step.
+  const generateCampaignFor = async (fc: FlowClient, resp: FormResponse) => {
+    if (!fc.clientId || campaignStartedRef.current.has(fc.id)) return;
+    campaignStartedRef.current.add(fc.id);
+    updateFlowClient(fc.id, { campaignStatus: "generating" });
+    try {
+      const briefing = Object.entries(resp.answers || {}).map(([k, v]) => `${k}: ${String(v)}`).join("\n")
+        + (fc.context ? `\n\nContexto del dueño de cuenta: ${fc.context}` : "");
+      const { data: { session } } = await supabase.auth.getSession();
+      const gen = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-campaign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ briefing, website: "", company: fc.company || "", sender: "Xavi", language: "Español", tone: "cercano y directo, voz de Xavi", goal: "conseguir una reunión / llamada", num_steps: 3, num_variants: 3, skills: ai.campaign }),
+      });
+      const gj = await gen.json();
+      if (gj.error || !Array.isArray(gj.steps) || gj.steps.length === 0) throw new Error(gj.error || "no se generó la secuencia");
+      const steps = gj.steps.map((s: any, i: number) => ({
+        subject: (s.subject || "").trim(),
+        body: s.body || "",
+        delay_days: i === 0 ? 0 : 2, // 1-2 días entre follow-ups
+        variants: Array.isArray(s.variants) ? s.variants.filter((v: any) => (v.subject || v.body)).map((v: any) => ({ subject: (v.subject || "").trim(), body: v.body || "" })) : [],
+      }));
+      const campaignName = `Automatización · ${fc.company || fc.name || fc.email}`;
+      const res = await callAdmin({
+        action: "create_client_campaign",
+        client_user_id: fc.clientId,
+        name: campaignName,
+        options: { stop_on_reply: true, first_email_text_only: false, text_only_emails: false, break_thread_after: 0, include_unsubscribe: false },
+        steps,
+        leads: [], // sin leads cargados — se aprueba en borrador
+      });
+      if (res.error) throw new Error(res.error);
+      const approvalStep = Math.min(formNodeIdx(nodes) + 2, nodes.length - 1); // "Tu aprobación"
+      updateFlowClient(fc.id, { campaignStatus: "done", campaignName, step: approvalStep });
+      syncOnboarding(fc.clientId, approvalStep);
+      toast.success(`Campaña generada en borrador para ${fc.company || fc.email}`);
+    } catch (e: any) {
+      updateFlowClient(fc.id, { campaignStatus: "failed", campaignError: String(e?.message || e) });
+      toast.error(`No se pudo generar la campaña: ${e?.message || e}`);
+    }
+  };
 
   // The client whose run is being visualised on the flow (defaults to the most recent).
   const activeClient = clients.find((c) => c.id === activeClientId) || clients[0] || null;
@@ -531,6 +580,8 @@ export default function AutomationFlow() {
                           ? (waitForm ? "Esperando la respuesta del Form…"
                             : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "sending") ? "Enviando el correo…"
                             : (/correo|arranque/i.test(s.label) && activeClient?.emailStatus === "failed") ? "⚠ No se pudo enviar el correo"
+                            : (/genera|campa/i.test(s.label) && activeClient?.campaignStatus === "generating") ? "Generando la campaña con IA…"
+                            : (/genera|campa/i.test(s.label) && activeClient?.campaignStatus === "failed") ? "⚠ No se pudo generar la campaña"
                             : "En curso…")
                           : s.desc}
                       </p>
@@ -573,6 +624,9 @@ export default function AutomationFlow() {
                         {c.emailStatus === "sending" && <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Enviando el correo…</p>}
                         {c.emailStatus === "sent" && <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Correo enviado desde {c.emailFrom || "la cuenta de envío"}</p>}
                         {c.emailStatus === "failed" && <p className="text-xs text-destructive">⚠ Correo no enviado{c.emailError ? `: ${c.emailError}` : ""}</p>}
+                        {c.campaignStatus === "generating" && <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Generando la campaña con IA…</p>}
+                        {c.campaignStatus === "done" && <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Campaña en borrador creada</p>}
+                        {c.campaignStatus === "failed" && <p className="text-xs text-destructive">⚠ Campaña no generada{c.campaignError ? `: ${c.campaignError}` : ""}</p>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[node?.agent || "manual"].color}`}>
