@@ -35,8 +35,8 @@ function cleanInbound(raw?: string | null): string {
   t = t.split("\n").filter((l) => !/^--[0-9a-f]{8,}/i.test(l) && !/^BODY\[/i.test(l) && !/^Content-(Type|Transfer|Disposition)/i.test(l) && !/^>+/.test(l.trim())).join("\n");
   return t.replace(/\n{3,}/g, "\n\n").trim();
 }
-const ACTION_LABEL: Record<string, string> = { reply: "Respondido", copy_change: "Copy cambiado", escalate: "Escalado a team@", ignore: "Sin acción", error: "Error", skip_unknown: "Sin acción", escalate_unknown: "Escalado" };
-const ACTION_STYLE = (a: string) => a === "error" ? "bg-destructive/10 text-destructive" : a === "copy_change" ? "bg-emerald-500/10 text-emerald-600" : a === "reply" ? "bg-blue-500/10 text-blue-600" : /escalate/.test(a) ? "bg-amber-500/10 text-amber-600" : "bg-muted text-muted-foreground";
+const ACTION_LABEL: Record<string, string> = { reply: "Respondido", copy_change: "Copy cambiado", confirm: "Confirmado", escalate: "Escalado a team@", ignore: "Sin acción", error: "Error", skip_unknown: "Sin acción", escalate_unknown: "Escalado" };
+const ACTION_STYLE = (a: string) => a === "error" ? "bg-destructive/10 text-destructive" : (a === "copy_change" || a === "confirm") ? "bg-emerald-500/10 text-emerald-600" : a === "reply" ? "bg-blue-500/10 text-blue-600" : /escalate/.test(a) ? "bg-amber-500/10 text-amber-600" : "bg-muted text-muted-foreground";
 
 // Owner-only automation module — an EDITABLE flow (N8N-style) of the auto-onboarding +
 // customer-service pipeline, organised as separate AI "agents" per phase. It runs on

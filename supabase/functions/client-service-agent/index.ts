@@ -113,6 +113,31 @@ serve(async (req) => {
   const ownerId = owner_user_id || "b94a0bdf-0120-44cd-8c7d-51126bfc2075";
   const dryRun = !!dry_run; // dry_run: decide but NEVER send emails / edit campaigns / mark read
 
+  // Sending mailbox = the configured service inbox (account_id) if given, else team@/support@.
+  const { data: ownerAccts } = await admin.from("email_accounts").select("id, email, smtp_host, smtp_port, smtp_username, smtp_password, status").eq("user_id", ownerId).eq("status", "connected");
+  const teamAcct = (account_id ? (ownerAccts || []).find((a: any) => a.id === account_id) : null)
+    || (ownerAccts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
+
+  // ── Step 2 of a copy change: send the queued "ya está aplicado" confirmation ────────
+  // A copy_change first sends a quick "vale, lo aplicamos" ack and queues the confirmation
+  // (pending=true). Here, on a LATER run (≥90s after), we send that confirmation — so the
+  // client gets two natural, separated emails instead of two at once.
+  let confirmed = 0;
+  if (!dryRun && teamAcct) {
+    const { data: pend } = await admin.from("client_service_log")
+      .select("id, from_email, subject, reply")
+      .eq("owner_id", ownerId).eq("pending", true)
+      .lt("created_at", new Date(Date.now() - 90 * 1000).toISOString())
+      .order("created_at", { ascending: true }).limit(10);
+    for (const p of (pend as any[]) || []) {
+      try {
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."));
+      } catch { continue; /* keep pending, retry next run */ }
+      await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
+      confirmed++;
+    }
+  }
+
   // 1) Unprocessed inbound to the owner's connected mailboxes (skip warmup / our own sends).
   let q = admin.from("inbox_messages").select("*").eq("user_id", ownerId).eq("auto_replied", false).eq("is_sent", false).eq("is_warmup", false).order("received_at", { ascending: true }).limit(Math.min(limit || 15, 30));
   if (account_id) q = q.eq("account_id", account_id);
@@ -120,12 +145,7 @@ serve(async (req) => {
   // can test immediately). Combined with the cron cadence, the reply goes out ~5 min later.
   if (!dryRun) q = q.lte("received_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const { data: msgs } = await q;
-  if (!msgs?.length) return new Response(JSON.stringify({ processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-  // Sending mailbox = the configured service inbox (account_id) if given, else team@/support@.
-  const { data: ownerAccts } = await admin.from("email_accounts").select("id, email, smtp_host, smtp_port, smtp_username, smtp_password, status").eq("user_id", ownerId).eq("status", "connected");
-  const teamAcct = (account_id ? (ownerAccts || []).find((a: any) => a.id === account_id) : null)
-    || (ownerAccts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
+  if (!msgs?.length) return new Response(JSON.stringify({ processed: 0, confirmed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   let processed = 0;
   const results: any[] = [];
@@ -198,12 +218,23 @@ REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE par
           if (target) { const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body)); await admin.from("campaign_steps").update(upd).eq("id", target.id); applied = true; }
         }
       }
-      // ALWAYS answer the client — never go silent on a change request.
-      const reply = applied
-        ? (d.reply || "¡Hecho! Ya he aplicado el cambio en los mensajes de tu campaña. Puedes verlo entrando en tu cuenta. Cualquier otra cosa, aquí estamos.")
-        : "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
-      if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(reply));
-      d.reply = reply;
+      // TWO-STEP so the client never gets two emails at once:
+      //  1) now → a short ack ("vale, perfecto, aplicamos los cambios");
+      //  2) queued (pending) → sent on a LATER run: "ya está aplicado, puedes verlo".
+      if (applied) {
+        const ack = "¡Vale, perfecto! Aplicamos los cambios en tu campaña ahora mismo. En un momento te confirmo. 👍";
+        const confirm = "Te queremos comentar que ya hemos aplicado los cambios dentro de tu campaña — puedes ver los mensajes entrando en tu cuenta. Cualquier cosa, nos dices.";
+        if (!dryRun) {
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(ack));
+          await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: confirm, pending: true });
+        }
+        d.reply = ack;
+      } else {
+        // Couldn't apply (no draft yet) → a single, honest acknowledgement, no false "done".
+        const ack = "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
+        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(ack));
+        d.reply = ack;
+      }
       results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
     }
     if (!handled && d.action === "reply" && known) {
@@ -238,5 +269,5 @@ REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE par
    }
   }
 
-  return new Response(JSON.stringify({ processed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ processed, confirmed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
