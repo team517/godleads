@@ -23,6 +23,9 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
+import { buildCopyDoc } from "../_shared/report/buildCopyPdf.ts";
+import { ONEPULSO_LOGO_WHITE_DATAURL, ONEPULSO_LOGO_RATIO } from "../_shared/report/onepulsoLogoWhite.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +55,73 @@ function cleanBody(raw: string): string {
 function textToHtml(text: string): string {
   if (/<(p|div|br)\b/i.test(text)) return text;
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+}
+
+// Every client-facing message ends with the OnePulso sign-off.
+const SIGN = "Un saludo,\nEquipo de OnePulso · OnePulso Team";
+function withSignoff(text: string): string {
+  const t = (text || "").trim();
+  if (/onepulso team|equipo de onepulso/i.test(t)) return t;
+  return `${t}\n\n${SIGN}`;
+}
+
+// Build a clean, branded PDF of a client's CURRENT campaign copy (all campaigns, or only the
+// ones whose name matches campaignFilter) → base64. Same jsPDF builder as the owner UI.
+async function buildCopysBase64(admin: any, clientId: string, companyName: string, campaignFilter: string | null): Promise<{ base64: string; campaignNames: string[] } | null> {
+  const { data: camps } = await admin.from("campaigns").select("id, name, status").eq("user_id", clientId).order("created_at", { ascending: false });
+  let list = (camps || []) as any[];
+  if (campaignFilter) {
+    const f = campaignFilter.toLowerCase().trim();
+    const matched = list.filter((c) => (c.name || "").toLowerCase().includes(f));
+    if (matched.length) list = matched;
+  }
+  if (!list.length) return null;
+  const campaigns: any[] = [];
+  for (const c of list) {
+    const { data: steps } = await admin.from("campaign_steps").select("step_order, subject, body, variants, delay_days").eq("campaign_id", c.id).order("step_order");
+    campaigns.push({ name: c.name, status: c.status, steps: steps || [] });
+  }
+  let sampleLead: any = null;
+  try { const { data: s } = await admin.from("leads").select("email, custom_fields").eq("user_id", clientId).limit(1); sampleLead = (s || [])[0] || null; } catch { /* optional */ }
+  const now = new Date();
+  const doc = buildCopyDoc(jsPDF, {
+    clientName: companyName || "Cliente",
+    generatedAtLabel: now.toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" }),
+    campaigns, sampleLead,
+    agencyLogoDataUrl: ONEPULSO_LOGO_WHITE_DATAURL, agencyLogoRatio: ONEPULSO_LOGO_RATIO,
+  });
+  const bytes = new Uint8Array(doc.output("arraybuffer"));
+  let bin = ""; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return { base64: btoa(bin), campaignNames: list.map((c) => c.name) };
+}
+
+// Send the copys PDF to the client via send-report (uploads it + emails a clean link).
+async function sendCopys(admin: any, clientId: string, companyName: string, campaignFilter: string | null, toEmail: string, teamAcct: any, leadMessage: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const built = await buildCopysBase64(admin, clientId, companyName, campaignFilter);
+    if (!built) return { ok: false, error: "sin campañas" };
+    const message = withSignoff(leadMessage && leadMessage.trim() ? leadMessage : "¡Hola! Aquí tienes los mensajes completos de tu campaña, tal cual están ahora mismo, en un PDF ordenado. Échales un vistazo con calma y me dices cualquier cosa.");
+    const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}` },
+      body: JSON.stringify({ mode: "send_copys", secret: Deno.env.get("REPORTS_CRON_SECRET"), to: toEmail, from_account_id: teamAcct.id, subject: "Los mensajes de tu campaña", message, pdf_base64: built.base64 }),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: !!j.ok, error: j.error };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// Send the analytics/results report to the client via send-report (built server-side).
+async function sendAnalytics(admin: any, clientId: string, toEmail: string, teamAcct: any): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}` },
+      body: JSON.stringify({ mode: "manual", secret: Deno.env.get("REPORTS_CRON_SECRET"), client_user_id: clientId, kind: "48h", test_to: toEmail, from_account_id: teamAcct.id }),
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: !!j.ok, error: j.error };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
 // ── SMTP send (same flow as process-auto-replies) ──────────────────────────────
@@ -132,7 +202,7 @@ serve(async (req) => {
       .order("created_at", { ascending: true }).limit(10);
     for (const p of (pend as any[]) || []) {
       try {
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."));
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || withSignoff("Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices.")));
       } catch { continue; /* keep pending, retry next run */ }
       await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
       confirmed++;
@@ -179,12 +249,14 @@ serve(async (req) => {
     const system = (prof?.ai_reply_prompt || DEFAULT_ATENCION)
       + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
       + `\n\n${known ? "Este remitente ES un cliente conocido (su dominio cuadra con una cuenta registrada)." : "Este remitente NO es un cliente conocido (su dominio no cuadra con ninguna cuenta registrada)."}`
-      + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|escalate|ignore","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","summary":"<qué pide, para el equipo>"}.
+      + `\n\nDevuelve SOLO JSON: {"action":"reply|copy_change|send_copys|send_report|escalate|ignore","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
 - "reply": cliente conocido con una duda/objeción/consulta o una PREGUNTA → respóndele tú con naturalidad y resuélvelo. IMPORTANTE: si PREGUNTA por el estado de un cambio (p.ej. "¿ya está hecho?", "¿lo aplicaste?", "¿está listo?") NO es un cambio nuevo → usa "reply" y, mirando la CONVERSACIÓN PREVIA, confírmale la verdad: si ya lo aplicaste antes, dile que SÍ, que ya está aplicado y puede verlo entrando en su campaña.
 - "copy_change": SOLO cuando el cliente pide un cambio NUEVO y concreto en el texto de su campaña (asunto/cuerpo/nombre/firma) → aplícalo tú (NO pidas datos ni el email). Una PREGUNTA, un agradecimiento o una confirmación NO es copy_change. Para cambiar UN email concreto usa step_order + new_subject/new_body. Para un cambio que afecta a TODOS los emails (p.ej. cambiar un nombre o firma como "Xavi" por "José", un enlace o una palabra) usa find + replace_with con el texto EXACTO tal cual aparece.
+- "send_copys": cuando el cliente pide VER/QUE LE ENVÍES los mensajes/copys de su campaña ("mándame los mensajes", "quiero verlos enteros", "pásame los copys"). NO pegues los mensajes en el correo: se le genera un PDF limpio con el logo y los mensajes ACTUALES y se le envía. En "reply" pon una frase corta de acompañamiento. Si nombra una campaña concreta, ponla en "campaign"; si no, null = todas.
+- "send_report": cuando el cliente pide RESULTADOS/ANALÍTICAS/un informe de su campaña ("¿cómo va?", "resultados", "métricas", "reporte") → se le genera y envía un PDF con las analíticas. En "reply" una frase corta.
 - "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online.
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
-REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE para lo esencial (reunión/devolución/dinero/cancelación/legal/queja seria). Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore" — nunca "reply" ni "copy_change".`;
+REGLA CLAVE: usa send_copys/send_report SOLO cuando tenga sentido y sea lo mejor para el cliente (un PDF ordenado con logo da mejor imagen que pegar texto); no los uses porque sí. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore".`;
     const userMsg = (known
       ? `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
       : `REMITENTE DESCONOCIDO (no es un cliente registrado).\n\n`)
@@ -192,8 +264,9 @@ REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE par
 
     let d: any = {};
     try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "ignore", summary: "fallo IA" }; }
-    // A non-client can only be escalated (if essential) or ignored — never auto-replied or copy-edited.
-    if (!known && (d.action === "reply" || d.action === "copy_change")) d.action = "ignore";
+    // A non-client can only be escalated (if essential) or ignored — never auto-replied,
+    // copy-edited, or sent copys/reports.
+    if (!known && ["reply", "copy_change", "send_copys", "send_report"].includes(d.action)) d.action = "ignore";
 
     const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
 
@@ -226,21 +299,42 @@ REGLA CLAVE: NO avises al equipo por cada correo. Usa "escalate" ÚNICAMENTE par
         const ack = "¡Vale, perfecto! Aplicamos los cambios en tu campaña ahora mismo. En un momento te confirmo. 👍";
         const confirm = "Te queremos comentar que ya hemos aplicado los cambios dentro de tu campaña — puedes ver los mensajes entrando en tu cuenta. Cualquier cosa, nos dices.";
         if (!dryRun) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(ack));
-          await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: confirm, pending: true });
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(ack)));
+          await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: withSignoff(confirm), pending: true });
         }
         d.reply = ack;
       } else {
         // Couldn't apply (no draft yet) → a single, honest acknowledgement, no false "done".
         const ack = "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
-        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(ack));
+        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(ack)));
         d.reply = ack;
       }
       results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
     }
+    if (!handled && d.action === "send_copys" && known) {
+      // Send a clean, branded PDF of the CURRENT campaign copy (all, or the named one) — never
+      // paste the messages as text. Falls back to a normal reply if the PDF can't be built.
+      if (!dryRun) {
+        const res = await sendCopys(admin, clientId as string, prof?.company_name || dom, d.campaign || null, m.from_email, teamAcct, d.reply || "");
+        if (!res.ok) {
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "¡Hola! Enseguida te preparo los mensajes y te los paso.")));
+        }
+      }
+      results.push({ ...base, action: "send_copys" }); processed++; handled = true;
+    }
+    if (!handled && d.action === "send_report" && known) {
+      // Send the analytics/results report PDF. If there's no data yet, fall back to a reply.
+      if (!dryRun) {
+        const res = await sendAnalytics(admin, clientId as string, m.from_email, teamAcct);
+        if (!res.ok) {
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "¡Hola! En cuanto la campaña acumule datos suficientes te preparo el informe con los resultados y te lo envío.")));
+        }
+      }
+      results.push({ ...base, action: "send_report" }); processed++; handled = true;
+    }
     if (!handled && d.action === "reply" && known) {
       if (!dryRun) {
-        const html = textToHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
+        const html = textToHtml(withSignoff(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos."));
         await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
       }
       results.push({ ...base, action: "reply" }); processed++; handled = true;
