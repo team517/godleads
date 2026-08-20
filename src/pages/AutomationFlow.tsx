@@ -401,7 +401,7 @@ export default function AutomationFlow() {
     // Auto-refresh like the campaigns Unibox: responses every min; the support@ inbox +
     // agent activity every 2 min (the fetch-inbox cron pulls new mail every minute).
     const iv = setInterval(() => loadResponses(), 60000);
-    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); }, 120000);
+    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); }, 30000);
     return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); clearInterval(iv2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -755,7 +755,7 @@ export default function AutomationFlow() {
             <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
               <Mail className="h-3.5 w-3.5" /> Bandeja de support@onepulso.online
               {serviceActivity.some((a) => a.action === "error") && <span className="text-destructive">· hay errores</span>}
-              <span className="ml-auto font-normal">se refresca solo cada 2 min</span>
+              <span className="ml-auto font-normal">sync cada minuto · se refresca solo</span>
             </p>
             {supportInbox.length === 0 ? (
               <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Aún no hay correos en support@. Cuando alguien escriba, el mensaje completo aparecerá aquí y el bot actuará solo.</p>

@@ -749,6 +749,14 @@ serve(async (req) => {
         accounts = data || [];
         totalAccounts = count || 0;
       }
+    } else if (body.account_id) {
+      // Priority single-mailbox sync (anon cron, no user auth). The customer-service inbox
+      // (support@) gets its OWN 1-min cron so its replies land in inbox_messages instantly —
+      // for the AI agent to answer and for the Automatización Unibox — instead of waiting for
+      // the rotating window (~13-18 min with 120+ mailboxes).
+      const { data } = await adminClient.from("email_accounts").select("*").eq("id", body.account_id).in("status", ["connected", "auth_failed"]).limit(1);
+      accounts = data || [];
+      totalAccounts = accounts.length;
     } else {
       // Cron path: count first, then process a small window starting at the given
       // offset (0 for the cron tick). After finishing, this invocation chains to the
