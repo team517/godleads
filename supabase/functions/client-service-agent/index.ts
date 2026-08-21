@@ -80,6 +80,19 @@ function withSignoff(text: string): string {
   return `${t}\n\n${SIGN}`;
 }
 
+// Build the outgoing HTML with the sign-off GLUED to the last paragraph (no blank-line
+// boundary before it). Otherwise Gmail sees the identical trailing signature block and hides
+// it behind a "…" (trimmed content) toggle. Gluing it to the unique last line keeps it inline.
+function signedHtml(text: string): string {
+  const clean = withSignoff(text || ""); // strips emojis + ensures the sign-off is present
+  const blocks = clean.split(/\n\n+/).map((b) => b.trim().replace(/\n/g, "<br>")).filter(Boolean);
+  if (blocks.length >= 2) {
+    const sign = blocks.pop() as string;                 // the sign-off block
+    blocks[blocks.length - 1] += `<br><br>${sign}`;      // glue it onto the previous paragraph
+  }
+  return blocks.map((b) => `<p style="margin:0 0 10px">${b}</p>`).join("") || `<p>${clean.replace(/\n/g, "<br>")}</p>`;
+}
+
 // Build a clean, branded PDF of a client's CURRENT campaign copy (all campaigns, or only the
 // ones whose name matches campaignFilter) → base64. Same jsPDF builder as the owner UI.
 async function buildCopysBase64(admin: any, clientId: string, companyName: string, campaignFilter: string | null): Promise<{ base64: string; campaignNames: string[] } | null> {
@@ -223,7 +236,7 @@ serve(async (req) => {
           const res = await sendCopys(admin, p.client_user_id, (pr as any)?.company_name || "", p.campaign || null, p.from_email, teamAcct, "");
           if (!res.ok) continue; // not ready yet → keep pending, retry next run
         } else {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || withSignoff("Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices.")));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, signedHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."));
         }
       } catch { continue; /* keep pending, retry next run */ }
       await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
@@ -323,14 +336,14 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         const ack = "Perfecto. Aplicamos los cambios en tu campaña ahora mismo y en un momento te confirmo.";
         const confirm = "Te queremos comentar que ya hemos aplicado los cambios dentro de tu campaña — puedes ver los mensajes entrando en tu cuenta. Cualquier cosa, nos dices.";
         if (!dryRun) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(ack)));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(ack));
           await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: withSignoff(confirm), pending: true });
         }
         d.reply = ack;
       } else {
         // Couldn't apply (no draft yet) → a single, honest acknowledgement, no false "done".
         const ack = "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
-        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(ack)));
+        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(ack));
         d.reply = ack;
       }
       results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
@@ -341,7 +354,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       if (!dryRun) {
         const res = await sendCopys(admin, clientId as string, prof?.company_name || dom, d.campaign || null, m.from_email, teamAcct, d.reply || "");
         if (!res.ok) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "¡Hola! Enseguida te preparo los mensajes y te los paso.")));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "¡Hola! Enseguida te preparo los mensajes y te los paso."));
         }
       }
       results.push({ ...base, action: "send_copys" }); processed++; handled = true;
@@ -350,7 +363,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       // Commit now with a natural reply, and QUEUE the copys PDF to be delivered on a later run
       // (once it's ready) — "okey, nos ponemos y te lo envío en cuanto esté".
       if (!dryRun) {
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos.")));
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."));
         await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "deliver_copys", subject: m.subject, campaign: d.campaign || null, pending: true });
       }
       results.push({ ...base, action: "send_copys_later" }); processed++; handled = true;
@@ -360,14 +373,14 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       if (!dryRun) {
         const res = await sendAnalytics(admin, clientId as string, m.from_email, teamAcct);
         if (!res.ok) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "¡Hola! En cuanto la campaña acumule datos suficientes te preparo el informe con los resultados y te lo envío.")));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "¡Hola! En cuanto la campaña acumule datos suficientes te preparo el informe con los resultados y te lo envío."));
         }
       }
       results.push({ ...base, action: "send_report" }); processed++; handled = true;
     }
     if (!handled && d.action === "reply" && known) {
       if (!dryRun) {
-        const html = textToHtml(withSignoff(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos."));
+        const html = signedHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
         await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
       }
       results.push({ ...base, action: "reply" }); processed++; handled = true;
