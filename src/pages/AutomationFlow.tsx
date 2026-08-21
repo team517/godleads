@@ -341,7 +341,14 @@ export default function AutomationFlow() {
     setAgentRunning(true);
     try {
       const { data } = await supabase.functions.invoke("client-service-agent", { body: { account_id: SUPPORT_ACCOUNT, dry_run: dry, limit: 10 } });
-      toast.success(`Agente: ${(data as any)?.processed ?? 0} correo(s) ${dry ? "analizados (prueba)" : "procesados"}`);
+      // `skipped` = auto-respuestas, rebotes y direcciones no-reply que el agente calla a
+      // propósito. Se muestra para que no parezca que "no ha hecho nada".
+      const res = data as any;
+      const skipped = res?.skipped ?? 0;
+      toast.success(
+        `Agente: ${res?.processed ?? 0} correo(s) ${dry ? "analizados (prueba)" : "procesados"}` +
+        (skipped ? ` · ${skipped} omitido(s) (automáticos/rebotes)` : ""),
+      );
       loadServiceActivity(); loadSupportInbox();
     } catch { toast.error("No se pudo ejecutar el agente"); }
     setAgentRunning(false);

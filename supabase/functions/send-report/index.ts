@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
 import { buildReportDoc } from "../_shared/report/buildReportPdf.ts";
 import type { ReportData } from "../_shared/report/types.ts";
+import { foldHeader } from "../_shared/emailThread.ts";
 
 // ── Scheduled / manual sender of the client PDF reports ──────────────────────
 // Modes:
@@ -85,6 +86,9 @@ async function sendSmtp(
   host: string, port: number, username: string, password: string,
   from: string, fromName: string, to: string, subject: string, body: string,
   attachments: { filename: string; mime: string; base64: string }[],
+  // When present, the mail is a REPLY: it threads under the client's conversation
+  // instead of arriving as a loose new email (used by the customer-service agent).
+  thread?: { inReplyTo?: string | null; references?: string | null },
 ): Promise<{ ok: boolean; error?: string; transcript?: string[] }> {
   const log: string[] = [];
   try {
@@ -138,17 +142,19 @@ async function sendSmtp(
     const fromDomain = from.split("@")[1] || "localhost";
     const dateHeader = new Date().toUTCString().replace("GMT", "+0000");
     const messageId = `<${Math.random().toString(36).slice(2)}${Date.now().toString(36)}@${fromDomain}>`;
+    const headerLines: string[] = [
+      `From: ${fromHeader(fromName, from)}`,
+      `To: ${to}`,
+      `Subject: ${mimeWord(subject)}`,
+      `Reply-To: <${from}>`,
+      `Date: ${dateHeader}`,
+      `Message-ID: ${messageId}`,
+    ];
+    if (thread?.inReplyTo) headerLines.push(foldHeader("In-Reply-To", thread.inReplyTo));
+    if (thread?.references) headerLines.push(foldHeader("References", thread.references));
+    headerLines.push(`MIME-Version: 1.0`, `Content-Type: multipart/mixed; boundary="${boundary}"`);
     const parts: string[] = [
-      [
-        `From: ${fromHeader(fromName, from)}`,
-        `To: ${to}`,
-        `Subject: ${mimeWord(subject)}`,
-        `Reply-To: <${from}>`,
-        `Date: ${dateHeader}`,
-        `Message-ID: ${messageId}`,
-        `MIME-Version: 1.0`,
-        `Content-Type: multipart/mixed; boundary="${boundary}"`,
-      ].join("\r\n"),
+      headerLines.join("\r\n"),
       "",
       `--${boundary}`,
       `Content-Type: text/plain; charset=utf-8`,
@@ -271,7 +277,7 @@ interface ClientCtx {
   report_low_contacts_threshold: number | null; report_to_email: string | null;
 }
 
-async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "weekly", opts: { dryRun?: boolean; testTo?: string; fromAccountId?: string; ownerUserId?: string }) {
+async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "weekly", opts: { dryRun?: boolean; testTo?: string; fromAccountId?: string; ownerUserId?: string; inReplyTo?: string | null; references?: string | null }) {
   const days = kind === "weekly" ? 7 : 2;
   const chartDays = Math.max(7, days);
   const { data: bundle, error: bErr } = await admin.rpc("report_bundle_admin", { p_user_id: client.user_id, p_days: days, p_chart_days: chartDays });
@@ -336,6 +342,7 @@ async function generateReport(admin: any, client: ClientCtx, kind: "48h" | "week
     acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
     acct.email, "OnePulso", to!, subject, emailBody,
     [], // solo el link, sin adjunto
+    { inReplyTo: opts.inReplyTo, references: opts.references },
   );
   await logReport(admin, client.user_id, kind, data, pdfPath, to, r.ok, r.ok ? null : (r.error || null), emailBody);
   return { ok: r.ok, pdfPath, error: r.error, smtp: r.transcript, from: acct.email, to };
@@ -423,7 +430,7 @@ serve(async (req) => {
       const { data: u } = await admin.auth.admin.getUserById(clientUserId);
       if (!u?.user) return json({ error: "Usuario no encontrado" }, 404);
       const client: ClientCtx = { ...((p as any) || {}), user_id: clientUserId, email: u.user.email || null };
-      const r = await generateReport(admin, client, kind, { dryRun: !!body.dry_run, testTo: body.test_to, fromAccountId: body.from_account_id, ownerUserId: callerId || undefined });
+      const r = await generateReport(admin, client, kind, { dryRun: !!body.dry_run, testTo: body.test_to, fromAccountId: body.from_account_id, ownerUserId: callerId || undefined, inReplyTo: body.in_reply_to || null, references: body.references || null });
       return json(r);
     }
 
@@ -538,6 +545,7 @@ serve(async (req) => {
         acct.smtp_host, acct.smtp_port || 465, acct.smtp_username, acct.smtp_password,
         acct.email, "OnePulso", to, subject || "Los mensajes de tu campaña", finalMsg,
         [], // sin adjunto
+        { inReplyTo: body.in_reply_to || null, references: body.references || null },
       );
       return json({ ok: r.ok, error: r.error, smtp: r.transcript, from: acct.email, to });
     }
