@@ -152,13 +152,25 @@ async function sendAnalytics(admin: any, clientId: string, toEmail: string, team
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// Normalize a Message-ID to <...> form for headers.
+const wrapId = (id: string) => { const t = (id || "").trim(); return !t ? "" : (t.startsWith("<") ? t : `<${t}>`); };
+
 // ── SMTP send (same flow as process-auto-replies) ──────────────────────────────
-async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string): Promise<{ ok: boolean; error?: string }> {
+// opts.inReplyTo / opts.references thread the reply to the ORIGINAL message by Message-ID
+// (In-Reply-To + References). Without them, clients thread by SUBJECT — and since many clients
+// share the same subject ("Re: Empezamos con tu campaña"), the reply could land in the wrong
+// conversation. Message-ID threading pins it to the exact original thread.
+async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string }> {
   try {
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
     const read = async () => { const b = new Uint8Array(4096); const n = await conn.read(b); return new TextDecoder().decode(b.subarray(0, n || 0)); };
     const send = async (cmd: string) => { await conn.write(new TextEncoder().encode(cmd + "\r\n")); return await read(); };
-    const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
+    const inReplyTo = wrapId(opts?.inReplyTo || "");
+    const refs = (opts?.references || opts?.inReplyTo || "").trim();
+    const referencesHdr = refs ? refs.split(/\s+/).map(wrapId).filter(Boolean).join(" ") : "";
+    const threadHdrs = inReplyTo ? `In-Reply-To: ${inReplyTo}\r\nReferences: ${referencesHdr || inReplyTo}\r\n` : "";
+    const ourId = `<${crypto.randomUUID()}@onepulso.online>`;
+    const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
     await read();
     if (port === 587) {
       const ehlo = await send("EHLO onepulso");
@@ -224,7 +236,7 @@ serve(async (req) => {
   let confirmed = 0;
   if (!dryRun && teamAcct) {
     const { data: pend } = await admin.from("client_service_log")
-      .select("id, client_user_id, from_email, subject, action, reply, campaign")
+      .select("id, client_user_id, from_email, subject, action, reply, campaign, in_reply_to, references_hdr")
       .eq("owner_id", ownerId).eq("pending", true)
       .lt("created_at", new Date(Date.now() - 120 * 1000).toISOString())
       .gt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
@@ -236,7 +248,8 @@ serve(async (req) => {
           const res = await sendCopys(admin, p.client_user_id, (pr as any)?.company_name || "", p.campaign || null, p.from_email, teamAcct, "");
           if (!res.ok) continue; // not ready yet → keep pending, retry next run
         } else {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, signedHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."));
+          const pSubject = "Re: " + String(p.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, pSubject, signedHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."), { inReplyTo: p.in_reply_to || "", references: p.references_hdr || p.in_reply_to || "" });
         }
       } catch { continue; /* keep pending, retry next run */ }
       await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
@@ -270,6 +283,10 @@ serve(async (req) => {
     if (!clientId && dom) { const { data: domAccts } = await admin.from("email_accounts").select("user_id").ilike("email", `%@${dom}`).neq("user_id", ownerId).limit(1); clientId = (domAccts || [])[0]?.user_id || null; }
     const known = !!clientId;
     const body = cleanBody(m.body_text || m.body_html || "");
+    // Thread the reply to THIS exact message by Message-ID (avoids landing in the wrong
+    // conversation when several clients share the same subject).
+    const thread = { inReplyTo: m.message_id || "", references: [m.ref_chain, m.message_id].filter(Boolean).join(" ") };
+    const reSubject = "Re: " + String(m.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
 
     // Client context: profile + their draft campaigns (+ steps for possible copy edits).
     const { data: prof } = await admin.from("profiles").select("company_name, ai_reply_prompt").eq("user_id", clientId).maybeSingle();
@@ -336,14 +353,14 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         const ack = "Perfecto. Aplicamos los cambios en tu campaña ahora mismo y en un momento te confirmo.";
         const confirm = "Te queremos comentar que ya hemos aplicado los cambios dentro de tu campaña — puedes ver los mensajes entrando en tu cuenta. Cualquier cosa, nos dices.";
         if (!dryRun) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(ack));
-          await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: withSignoff(confirm), pending: true });
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(ack), thread);
+          await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "confirm", subject: m.subject, reply: withSignoff(confirm), pending: true, in_reply_to: thread.inReplyTo, references_hdr: thread.references });
         }
         d.reply = ack;
       } else {
         // Couldn't apply (no draft yet) → a single, honest acknowledgement, no false "done".
         const ack = "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
-        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(ack));
+        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(ack), thread);
         d.reply = ack;
       }
       results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
@@ -354,7 +371,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       if (!dryRun) {
         const res = await sendCopys(admin, clientId as string, prof?.company_name || dom, d.campaign || null, m.from_email, teamAcct, d.reply || "");
         if (!res.ok) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "¡Hola! Enseguida te preparo los mensajes y te los paso."));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(d.reply || "¡Hola! Enseguida te preparo los mensajes y te los paso."), thread);
         }
       }
       results.push({ ...base, action: "send_copys" }); processed++; handled = true;
@@ -363,8 +380,8 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       // Commit now with a natural reply, and QUEUE the copys PDF to be delivered on a later run
       // (once it's ready) — "okey, nos ponemos y te lo envío en cuanto esté".
       if (!dryRun) {
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."));
-        await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "deliver_copys", subject: m.subject, campaign: d.campaign || null, pending: true });
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(d.reply || "Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."), thread);
+        await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "deliver_copys", subject: m.subject, campaign: d.campaign || null, pending: true, in_reply_to: thread.inReplyTo, references_hdr: thread.references });
       }
       results.push({ ...base, action: "send_copys_later" }); processed++; handled = true;
     }
@@ -373,7 +390,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       if (!dryRun) {
         const res = await sendAnalytics(admin, clientId as string, m.from_email, teamAcct);
         if (!res.ok) {
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, signedHtml(d.reply || "¡Hola! En cuanto la campaña acumule datos suficientes te preparo el informe con los resultados y te lo envío."));
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(d.reply || "¡Hola! En cuanto la campaña acumule datos suficientes te preparo el informe con los resultados y te lo envío."), thread);
         }
       }
       results.push({ ...base, action: "send_report" }); processed++; handled = true;
@@ -381,7 +398,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
     if (!handled && d.action === "reply" && known) {
       if (!dryRun) {
         const html = signedHtml(d.reply || "Gracias por tu mensaje, lo revisamos y te contamos.");
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || ""}`.trim(), html);
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, html, thread);
       }
       results.push({ ...base, action: "reply" }); processed++; handled = true;
     }
