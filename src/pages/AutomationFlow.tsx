@@ -366,7 +366,8 @@ export default function AutomationFlow() {
       const ur = await up.json();
       if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
       const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
-      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso|team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      // Send from support@ so the client's reply lands where the bot watches (support@).
+      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso/i.test(a.email))?.id || ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
       if (!fromAcc) throw new Error("no hay cuenta de envío");
       const message = `Hola,\n\nAquí tienes los mensajes de tu nueva campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEquipo de OnePulso · OnePulso Team`;
       const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: req.from_email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
@@ -614,7 +615,7 @@ export default function AutomationFlow() {
       const ur = await up.json();
       if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
       const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
-      const fromAcc = ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso/i.test(a.email))?.id || ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
       if (!fromAcc) throw new Error("no hay cuenta de envío");
       const message = `Hola ${fc.name || fc.company || ""},\n\nAquí tienes los mensajes de tu campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEl equipo de OnePulso`;
       const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: fc.email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
