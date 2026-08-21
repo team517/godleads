@@ -310,6 +310,8 @@ export default function AutomationFlow() {
   const [chatOpen, setChatOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [reviewClient, setReviewClient] = useState<FlowClient | null>(null);
+  const [reviewNcr, setReviewNcr] = useState<{ req: any; steps: any[] } | null>(null);
+  const [loadingNcrReview, setLoadingNcrReview] = useState<string | null>(null);
 
   const [forms, setForms] = useState<GForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
@@ -375,6 +377,16 @@ export default function AutomationFlow() {
       loadPendingCampaigns();
     } catch (e: any) { toast.error(`No se pudo aprobar: ${e?.message || e}`); }
     setApprovingId(null);
+  };
+  // Open the SAME review popup as the normal flow (messages + variants) before approving.
+  const openNcrReview = async (req: any) => {
+    if (!req.campaign_id) { toast.error("Aún no hay campaña generada"); return; }
+    setLoadingNcrReview(req.id);
+    try {
+      const { data: steps } = await supabase.rpc("new_campaign_steps" as never, { p_campaign_id: req.campaign_id } as never);
+      setReviewNcr({ req, steps: (steps as any[]) || [] });
+    } catch (e: any) { toast.error(`No se pudieron cargar los mensajes: ${e?.message || e}`); }
+    setLoadingNcrReview(null);
   };
   // Latest agent action for a given sender (overlay on each inbox message).
   const actionFor = (fromEmail: string) => serviceActivity.find((a) => (a.from_email || "").toLowerCase() === (fromEmail || "").toLowerCase());
@@ -1004,7 +1016,7 @@ export default function AutomationFlow() {
                           {!isPending && !isError && <Loader2 className="h-3 w-3 animate-spin" />}
                           {Math.min(r.step, nodes.length - 1) + 1}. {stepNode?.label}
                         </span>
-                        {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={approvingId === r.ncr.id} onClick={() => approveNewCampaign(r.ncr)}>{approvingId === r.ncr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Aprobar y enviar copys</Button>}
+                        {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={loadingNcrReview === r.ncr.id} onClick={() => openNcrReview(r.ncr)}>{loadingNcrReview === r.ncr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Revisar y aprobar</Button>}
                       </div>
                     </div>
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1135,6 +1147,12 @@ export default function AutomationFlow() {
 
       {/* Review the generated copys before approving */}
       <ReviewDialog client={reviewClient} onClose={() => setReviewClient(null)} onApprove={() => { if (reviewClient) approveClient(reviewClient); setReviewClient(null); }} />
+      {/* Same review popup for a client's NEW campaign — review messages + variants, then approve → sends copys */}
+      <ReviewDialog
+        client={reviewNcr ? ({ company: reviewNcr.req.company_name, name: "", email: reviewNcr.req.from_email, campaignSteps: reviewNcr.steps } as any) : null}
+        onClose={() => setReviewNcr(null)}
+        onApprove={() => { const req = reviewNcr?.req; setReviewNcr(null); if (req) approveNewCampaign(req); }}
+      />
 
       {/* Test a conversation with the customer-service agent */}
       <ChatTestDialog open={chatOpen} onClose={() => setChatOpen(false)} prompt={ai.replies} />
