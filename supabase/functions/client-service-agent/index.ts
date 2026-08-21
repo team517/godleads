@@ -35,6 +35,9 @@ const corsHeaders = {
 const TEAM_EMAIL = "team@onepulso.online";
 const DEFAULT_ATENCION = `Eres la atención al cliente de OnePulso (agencia de cold email B2B). Tono humano, cercano, decisivo, nunca defensivo. Responde en el idioma del cliente.
 - PIENSA CON CRITERIO antes de actuar. Eres un buen responsable de cuenta: en cada correo párate a pensar qué respuesta da la MEJOR imagen de OnePulso (profesional PERO humana y cercana) y qué es lo más útil para el cliente AHORA. Muchas veces lo mejor es una respuesta clara, natural y bien escrita — no un recurso automático.
+- ESCRIBE BIEN: correos limpios y bien ESTRUCTURADOS. Saludo breve, un cuerpo claro y ordenado (frases cortas, y si hay varios puntos sepáralos en líneas), y cierre. Redacción profesional y natural. NO uses emojis NUNCA.
+- NO respondas siempre por responder. Si la conversación llega a un cierre natural (el cliente dice "hablamos más adelante", "cuando esté me dices", "ok gracias", "perfecto"), dale una respuesta natural, breve y humana (p.ej. "Perfecto, nos ponemos ahora mismo y te aviso en cuanto esté") y cierra ahí — no alargues ni fuerces nada. Si de verdad no hace falta decir nada, no respondas (ignore).
+- Si te comprometes a enviar algo cuando esté listo (p.ej. los mensajes de la campaña), respóndele natural que os ponéis con ello y se lo envías en cuanto esté; y cuando lo tengas, se lo envías (con PDF si hace falta). Usa "send_copys_later" para eso.
 - Los PDFs salen por CRITERIO TUYO, no por insistencia del cliente. Cuando TÚ valoras que ese contenido se PRESENTA mejor y más profesional en un PDF limpio con logo (típicamente: el CONJUNTO de mensajes/copys de la campaña, o un informe de resultados), piensas "esto queda mejor en PDF" y lo generas y lo envías. Si es una duda puntual, una pregunta corta o algo que se resuelve mejor hablando, RESPONDE con palabras — no por que el cliente lo pida o insista, sino porque tú ves que es la mejor forma de presentarlo.
 - NUNCA pidas el email ni datos de identidad: YA SABES de qué cliente es. Trátalo por su empresa, con naturalidad.
 - Reunión → pasa https://calendly.com/onepulso/30min.
@@ -59,10 +62,19 @@ function textToHtml(text: string): string {
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
-// Every client-facing message ends with the OnePulso sign-off.
+// Strip emojis / pictographs — OnePulso emails are clean and professional, no emojis.
+function stripEmojis(text: string): string {
+  return (text || "")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{1F1E6}-\u{1F1FF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}]/gu, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+// Every client-facing message: no emojis + ends with the OnePulso sign-off.
 const SIGN = "Un saludo,\nEquipo de OnePulso · OnePulso Team";
 function withSignoff(text: string): string {
-  const t = (text || "").trim();
+  const t = stripEmojis(text || "");
   if (/onepulso team|equipo de onepulso/i.test(t)) return t;
   return `${t}\n\n${SIGN}`;
 }
@@ -190,21 +202,28 @@ serve(async (req) => {
   const teamAcct = (account_id ? (ownerAccts || []).find((a: any) => a.id === account_id) : null)
     || (ownerAccts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
 
-  // ── Step 2 of a copy change: send the queued "ya está aplicado" confirmation ────────
-  // A copy_change first sends a quick "vale, lo aplicamos" ack and queues the confirmation
-  // (pending=true). Here, on a LATER run, once the change has been applied and ~2-3 min have
-  // passed, we send that confirmation — two natural, separated emails, never two at once.
-  // Gate = 2 min; with the 1-min cron the confirmation lands reliably 2-3 min after the ack.
+  // ── Deferred deliveries (later runs) ────────────────────────────────────────────────
+  //  • "confirm"       → the "ya está aplicado" note after a copy_change ack (2-step, no two
+  //                      emails at once). Gate 2 min → lands 2-3 min after the ack.
+  //  • "deliver_copys" → after a "send_copys_later" commit ("te lo envío cuando esté"), builds
+  //                      and sends the copys PDF once it's ready. Retries until ready (≤24h).
   let confirmed = 0;
   if (!dryRun && teamAcct) {
     const { data: pend } = await admin.from("client_service_log")
-      .select("id, from_email, subject, reply")
+      .select("id, client_user_id, from_email, subject, action, reply, campaign")
       .eq("owner_id", ownerId).eq("pending", true)
       .lt("created_at", new Date(Date.now() - 120 * 1000).toISOString())
+      .gt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
       .order("created_at", { ascending: true }).limit(10);
     for (const p of (pend as any[]) || []) {
       try {
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || withSignoff("Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices.")));
+        if (p.action === "deliver_copys") {
+          const { data: pr } = await admin.from("profiles").select("company_name").eq("user_id", p.client_user_id).maybeSingle();
+          const res = await sendCopys(admin, p.client_user_id, (pr as any)?.company_name || "", p.campaign || null, p.from_email, teamAcct, "");
+          if (!res.ok) continue; // not ready yet → keep pending, retry next run
+        } else {
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, `Re: ${p.subject || "tu campaña"}`, textToHtml(p.reply || withSignoff("Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices.")));
+        }
       } catch { continue; /* keep pending, retry next run */ }
       await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
       confirmed++;
@@ -252,10 +271,11 @@ serve(async (req) => {
       + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
       + `\n\n${known ? "Este remitente ES un cliente conocido (su dominio cuadra con una cuenta registrada)." : "Este remitente NO es un cliente conocido (su dominio no cuadra con ninguna cuenta registrada)."}`
       + `\n\nRAZONA PRIMERO (campo "reasoning"): en 1-2 frases piensa con criterio qué opción da la mejor imagen de OnePulso (profesional y humana) y es lo más útil para el cliente ahora. Decide TÚ cómo se presenta mejor: si el contenido queda mejor y más profesional en un PDF limpio, hazlo por criterio propio (no porque el cliente insista); si se comunica mejor hablando, responde con palabras. LUEGO elige la acción coherente con ese razonamiento.
-Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_report|escalate|ignore","reply":"texto para el cliente","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
+Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_copys_later|send_report|escalate|ignore","reply":"texto para el cliente (bien redactado, sin emojis)","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
 - "reply": cliente conocido con una duda/objeción/consulta o una PREGUNTA → respóndele tú con naturalidad y resuélvelo. IMPORTANTE: si PREGUNTA por el estado de un cambio (p.ej. "¿ya está hecho?", "¿lo aplicaste?", "¿está listo?") NO es un cambio nuevo → usa "reply" y, mirando la CONVERSACIÓN PREVIA, confírmale la verdad: si ya lo aplicaste antes, dile que SÍ, que ya está aplicado y puede verlo entrando en su campaña.
 - "copy_change": SOLO cuando el cliente pide un cambio NUEVO y concreto en el texto de su campaña (asunto/cuerpo/nombre/firma) → aplícalo tú (NO pidas datos ni el email). Una PREGUNTA, un agradecimiento o una confirmación NO es copy_change. Para cambiar UN email concreto usa step_order + new_subject/new_body. Para un cambio que afecta a TODOS los emails (p.ej. cambiar un nombre o firma como "Xavi" por "José", un enlace o una palabra) usa find + replace_with con el texto EXACTO tal cual aparece.
-- "send_copys": cuando el contenido a entregar es el CONJUNTO de mensajes/copys de la campaña y TÚ valoras que se presenta mejor y más profesional como un PDF limpio con logo (que pegarlo como texto). Es tu criterio de presentación, NO que el cliente insista. Genera el PDF con los mensajes ACTUALES. En "reply" una frase corta de acompañamiento. Si nombra una campaña, ponla en "campaign"; si no, null = todas. Si solo pregunta por UN email o un detalle, NO uses send_copys → responde con "reply".
+- "send_copys": cuando el contenido a entregar es el CONJUNTO de mensajes/copys de la campaña, YA está listo, y TÚ valoras que se presenta mejor y más profesional como un PDF limpio con logo (que pegarlo como texto). Es tu criterio de presentación, NO que el cliente insista. Genera el PDF con los mensajes ACTUALES. En "reply" una frase corta de acompañamiento. Si nombra una campaña, ponla en "campaign"; si no, null = todas. Si solo pregunta por UN email o un detalle, NO uses send_copys → responde con "reply".
+- "send_copys_later": cuando te COMPROMETES a enviar los mensajes/copys pero el momento natural es "os ponéis y se lo enviáis cuando esté" (aún no toca soltarlo de golpe). En "reply" das una respuesta natural comprometiéndote ("Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."). El PDF se enviará solo un poco después, cuando esté preparado. Úsalo cuando encaje ese flujo conversacional en vez de soltar el PDF inmediatamente.
 - "send_report": cuando el contenido son RESULTADOS/ANALÍTICAS/un informe de la campaña y TÚ valoras que queda mejor y más profesional presentado como un PDF con métricas. Para un "¿cómo va?" informal, si crees que una respuesta humana breve comunica mejor, usa "reply".
 - "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online.
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
@@ -269,7 +289,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
     try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "ignore", summary: "fallo IA" }; }
     // A non-client can only be escalated (if essential) or ignored — never auto-replied,
     // copy-edited, or sent copys/reports.
-    if (!known && ["reply", "copy_change", "send_copys", "send_report"].includes(d.action)) d.action = "ignore";
+    if (!known && ["reply", "copy_change", "send_copys", "send_copys_later", "send_report"].includes(d.action)) d.action = "ignore";
 
     const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, reasoning: d.reasoning || "", summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
 
@@ -299,7 +319,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       //  1) now → a short ack ("vale, perfecto, aplicamos los cambios");
       //  2) queued (pending) → sent on a LATER run: "ya está aplicado, puedes verlo".
       if (applied) {
-        const ack = "¡Vale, perfecto! Aplicamos los cambios en tu campaña ahora mismo. En un momento te confirmo. 👍";
+        const ack = "Perfecto. Aplicamos los cambios en tu campaña ahora mismo y en un momento te confirmo.";
         const confirm = "Te queremos comentar que ya hemos aplicado los cambios dentro de tu campaña — puedes ver los mensajes entrando en tu cuenta. Cualquier cosa, nos dices.";
         if (!dryRun) {
           await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(ack)));
@@ -324,6 +344,15 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         }
       }
       results.push({ ...base, action: "send_copys" }); processed++; handled = true;
+    }
+    if (!handled && d.action === "send_copys_later" && known) {
+      // Commit now with a natural reply, and QUEUE the copys PDF to be delivered on a later run
+      // (once it's ready) — "okey, nos ponemos y te lo envío en cuanto esté".
+      if (!dryRun) {
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, `Re: ${m.subject || "tu campaña"}`, textToHtml(withSignoff(d.reply || "Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos.")));
+        await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: "deliver_copys", subject: m.subject, campaign: d.campaign || null, pending: true });
+      }
+      results.push({ ...base, action: "send_copys_later" }); processed++; handled = true;
     }
     if (!handled && d.action === "send_report" && known) {
       // Send the analytics/results report PDF. If there's no data yet, fall back to a reply.
