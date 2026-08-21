@@ -185,6 +185,8 @@ async function genCampaignSteps(apiKey: string, briefing: string, company: strin
 // response has arrived, generate the DRAFT campaign, notify team@ (pending approval), and
 // mark the request pending_approval. Runs each tick (like the pending processor).
 async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, teamAcct: any): Promise<number> {
+  // Recover any request stuck in "generating" (e.g. a crash mid-generation) → retry it.
+  await admin.from("new_campaign_requests").update({ status: "awaiting_form" }).eq("owner_id", ownerId).eq("status", "generating").lt("updated_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const { data: reqs } = await admin.from("new_campaign_requests").select("*").eq("owner_id", ownerId).eq("status", "awaiting_form").order("requested_at", { ascending: true }).limit(5);
   let generated = 0;
   for (const r of (reqs as any[]) || []) {
@@ -200,6 +202,8 @@ async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, t
         return false;
       });
       if (!match) continue; // still waiting for the form
+      // Mark it "generating" NOW (visible in the flow as "Generando la campaña con IA…").
+      await admin.from("new_campaign_requests").update({ status: "generating", form_response_id: match.id, updated_at: new Date().toISOString() }).eq("id", r.id);
       const briefing = Object.entries(match.answers || {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join("\n");
       let steps: any[] = [];
       for (let a = 0; a < 2 && steps.length === 0; a++) { try { steps = await genCampaignSteps(dkKey, briefing, r.company_name || "", "castellano de España"); } catch { /* retry */ } }
@@ -209,7 +213,7 @@ async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, t
       const cid = (camp as any)?.id;
       if (!cid) { await admin.from("new_campaign_requests").update({ status: "error", note: "no se pudo crear la campaña" }).eq("id", r.id); continue; }
       for (let i = 0; i < steps.length; i++) { const s = steps[i]; await admin.from("campaign_steps").insert({ campaign_id: cid, step_order: i, subject: s.subject, body: s.body, delay_days: s.delay_days, variants: s.variants }); }
-      const html = textToHtml(`Nueva campaña generada y PENDIENTE DE TU APROBACIÓN.\n\nCliente: ${r.company_name || r.from_email}\nCampaña (borrador): ${name}\nEmails: ${steps.length} (con variantes).\n\nEntra en la plataforma → Automatización → "Campañas pendientes de aprobación" para revisarla y aprobarla. Al aprobar, se le envían los copys al cliente.`);
+      const html = textToHtml(`Nueva campaña generada y PENDIENTE DE TU APROBACIÓN.\n\nCliente: ${r.company_name || r.from_email}\nCampaña (borrador): ${name}\nEmails: ${steps.length} (con variantes).\n\nEntra en la plataforma → Automatización → "Clientes en el flujo" para revisarla y aprobarla. Al aprobar, se le envían los copys al cliente.`);
       await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Nueva campaña] ${r.company_name || r.from_email} pendiente de aprobar`, html);
       await admin.from("new_campaign_requests").update({ status: "pending_approval", campaign_id: cid, campaign_name: name, form_response_id: match.id, updated_at: new Date().toISOString() }).eq("id", r.id);
       generated++;

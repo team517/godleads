@@ -344,9 +344,10 @@ export default function AutomationFlow() {
     if (!req.campaign_id || !req.from_email) { toast.error("Falta la campaña o el correo"); return; }
     setApprovingId(req.id);
     try {
-      // Pull the generated campaign's current steps from the DB and build the copys PDF.
-      const { data: steps } = await (supabase as any).from("campaign_steps").select("step_order, subject, body, variants, delay_days").eq("campaign_id", req.campaign_id).order("step_order");
-      if (!steps?.length) throw new Error("la campaña no tiene mensajes");
+      // Pull the CLIENT's generated campaign steps via a security-definer RPC (the owner can't
+      // read another user's campaign_steps directly — RLS).
+      const { data: steps } = await supabase.rpc("new_campaign_steps" as never, { p_campaign_id: req.campaign_id } as never);
+      if (!(steps as any[])?.length) throw new Error("la campaña no tiene mensajes");
       const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
         import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
       ]);
@@ -650,11 +651,12 @@ export default function AutomationFlow() {
   // "Crear campaña nueva" requests, shown as clients IN THE FLOW (existing clients asking for
   // another campaign): no onboarding, they sit at "responde el Form" and then "Tu aprobación".
   const fIdx = formNodeIdx(nodes);
-  const ncrStep = (status: string) => status === "pending_approval" ? Math.min(fIdx + 2, nodes.length - 1) : status === "approved" ? nodes.length : fIdx;
+  const ncrStep = (status: string) => status === "pending_approval" ? Math.min(fIdx + 2, nodes.length - 1) : status === "generating" ? Math.min(fIdx + 1, nodes.length - 1) : status === "approved" ? nodes.length : fIdx;
   const ncrFlow = (pendingCampaigns || []).map((r) => ({
     id: `ncr-${r.id}`, ncr: r as any, isNcr: true as const,
     company: r.company_name || r.from_email, name: r.company_name || "", email: r.from_email,
-    step: ncrStep(r.status), campaignStatus: r.status === "pending_approval" ? "done" : undefined,
+    step: ncrStep(r.status),
+    campaignStatus: r.status === "pending_approval" ? "done" : r.status === "generating" ? "generating" : undefined,
   }));
   const flowItems: any[] = [...clients, ...ncrFlow];
 
@@ -977,22 +979,29 @@ export default function AutomationFlow() {
                 );
               })}
               {ncrFlow.map((r) => {
-                const isPending = r.ncr.status === "pending_approval";
+                const st = r.ncr.status as string;
+                const isPending = st === "pending_approval";
+                const isGenerating = st === "generating";
+                const isError = st === "error";
                 const stepNode = nodes[Math.min(r.step, nodes.length - 1)] || nodes[0];
                 const pct = Math.round(((Math.min(r.step, nodes.length - 1) + 1) / nodes.length) * 100);
                 return (
-                  <div key={r.id} className="rounded-lg border border-border p-3">
+                  <div key={r.id} className={`rounded-lg border p-3 ${isError ? "border-destructive/40 bg-destructive/5" : "border-border"}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{r.company} <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">nueva campaña</span></p>
                         <p className="truncate text-xs text-muted-foreground">{r.email}{r.ncr.campaign_name ? ` · ${r.ncr.campaign_name}` : ""}</p>
                         {isPending
                           ? <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Campaña en borrador creada</p>
-                          : <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Esperando la respuesta del Form…</p>}
+                          : isGenerating
+                            ? <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Creando la campaña · generando los copys con IA…</p>
+                            : isError
+                              ? <p className="text-xs text-destructive">⚠ No se pudo generar{r.ncr.note ? `: ${r.ncr.note}` : ""} · se reintenta solo</p>
+                              : <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Esperando la respuesta del Form…</p>}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[stepNode?.agent || "manual"].color}`}>
-                          {!isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                          {!isPending && !isError && <Loader2 className="h-3 w-3 animate-spin" />}
                           {Math.min(r.step, nodes.length - 1) + 1}. {stepNode?.label}
                         </span>
                         {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={approvingId === r.ncr.id} onClick={() => approveNewCampaign(r.ncr)}>{approvingId === r.ncr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Aprobar y enviar copys</Button>}
@@ -1001,7 +1010,11 @@ export default function AutomationFlow() {
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                       {isPending
                         ? <><CheckCircle2 className="h-3 w-3 text-emerald-600" /> Generada y pendiente de tu aprobación</>
-                        : <><Loader2 className="h-3 w-3 animate-spin text-primary" /> Le enviamos el formulario; en cuanto lo responda, generamos la campaña</>}
+                        : isGenerating
+                          ? <><Loader2 className="h-3 w-3 animate-spin text-primary" /> La IA está creando los mensajes según la info del formulario…</>
+                          : isError
+                            ? <><XCircle className="h-3 w-3 text-destructive" /> Error al generar — el sistema lo reintenta solo</>
+                            : <><Loader2 className="h-3 w-3 animate-spin text-primary" /> Le enviamos el formulario; en cuanto lo responda, generamos la campaña</>}
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                       <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
