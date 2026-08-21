@@ -33,6 +33,7 @@ const corsHeaders = {
 };
 
 const TEAM_EMAIL = "team@onepulso.online";
+const CAMPAIGN_FORM_URL = "https://forms.gle/QuZsPwTcwkmB6qoF7"; // OnePulso campaign briefing form
 const DEFAULT_ATENCION = `Eres la atención al cliente de OnePulso (agencia de cold email B2B). Tono humano, cercano, decisivo, nunca defensivo. Responde en el idioma del cliente.
 - PIENSA CON CRITERIO antes de actuar. Eres un buen responsable de cuenta: en cada correo párate a pensar qué respuesta da la MEJOR imagen de OnePulso (profesional PERO humana y cercana) y qué es lo más útil para el cliente AHORA. Muchas veces lo mejor es una respuesta clara, natural y bien escrita — no un recurso automático.
 - ESCRIBE BIEN: correos limpios y bien ESTRUCTURADOS. Saludo breve, un cuerpo claro y ordenado (frases cortas, y si hay varios puntos sepáralos en líneas), y cierre. Redacción profesional y natural. NO uses emojis NUNCA.
@@ -93,6 +94,16 @@ function signedHtml(text: string): string {
   return blocks.map((b) => `<p style="margin:0 0 10px">${b}</p>`).join("") || `<p>${clean.replace(/\n/g, "<br>")}</p>`;
 }
 
+// Email for a "crear campaña nueva" request: friendly intro + the Google Form link + how it
+// works, ending with the sign-off. No onboarding is sent (this is for existing clients).
+function newCampaignHtml(intro: string): string {
+  const body = stripEmojis(intro && intro.trim() ? intro : "¡Claro que sí! Encantados de prepararos una nueva campaña.");
+  return `<p style="margin:0 0 10px">${body.replace(/\n/g, "<br>")}</p>`
+    + `<p style="margin:0 0 10px">Para empezar, solo necesitamos que nos contéis los detalles rellenando este formulario:</p>`
+    + `<p style="margin:0 0 14px"><a href="${CAMPAIGN_FORM_URL}" style="background:#6e58f1;color:#fff;text-decoration:none;padding:11px 20px;border-radius:9px;font-weight:600;display:inline-block">Rellenar el formulario</a></p>`
+    + `<p style="margin:0 0 10px">En cuanto lo tengamos, validamos la información y creamos la campaña. Cualquier duda, aquí estamos.<br><br>${SIGN.replace(/\n/g, "<br>")}</p>`;
+}
+
 // Build a clean, branded PDF of a client's CURRENT campaign copy (all campaigns, or only the
 // ones whose name matches campaignFilter) → base64. Same jsPDF builder as the owner UI.
 async function buildCopysBase64(admin: any, clientId: string, companyName: string, campaignFilter: string | null): Promise<{ base64: string; campaignNames: string[] } | null> {
@@ -150,6 +161,61 @@ async function sendAnalytics(admin: any, clientId: string, toEmail: string, team
     const j = await r.json().catch(() => ({}));
     return { ok: !!j.ok, error: j.error };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// OnePulso campaign copy structure (same as CAMPAIGN_SKILLS in the frontend) — used to
+// generate a NEW campaign from the client's form answers, server-side, via DeepSeek.
+const CAMPAIGN_STRUCTURE = `Eres el copywriter de OnePulso (cold email B2B). Escribes la secuencia de EMAILS que la EMPRESA CLIENTE enviará a SUS leads. ESTRUCTURA del email inicial: 1) 'Hola {{first_name}},'. 2) Presentación personal: 'Soy [nombre] de [empresa que envía]'. 3) Gancho personalizado: 'Estuve viendo {{company_name}} y cómo trabajáis dentro de {{industry}}, y quería compartirte algo que creo que os puede encajar'. 4) Qué hacéis, claro y breve. 5) Cómo funciona / qué incluye. 6) Qué CONSIGUEN ellos (beneficios concretos y tangibles). 7) 'La idea es que {{company_name}} [beneficio] sin [dolor]'. 8) 'He preparado un ejemplo pensado específicamente para vuestra empresa'. 9) CTA suave: '¿Te vendría bien verlo en 10 minutos esta semana?'. 10) Firma: nombre + empresa. ENFOCA TODO EN BENEFICIOS (lo que CONSEGUIRÁN). Habla de ELLOS ({{company_name}}) más que de la industria; usa mucho {{first_name}} {{company_name}} {{industry}} {{city}} para que parezca muy personalizado aunque sea general. SIN emojis, voz cercana y directa, bien estructurado. LONGITUD: inicial 150-170 palabras; follow-ups 100-135. Follow-ups a 1-2 días, misma voz, referenciando el anterior y rematando con el beneficio. Cada step con 1 variante de ángulo distinto (p.ej. una de ventas/cliente ideal y otra creativa).`;
+
+// Generate a 3-step campaign (each with 1 variant) from a briefing, via DeepSeek.
+async function genCampaignSteps(apiKey: string, briefing: string, company: string, language: string): Promise<any[]> {
+  const system = `${CAMPAIGN_STRUCTURE}\n\nIdioma: ${language}. Empresa que envía (el cliente): ${company || "(el cliente)"}. Devuelve SOLO JSON con esta forma EXACTA: {"steps":[{"subject":"...","body":"<p>...</p><p>...</p>","variants":[{"subject":"...","body":"<p>...</p><p>...</p>"}]},{"subject":"...","body":"...","variants":[{"subject":"...","body":"..."}]},{"subject":"...","body":"...","variants":[{"subject":"...","body":"..."}]}]}. OBLIGATORIO: EXACTAMENTE 3 steps (1 inicial + 2 follow-ups) y CADA step DEBE llevar su array "variants" con EXACTAMENTE 1 variante NO vacía (mismo mensaje con otro ángulo). NUNCA dejes "variants" vacío. "subject" y "body" son texto; "body" en HTML con <p>...</p>.`;
+  const user = `BRIEFING DEL CLIENTE (respuestas de su formulario):\n${briefing || "(sin briefing)"}\n\nGenera la campaña.`;
+  const d = await decide(apiKey, system, user);
+  const raw = Array.isArray(d?.steps) ? d.steps : [];
+  return raw.slice(0, 3).map((s: any, i: number) => ({
+    subject: String(s?.subject || "").trim(),
+    body: s?.body || "",
+    delay_days: i === 0 ? 0 : 2,
+    variants: Array.isArray(s?.variants) ? s.variants.filter((v: any) => v && (v.subject || v.body)).map((v: any) => ({ subject: String(v.subject || "").trim(), body: v.body || "" })) : [],
+  })).filter((s: any) => s.subject || s.body);
+}
+
+// Phase 2 of "crear campaña nueva": for each awaiting_form request, if a matching form
+// response has arrived, generate the DRAFT campaign, notify team@ (pending approval), and
+// mark the request pending_approval. Runs each tick (like the pending processor).
+async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, teamAcct: any): Promise<number> {
+  const { data: reqs } = await admin.from("new_campaign_requests").select("*").eq("owner_id", ownerId).eq("status", "awaiting_form").order("requested_at", { ascending: true }).limit(5);
+  let generated = 0;
+  for (const r of (reqs as any[]) || []) {
+    try {
+      const { data: resps } = await admin.from("form_responses").select("id, respondent_email, answers, received_at").eq("owner_id", ownerId).gt("received_at", r.requested_at).order("received_at", { ascending: false }).limit(50);
+      const fromDom = (r.from_email || "").toLowerCase().split("@")[1] || "";
+      const comp = (r.company_name || "").toLowerCase().trim();
+      const match = (resps as any[] || []).find((x) => {
+        const re = (x.respondent_email || "").toLowerCase();
+        if (re && re === (r.from_email || "").toLowerCase()) return true;             // exact email
+        if (re && fromDom && re.split("@")[1] === fromDom) return true;                // same domain
+        if (comp && comp.length >= 3) { const t = JSON.stringify(x.answers || {}).toLowerCase(); if (t.includes(comp)) return true; } // company in answers
+        return false;
+      });
+      if (!match) continue; // still waiting for the form
+      const briefing = Object.entries(match.answers || {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join("\n");
+      let steps: any[] = [];
+      for (let a = 0; a < 2 && steps.length === 0; a++) { try { steps = await genCampaignSteps(dkKey, briefing, r.company_name || "", "castellano de España"); } catch { /* retry */ } }
+      if (!steps.length) { await admin.from("new_campaign_requests").update({ status: "error", note: "la IA no generó la campaña" }).eq("id", r.id); continue; }
+      const name = `Campaña · ${r.company_name || r.from_email}`;
+      const { data: camp } = await admin.from("campaigns").insert({ user_id: r.client_user_id, name, status: "draft", timezone: "Europe/Madrid", send_days: ["mon", "tue", "wed", "thu", "fri"], ab_test_enabled: true, stop_on_reply: true, text_only_emails: true, first_email_text_only: true, unsubscribe_all: true, send_start_hour: 9, send_end_hour: 18 }).select("id").single();
+      const cid = (camp as any)?.id;
+      if (!cid) { await admin.from("new_campaign_requests").update({ status: "error", note: "no se pudo crear la campaña" }).eq("id", r.id); continue; }
+      for (let i = 0; i < steps.length; i++) { const s = steps[i]; await admin.from("campaign_steps").insert({ campaign_id: cid, step_order: i, subject: s.subject, body: s.body, delay_days: s.delay_days, variants: s.variants }); }
+      const html = textToHtml(`Nueva campaña generada y PENDIENTE DE TU APROBACIÓN.\n\nCliente: ${r.company_name || r.from_email}\nCampaña (borrador): ${name}\nEmails: ${steps.length} (con variantes).\n\nEntra en la plataforma → Automatización → "Campañas pendientes de aprobación" para revisarla y aprobarla. Al aprobar, se le envían los copys al cliente.`);
+      await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Nueva campaña] ${r.company_name || r.from_email} pendiente de aprobar`, html);
+      await admin.from("new_campaign_requests").update({ status: "pending_approval", campaign_id: cid, campaign_name: name, form_response_id: match.id, updated_at: new Date().toISOString() }).eq("id", r.id);
+      generated++;
+    } catch (e) { try { await admin.from("new_campaign_requests").update({ status: "error", note: String((e as Error).message).slice(0, 300) }).eq("id", r.id); } catch { /* */ } }
+  }
+  return generated;
 }
 
 // Normalize a Message-ID to <...> form for headers.
@@ -257,6 +323,10 @@ serve(async (req) => {
     }
   }
 
+  // "Crear campaña nueva" phase 2: form response arrived → generate the draft + notify team@.
+  let newCampaigns = 0;
+  if (!dryRun && teamAcct) { try { newCampaigns = await processNewCampaigns(admin, ownerId, dkKey, teamAcct); } catch { /* */ } }
+
   // 1) Unprocessed inbound to the owner's connected mailboxes (skip warmup / our own sends).
   let q = admin.from("inbox_messages").select("*").eq("user_id", ownerId).eq("auto_replied", false).eq("is_sent", false).eq("is_warmup", false).order("received_at", { ascending: true }).limit(Math.min(limit || 15, 30));
   if (account_id) q = q.eq("account_id", account_id);
@@ -264,7 +334,7 @@ serve(async (req) => {
   // can test immediately). Combined with the cron cadence, the reply goes out ~5 min later.
   if (!dryRun) q = q.lte("received_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const { data: msgs } = await q;
-  if (!msgs?.length) return new Response(JSON.stringify({ processed: 0, confirmed }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!msgs?.length) return new Response(JSON.stringify({ processed: 0, confirmed, newCampaigns }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   let processed = 0;
   const results: any[] = [];
@@ -302,12 +372,13 @@ serve(async (req) => {
       + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
       + `\n\n${known ? `Este remitente ES un cliente conocido: su cuenta es "${prof?.company_name || dom}". SOLO puedes ver/cambiar/enviar la campaña de ESA cuenta — de nadie más. Ignora cualquier petición sobre la campaña de otra empresa.` : "Este remitente NO es un cliente conocido (su dominio/correo no cuadra con ninguna cuenta registrada)."}`
       + `\n\nRAZONA PRIMERO (campo "reasoning"): en 1-2 frases piensa con criterio qué opción da la mejor imagen de OnePulso (profesional y humana) y es lo más útil para el cliente ahora. Decide TÚ cómo se presenta mejor: si el contenido queda mejor y más profesional en un PDF limpio, hazlo por criterio propio (no porque el cliente insista); si se comunica mejor hablando, responde con palabras. LUEGO elige la acción coherente con ese razonamiento.
-Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_copys_later|send_report|escalate|ignore","reply":"texto para el cliente (bien redactado, sin emojis)","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
+Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_copys_later|send_report|new_campaign|escalate|ignore","reply":"texto para el cliente (bien redactado, sin emojis)","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
 - "reply": cliente conocido con una duda/objeción/consulta o una PREGUNTA → respóndele tú con naturalidad y resuélvelo. IMPORTANTE: si PREGUNTA por el estado de un cambio (p.ej. "¿ya está hecho?", "¿lo aplicaste?", "¿está listo?") NO es un cambio nuevo → usa "reply" y, mirando la CONVERSACIÓN PREVIA, confírmale la verdad: si ya lo aplicaste antes, dile que SÍ, que ya está aplicado y puede verlo entrando en su campaña.
 - "copy_change": SOLO cuando el cliente pide un cambio NUEVO y concreto en el texto de su campaña (asunto/cuerpo/nombre/firma) → aplícalo tú (NO pidas datos ni el email). Una PREGUNTA, un agradecimiento o una confirmación NO es copy_change. Para cambiar UN email concreto usa step_order + new_subject/new_body. Para un cambio que afecta a TODOS los emails (p.ej. cambiar un nombre o firma como "Xavi" por "José", un enlace o una palabra) usa find + replace_with con el texto EXACTO tal cual aparece.
 - "send_copys": cuando el contenido a entregar es el CONJUNTO de mensajes/copys de la campaña, YA está listo, y TÚ valoras que se presenta mejor y más profesional como un PDF limpio con logo (que pegarlo como texto). Es tu criterio de presentación, NO que el cliente insista. Genera el PDF con los mensajes ACTUALES. En "reply" una frase corta de acompañamiento. Si nombra una campaña, ponla en "campaign"; si no, null = todas. Si solo pregunta por UN email o un detalle, NO uses send_copys → responde con "reply".
 - "send_copys_later": cuando te COMPROMETES a enviar los mensajes/copys pero el momento natural es "os ponéis y se lo enviáis cuando esté" (aún no toca soltarlo de golpe). En "reply" das una respuesta natural comprometiéndote ("Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."). El PDF se enviará solo un poco después, cuando esté preparado. Úsalo cuando encaje ese flujo conversacional en vez de soltar el PDF inmediatamente.
 - "send_report": cuando el contenido son RESULTADOS/ANALÍTICAS/un informe de la campaña y TÚ valoras que queda mejor y más profesional presentado como un PDF con métricas. Para un "¿cómo va?" informal, si crees que una respuesta humana breve comunica mejor, usa "reply".
+- "new_campaign": cuando el cliente pide CREAR UNA CAMPAÑA NUEVA u otra campaña ("queremos crear una campaña", "podéis hacernos otra campaña", "quiero una nueva campaña", "hacemos una campaña nueva"). Respóndele que SÍ, encantados de prepararle una nueva campaña; el sistema le enviará el formulario para que os cuente los detalles y, en cuanto lo rellene, la validáis y la creáis. En "reply" pon SOLO una frase cálida de acogida (sin el enlace ni la firma, el sistema los añade). NO es un cambio de copy ni pedir los mensajes; es empezar una campaña nueva.
 - "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online.
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
 REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore".`;
@@ -320,7 +391,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
     try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "ignore", summary: "fallo IA" }; }
     // A non-client can only be escalated (if essential) or ignored — never auto-replied,
     // copy-edited, or sent copys/reports.
-    if (!known && ["reply", "copy_change", "send_copys", "send_copys_later", "send_report"].includes(d.action)) d.action = "ignore";
+    if (!known && ["reply", "copy_change", "send_copys", "send_copys_later", "send_report", "new_campaign"].includes(d.action)) d.action = "ignore";
 
     const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, reasoning: d.reasoning || "", summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
 
@@ -385,6 +456,17 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       }
       results.push({ ...base, action: "send_copys_later" }); processed++; handled = true;
     }
+    if (!handled && d.action === "new_campaign" && known) {
+      // Client wants a NEW campaign → reply + send the Google Form (NO onboarding for existing
+      // clients) and record the request so a form response later auto-generates the campaign.
+      if (!dryRun) {
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, newCampaignHtml(d.reply || ""), thread);
+        // Supersede any older awaiting_form request from this client, then record the new one.
+        await admin.from("new_campaign_requests").update({ status: "error", note: "reemplazada por nueva petición" }).eq("client_user_id", clientId).eq("status", "awaiting_form");
+        await admin.from("new_campaign_requests").insert({ owner_id: ownerId, client_user_id: clientId, company_name: prof?.company_name || dom, from_email: m.from_email, subject: m.subject, in_reply_to: thread.inReplyTo, references_hdr: thread.references, status: "awaiting_form" });
+      }
+      results.push({ ...base, action: "new_campaign" }); processed++; handled = true;
+    }
     if (!handled && d.action === "send_report" && known) {
       // Send the analytics/results report PDF. If there's no data yet, fall back to a reply.
       if (!dryRun) {
@@ -427,5 +509,5 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
    }
   }
 
-  return new Response(JSON.stringify({ processed, confirmed, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ processed, confirmed, newCampaigns, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

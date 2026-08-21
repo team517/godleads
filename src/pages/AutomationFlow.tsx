@@ -318,6 +318,8 @@ export default function AutomationFlow() {
   const [serviceActivity, setServiceActivity] = useState<any[]>([]);
   const [supportInbox, setSupportInbox] = useState<any[]>([]);
   const [expandedMsg, setExpandedMsg] = useState<Record<string, boolean>>({});
+  const [pendingCampaigns, setPendingCampaigns] = useState<any[]>([]);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [agentRunning, setAgentRunning] = useState(false);
   const campaignStartedRef = useRef<Set<string>>(new Set());
   const SUPPORT_ACCOUNT = "7b97ced3-007b-44b4-846b-49dfb78d8454"; // support@onepulso.online mailbox
@@ -334,6 +336,44 @@ export default function AutomationFlow() {
         .order("received_at", { ascending: false }).limit(40);
       setSupportInbox((data as any[]) || []);
     } catch { /* */ }
+  };
+  // "Crear campaña nueva" — campaigns the bot generated from a client's form, waiting for the
+  // owner to approve (which sends the client the copys PDF).
+  const loadPendingCampaigns = async () => { try { const { data } = await supabase.rpc("my_new_campaign_requests" as never); setPendingCampaigns((data as any[]) || []); } catch { /* */ } };
+  const approveNewCampaign = async (req: any) => {
+    if (!req.campaign_id || !req.from_email) { toast.error("Falta la campaña o el correo"); return; }
+    setApprovingId(req.id);
+    try {
+      // Pull the generated campaign's current steps from the DB and build the copys PDF.
+      const { data: steps } = await (supabase as any).from("campaign_steps").select("step_order, subject, body, variants, delay_days").eq("campaign_id", req.campaign_id).order("step_order");
+      if (!steps?.length) throw new Error("la campaña no tiene mensajes");
+      const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
+        import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
+      ]);
+      const doc = buildCopyDoc(jsPDF, {
+        clientName: req.company_name || req.from_email,
+        generatedAtLabel: new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" }),
+        campaigns: [{ name: req.campaign_name || "Campaña", status: "draft", steps }], sampleLead: null,
+        agencyLogoDataUrl: logo?.dataUrl || null, agencyLogoRatio: logo?.ratio || null,
+      });
+      const uri: string = doc.output("datauristring");
+      const b64 = uri.substring(uri.indexOf("base64,") + 7);
+      const { data: { session } } = await supabase.auth.getSession();
+      const up = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "upload_copys", pdf_base64: b64 }) });
+      const ur = await up.json();
+      if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
+      const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
+      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso|team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      if (!fromAcc) throw new Error("no hay cuenta de envío");
+      const message = `Hola,\n\nAquí tienes los mensajes de tu nueva campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEquipo de OnePulso · OnePulso Team`;
+      const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: req.from_email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
+      const sr = await send.json();
+      if (!sr.ok) throw new Error(sr.error || "no se pudo enviar");
+      await supabase.rpc("approve_new_campaign" as never, { p_id: req.id } as never);
+      toast.success(`Aprobada · copys enviados a ${req.from_email}`);
+      loadPendingCampaigns();
+    } catch (e: any) { toast.error(`No se pudo aprobar: ${e?.message || e}`); }
+    setApprovingId(null);
   };
   // Latest agent action for a given sender (overlay on each inbox message).
   const actionFor = (fromEmail: string) => serviceActivity.find((a) => (a.from_email || "").toLowerCase() === (fromEmail || "").toLowerCase());
@@ -396,12 +436,13 @@ export default function AutomationFlow() {
     loadResponses();
     loadServiceActivity();
     loadSupportInbox();
-    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); loadSupportInbox(); };
+    loadPendingCampaigns();
+    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); loadSupportInbox(); loadPendingCampaigns(); };
     window.addEventListener("focus", onFocus);
     // Auto-refresh like the campaigns Unibox: responses every min; the support@ inbox +
     // agent activity every 2 min (the fetch-inbox cron pulls new mail every minute).
     const iv = setInterval(() => loadResponses(), 60000);
-    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); }, 30000);
+    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); loadPendingCampaigns(); }, 30000);
     return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); clearInterval(iv2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -796,6 +837,37 @@ export default function AutomationFlow() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── New-campaign requests (crear campaña nueva) ── */}
+      {pendingCampaigns.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <Sparkles className="h-4 w-4 text-primary" /> Campañas nuevas de clientes
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600">{pendingCampaigns.filter((r) => r.status === "pending_approval").length} por aprobar</span>
+            </CardTitle>
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadPendingCampaigns}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-sm text-muted-foreground">Cuando un cliente pide una campaña nueva por support@, el bot le envía el formulario; al responderlo, genera la campaña en borrador y aparece aquí para que la apruebes. Al aprobar, se le envían los copys.</p>
+            {pendingCampaigns.map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">{r.company_name || r.from_email}</p>
+                  <p className="truncate text-xs text-muted-foreground">{r.from_email}{r.campaign_name ? ` · ${r.campaign_name}` : ""}</p>
+                </div>
+                {r.status === "pending_approval" ? (
+                  <Button size="sm" className="gap-1.5" disabled={approvingId === r.id} onClick={() => approveNewCampaign(r)}>
+                    {approvingId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Aprobar y enviar copys
+                  </Button>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Esperando respuesta del formulario</span>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Editable flow ── */}
       <Card>
