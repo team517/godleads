@@ -647,8 +647,19 @@ export default function AutomationFlow() {
     generateCampaignFor({ ...c, step: respondedStep }, testResp, true); // test = no crea la campaña real
   };
 
+  // "Crear campaña nueva" requests, shown as clients IN THE FLOW (existing clients asking for
+  // another campaign): no onboarding, they sit at "responde el Form" and then "Tu aprobación".
+  const fIdx = formNodeIdx(nodes);
+  const ncrStep = (status: string) => status === "pending_approval" ? Math.min(fIdx + 2, nodes.length - 1) : status === "approved" ? nodes.length : fIdx;
+  const ncrFlow = (pendingCampaigns || []).map((r) => ({
+    id: `ncr-${r.id}`, ncr: r as any, isNcr: true as const,
+    company: r.company_name || r.from_email, name: r.company_name || "", email: r.from_email,
+    step: ncrStep(r.status), campaignStatus: r.status === "pending_approval" ? "done" : undefined,
+  }));
+  const flowItems: any[] = [...clients, ...ncrFlow];
+
   // The client whose run is being visualised on the flow (defaults to the most recent).
-  const activeClient = clients.find((c) => c.id === activeClientId) || clients[0] || null;
+  const activeClient = flowItems.find((c) => c.id === activeClientId) || flowItems[0] || null;
   const activeStep = activeClient ? activeClient.step : -1;
 
   return (
@@ -838,37 +849,6 @@ export default function AutomationFlow() {
         </CardContent>
       </Card>
 
-      {/* ── New-campaign requests (crear campaña nueva) ── */}
-      {pendingCampaigns.length > 0 && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" /> Campañas nuevas de clientes
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600">{pendingCampaigns.filter((r) => r.status === "pending_approval").length} por aprobar</span>
-            </CardTitle>
-            <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadPendingCampaigns}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <p className="text-sm text-muted-foreground">Cuando un cliente pide una campaña nueva por support@, el bot le envía el formulario; al responderlo, genera la campaña en borrador y aparece aquí para que la apruebes. Al aprobar, se le envían los copys.</p>
-            {pendingCampaigns.map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm">
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-foreground">{r.company_name || r.from_email}</p>
-                  <p className="truncate text-xs text-muted-foreground">{r.from_email}{r.campaign_name ? ` · ${r.campaign_name}` : ""}</p>
-                </div>
-                {r.status === "pending_approval" ? (
-                  <Button size="sm" className="gap-1.5" disabled={approvingId === r.id} onClick={() => approveNewCampaign(r)}>
-                    {approvingId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Aprobar y enviar copys
-                  </Button>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Esperando respuesta del formulario</span>
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
       {/* ── Editable flow ── */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -877,13 +857,13 @@ export default function AutomationFlow() {
         </CardHeader>
         <CardContent>
           {/* Which client's run we're watching — the flow lights up for this one, like N8N */}
-          {clients.length > 0 && (
+          {flowItems.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Viendo:</span>
-              {clients.map((c) => (
+              {flowItems.map((c) => (
                 <button key={c.id} onClick={() => setActiveClientId(c.id)}
                   className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${activeClient?.id === c.id ? "bg-primary text-primary-foreground" : "bg-muted text-foreground hover:bg-muted/70"}`}>
-                  {c.company || c.name || c.email}
+                  {c.company || c.name || c.email}{c.isNcr ? " · nueva campaña" : ""}
                 </button>
               ))}
             </div>
@@ -943,7 +923,7 @@ export default function AutomationFlow() {
           <Button size="sm" className="gap-1.5" onClick={() => setNewClient(true)}><UserPlus className="h-4 w-4" /> Nuevo cliente</Button>
         </CardHeader>
         <CardContent>
-          {clients.length === 0 ? (
+          {flowItems.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
               Mete los datos de un cliente con <b className="text-foreground">"Nuevo cliente"</b> y arranca su flujo. Aquí lo verás avanzar por cada paso en tiempo real.
             </div>
@@ -989,6 +969,39 @@ export default function AutomationFlow() {
                         : isFinal
                           ? <><CheckCircle2 className="h-3 w-3 text-emerald-600" /> Atención al cliente activa</>
                           : <><Loader2 className="h-3 w-3 animate-spin text-primary" /> {node?.desc}</>}
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {ncrFlow.map((r) => {
+                const isPending = r.ncr.status === "pending_approval";
+                const stepNode = nodes[Math.min(r.step, nodes.length - 1)] || nodes[0];
+                const pct = Math.round(((Math.min(r.step, nodes.length - 1) + 1) / nodes.length) * 100);
+                return (
+                  <div key={r.id} className="rounded-lg border border-border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{r.company} <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">nueva campaña</span></p>
+                        <p className="truncate text-xs text-muted-foreground">{r.email}{r.ncr.campaign_name ? ` · ${r.ncr.campaign_name}` : ""}</p>
+                        {isPending
+                          ? <p className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Campaña en borrador creada</p>
+                          : <p className="flex items-center gap-1 text-xs text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Esperando la respuesta del Form…</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${AGENT_META[stepNode?.agent || "manual"].color}`}>
+                          {!isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                          {Math.min(r.step, nodes.length - 1) + 1}. {stepNode?.label}
+                        </span>
+                        {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={approvingId === r.ncr.id} onClick={() => approveNewCampaign(r.ncr)}>{approvingId === r.ncr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Aprobar y enviar copys</Button>}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {isPending
+                        ? <><CheckCircle2 className="h-3 w-3 text-emerald-600" /> Generada y pendiente de tu aprobación</>
+                        : <><Loader2 className="h-3 w-3 animate-spin text-primary" /> Le enviamos el formulario; en cuanto lo responda, generamos la campaña</>}
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
                       <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
