@@ -381,7 +381,7 @@ serve(async (req) => {
     const { data: camps } = await admin.from("campaigns").select("id, name, status, created_at").eq("user_id", clientId).order("created_at", { ascending: false }).limit(8);
     const allCamps = (camps || []) as any[];
     const draft = allCamps.find((c: any) => c.status === "draft") || allCamps[0];
-    const { data: steps } = draft ? await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", draft.id).order("step_order") : { data: [] as any[] };
+    const { data: steps } = draft ? await admin.from("campaign_steps").select("id, step_order, subject, body, variants").eq("campaign_id", draft.id).order("step_order") : { data: [] as any[] };
     const relTime = (iso: string) => { const dd = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return dd <= 0 ? "hoy" : dd === 1 ? "ayer" : `hace ${dd} días`; };
     const campList = allCamps.length ? allCamps.map((c: any, i: number) => `${i + 1}. "${c.name}" (${c.status === "draft" ? "borrador" : c.status}) — creada ${relTime(c.created_at)}${i === 0 ? " [LA MÁS NUEVA]" : ""}${draft && c.id === draft.id ? " [la que edito por defecto]" : ""}`).join("\n") : "(sin campañas)";
 
@@ -432,7 +432,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         if (m2) targetCamp = m2;
       }
       let tSteps: any[] = (steps as any[]) || [];
-      if (targetCamp && (!draft || targetCamp.id !== draft.id)) { const { data: ts } = await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", targetCamp.id).order("step_order"); tSteps = ts || []; }
+      if (targetCamp && (!draft || targetCamp.id !== draft.id)) { const { data: ts } = await admin.from("campaign_steps").select("id, step_order, subject, body, variants").eq("campaign_id", targetCamp.id).order("step_order"); tSteps = ts || []; }
       // Two shapes: a global find/replace across ALL steps, or a specific step's subject/body.
       let applied = false;
       if (tSteps?.length) {
@@ -442,10 +442,19 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
           applied = !!(doGlobal || doStep);
         } else if (doGlobal) {
           const find = String(d.find);
+          const rep = (t: any) => String(t ?? "").split(find).join(String(d.replace_with));
           for (const s of tSteps as any[]) {
-            const ns = String(s.subject || "").split(find).join(String(d.replace_with));
-            const nb = String(s.body || "").split(find).join(String(d.replace_with));
-            if (ns !== s.subject || nb !== s.body) { await admin.from("campaign_steps").update({ subject: ns, body: nb }).eq("id", s.id); applied = true; }
+            let changed = false;
+            const ns = rep(s.subject); if (ns !== (s.subject ?? "")) changed = true;
+            const nb = rep(s.body); if (nb !== (s.body ?? "")) changed = true;
+            // Also replace inside EVERY variant (subject + body), not just the principal.
+            const nv = Array.isArray(s.variants) ? s.variants.map((v: any) => {
+              const out = { ...v };
+              if (typeof v?.subject === "string") { const x = rep(v.subject); if (x !== v.subject) { out.subject = x; changed = true; } }
+              if (typeof v?.body === "string") { const x = rep(v.body); if (x !== v.body) { out.body = x; changed = true; } }
+              return out;
+            }) : s.variants;
+            if (changed) { await admin.from("campaign_steps").update({ subject: ns, body: nb, variants: nv }).eq("id", s.id); applied = true; }
           }
         } else if (doStep) {
           const target = (tSteps as any[]).find((s: any) => s.step_order === Number(d.step_order));
