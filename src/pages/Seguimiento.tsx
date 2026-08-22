@@ -36,6 +36,7 @@ export default function Seguimiento() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [segThreads, setSegThreads] = useState<any[]>([]);
   const [fuDetail, setFuDetail] = useState<any | null>(null); // follow-up abierto en el popup
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
   const loadFollowups = async () => {
     try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
@@ -139,11 +140,17 @@ export default function Seguimiento() {
   if (!user) return null;
   if ((user.email || "").toLowerCase() !== "hello@onepulso.blog") return <Navigate to="/dashboard" replace />;
 
-  // Semana visible (7 días desde hoy) para el calendario arrastrable.
   const today = dayISO(new Date());
-  const week = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(today.getDate() + i); return d; });
   const scheduled = followups.filter((f) => f.status === "scheduled");
   const fusOn = (d: Date) => scheduled.filter((f) => dayISO(new Date(f.scheduled_at)).getTime() === d.getTime()).sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
+  // Rejilla del MES completo (empieza en lunes), 6 semanas.
+  const firstOfMonth = new Date(calMonth.y, calMonth.m, 1);
+  const offset = (firstOfMonth.getDay() + 6) % 7; // 0 = lunes
+  const gridStart = dayISO(firstOfMonth); gridStart.setDate(gridStart.getDate() - offset);
+  const monthCells = Array.from({ length: 42 }, (_, i) => { const d = new Date(gridStart); d.setDate(gridStart.getDate() + i); return dayISO(d); });
+  const monthLabel = firstOfMonth.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const prevMonth = () => setCalMonth((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m: c.m - 1 }));
+  const nextMonth = () => setCalMonth((c) => (c.m === 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m: c.m + 1 }));
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-4">
@@ -270,29 +277,41 @@ export default function Seguimiento() {
         </div>
       )}
 
-      {/* Calendario semanal con arrastrar */}
+      {/* Calendario del MES con arrastrar */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 py-3">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 py-3">
           <CardTitle className="flex items-center gap-2 text-sm"><CalendarClock className="h-4 w-4 text-primary" /> Calendario de follow-ups <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{scheduled.length} programados</span></CardTitle>
-          <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadFollowups}><RefreshCw className="h-4 w-4" /> Actualizar</Button>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={prevMonth} title="Mes anterior">‹</Button>
+            <span className="min-w-[130px] text-center text-sm font-semibold capitalize">{monthLabel}</span>
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={nextMonth} title="Mes siguiente">›</Button>
+            <Button size="sm" variant="outline" className="h-8" onClick={() => { const d = new Date(); setCalMonth({ y: d.getFullYear(), m: d.getMonth() }); }}>Hoy</Button>
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={loadFollowups} title="Actualizar"><RefreshCw className="h-4 w-4" /></Button>
+          </div>
         </CardHeader>
         <CardContent>
-          <p className="mb-2 text-xs text-muted-foreground">Arrastra un follow-up a otro día para reprogramarlo (mantiene la hora). Se envían solos a su hora desde team@.</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-            {week.map((d, i) => {
+          <p className="mb-2 text-xs text-muted-foreground">Arrastra un follow-up a otro día para reprogramarlo (mantiene la hora). Se envían solos a su hora desde team@. Clic en uno para ver el mensaje.</p>
+          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg bg-border text-center">
+            {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((w) => (
+              <div key={w} className="bg-muted/50 py-1 text-[11px] font-semibold text-muted-foreground">{w}</div>
+            ))}
+            {monthCells.map((d, i) => {
               const items = fusOn(d);
               const isToday = d.getTime() === today.getTime();
+              const inMonth = d.getMonth() === calMonth.m;
+              const isPast = d.getTime() < today.getTime();
               return (
-                <div key={i} onDragOver={(e) => e.preventDefault()} onDrop={() => dropOnDay(d)} className={`min-h-[110px] rounded-lg border p-1.5 ${isToday ? "border-primary/50 bg-primary/5" : "border-border"}`}>
-                  <p className={`mb-1 text-[11px] font-semibold capitalize ${isToday ? "text-primary" : "text-muted-foreground"}`}>{d.toLocaleDateString("es-ES", { weekday: "short", day: "2-digit" })}</p>
-                  <div className="space-y-1">
+                <div key={i} onDragOver={(e) => e.preventDefault()} onDrop={() => dropOnDay(d)}
+                  className={`min-h-[84px] p-1 text-left align-top ${inMonth ? "bg-card" : "bg-muted/20"} ${isToday ? "ring-1 ring-inset ring-primary" : ""}`}>
+                  <p className={`mb-0.5 text-[11px] font-semibold ${isToday ? "text-primary" : inMonth ? (isPast ? "text-muted-foreground/50" : "text-foreground") : "text-muted-foreground/40"}`}>{d.getDate()}</p>
+                  <div className="space-y-0.5">
                     {items.map((f) => (
-                      <div key={f.id} draggable onDragStart={() => setDragId(f.id)} onDragEnd={() => setDragId(null)} onClick={() => setFuDetail(f)} className="group cursor-pointer rounded-md border border-border bg-card p-1.5 text-[10px] shadow-sm hover:border-primary" title="Ver el mensaje programado">
+                      <div key={f.id} draggable onDragStart={() => setDragId(f.id)} onDragEnd={() => setDragId(null)} onClick={() => setFuDetail(f)}
+                        className="group cursor-pointer rounded border border-primary/30 bg-primary/5 px-1 py-0.5 text-[9px] leading-tight hover:border-primary" title="Ver el mensaje programado">
                         <p className="flex items-center justify-between font-medium text-foreground">
-                          <span>{new Date(f.scheduled_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
-                          <button onClick={(e) => { e.stopPropagation(); cancelFollowup(f.id); }} className="rounded p-0.5 text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Cancelar"><X className="h-3 w-3" /></button>
+                          <span className="truncate">{new Date(f.scheduled_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} {(f.contact_name || f.contact_email || "").split(/[ @]/)[0]}</span>
+                          <button onClick={(e) => { e.stopPropagation(); cancelFollowup(f.id); }} className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Cancelar"><X className="h-2.5 w-2.5" /></button>
                         </p>
-                        <p className="truncate text-muted-foreground">{f.contact_name || f.contact_email}</p>
                       </div>
                     ))}
                   </div>
@@ -300,9 +319,6 @@ export default function Seguimiento() {
               );
             })}
           </div>
-          {scheduled.some((f) => dayISO(new Date(f.scheduled_at)).getTime() > week[6].getTime()) && (
-            <p className="mt-2 text-xs text-muted-foreground">+ hay follow-ups más allá de esta semana (se enviarán igualmente a su hora).</p>
-          )}
         </CardContent>
       </Card>
 
