@@ -137,6 +137,18 @@ export default function Seguimiento() {
   const cancelFollowup = async (id: string) => {
     try { await (supabase as any).from("follow_ups").update({ status: "canceled" }).eq("id", id); setFollowups((p) => p.filter((f) => f.id !== id)); } catch { /* */ }
   };
+  const [fuSending, setFuSending] = useState(false);
+  const sendFollowNow = async (f: any) => {
+    setFuSending(true);
+    try {
+      // Ponerlo "vencido" (ahora) para que el cron lo envíe ya, y disparar el envío al momento.
+      await (supabase as any).from("follow_ups").update({ scheduled_at: new Date().toISOString() }).eq("id", f.id).eq("status", "scheduled");
+      await supabase.functions.invoke("send-followups", { body: { limit: 5 } });
+      toast.success(`Enviado ahora a ${f.contact_email}`);
+      setFuDetail(null); loadFollowups();
+    } catch (e: any) { toast.error(`No se pudo enviar: ${e?.message || e}`); }
+    setFuSending(false);
+  };
   // Drag a follow-up card onto a day → reprograma a ese día (misma hora).
   const dropOnDay = async (dayStart: Date) => {
     if (!dragId) return;
@@ -352,10 +364,13 @@ export default function Seguimiento() {
             </div>
           )}
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { if (fuDetail) openFuConversation(fuDetail); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => { if (fuDetail) cancelFollowup(fuDetail.id); setFuDetail(null); }}><X className="h-4 w-4" /> Cancelar follow-up</Button>
-              <Button size="sm" onClick={() => setFuDetail(null)}>Cerrar</Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { if (fuDetail) openFuConversation(fuDetail); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
+              <Button size="sm" className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700" disabled={fuSending} onClick={() => { if (fuDetail) sendFollowNow(fuDetail); }}>{fuSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar ahora</Button>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => { if (fuDetail) cancelFollowup(fuDetail.id); setFuDetail(null); }}><X className="h-4 w-4" /> Cancelar</Button>
+              <Button size="sm" variant="outline" onClick={() => setFuDetail(null)}>Cerrar</Button>
             </div>
           </DialogFooter>
         </DialogContent>
