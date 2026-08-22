@@ -71,3 +71,6 @@ verify_jwt = false
 
 [functions.send-followups]
 verify_jwt = false
+
+[functions.imap-conversations]
+verify_jwt = false
