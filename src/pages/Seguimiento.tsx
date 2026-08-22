@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { CalendarClock, Search, Sparkles, Send, Loader2, Mail, User, X, Clock, RefreshCw, ArrowLeft, MessageSquare } from "lucide-react";
@@ -34,6 +35,7 @@ export default function Seguimiento() {
   const [followups, setFollowups] = useState<any[]>([]);
   const [dragId, setDragId] = useState<string | null>(null);
   const [segThreads, setSegThreads] = useState<any[]>([]);
+  const [fuDetail, setFuDetail] = useState<any | null>(null); // follow-up abierto en el popup
 
   const loadFollowups = async () => {
     try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
@@ -285,10 +287,10 @@ export default function Seguimiento() {
                   <p className={`mb-1 text-[11px] font-semibold capitalize ${isToday ? "text-primary" : "text-muted-foreground"}`}>{d.toLocaleDateString("es-ES", { weekday: "short", day: "2-digit" })}</p>
                   <div className="space-y-1">
                     {items.map((f) => (
-                      <div key={f.id} draggable onDragStart={() => setDragId(f.id)} onDragEnd={() => setDragId(null)} className="group cursor-grab rounded-md border border-border bg-card p-1.5 text-[10px] shadow-sm active:cursor-grabbing">
+                      <div key={f.id} draggable onDragStart={() => setDragId(f.id)} onDragEnd={() => setDragId(null)} onClick={() => setFuDetail(f)} className="group cursor-pointer rounded-md border border-border bg-card p-1.5 text-[10px] shadow-sm hover:border-primary" title="Ver el mensaje programado">
                         <p className="flex items-center justify-between font-medium text-foreground">
                           <span>{new Date(f.scheduled_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
-                          <button onClick={() => cancelFollowup(f.id)} className="rounded p-0.5 text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Cancelar"><X className="h-3 w-3" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); cancelFollowup(f.id); }} className="rounded p-0.5 text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Cancelar"><X className="h-3 w-3" /></button>
                         </p>
                         <p className="truncate text-muted-foreground">{f.contact_name || f.contact_email}</p>
                       </div>
@@ -303,6 +305,35 @@ export default function Seguimiento() {
           )}
         </CardContent>
       </Card>
+
+      {/* Detalle del follow-up programado (clic en el calendario) */}
+      <Dialog open={!!fuDetail} onOpenChange={(o) => !o && setFuDetail(null)}>
+        <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base"><Clock className="h-4 w-4 text-primary" /> Follow-up programado</DialogTitle>
+          </DialogHeader>
+          {fuDetail && (
+            <div className="space-y-3 py-1 text-sm">
+              <div className="rounded-lg bg-muted/40 p-2.5 text-xs">
+                <p><b className="text-foreground">Para:</b> {fuDetail.contact_name ? `${fuDetail.contact_name} · ` : ""}{fuDetail.contact_email}</p>
+                <p><b className="text-foreground">Se envía:</b> {new Date(fuDetail.scheduled_at).toLocaleString("es-ES", { weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" })} <span className="text-muted-foreground">(desde team@)</span></p>
+                <p className="truncate"><b className="text-foreground">Asunto:</b> {fuDetail.subject || "Seguimiento"}</p>
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold text-muted-foreground">Mensaje programado</p>
+                <div className="whitespace-pre-wrap break-words rounded-lg border border-border p-3 text-sm text-foreground">{cleanBody(fuDetail.body) || "(vacío)"}</div>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { const f = fuDetail; setFuDetail(null); if (f) openThread({ contact_email: f.contact_email, contact_name: f.contact_name, subject: f.subject || "" }); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => { if (fuDetail) cancelFollowup(fuDetail.id); setFuDetail(null); }}><X className="h-4 w-4" /> Cancelar follow-up</Button>
+              <Button size="sm" onClick={() => setFuDetail(null)}>Cerrar</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
