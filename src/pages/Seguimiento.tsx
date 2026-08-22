@@ -36,6 +36,16 @@ export default function Seguimiento() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [segThreads, setSegThreads] = useState<any[]>([]);
   const [fuDetail, setFuDetail] = useState<any | null>(null); // follow-up abierto en el popup
+  const [convPreview, setConvPreview] = useState<{ fu: any; messages: any[] } | null>(null); // popup conversación + follow-up
+  const [convLoading, setConvLoading] = useState(false);
+  const openFuConversation = async (f: any) => {
+    setFuDetail(null); setConvPreview({ fu: f, messages: [] }); setConvLoading(true);
+    try {
+      const d = await callImap({ action: "import", contactEmail: f.contact_email, subject: f.subject || "" });
+      setConvPreview({ fu: f, messages: (d.messages || []) as any[] });
+    } catch (e: any) { toast.error(`No se pudo cargar: ${e?.message || e}`); }
+    setConvLoading(false);
+  };
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
   const loadFollowups = async () => {
@@ -342,11 +352,48 @@ export default function Seguimiento() {
             </div>
           )}
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { const f = fuDetail; setFuDetail(null); if (f) openThread({ contact_email: f.contact_email, contact_name: f.contact_name, subject: f.subject || "" }); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { if (fuDetail) openFuConversation(fuDetail); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
             <div className="flex gap-2">
               <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => { if (fuDetail) cancelFollowup(fuDetail.id); setFuDetail(null); }}><X className="h-4 w-4" /> Cancelar follow-up</Button>
               <Button size="sm" onClick={() => setFuDetail(null)}>Cerrar</Button>
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conversación + el follow-up abajo, como si formara parte del hilo */}
+      <Dialog open={!!convPreview} onOpenChange={(o) => !o && setConvPreview(null)}>
+        <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base"><Mail className="h-4 w-4 text-primary" /> Conversación con {convPreview?.fu?.contact_name || convPreview?.fu?.contact_email}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            {convLoading ? (
+              <p className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando la conversación…</p>
+            ) : (
+              <>
+                {(convPreview?.messages || []).map((m, i) => (
+                  <div key={i} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs ${m.direction === "outbound" ? "bg-primary/10" : "bg-muted"}`}>
+                      <p className="mb-0.5 flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">{m.direction === "outbound" ? <Send className="h-3 w-3" /> : <User className="h-3 w-3" />}{m.direction === "outbound" ? "Tú · team@" : (m.from || convPreview?.fu?.contact_email)} · {fmt(m.date)}</p>
+                      <p className="whitespace-pre-wrap break-words text-foreground">{(m.body_text || cleanBody(m.body_html)) || "(sin texto)"}</p>
+                    </div>
+                  </div>
+                ))}
+                {/* El follow-up programado, abajo, como parte del hilo (pendiente) */}
+                {convPreview?.fu && (
+                  <div className="flex justify-end">
+                    <div className="max-w-[82%] rounded-2xl border border-dashed border-primary/50 bg-primary/5 px-3 py-2 text-xs">
+                      <p className="mb-0.5 flex items-center gap-1.5 text-[10px] font-medium text-primary"><Clock className="h-3 w-3" /> Tu follow-up · programado para {fmt(convPreview.fu.scheduled_at)}</p>
+                      <p className="whitespace-pre-wrap break-words text-foreground">{cleanBody(convPreview.fu.body) || "(vacío)"}</p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter className="sm:justify-end">
+            <Button size="sm" onClick={() => setConvPreview(null)}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
