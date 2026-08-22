@@ -287,6 +287,35 @@ serve(async (req) => {
   // The owner (agency) whose inbox we watch. Passed in, or default to the known owner.
   const input = await req.json().catch(() => ({} as any));
 
+  // ── FOLLOWUP: propone SOLO el cuerpo de un email de seguimiento, limpio (para Seguimiento) ──
+  if (input.action === "followup") {
+    const name = String(input.contact_name || "").split(/[ @]/)[0].trim();
+    const hist = Array.isArray(input.history) ? input.history.map((h: any) => `${h.role === "user" ? "ELLOS" : "NOSOTROS"}: ${h.text}`).join("\n") : "";
+    const system = `Eres un comercial de OnePulso escribiendo un email de SEGUIMIENTO a un contacto con el que YA hay una conversación. Devuelve EXCLUSIVAMENTE el CUERPO del email, listo para enviarse tal cual.
+REGLAS ESTRICTAS:
+- Empieza con "Hola ${name || "[nombre]"},".
+- NADA de meta-comentarios (nada de "te propongo", "aquí tienes una opción", "¿te encaja?", "puedo adaptarlo"). Solo el email.
+- NO escribas "Asunto:" ni ninguna línea de asunto. NO uses corchetes ni placeholders ([Nombre], [Tu nombre], [empresa]).
+- Retoma el hilo con naturalidad según la conversación previa. Breve: 3-6 líneas. Frases cortas, bien estructurado, párrafos separados por una línea en blanco.
+- Un solo CTA claro (una llamada corta o una respuesta). SIN emojis.
+- Termina exactamente con:\nUn saludo,\nEquipo de OnePulso
+Devuelve solo el texto del email, sin comillas ni markdown.`;
+    const user = `${hist ? "CONVERSACIÓN PREVIA (lo más reciente abajo):\n" + hist + "\n\n" : ""}${input.hint ? "Indicación del usuario: " + input.hint + "\n\n" : ""}Escribe el email de seguimiento para ${input.contact_name || "el contacto"}.`;
+    let text = "";
+    try {
+      const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${dkKey}` },
+        body: JSON.stringify({ model: "deepseek-chat", temperature: 0.4, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      });
+      const j = await res.json();
+      text = j?.choices?.[0]?.message?.content || "";
+    } catch { /* */ }
+    // Saneado: quita comillas envolventes, markdown, líneas "Asunto:", separadores y placeholders sobrantes.
+    text = stripEmojis(text).replace(/^\s*["'`]+|["'`]+\s*$/g, "").replace(/\*\*/g, "").replace(/^\s*-{3,}\s*$/gm, "")
+      .replace(/^\s*asunto\s*:.*$/gim, "").replace(/\[tu nombre\]/gi, "Equipo de OnePulso").replace(/\n{3,}/g, "\n\n").trim();
+    return new Response(JSON.stringify({ reply: text || "Hola, retomo el hilo por si te viene bien que lo veamos. ¿Te va bien una llamada corta esta semana?\n\nUn saludo,\nEquipo de OnePulso" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
   // ── CHAT: test a conversation with the agent (no email / campaign side effects) ──
   if (input.action === "chat") {
     const system = (input.prompt || DEFAULT_ATENCION) + `\n\nEres el asistente de atención de OnePulso hablando directamente con un cliente por chat. Responde de forma natural, humana y conversacional, en su idioma. Ten en cuenta TODA la conversación de arriba y NO repitas respuestas anteriores: si el cliente insiste en algo ya tratado, gestiónalo de forma DIFERENTE. Devuelve SOLO JSON: {"reply":"tu respuesta"}.`;

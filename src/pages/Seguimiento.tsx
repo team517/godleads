@@ -105,8 +105,7 @@ export default function Seguimiento() {
     setAiLoading(true);
     try {
       const history = conv.map((c) => ({ role: c.direction === "inbound" ? "user" : "assistant", text: (c.body_text || cleanBody(c.body_html)).slice(0, 600) }));
-      const lastIn = [...conv].reverse().find((c) => c.direction === "inbound");
-      const { data } = await supabase.functions.invoke("client-service-agent", { body: { action: "chat", company: active.contact_name || active.contact_email, history, message: (lastIn?.body_text || cleanBody(lastIn?.body_html)) || "Propón un buen mensaje de seguimiento para retomar el contacto." } });
+      const { data } = await supabase.functions.invoke("client-service-agent", { body: { action: "followup", contact_name: active.contact_name || active.contact_email, history } });
       const reply = (data as any)?.reply;
       if (reply) { setBodyText(reply); toast.success("Propuesta lista — revísala antes de enviar"); }
       else toast.error("La IA no devolvió propuesta");
