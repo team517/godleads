@@ -84,7 +84,8 @@ async function searchEmails(acc: any, query: string) {
 
 async function importConversation(acc: any, contact: string, threadSubject?: string) {
   contact = String(contact || "").toLowerCase().trim();
-  const wantSubj = threadSubject && String(threadSubject).trim() ? normSubj(threadSubject).toLowerCase() : null;
+  const baseSubject = normSubj(String(threadSubject || "")); // sin Re:/Fwd, para buscar el hilo entero
+  const wantSubj = baseSubject ? baseSubject.toLowerCase() : null;
   const me = String(acc.email || acc.imap_username).toLowerCase();
   const client = connectImap(acc); await client.connect();
   const out: any[] = [], seen = new Set<string>();
@@ -96,15 +97,21 @@ async function importConversation(acc: any, contact: string, threadSubject?: str
       let lock; try { lock = await client.getMailboxLock(box.path); } catch { continue; }
       try {
         let uids: any[] = [];
-        try { uids = await client.search({ or: [{ from: contact }, { to: contact }] }, { uid: true }) as any[]; } catch { uids = []; }
+        // FAST + solo el hilo: busca por ASUNTO base (mucho menos que todos los correos del
+        // contacto). Combinado con el contacto. Fallback a contacto solo si no hay asunto.
+        if (wantSubj) {
+          try { uids = await client.search({ subject: baseSubject, or: [{ from: contact }, { to: contact }] }, { uid: true }) as any[]; } catch { uids = []; }
+          if (!uids || !uids.length) { try { uids = await client.search({ subject: baseSubject }, { uid: true }) as any[]; } catch { uids = []; } }
+        }
+        if ((!uids || !uids.length)) { try { uids = await client.search({ or: [{ from: contact }, { to: contact }] }, { uid: true }) as any[]; } catch { uids = []; } }
         if (!uids || !uids.length) continue;
-        uids = uids.slice(-80);
+        uids = uids.slice(-40); // tope: un hilo real cabe de sobra
         for await (const msg of client.fetch(uids, { uid: true, source: true }, { uid: true } as any)) {
           try {
             const parsed: any = await simpleParser((msg as any).source);
             const mid = parsed.messageId || box.path + ":" + (msg as any).uid;
             if (seen.has(mid)) continue; seen.add(mid);
-            if (wantSubj && normSubj(parsed.subject || "").toLowerCase() !== wantSubj) continue;
+            if (wantSubj) { const ms = normSubj(parsed.subject || "").toLowerCase(); if (ms !== wantSubj && !ms.includes(wantSubj) && !wantSubj.includes(ms)) continue; }
             const fromAddr = ((parsed.from && parsed.from.value && parsed.from.value[0] && parsed.from.value[0].address) || "").toLowerCase();
             out.push({
               id: mid, direction: fromAddr === me ? "outbound" : "inbound",

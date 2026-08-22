@@ -33,11 +33,24 @@ export default function Seguimiento() {
   const [scheduleAt, setScheduleAt] = useState("");
   const [followups, setFollowups] = useState<any[]>([]);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [segThreads, setSegThreads] = useState<any[]>([]);
 
   const loadFollowups = async () => {
     try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
   };
-  useEffect(() => { loadFollowups(); const iv = setInterval(loadFollowups, 60000); return () => clearInterval(iv); }, []);
+  const loadSegThreads = async () => {
+    try { const { data } = await (supabase as any).from("seg_threads").select("*").order("last_imported_at", { ascending: false }).limit(100); setSegThreads((data as any[]) || []); } catch { /* */ }
+  };
+  useEffect(() => { loadFollowups(); loadSegThreads(); const iv = setInterval(() => { loadFollowups(); loadSegThreads(); }, 60000); return () => clearInterval(iv); }, []);
+  const hasFu = (email: string) => followups.some((f) => f.status === "scheduled" && (f.contact_email || "").toLowerCase() === (email || "").toLowerCase());
+  const deleteSegThread = async (t: any) => {
+    try {
+      await (supabase as any).from("seg_threads").delete().eq("id", t.id);
+      await (supabase as any).from("follow_ups").update({ status: "canceled" }).eq("contact_email", t.contact_email).eq("status", "scheduled");
+      setSegThreads((p) => p.filter((x) => x.id !== t.id)); loadFollowups();
+      toast.success("Seguimiento eliminado");
+    } catch { toast.error("No se pudo eliminar"); }
+  };
 
   const callImap = async (payload: any) => {
     const { data, error } = await supabase.functions.invoke("imap-conversations", { body: payload });
@@ -68,6 +81,8 @@ export default function Seguimiento() {
       setRefs({ inReplyTo: last?.message_id || "", references: [...(last?.references || []), last?.message_id].filter(Boolean).join(" ") });
       setSubject(t.subject ? "Re: " + String(t.subject).replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "") : "Seguimiento");
       setBodyText("");
+      // Guarda este seguimiento (para verlo en "Mis seguimientos" con su nombre).
+      try { await (supabase as any).from("seg_threads").upsert({ contact_email: t.contact_email, contact_name: t.contact_name || null, subject: t.subject || "", last_imported_at: new Date().toISOString() }, { onConflict: "owner_id,contact_email,subject" }); loadSegThreads(); } catch { /* */ }
     } catch (e: any) { toast.error(`No se pudo importar: ${e?.message || e}`); }
     setImporting(false);
   };
@@ -145,6 +160,27 @@ export default function Seguimiento() {
           <Button onClick={doSearch} disabled={searching} className="gap-1.5">{searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Buscar</Button>
         </CardContent>
       </Card>
+
+      {/* Mis seguimientos guardados (lo que ya has importado) */}
+      {segThreads.length > 0 && (
+        <Card>
+          <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><MessageSquare className="h-4 w-4 text-primary" /> Mis seguimientos <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{segThreads.length}</span></CardTitle></CardHeader>
+          <CardContent className="grid gap-1.5 sm:grid-cols-2">
+            {segThreads.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-border p-2.5">
+                <button onClick={() => openThread(t)} className="min-w-0 flex-1 text-left">
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium text-foreground">
+                    {t.contact_name || t.contact_email}
+                    {hasFu(t.contact_email) && <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"><Clock className="h-3 w-3" /> follow-up</span>}
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">{t.subject || t.contact_email}</p>
+                </button>
+                <button onClick={() => deleteSegThread(t)} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Eliminar seguimiento"><X className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Resultados: las diferentes conversaciones/hilos → elige uno */}
       {!active && (
