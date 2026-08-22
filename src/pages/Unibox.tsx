@@ -1289,6 +1289,35 @@ export default function Unibox() {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
+  // Saved reply templates (per user) — create, apply and manage from the composer.
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [tplOpen, setTplOpen] = useState(false);
+  const loadTemplates = async () => { try { const { data } = await (supabase as any).from("reply_templates").select("id, name, body").order("created_at", { ascending: false }); setTemplates((data as any[]) || []); } catch { /* */ } };
+  const applyTemplate = (t: any) => {
+    const ta = replyRef.current;
+    if (ta && typeof ta.selectionStart === "number") {
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      setReply(reply.slice(0, start) + (t.body || "") + reply.slice(end));
+    } else {
+      setReply((prev) => prev ? `${prev}\n${t.body || ""}` : (t.body || ""));
+    }
+    setTplOpen(false);
+  };
+  const saveTemplate = async () => {
+    const text = (reply || "").trim();
+    if (!text) { toast.error("Escribe la respuesta primero, luego guárdala como plantilla"); return; }
+    const name = window.prompt("Nombre de la plantilla:", "");
+    if (!name || !name.trim()) return;
+    try {
+      const { error } = await (supabase as any).from("reply_templates").insert({ name: name.trim(), body: text });
+      if (error) throw error;
+      toast.success("Plantilla guardada");
+      loadTemplates();
+    } catch (e: any) { toast.error(`No se pudo guardar: ${e?.message || e}`); }
+  };
+  const deleteTemplate = async (id: string) => {
+    try { await (supabase as any).from("reply_templates").delete().eq("id", id); setTemplates((prev) => prev.filter((t) => t.id !== id)); } catch { /* */ }
+  };
   const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
   const [importantItems, setImportantItems] = useState<any[]>([]); // messages you starred (label "Importante")
@@ -1533,6 +1562,7 @@ export default function Unibox() {
   }, [syncInbox]);
 
   // Load AI prompts and account tags
+  useEffect(() => { if (user) loadTemplates(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user]);
   useEffect(() => {
     if (!user) return;
     const loadAI = async () => {
@@ -3629,6 +3659,36 @@ export default function Unibox() {
                         <Languages className="h-3.5 w-3.5" />
                         {autoTranslating ? "Traduciendo…" : (replyLang ? `En ${langLabels[replyLang] || replyLang}` : "Su idioma")}
                       </Button>
+                      <Popover open={tplOpen} onOpenChange={(o) => { setTplOpen(o); if (o) loadTemplates(); }}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" title="Plantillas de respuesta">
+                            <FileText className="h-3.5 w-3.5" /> Plantilla
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80 space-y-2 p-3" align="start">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-semibold">Plantillas de respuesta</p>
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={saveTemplate}><Star className="h-3.5 w-3.5" /> Guardar la actual</Button>
+                          </div>
+                          {templates.length === 0 ? (
+                            <p className="rounded-lg border border-dashed border-border p-3 text-center text-xs text-muted-foreground">Sin plantillas. Escribe una respuesta y pulsa <b className="text-foreground">"Guardar la actual"</b>; luego aplícala con un clic.</p>
+                          ) : (
+                            <div className="max-h-64 space-y-1 overflow-y-auto">
+                              {templates.map((t) => (
+                                <div key={t.id} className="group flex items-start justify-between gap-2 rounded-lg border border-border p-2 hover:bg-muted/40">
+                                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => applyTemplate(t)} title="Aplicar plantilla">
+                                    <p className="truncate text-xs font-medium text-foreground">{t.name}</p>
+                                    <p className="truncate text-[11px] text-muted-foreground">{(t.body || "").replace(/<[^>]+>/g, " ").slice(0, 60)}</p>
+                                  </button>
+                                  <button type="button" onClick={() => deleteTemplate(t.id)} className="rounded p-1 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Borrar plantilla">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
                     </div>
                     <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
                       <Send className="h-3.5 w-3.5" /> {sending ? "Enviando…" : "Responder"}
