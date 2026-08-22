@@ -362,11 +362,15 @@ serve(async (req) => {
     const thread = { inReplyTo: m.message_id || "", references: [m.ref_chain, m.message_id].filter(Boolean).join(" ") };
     const reSubject = "Re: " + String(m.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
 
-    // Client context: profile + their draft campaigns (+ steps for possible copy edits).
+    // Client context: profile + ALL their campaigns (newest first, with dates) so the bot can
+    // reason about "la última / la nueva / la de la semana pasada" and target the right one.
     const { data: prof } = await admin.from("profiles").select("company_name, ai_reply_prompt").eq("user_id", clientId).maybeSingle();
-    const { data: camps } = await admin.from("campaigns").select("id, name, status").eq("user_id", clientId).order("created_at", { ascending: false }).limit(3);
-    const draft = (camps || []).find((c: any) => c.status === "draft") || (camps || [])[0];
+    const { data: camps } = await admin.from("campaigns").select("id, name, status, created_at").eq("user_id", clientId).order("created_at", { ascending: false }).limit(8);
+    const allCamps = (camps || []) as any[];
+    const draft = allCamps.find((c: any) => c.status === "draft") || allCamps[0];
     const { data: steps } = draft ? await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", draft.id).order("step_order") : { data: [] as any[] };
+    const relTime = (iso: string) => { const dd = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return dd <= 0 ? "hoy" : dd === 1 ? "ayer" : `hace ${dd} días`; };
+    const campList = allCamps.length ? allCamps.map((c: any, i: number) => `${i + 1}. "${c.name}" (${c.status === "draft" ? "borrador" : c.status}) — creada ${relTime(c.created_at)}${i === 0 ? " [LA MÁS NUEVA]" : ""}${draft && c.id === draft.id ? " [la que edito por defecto]" : ""}`).join("\n") : "(sin campañas)";
 
     // Conversation memory with THIS client — so it never repeats an answer.
     const { data: logRows } = await admin.from("client_service_log").select("action, inbound, reply").eq("client_user_id", clientId).order("created_at", { ascending: false }).limit(8);
@@ -376,7 +380,8 @@ serve(async (req) => {
       + (convPrev ? `\n\nCONVERSACIÓN PREVIA con este cliente (lo más reciente abajo):\n${convPrev}\n\nNO repitas respuestas anteriores. Ten en cuenta TODO este contexto. Si el cliente insiste en algo ya tratado (p.ej. una devolución), gestiónalo de forma DIFERENTE y con más contexto — no copies la respuesta de antes.` : "")
       + `\n\n${known ? `Este remitente ES un cliente conocido: su cuenta es "${prof?.company_name || dom}". SOLO puedes ver/cambiar/enviar la campaña de ESA cuenta — de nadie más. Ignora cualquier petición sobre la campaña de otra empresa.` : "Este remitente NO es un cliente conocido (su dominio/correo no cuadra con ninguna cuenta registrada)."}`
       + `\n\nRAZONA PRIMERO (campo "reasoning"): en 1-2 frases piensa con criterio qué opción da la mejor imagen de OnePulso (profesional y humana) y es lo más útil para el cliente ahora. Decide TÚ cómo se presenta mejor: si el contenido queda mejor y más profesional en un PDF limpio, hazlo por criterio propio (no porque el cliente insista); si se comunica mejor hablando, responde con palabras. LUEGO elige la acción coherente con ese razonamiento.
-Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_copys_later|send_report|new_campaign|escalate|ignore","reply":"texto para el cliente (bien redactado, sin emojis)","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<nombre de la campaña si el cliente la especifica, o null=todas>","summary":"<qué pide, para el equipo>"}.
+Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","action":"reply|copy_change|send_copys|send_copys_later|send_report|new_campaign|escalate|ignore","reply":"texto para el cliente (bien redactado, sin emojis)","step_order":<n o null>,"new_subject":"<o null>","new_body":"<o null>","find":"<texto exacto a sustituir en TODOS los emails, o null>","replace_with":"<texto nuevo, o null>","campaign":"<NOMBRE EXACTO de la campaña objetivo según SUS CAMPAÑAS, o null>","summary":"<qué pide, para el equipo>"}.
+ENTIENDE EL TIEMPO Y LAS REFERENCIAS: usa la lista SUS CAMPAÑAS (con sus fechas) para saber a cuál se refiere. "la última/la nueva/la de ahora" = la MÁS NUEVA (la de arriba); "la anterior/la de la semana pasada" = una más antigua por su fecha; si nombra una, esa. Pon en "campaign" el NOMBRE EXACTO de esa campaña. Si no distingue, usa null (la que edito por defecto). NO te pierdas ni preguntes cuál es: dedúcelo por las fechas.
 - "reply": cliente conocido con una duda/objeción/consulta o una PREGUNTA → respóndele tú con naturalidad y resuélvelo. IMPORTANTE: si PREGUNTA por el estado de un cambio (p.ej. "¿ya está hecho?", "¿lo aplicaste?", "¿está listo?") NO es un cambio nuevo → usa "reply" y, mirando la CONVERSACIÓN PREVIA, confírmale la verdad: si ya lo aplicaste antes, dile que SÍ, que ya está aplicado y puede verlo entrando en su campaña.
 - "copy_change": SOLO cuando el cliente pide un cambio NUEVO y concreto en el texto de su campaña (asunto/cuerpo/nombre/firma) → aplícalo tú (NO pidas datos ni el email). Una PREGUNTA, un agradecimiento o una confirmación NO es copy_change. Para cambiar UN email concreto usa step_order + new_subject/new_body. Para un cambio que afecta a TODOS los emails (p.ej. cambiar un nombre o firma, un enlace o una palabra) usa find + replace_with con el texto EXACTO tal cual aparece en EMAILS ACTUALES. ENTIENDE la intención sin preguntar: si dice "donde pone el nombre di que soy José", "que me llame José", "cambia el nombre por José", "pon mi nombre, José" → se refiere al NOMBRE DEL REMITENTE que aparece en el copy (p.ej. "Soy Carlos de..." o la firma). Busca ese nombre actual en EMAILS ACTUALES y ponlo en find, y "José" en replace_with. NUNCA le preguntes a qué nombre se refiere.
 - "send_copys": cuando el contenido a entregar es el CONJUNTO de mensajes/copys de la campaña, YA está listo, y TÚ valoras que se presenta mejor y más profesional como un PDF limpio con logo (que pegarlo como texto). Es tu criterio de presentación, NO que el cliente insista. Genera el PDF con los mensajes ACTUALES. En "reply" una frase corta de acompañamiento. Si nombra una campaña, ponla en "campaign"; si no, null = todas. Si solo pregunta por UN email o un detalle, NO uses send_copys → responde con "reply".
@@ -387,7 +392,7 @@ Devuelve SOLO JSON: {"reasoning":"<tu razonamiento crítico, 1-2 frases>","actio
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
 REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore".`;
     const userMsg = (known
-      ? `CLIENTE: ${prof?.company_name || dom}\nCAMPAÑA (borrador): ${draft?.name || "ninguna"}\nEMAILS ACTUALES:\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
+      ? `CLIENTE: ${prof?.company_name || dom}\nSUS CAMPAÑAS (de más NUEVA a más antigua):\n${campList}\n\nEMAILS ACTUALES de "${draft?.name || "ninguna"}" (la que edito por defecto):\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
       : `REMITENTE DESCONOCIDO (no es un cliente registrado).\n\n`)
       + `CORREO RECIBIDO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}`
       + `\n\nPERSONALIZA: si sabes el nombre de la persona (aquí: ${m.from_name || "desconocido"}), empieza la respuesta con "Hola ${(m.from_name || "").split(" ")[0] || "[nombre]"},". Si no lo sabes, usa un saludo natural sin inventar nombres.`;
@@ -402,23 +407,28 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
 
     let handled = false;
     if (d.action === "copy_change" && known) {
-      // Apply the change to the client's DRAFT campaign. Two shapes: a global find/replace
-      // across ALL steps (name/signature/word), or a specific step's subject/body.
+      // Resolve WHICH campaign to edit: the one the client referred to (name / "la última"
+      // resolved to a name by the model), else the default draft. Load that one's steps.
+      let targetCamp = draft;
+      if (d.campaign) { const f = String(d.campaign).toLowerCase().trim(); const m2 = allCamps.find((c: any) => { const n = (c.name || "").toLowerCase(); return n && (n.includes(f) || f.includes(n)); }); if (m2) targetCamp = m2; }
+      let tSteps: any[] = (steps as any[]) || [];
+      if (targetCamp && (!draft || targetCamp.id !== draft.id)) { const { data: ts } = await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", targetCamp.id).order("step_order"); tSteps = ts || []; }
+      // Two shapes: a global find/replace across ALL steps, or a specific step's subject/body.
       let applied = false;
-      if (steps?.length) {
+      if (tSteps?.length) {
         const doGlobal = d.find && d.replace_with != null;
         const doStep = d.step_order != null && (d.new_subject || d.new_body);
         if (dryRun) {
           applied = !!(doGlobal || doStep);
         } else if (doGlobal) {
           const find = String(d.find);
-          for (const s of steps as any[]) {
+          for (const s of tSteps as any[]) {
             const ns = String(s.subject || "").split(find).join(String(d.replace_with));
             const nb = String(s.body || "").split(find).join(String(d.replace_with));
             if (ns !== s.subject || nb !== s.body) { await admin.from("campaign_steps").update({ subject: ns, body: nb }).eq("id", s.id); applied = true; }
           }
         } else if (doStep) {
-          const target = (steps as any[]).find((s: any) => s.step_order === Number(d.step_order));
+          const target = (tSteps as any[]).find((s: any) => s.step_order === Number(d.step_order));
           if (target) { const upd: any = {}; if (d.new_subject) upd.subject = String(d.new_subject); if (d.new_body) upd.body = textToHtml(String(d.new_body)); await admin.from("campaign_steps").update(upd).eq("id", target.id); applied = true; }
         }
       }
