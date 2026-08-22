@@ -185,8 +185,10 @@ async function genCampaignSteps(apiKey: string, briefing: string, company: strin
 // response has arrived, generate the DRAFT campaign, notify team@ (pending approval), and
 // mark the request pending_approval. Runs each tick (like the pending processor).
 async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, teamAcct: any): Promise<number> {
-  // Recover any request stuck in "generating" (e.g. a crash mid-generation) → retry it.
-  await admin.from("new_campaign_requests").update({ status: "awaiting_form" }).eq("owner_id", ownerId).eq("status", "generating").lt("updated_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
+  // Recover requests stuck in "generating" (crash mid-run): if a campaign was ALREADY created,
+  // finalize to pending_approval (avoid creating a 2nd one); otherwise retry from awaiting_form.
+  await admin.from("new_campaign_requests").update({ status: "pending_approval", updated_at: new Date().toISOString() }).eq("owner_id", ownerId).eq("status", "generating").not("campaign_id", "is", null).lt("updated_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
+  await admin.from("new_campaign_requests").update({ status: "awaiting_form" }).eq("owner_id", ownerId).eq("status", "generating").is("campaign_id", null).lt("updated_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const { data: reqs } = await admin.from("new_campaign_requests").select("*").eq("owner_id", ownerId).eq("status", "awaiting_form").order("requested_at", { ascending: true }).limit(5);
   let generated = 0;
   for (const r of (reqs as any[]) || []) {
@@ -202,8 +204,11 @@ async function processNewCampaigns(admin: any, ownerId: string, dkKey: string, t
         return false;
       });
       if (!match) continue; // still waiting for the form
-      // Mark it "generating" NOW (visible in the flow as "Generando la campaña con IA…").
-      await admin.from("new_campaign_requests").update({ status: "generating", form_response_id: match.id, updated_at: new Date().toISOString() }).eq("id", r.id);
+      // ATOMIC CLAIM: awaiting_form → generating (conditional). If another run claimed it, skip.
+      const { data: claimed } = await admin.from("new_campaign_requests").update({ status: "generating", form_response_id: match.id, updated_at: new Date().toISOString() }).eq("id", r.id).eq("status", "awaiting_form").select("id");
+      if (!claimed || !(claimed as any[]).length) continue; // another run is handling it
+      // Safety: if this request somehow already has a campaign, don't create a second one.
+      if (r.campaign_id) { await admin.from("new_campaign_requests").update({ status: "pending_approval" }).eq("id", r.id); continue; }
       const briefing = Object.entries(match.answers || {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join("\n");
       let steps: any[] = [];
       for (let a = 0; a < 2 && steps.length === 0; a++) { try { steps = await genCampaignSteps(dkKey, briefing, r.company_name || "", "castellano de España"); } catch { /* retry */ } }
@@ -232,6 +237,7 @@ const wrapId = (id: string) => { const t = (id || "").trim(); return !t ? "" : (
 // conversation. Message-ID threading pins it to the exact original thread.
 async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string }> {
   try {
+    port = Number(port) || 587; // coerce (a string port would skip the TLS/STARTTLS branches)
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
     const read = async () => { const b = new Uint8Array(4096); const n = await conn.read(b); return new TextDecoder().decode(b.subarray(0, n || 0)); };
     const send = async (cmd: string) => { await conn.write(new TextEncoder().encode(cmd + "\r\n")); return await read(); };
@@ -319,7 +325,8 @@ serve(async (req) => {
           if (!res.ok) continue; // not ready yet → keep pending, retry next run
         } else {
           const pSubject = "Re: " + String(p.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
-          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, pSubject, signedHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."), { inReplyTo: p.in_reply_to || "", references: p.references_hdr || p.in_reply_to || "" });
+          const cres = await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", p.from_email, pSubject, signedHtml(p.reply || "Ya hemos aplicado los cambios en tu campaña, puedes ver los mensajes. Cualquier cosa, nos dices."), { inReplyTo: p.in_reply_to || "", references: p.references_hdr || p.in_reply_to || "" });
+          if (!cres.ok) continue; // send failed → keep pending, retry next run (don't lose the confirmation)
         }
       } catch { continue; /* keep pending, retry next run */ }
       await admin.from("client_service_log").update({ pending: false }).eq("id", p.id);
@@ -344,9 +351,15 @@ serve(async (req) => {
   const results: any[] = [];
   for (const m of msgs) {
    try {
+    // ATOMIC CLAIM: mark this message processed FIRST (conditional on it still being unprocessed).
+    // If another concurrent run (cron + "Ejecutar ahora") already claimed it, skip — no double reply.
+    if (!dryRun) {
+      const { data: claimed } = await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id).eq("auto_replied", false).select("id");
+      if (!claimed || !(claimed as any[]).length) continue; // someone else took it
+    }
     const fromEmail = (m.from_email || "").toLowerCase();
     const dom = domainOf(fromEmail);
-    if (!dom || !teamAcct) { if (!dryRun) await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id); continue; }
+    if (!dom || !teamAcct) continue; // already claimed above
 
     // 2) Match the sender to a CLIENT. A client may write from a personal address (gmail…),
     //    so try, in order: (a) their registered account/login email; (b) their profile contact
@@ -410,7 +423,14 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       // Resolve WHICH campaign to edit: the one the client referred to (name / "la última"
       // resolved to a name by the model), else the default draft. Load that one's steps.
       let targetCamp = draft;
-      if (d.campaign) { const f = String(d.campaign).toLowerCase().trim(); const m2 = allCamps.find((c: any) => { const n = (c.name || "").toLowerCase(); return n && (n.includes(f) || f.includes(n)); }); if (m2) targetCamp = m2; }
+      if (d.campaign) {
+        const f = String(d.campaign).toLowerCase().trim();
+        // Exact name first (allCamps is newest-first, so ties resolve to the newest); then a
+        // strong-ish partial (>=4 chars) to avoid matching the wrong campaign on a vague value.
+        const m2 = allCamps.find((c: any) => (c.name || "").toLowerCase() === f)
+          || (f.length >= 4 ? allCamps.find((c: any) => { const n = (c.name || "").toLowerCase(); return n && (n.includes(f) || f.includes(n)); }) : null);
+        if (m2) targetCamp = m2;
+      }
       let tSteps: any[] = (steps as any[]) || [];
       if (targetCamp && (!draft || targetCamp.id !== draft.id)) { const { data: ts } = await admin.from("campaign_steps").select("id, step_order, subject, body").eq("campaign_id", targetCamp.id).order("step_order"); tSteps = ts || []; }
       // Two shapes: a global find/replace across ALL steps, or a specific step's subject/body.
@@ -444,12 +464,18 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         }
         d.reply = ack;
       } else {
-        // Couldn't apply (no draft yet) → a single, honest acknowledgement, no false "done".
-        const ack = "¡Gracias! Tomo nota del cambio y lo dejo aplicado en tu campaña. Si quieres afinar algo más, dímelo por aquí.";
-        if (!dryRun) await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(ack), thread);
+        // Couldn't apply it automatically → be HONEST (never say "done") and escalate to the
+        // team so a human applies it. The change is not lost.
+        const ack = "¡Gracias! Tomamos nota de tu cambio; lo estamos ajustando y te confirmamos en cuanto esté aplicado.";
+        if (!dryRun) {
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(ack), thread);
+          const esc = textToHtml(`Cambio de copy que el bot NO pudo aplicar solo — aplícalo tú.\n\nCliente: ${prof?.company_name || dom}\nDe: ${m.from_email}\nCampaña objetivo: ${targetCamp?.name || draft?.name || "(la más reciente)"}\n\nQué pide:\n${body}\n\n(La IA propuso: find="${d.find || ""}" → "${d.replace_with || ""}"${d.step_order != null ? `, step ${d.step_order}` : ""}. Aplícalo en la campaña del cliente.)`);
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Cambio de copy] ${prof?.company_name || m.from_email} — aplicar a mano`, esc);
+        }
         d.reply = ack;
+        results.push({ ...base, action: "copy_change", applied: false, escalated: true }); processed++; handled = true;
       }
-      results.push({ ...base, action: "copy_change", applied }); processed++; handled = true;
+      if (applied) { results.push({ ...base, action: "copy_change", applied }); processed++; handled = true; }
     }
     if (!handled && d.action === "send_copys" && known) {
       // Send a clean, branded PDF of the CURRENT campaign copy (all, or the named one) — never
@@ -514,8 +540,8 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
     }
 
     if (!dryRun) {
+      // (message already claimed as auto_replied at the top of the loop — just log the action)
       await admin.from("client_service_log").insert({ owner_id: ownerId, client_user_id: clientId, from_email: m.from_email, action: d.action || "ignore", inbound: body.slice(0, 1200), reply: (d.reply || "").slice(0, 1200) });
-      await admin.from("inbox_messages").update({ auto_replied: true }).eq("id", m.id);
     }
    } catch (e) {
      // Error is logged for the owner (visible in Automatización) — the client is told nothing.

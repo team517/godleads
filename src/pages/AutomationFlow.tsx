@@ -42,16 +42,15 @@ const ACTION_STYLE = (a: string) => a === "error" ? "bg-destructive/10 text-dest
 // customer-service pipeline, organised as separate AI "agents" per phase. It runs on
 // DeepSeek (wired up once the backend deploy path is restored).
 //
-// SAFETY (as the owner explicitly required): this module NEVER touches the sending engine.
-//  · The campaign agent creates campaigns as DRAFTS only — never sets them active. The
-//    engine only ever sends campaigns the owner approves.
-//  · The reply agent escalates anything important to the owner (summary + proposed reply
-//    saved as a draft); only routine replies are handled autonomously, rate-limited.
-//  · Reports keep their existing per-client throttle. Nothing here mass-sends.
+// SAFETY (as the owner explicitly required): this module NEVER activates campaigns / touches
+// the sending engine. Campaigns are only ever created as DRAFTS (the engine sends only active
+// ones the owner activates). The customer-service agent (edge fn client-service-agent) DOES
+// auto-respond on support@: it answers routine questions, applies copy changes to the client's
+// DRAFT campaign, and sends copys/report PDFs — but only ESSENTIAL matters (meetings, refunds,
+// money, cancellations, legal) are escalated to team@onepulso.online.
 //
-// FIRST VERSION: flow definition, clients-in-flow and the AI "brain" (memory + per-agent
-// behaviour) are stored in the browser (localStorage) so the owner can shape and author
-// everything now. Real persistence + execution plug in on the backend later.
+// The flow definition + AI "brain" (memory/behaviour) live in the browser (localStorage); the
+// customer-service agent, new-campaign generation and approvals run server-side (Supabase).
 
 type Node = { id: string; label: string; desc: string; agent: AgentKey };
 type FlowClient = { id: string; name: string; email: string; company: string; context: string; step: number; startedAt: string; clientId?: string; onboardingSlug?: string; brandColor?: string; emailStatus?: "sending" | "sent" | "failed"; emailFrom?: string; emailError?: string; campaignStatus?: "generating" | "done" | "failed"; campaignError?: string; campaignName?: string; campaignSteps?: { subject: string; body: string; delay_days: number; variants: { subject: string; body: string }[] }[] };
@@ -664,7 +663,7 @@ export default function AutomationFlow() {
   // "Crear campaña nueva" requests, shown as clients IN THE FLOW (existing clients asking for
   // another campaign): no onboarding, they sit at "responde el Form" and then "Tu aprobación".
   const fIdx = formNodeIdx(nodes);
-  const ncrStep = (status: string) => status === "pending_approval" ? Math.min(fIdx + 2, nodes.length - 1) : status === "generating" ? Math.min(fIdx + 1, nodes.length - 1) : status === "approved" ? nodes.length : fIdx;
+  const ncrStep = (status: string) => status === "pending_approval" ? Math.min(fIdx + 2, nodes.length - 1) : status === "generating" ? Math.min(fIdx + 1, nodes.length - 1) : status === "approved" ? nodes.length - 1 : fIdx;
   const ncrFlow = (pendingCampaigns || []).map((r) => ({
     id: `ncr-${r.id}`, ncr: r as any, isNcr: true as const,
     company: r.company_name || r.from_email, name: r.company_name || "", email: r.from_email,
@@ -1017,7 +1016,7 @@ export default function AutomationFlow() {
                           {!isPending && !isError && <Loader2 className="h-3 w-3 animate-spin" />}
                           {Math.min(r.step, nodes.length - 1) + 1}. {stepNode?.label}
                         </span>
-                        {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={loadingNcrReview === r.ncr.id} onClick={() => openNcrReview(r.ncr)}>{loadingNcrReview === r.ncr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Revisar y aprobar</Button>}
+                        {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={loadingNcrReview === r.ncr.id || approvingId === r.ncr.id} onClick={() => openNcrReview(r.ncr)}>{(loadingNcrReview === r.ncr.id || approvingId === r.ncr.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} {approvingId === r.ncr.id ? "Enviando…" : "Revisar y aprobar"}</Button>}
                       </div>
                     </div>
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
