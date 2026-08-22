@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -29,6 +29,7 @@ const toolsNav = [
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
   { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
   { icon: Workflow, label: "Automatización", path: "/automatizacion" },
+  { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
 ];
 
 interface AppSidebarProps {
@@ -55,7 +56,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
   // Automatización: ONLY the owner (hello@onepulso.blog) — not managers.
   const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
-  const OWNER_ONLY = new Set(["/automatizacion"]);
+  const OWNER_ONLY = new Set(["/automatizacion", "/seguimiento"]);
   const visibleTools = toolsNav.filter((item) => {
     if (OWNER_ONLY.has(item.path)) return isOwner;
     if (OWNER_OR_MANAGER.has(item.path)) return isOwner || isManager;

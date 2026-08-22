@@ -68,3 +68,6 @@ verify_jwt = false
 
 [functions.test-smtp-inbox]
 verify_jwt = false
+
+[functions.send-followups]
+verify_jwt = false
