@@ -10,39 +10,40 @@ import { VerificationProvider } from "@/contexts/VerificationContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyWithRetry } from "@/lib/lazy-retry";
 // Lazy: the chatbot pulls in recharts + react-markdown + framer-motion. Loading
 // it eagerly bloated the initial bundle of EVERY page. Now it loads on idle,
 // after the page is interactive.
-const ColdEmailChatbot = lazy(() =>
+const ColdEmailChatbot = lazyWithRetry(() =>
   import("@/components/ColdEmailChatbot").then((m) => ({ default: m.ColdEmailChatbot })),
 );
 
-const Landing = lazy(() => import("./pages/Landing"));
-const Auth = lazy(() => import("./pages/Auth"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
-const EmailAccounts = lazy(() => import("./pages/EmailAccounts"));
-const Campaigns = lazy(() => import("./pages/Campaigns"));
-const Leads = lazy(() => import("./pages/Leads"));
-const Unibox = lazy(() => import("./pages/Unibox"));
-const Stats = lazy(() => import("./pages/Stats"));
-const Personalizacion = lazy(() => import("./pages/Personalizacion"));
-const DeliverabilityTest = lazy(() => import("./pages/DeliverabilityTest"));
-const SettingsPage = lazy(() => import("./pages/SettingsPage"));
-const AIPrompts = lazy(() => import("./pages/AIPrompts"));
-const AdminPanel = lazy(() => import("./pages/AdminPanel"));
-const ClientPortal = lazy(() => import("./pages/ClientPortal"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const Install = lazy(() => import("./pages/Install"));
-const Community = lazy(() => import("./pages/Community"));
-const Onboarding = lazy(() => import("./pages/Onboarding"));
-const OnboardingPortal = lazy(() => import("./pages/OnboardingPortal"));
-const ClientCampaigns = lazy(() => import("./pages/ClientCampaigns"));
-const AutomationFlow = lazy(() => import("./pages/AutomationFlow"));
-const Seguimiento = lazy(() => import("./pages/Seguimiento"));
-const GodTube = lazy(() => import("./pages/GodTube"));
-const Partners = lazy(() => import("./pages/Partners"));
-const Metrics = lazy(() => import("./pages/Metrics"));
+const Landing = lazyWithRetry(() => import("./pages/Landing"));
+const Auth = lazyWithRetry(() => import("./pages/Auth"));
+const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
+const EmailAccounts = lazyWithRetry(() => import("./pages/EmailAccounts"));
+const Campaigns = lazyWithRetry(() => import("./pages/Campaigns"));
+const Leads = lazyWithRetry(() => import("./pages/Leads"));
+const Unibox = lazyWithRetry(() => import("./pages/Unibox"));
+const Stats = lazyWithRetry(() => import("./pages/Stats"));
+const Personalizacion = lazyWithRetry(() => import("./pages/Personalizacion"));
+const DeliverabilityTest = lazyWithRetry(() => import("./pages/DeliverabilityTest"));
+const SettingsPage = lazyWithRetry(() => import("./pages/SettingsPage"));
+const AIPrompts = lazyWithRetry(() => import("./pages/AIPrompts"));
+const AdminPanel = lazyWithRetry(() => import("./pages/AdminPanel"));
+const ClientPortal = lazyWithRetry(() => import("./pages/ClientPortal"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
+const Install = lazyWithRetry(() => import("./pages/Install"));
+const Community = lazyWithRetry(() => import("./pages/Community"));
+const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
+const OnboardingPortal = lazyWithRetry(() => import("./pages/OnboardingPortal"));
+const ClientCampaigns = lazyWithRetry(() => import("./pages/ClientCampaigns"));
+const AutomationFlow = lazyWithRetry(() => import("./pages/AutomationFlow"));
+const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
+const GodTube = lazyWithRetry(() => import("./pages/GodTube"));
+const Partners = lazyWithRetry(() => import("./pages/Partners"));
+const Metrics = lazyWithRetry(() => import("./pages/Metrics"));
 
 const queryClient = new QueryClient();
 
