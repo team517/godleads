@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock,
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2,
 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Real relevant-unread count, published by the Unibox (matches what it shows).
   // Counting raw unread rows here showed a fake "99+" of warm-up noise.
   const [unreadCount, setUnreadCount] = useState(readCachedUniboxUnread());
+  // How many personalization jobs are generating right now → shows an "en curso" badge on the
+  // Personalización item from ANY screen, so you always know a batch is still running.
+  const [personalizing, setPersonalizing] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
@@ -80,6 +83,25 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
     };
     checkAdmin();
   }, [user]);
+
+  // Poll for a personalization job in progress (light head+count). Only runs when the user can
+  // actually see the Personalización item, and refreshes when you change screen.
+  useEffect(() => {
+    if (!user) return;
+    if (allowedRoutes && !allowedRoutes.includes("/personalizacion")) return;
+    let alive = true;
+    const check = async () => {
+      const { count } = await (supabase as any)
+        .from("personalization_csv_jobs")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .in("status", ["pending", "running"]);
+      if (alive) setPersonalizing(count || 0);
+    };
+    check();
+    const t = setInterval(check, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, [user, allowedRoutes, location.pathname]);
 
   // Prefetch all route chunks in the background after first render.
   useEffect(() => { prefetchAllRoutesOnIdle(); }, []);
@@ -142,6 +164,15 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           ) : (
             <span className="ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
               {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )
+        )}
+        {item.path === "/personalizacion" && personalizing > 0 && (
+          collapsed ? (
+            <span className="absolute top-1 right-1.5 h-2 w-2 rounded-full bg-primary animate-pulse" />
+          ) : (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">
+              <Loader2 className="h-2.5 w-2.5 animate-spin" /> en curso
             </span>
           )
         )}
