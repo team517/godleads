@@ -547,7 +547,7 @@ ENTIENDE EL TIEMPO Y LAS REFERENCIAS: usa la lista SUS CAMPAÑAS (con sus fechas
 - "new_campaign": cuando el cliente pide CREAR UNA CAMPAÑA NUEVA u otra campaña ("queremos crear una campaña", "podéis hacernos otra campaña", "quiero una nueva campaña", "hacemos una campaña nueva"). Respóndele que SÍ, encantados de prepararle una nueva campaña; el sistema le enviará el formulario para que os cuente los detalles y, en cuanto lo rellene, la validáis y la creáis. En "reply" pon SOLO una frase cálida de acogida (sin el enlace ni la firma, el sistema los añade). NO es un cambio de copy ni pedir los mensajes; es empezar una campaña nueva.
 - "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online. EXCEPCIÓN: si piden MÁS CUENTAS DE CORREO, NO escales — gestiónalo tú por "reply" (pregunta cuántas → precio a 2€/cuenta → si confirman, derívalos a team@onepulso.online).
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
-REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente conocido, usa SOLO "escalate" (si es esencial) o "ignore".`;
+REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente REGISTRADO (su correo/dominio no cuadra con ningún usuario ni cuenta de la plataforma), usa SIEMPRE "ignore": no le respondas ni avises a nadie. Solo atiendes a clientes registrados.`;
     const userMsg = (known
       ? `CLIENTE: ${prof?.company_name || dom}\nDATOS DE CUENTA: ${mailboxCount} cuenta(s) de envío conectada(s); ${allCamps.length} campaña(s) en total.\nSUS CAMPAÑAS (de más NUEVA a más antigua):\n${campList}\n\nEMAILS ACTUALES de "${draft?.name || "ninguna"}" (la que edito por defecto, ${(steps || []).length} email(s)):\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
       : `REMITENTE DESCONOCIDO (no es un cliente registrado).\n\n`)
@@ -556,9 +556,11 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
 
     let d: any = {};
     try { d = await decide(dkKey, system, userMsg); } catch { d = { action: "ignore", summary: "fallo IA" }; }
-    // A non-client can only be escalated (if essential) or ignored — never auto-replied,
-    // copy-edited, or sent copys/reports.
-    if (!known && ["reply", "copy_change", "send_copys", "send_copys_later", "send_report", "new_campaign"].includes(d.action)) d.action = "ignore";
+    // The support@ customer-service agent ONLY engages REGISTERED senders (their address/domain
+    // matches a platform user, their contact email, or one of their mailboxes). Anyone else — an
+    // unknown person or domain not registered — is ignored ENTIRELY: no reply, no escalate, no
+    // notification. (Cold-email prospects are handled separately by the prospect_only path above.)
+    if (!known) d.action = "ignore";
 
     const base = { id: m.id, client: prof?.company_name || dom, from: m.from_email, subject: m.subject, reasoning: d.reasoning || "", summary: d.summary || "", reply_preview: (d.reply || "").slice(0, 200) };
 
