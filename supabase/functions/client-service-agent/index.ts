@@ -464,10 +464,14 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     const reSubject = "Re: " + String(m.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
 
     // ── PROSPECT auto-reply (cold-email replies) ─────────────────────────────────────────
-    // Only for UNKNOWN senders and only when the owner enabled it AND set a calendar link.
     // Interested / question → short reply + the calendar link to book a meeting.
     // Not interested / negative / OOO / bounce / noise → do NOTHING (reply to no one, notify no one).
-    if (!known && prospectActive) {
+    // In a prospect-only run we answer ANY external sender (the "known-client" domain match must
+    // NOT skip a real prospect whose address happens to match a platform domain, e.g. a test from
+    // team@onepulso.online). Only our OWN mailboxes are skipped, to avoid self-reply loops. In the
+    // normal owner run we still keep it to unknown senders only.
+    const isOwnMailbox = (ownerAccts || []).some((a: any) => String(a.email || "").toLowerCase() === fromEmail);
+    if (prospectActive && !isOwnMailbox && (prospectOnly || !known)) {
       const recvAcct = (ownerAccts || []).find((a: any) => a.id === m.account_id) || teamAcct;
       const extra = prospectExtra;
       const psys = `Eres el asistente comercial de OnePulso que atiende las RESPUESTAS de prospectos a nuestros emails en frío. Con los interesados tu único objetivo es conseguir una reunión.
