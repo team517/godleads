@@ -329,6 +329,9 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
   const { owner_user_id, account_id, limit, dry_run } = input;
   const ownerId = owner_user_id || "b94a0bdf-0120-44cd-8c7d-51126bfc2075";
   const dryRun = !!dry_run; // dry_run: decide but NEVER send emails / edit campaigns / mark read
+  // prospect_only: process ONLY the prospect auto-reply path (interested→calendar / else nothing)
+  // and skip all the client-service machinery. Used for the cold-email accounts of an enabled user.
+  const prospectOnly = !!input.prospect_only;
 
   // Sending mailbox = the configured service inbox (account_id) if given, else team@/support@.
   const { data: ownerAccts } = await admin.from("email_accounts").select("id, email, smtp_host, smtp_port, smtp_username, smtp_password, status").eq("user_id", ownerId).eq("status", "connected");
@@ -338,8 +341,51 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
   // Owner-level AI auto-reply config for PROSPECTS (cold-email replies on this mailbox).
   // Gated on both the toggle AND a calendar link → nothing auto-sends until both are set.
   const { data: ownerProf } = await admin.from("profiles").select("ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode").eq("user_id", ownerId).maybeSingle();
-  const prospectCal = String((ownerProf as any)?.ai_reply_calendar_url || "").trim();
-  const prospectActive = !!((ownerProf as any)?.ai_reply_enabled && prospectCal);
+  let prospectCal = String((ownerProf as any)?.ai_reply_calendar_url || "").trim();
+  let prospectActive = !!((ownerProf as any)?.ai_reply_enabled && prospectCal);
+  let prospectExtra = String((ownerProf as any)?.ai_reply_prompt || "").trim();
+  let prospectMode = String((ownerProf as any)?.ai_reply_mode || "rules");
+  let prospectScopeIds: string[] | null = null;
+  let prospectSince: string | null = null; // only answer replies received AFTER the rule was (re)activated
+
+  // Prospect auto-reply is driven by the "Respuesta Automática" rules (auto_reply_rules) the
+  // owner manages in the Asistente IA page. In a prospect-only run we load THIS rule and take its
+  // prompt + the calendar link embedded in it + the accounts (by id and/or tag) it targets.
+  if (prospectOnly && (input as any).rule_id) {
+    const { data: rl } = await admin.from("auto_reply_rules").select("*").eq("id", (input as any).rule_id).maybeSingle();
+    if (rl && (rl as any).is_active) {
+      const text = `${(rl as any).company_info || ""}\n${(rl as any).prompt || ""}`;
+      prospectCal = ((text.match(/https?:\/\/[^\s<>"')\]]+/i) || [])[0] || "").trim();
+      prospectActive = !!prospectCal; // a rule with NO calendar link stays inactive (safe)
+      prospectExtra = text.trim();
+      prospectMode = "rules";
+      prospectSince = String((rl as any).updated_at || "") || null; // "from now on" = since activation
+      const ids = new Set<string>(((rl as any).account_ids || []) as string[]);
+      if (((rl as any).account_tags || []).length) {
+        const { data: tagged } = await admin.from("email_accounts").select("id, tags").eq("user_id", ownerId).eq("status", "connected");
+        for (const a of (tagged || []) as any[]) if ((a.tags || []).some((t: string) => (rl as any).account_tags.includes(t))) ids.add(a.id);
+      }
+      prospectScopeIds = Array.from(ids);
+    } else { prospectActive = false; }
+  }
+
+  // FAN-OUT: on each real cron tick (the support@ customer-service run), kick a PROSPECT-ONLY pass
+  // for EVERY active auto_reply_rules rule (Asistente IA → Respuesta Automática). That is how e.g.
+  // the support@ USER's 119 cold-email mailboxes get answered without a separate cron.
+  // Fire-and-forget; the prospect-only runs never re-fan.
+  if (!prospectOnly && !dryRun) {
+    try {
+      const { data: rules } = await admin.from("auto_reply_rules").select("id, user_id").eq("is_active", true);
+      for (const r of (rules || []) as any[]) {
+        if (!r.user_id || r.user_id === ownerId) continue;
+        fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/client-service-agent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}` },
+          body: JSON.stringify({ owner_user_id: r.user_id, prospect_only: true, rule_id: r.id, limit: 30 }),
+        }).catch(() => {});
+      }
+    } catch { /* */ }
+  }
 
   // ── Deferred deliveries (later runs) ────────────────────────────────────────────────
   //  • "confirm"       → the "ya está aplicado" note after a copy_change ack (2-step, no two
@@ -347,7 +393,7 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
   //  • "deliver_copys" → after a "send_copys_later" commit ("te lo envío cuando esté"), builds
   //                      and sends the copys PDF once it's ready. Retries until ready (≤24h).
   let confirmed = 0;
-  if (!dryRun && teamAcct) {
+  if (!dryRun && !prospectOnly && teamAcct) {
     const { data: pend } = await admin.from("client_service_log")
       .select("id, client_user_id, from_email, subject, action, reply, campaign, in_reply_to, references_hdr")
       .eq("owner_id", ownerId).eq("pending", true)
@@ -373,11 +419,16 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
 
   // "Crear campaña nueva" phase 2: form response arrived → generate the draft + notify team@.
   let newCampaigns = 0;
-  if (!dryRun && teamAcct) { try { newCampaigns = await processNewCampaigns(admin, ownerId, dkKey, teamAcct); } catch { /* */ } }
+  if (!dryRun && !prospectOnly && teamAcct) { try { newCampaigns = await processNewCampaigns(admin, ownerId, dkKey, teamAcct); } catch { /* */ } }
 
   // 1) Unprocessed inbound to the owner's connected mailboxes (skip warmup / our own sends).
   let q = admin.from("inbox_messages").select("*").eq("user_id", ownerId).eq("auto_replied", false).eq("is_sent", false).eq("is_warmup", false).order("received_at", { ascending: true }).limit(Math.min(limit || 15, 30));
   if (account_id) q = q.eq("account_id", account_id);
+  if (prospectOnly && prospectScopeIds && prospectScopeIds.length) q = q.in("account_id", prospectScopeIds);
+  // "From now on" guard: prospect auto-reply only answers replies received AFTER the rule was
+  // (re)activated (rule.updated_at) — so activating never blasts the existing backlog. Falls back
+  // to a 2-day window if no timestamp is available.
+  if (prospectOnly) q = q.gte("received_at", prospectSince || new Date(Date.now() - 2 * 86400000).toISOString());
   // Human-like delay: only reply to emails that arrived ≥5 min ago (skipped in dry_run so you
   // can test immediately). Combined with the cron cadence, the reply goes out ~5 min later.
   if (!dryRun) q = q.lte("received_at", new Date(Date.now() - 5 * 60 * 1000).toISOString());
@@ -418,7 +469,7 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     // Not interested / negative / OOO / bounce / noise → do NOTHING (reply to no one, notify no one).
     if (!known && prospectActive) {
       const recvAcct = (ownerAccts || []).find((a: any) => a.id === m.account_id) || teamAcct;
-      const extra = String((ownerProf as any)?.ai_reply_prompt || "").trim();
+      const extra = prospectExtra;
       const psys = `Eres el asistente comercial de OnePulso que atiende las RESPUESTAS de prospectos a nuestros emails en frío. Con los interesados tu único objetivo es conseguir una reunión.
 
 CLASIFICA el correo del prospecto:
@@ -433,12 +484,20 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
       const pmsg = `CORREO DEL PROSPECTO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}\n\nPERSONALIZA: si sabes el nombre (${m.from_name || "desconocido"}), empieza con "Hola ${(m.from_name || "").split(" ")[0] || ""},". Si no lo sabes, usa un saludo natural sin inventar nombre.`;
       let pd: any = {};
       try { pd = await decide(dkKey, psys, pmsg); } catch { pd = { interested: false }; }
-      const mode = String((ownerProf as any)?.ai_reply_mode || "rules");
+      const mode = prospectMode;
       if (pd.interested && String(pd.reply || "").trim()) {
         let replyText = String(pd.reply).trim();
         if (prospectCal && !replyText.includes(prospectCal)) replyText += `\n\nPuedes agendar aquí directamente: ${prospectCal}`;
+        // Sign as the PERSONA of the receiving mailbox (e.g. maria@… → "Maria"), not the
+        // customer-service "Equipo de OnePulso" — keeps the cold-email persona consistent.
+        const persona = String(recvAcct?.email || "").split("@")[0].split(/[._-]/)[0];
+        const personaName = persona ? persona.charAt(0).toUpperCase() + persona.slice(1) : "OnePulso";
+        const signed = stripEmojis(replyText) + `\n\nUn saludo,\n${personaName}`;
+        const blk = signed.split(/\n\n+/).map((x) => x.trim().replace(/\n/g, "<br>")).filter(Boolean);
+        if (blk.length >= 2) { const s = blk.pop() as string; blk[blk.length - 1] += `<br><br>${s}`; }
+        const htmlBody = blk.map((x) => `<p style="margin:0 0 10px">${x}</p>`).join("") || `<p>${signed.replace(/\n/g, "<br>")}</p>`;
         if (!dryRun && mode !== "draft" && recvAcct) {
-          await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(replyText), thread);
+          await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, personaName, m.from_email, reSubject, htmlBody, thread);
         }
         if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", inbound: body.slice(0, 1200), reply: replyText.slice(0, 1200) });
         results.push({ id: m.id, from: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", reply_preview: replyText.slice(0, 200) }); processed++;
@@ -448,6 +507,10 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
       }
       continue; // prospect path handled — skip the client-service decision flow
     }
+
+    // In prospect-only mode we do NOT run the client-service flow: a known client or an
+    // inactive-config sender simply gets nothing (mark processed, notify no one).
+    if (prospectOnly) { if (!dryRun) { try { await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: "ignore", inbound: body.slice(0, 400), reply: "" }); } catch { /* */ } } results.push({ id: m.id, from: m.from_email, action: "ignore_prospect" }); continue; }
 
     // Client context: profile + ALL their campaigns (newest first, with dates) so the bot can
     // reason about "la última / la nueva / la de la semana pasada" and target the right one.
