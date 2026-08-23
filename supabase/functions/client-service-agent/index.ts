@@ -335,6 +335,12 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
   const teamAcct = (account_id ? (ownerAccts || []).find((a: any) => a.id === account_id) : null)
     || (ownerAccts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (ownerAccts || [])[0];
 
+  // Owner-level AI auto-reply config for PROSPECTS (cold-email replies on this mailbox).
+  // Gated on both the toggle AND a calendar link → nothing auto-sends until both are set.
+  const { data: ownerProf } = await admin.from("profiles").select("ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode").eq("user_id", ownerId).maybeSingle();
+  const prospectCal = String((ownerProf as any)?.ai_reply_calendar_url || "").trim();
+  const prospectActive = !!((ownerProf as any)?.ai_reply_enabled && prospectCal);
+
   // ── Deferred deliveries (later runs) ────────────────────────────────────────────────
   //  • "confirm"       → the "ya está aplicado" note after a copy_change ack (2-step, no two
   //                      emails at once). Gate 2 min → lands 2-3 min after the ack.
@@ -405,6 +411,43 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     // conversation when several clients share the same subject).
     const thread = { inReplyTo: m.message_id || "", references: [m.ref_chain, m.message_id].filter(Boolean).join(" ") };
     const reSubject = "Re: " + String(m.subject || "tu campaña").replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "").trim();
+
+    // ── PROSPECT auto-reply (cold-email replies) ─────────────────────────────────────────
+    // Only for UNKNOWN senders and only when the owner enabled it AND set a calendar link.
+    // Interested / question → short reply + the calendar link to book a meeting.
+    // Not interested / negative / OOO / bounce / noise → do NOTHING (reply to no one, notify no one).
+    if (!known && prospectActive) {
+      const recvAcct = (ownerAccts || []).find((a: any) => a.id === m.account_id) || teamAcct;
+      const extra = String((ownerProf as any)?.ai_reply_prompt || "").trim();
+      const psys = `Eres el asistente comercial de OnePulso que atiende las RESPUESTAS de prospectos a nuestros emails en frío. Con los interesados tu único objetivo es conseguir una reunión.
+
+CLASIFICA el correo del prospecto:
+- POSITIVO = muestra interés o curiosidad, pide información/precio, hace una PREGUNTA, quiere saber más, pide que le llamen o se lo expliquen, propone hablar.
+- NEGATIVO/NEUTRO = no le interesa, pide baja/unsubscribe, responde molesto o cortante, fuera de oficina, respuesta automática, rebote (mailer-daemon/undelivered), o ruido sin intención comercial.
+
+REGLAS:
+- Si es POSITIVO: escribe una respuesta BREVE y humana (2-4 frases), en el MISMO idioma del prospecto, que resuelva por encima su duda y le invite a agendar una reunión. Incluye el enlace del calendario TAL CUAL, completo: ${prospectCal}. NO añadas tú la firma ni "Un saludo" (se añade sola). Sin emojis. No inventes datos ni des precios cerrados por email.
+- Si es NEGATIVO/NEUTRO: NO respondas. Deja "reply" vacío.${extra ? "\n\nCONOCIMIENTO E INSTRUCCIONES DEL DUEÑO (respétalas por encima de todo):\n" + extra : ""}
+
+Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>"}`;
+      const pmsg = `CORREO DEL PROSPECTO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}\n\nPERSONALIZA: si sabes el nombre (${m.from_name || "desconocido"}), empieza con "Hola ${(m.from_name || "").split(" ")[0] || ""},". Si no lo sabes, usa un saludo natural sin inventar nombre.`;
+      let pd: any = {};
+      try { pd = await decide(dkKey, psys, pmsg); } catch { pd = { interested: false }; }
+      const mode = String((ownerProf as any)?.ai_reply_mode || "rules");
+      if (pd.interested && String(pd.reply || "").trim()) {
+        let replyText = String(pd.reply).trim();
+        if (prospectCal && !replyText.includes(prospectCal)) replyText += `\n\nPuedes agendar aquí directamente: ${prospectCal}`;
+        if (!dryRun && mode !== "draft" && recvAcct) {
+          await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(replyText), thread);
+        }
+        if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", inbound: body.slice(0, 1200), reply: replyText.slice(0, 1200) });
+        results.push({ id: m.id, from: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", reply_preview: replyText.slice(0, 200) }); processed++;
+      } else {
+        if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: "ignore", inbound: body.slice(0, 600), reply: "" });
+        results.push({ id: m.id, from: m.from_email, action: "ignore_prospect" });
+      }
+      continue; // prospect path handled — skip the client-service decision flow
+    }
 
     // Client context: profile + ALL their campaigns (newest first, with dates) so the bot can
     // reason about "la última / la nueva / la de la semana pasada" and target the right one.
