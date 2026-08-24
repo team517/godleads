@@ -267,11 +267,11 @@ async function sendSmtp(host: string, port: number, username: string, password: 
 }
 
 // ── DeepSeek JSON decision ──────────────────────────────────────────────────────
-async function decide(apiKey: string, system: string, user: string): Promise<any> {
+async function decide(apiKey: string, system: string, user: string, temp = 0.3): Promise<any> {
   const res = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "deepseek-chat", temperature: 0.3, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+    body: JSON.stringify({ model: "deepseek-chat", temperature: temp, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
   });
   const j = await res.json();
   const content = j?.choices?.[0]?.message?.content || "{}";
@@ -489,7 +489,9 @@ REGLAS:
 Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>"}`;
       const pmsg = `CORREO DEL PROSPECTO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}\n\nPERSONALIZA: si sabes el nombre (${m.from_name || "desconocido"}), empieza con "Hola ${(m.from_name || "").split(" ")[0] || ""},". Si no lo sabes, usa un saludo natural sin inventar nombre.`;
       let pd: any = {};
-      try { pd = await decide(dkKey, psys, pmsg); } catch { pd = { interested: false }; }
+      // temp 0 → the interested/not-interested classification is DETERMINISTIC and reliable
+      // (at 0.3 the same clear "me interesa, ¿cómo funciona?" flip-flopped between runs).
+      try { pd = await decide(dkKey, psys, pmsg, 0); } catch { pd = { interested: false }; }
       const mode = prospectMode;
       if (pd.interested && String(pd.reply || "").trim()) {
         let replyText = String(pd.reply).trim();
