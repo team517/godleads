@@ -973,7 +973,11 @@ serve(async (req) => {
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),
-            ...(metricsReady ? { ref_chain: msg.ref_chain || null } : {}),
+            // ref_chain (References + In-Reply-To of the incoming mail) is ALWAYS stored — the
+            // column is created by migration, so it never depends on the metrics bootstrap. This
+            // is what lets replies carry the FULL thread chain in References, so they land in the
+            // right conversation even when the sender keeps changing the subject.
+            ref_chain: msg.ref_chain || null,
           };
         });
 
