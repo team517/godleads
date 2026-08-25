@@ -139,6 +139,25 @@ const NOT_INTERESTED = [
   /no\s+es\s+(nuestro\s+caso|para\s+nosotros)/i, /no\s+es\s+lo\s+que\s+(buscamos|necesitamos|nos\s+interesa)/i,
 ];
 
+// ── 2a-bis) SOFT rejections — polite "we're covered / not looking" replies that carry NO
+// explicit "no" or "not interested", so the strong NOT_INTERESTED list missed them and they
+// leaked as "neutral" (real case: "we currently have our own internal team that handles lead
+// generation … we are not looking to add any external systems or services at this time").
+// These ONLY count when the message shows NO interest/engagement signal (see classifyMessage),
+// so a mixed "we have our own team but tell me more" still reads as interested.
+const SOFT_REJECTION = [
+  /\bnot\s+looking\s+(to|for|at|into)\b/i,
+  /\bno\s+(plans?|need|intention|interest)\s+(to|for|of|in|at)\b/i,
+  /\b(don'?t|do\s+not|won'?t|will\s+not)\s+(need|require|be\s+(adding|needing|looking))\b/i,
+  /\b(have|got|use|using|maintain)\s+(our\s+own|an?\s+internal|an?\s+in[- ]?house|a\s+dedicated|an?\s+existing)\s+(team|solution|system|department|provider|setup|process|tool|stack|vendor|partner)\b/i,
+  /\bour\s+own\s+(internal\s+)?(team|solution|system|department|setup|process|people|tools?)\b/i,
+  /\b(handled?|managed?|covered|sorted|taken\s+care\s+of)\s+(internally|in[- ]?house)\b/i,
+  /\bnot?\s+(adding|bringing\s+on|onboarding)\s+(any\s+)?(external|third[- ]?party|new|additional)\b/i,
+  /no\s+(estamos|estoy|est[áa]n)\s+buscando/i,
+  /(tenemos|contamos con|disponemos de)\s+(nuestro|un|una)\s+(propi[oa]|equipo\s+(interno|propio)|soluci[óo]n\s+propia)/i,
+  /(ya\s+)?lo\s+(tenemos|llevamos|gestionamos)\s+(cubierto|resuelto|montado)/i,
+];
+
 // ── 2b) DO NOT CONTACT — unsubscribe / RGPD / spam / hostile. "La baja manda":
 // checked BEFORE not-interested and NEVER saved by an accompanying question/engagement.
 const DO_NOT_CONTACT = [
@@ -148,6 +167,10 @@ const DO_NOT_CONTACT = [
   /baja\s+de\s+(la\s+)?lista/i, /\bbaja\b.*lista/i,
   /(please\s+)?remove\s+(me|us)?\s*(from|de)/i, /quit(a|ad|en|adme|arme|ame|adnos)?\s+(me\s+|nos\s+)?de\s+(la\s+)?lista/i, /b[óo]rr(a|ame|enme|adme|ad|arme)\s*(me\s+)?(de\s+(la\s+)?lista|mis datos)?/i,
   /take\s+(me|us)?\s*off/i,
+  // "bájame / quítame / bórrame / elimíname DE la base de datos / lista / registro" — a very
+  // common Spanish unsubscribe phrasing the "de baja" / "de la lista" patterns above missed. The
+  // "verbo + de" shape keeps a service request ("eliminar duplicados de la base de datos") out.
+  /(b[áa]j|quit|borr|elimin|s[áa]c)\w*\s+de\s+(la\s+|las\s+|vuestr[oa]s?\s+|su\s+|sus\s+|nuestr[oa]s?\s+|tu\s+)?(base\s+de\s+datos|bbdd|listas?|registro|contactos?)\b/i,
   /stop\s+(contact|email|writ|send|messag|reach)/i,
   /(no|don'?t|do not)\s+(me\s+|nos\s+)?(contact|email|write|escrib|contacte|env[íi]e|manden?|mand[ée]is)/i,
   /deja(d|r)?\s+de\s+(enviar|escribir|contactar|molestar|mandar)/i,
@@ -244,15 +267,20 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   if (any(REFERRAL, text)) return "derivado";
 
   const hasEngagement = any(ENGAGEMENT, text);
+  const hasInterest = any(INTERESTED, text);
 
   // 3) Clearly not interested (unless they still asked for info / a call).
   if (!hasEngagement && any(NOT_INTERESTED, text)) return "not_interested";
+
+  // 3b) SOFT rejection ("we have our own team / not looking to add …") — only when there is NO
+  // interest OR engagement signal at all, so a genuine warm reply is never misread as a no.
+  if (!hasEngagement && !hasInterest && any(SOFT_REJECTION, text)) return "not_interested";
 
   // Doubt about fit reads as a question even if they also ask for info.
   if (any(UNCERTAIN, text)) return "question";
 
   // 3) Interested (positive buying signals).
-  if (any(INTERESTED, text)) return "interested";
+  if (hasInterest) return "interested";
 
   // Asked for info / a call (without doubt or a rejection) → that's a warm lead.
   if (hasEngagement) return "interested";
