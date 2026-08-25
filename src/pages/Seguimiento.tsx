@@ -65,7 +65,7 @@ export default function Seguimiento() {
     } catch { toast.error("No se pudo eliminar"); }
   };
 
-  const callImap = async (payload: any, timeoutMs = 45000) => {
+  const callImap = async (payload: any, timeoutMs = 55000) => {
     // Race the invoke against a timeout so a stalled IMAP call can NEVER leave the spinner hanging.
     // The backend already bails to a DB rebuild at ~28s, so this only fires in a real network stall.
     const invoke = supabase.functions.invoke("imap-conversations", { body: payload });

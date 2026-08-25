@@ -234,7 +234,7 @@ serve(async (req) => {
       let messages: any[] = [];
       let source = "imap";
       // 1) Try the LIVE IMAP fetch, but bounded to 28s so a stalled mailbox can't hang the request.
-      try { messages = await withTimeout(importConversation(acc, contactEmail, body.subject || ""), 24000); }
+      try { messages = await withTimeout(importConversation(acc, contactEmail, body.subject || ""), 40000); }
       catch { messages = []; }
       // 2) If IMAP returned nothing (timeout / error / empty), rebuild from the synced DB so the
       //    conversation ALWAYS loads.
