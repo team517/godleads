@@ -35,7 +35,7 @@ LONGITUD (ESTRICTA — cuenta las palabras del cuerpo):
 
 ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
 1. <p>Hola {{firstName}},</p>
-2. Apertura que conecta con {{companyName}} y {{industry}} de forma GENERAL (un reto o tendencia típica del sector; SIN suponer detalles internos suyos).
+2. Apertura estilo DESCUBRIMIENTO (obligatorio): empieza SIEMPRE con una variación natural de "Investigando {{companyName}} y vuestra actividad en {{industry}}, me llamó la atención / me topé con / vi ..." seguida de un reto o tendencia típica del sector. Tono de curiosidad genuina, como si de verdad hubieras investigado (SIN inventar detalles internos concretos suyos). Varía el verbo entre variantes (investigando / mirando / analizando).
 3. Reto común del sector {{industry}} + propuesta de valor directa del cliente (qué ofrece).
 4. Prueba social con un NÚMERO concreto (caso TÍPICO del sector {{industry}}, verosímil — no un hecho del prospect).
 5. Gancho con un guiño natural a {{companyName}} (general, sin inventar nada sobre ellos).
