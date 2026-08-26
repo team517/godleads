@@ -84,3 +84,8 @@ verify_jwt = false
 
 [functions.process-personalization]
 verify_jwt = false
+
+# Serves the Automatización data (owner's support@ activity) to authorized delegates (equipo@)
+# without them owning the mailbox. Does its OWN JWT check inside → verify_jwt=false at the gateway.
+[functions.automation-view]
+verify_jwt = false

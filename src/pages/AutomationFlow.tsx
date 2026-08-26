@@ -325,30 +325,21 @@ export default function AutomationFlow() {
   const campaignStartedRef = useRef<Set<string>>(new Set());
   const SUPPORT_ACCOUNT = "7b97ced3-007b-44b4-846b-49dfb78d8454"; // support@onepulso.online mailbox
 
-  const loadServiceActivity = async () => { try { const { data } = await supabase.rpc("my_service_activity" as never); setServiceActivity((data as any[]) || []); } catch { /* */ } };
-  // Real Unibox of support@onepulso.online — the chatbot's mailbox. Reads inbox_messages
-  // directly (owner RLS), newest first, full message. Refreshes every 2 min like the campaigns Unibox.
-  const loadSupportInbox = async () => {
-    try {
-      const { data } = await (supabase as any)
-        .from("inbox_messages")
-        .select("id, from_email, from_name, subject, body_text, body_html, received_at, auto_replied")
-        .eq("account_id", SUPPORT_ACCOUNT).eq("is_sent", false).eq("is_warmup", false)
-        .order("received_at", { ascending: false }).limit(40);
-      setSupportInbox((data as any[]) || []);
-    } catch { /* */ }
-  };
-  // "Crear campaña nueva" — campaigns the bot generated from a client's form, waiting for the
-  // owner to approve (which sends the client the copys PDF).
-  const loadPendingCampaigns = async () => { try { const { data } = await supabase.rpc("my_new_campaign_requests" as never); setPendingCampaigns((data as any[]) || []); } catch { /* */ } };
+  // All Automatización data comes from the OWNER's automation (support@ mailbox) via the
+  // automation-view edge fn, so a delegate (equipo@) sees/manages EXACTLY the same as the owner
+  // without owning the mailbox. It authorizes owner + equipo@ server-side.
+  const loadServiceActivity = async () => { try { const { data } = await supabase.functions.invoke("automation-view", { body: { action: "load" } }); setServiceActivity(((data as any)?.service as any[]) || []); } catch { /* */ } };
+  const loadSupportInbox = async () => { try { const { data } = await supabase.functions.invoke("automation-view", { body: { action: "load" } }); setSupportInbox(((data as any)?.inbox as any[]) || []); } catch { /* */ } };
+  const loadPendingCampaigns = async () => { try { const { data } = await supabase.functions.invoke("automation-view", { body: { action: "load" } }); setPendingCampaigns(((data as any)?.pending as any[]) || []); } catch { /* */ } };
   const approveNewCampaign = async (req: any) => {
     if (!req.campaign_id || !req.from_email) { toast.error("Falta la campaña o el correo"); return; }
     setApprovingId(req.id);
     try {
       // Pull the CLIENT's generated campaign steps via a security-definer RPC (the owner can't
       // read another user's campaign_steps directly — RLS).
-      const { data: steps } = await supabase.rpc("new_campaign_steps" as never, { p_campaign_id: req.campaign_id } as never);
-      if (!(steps as any[])?.length) throw new Error("la campaña no tiene mensajes");
+      const { data: csRes } = await supabase.functions.invoke("automation-view", { body: { action: "campaign_steps", campaign_id: req.campaign_id } });
+      const steps = ((csRes as any)?.steps as any[]) || [];
+      if (!steps.length) throw new Error("la campaña no tiene mensajes");
       const [{ default: jsPDF }, { buildCopyDoc }, logo] = await Promise.all([
         import("jspdf"), import("@/lib/report/buildCopyPdf"), loadPngDataUrl("/onepulso-logo-white-transparent.png"),
       ]);
@@ -364,15 +355,16 @@ export default function AutomationFlow() {
       const up = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "upload_copys", pdf_base64: b64 }) });
       const ur = await up.json();
       if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
-      const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
-      // Send from support@ so the client's reply lands where the bot watches (support@).
-      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso/i.test(a.email))?.id || ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      // Send from the OWNER's support@ (so the client's reply lands where the bot watches) —
+      // resolved server-side so a delegate (equipo@) without a mailbox can still approve.
+      const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } });
+      const fromAcc = (sa as any)?.account_id;
       if (!fromAcc) throw new Error("no hay cuenta de envío");
       const message = `Hola,\n\nAquí tienes los mensajes de tu nueva campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEquipo de OnePulso · OnePulso Team`;
       const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: req.from_email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
       const sr = await send.json();
       if (!sr.ok) throw new Error(sr.error || "no se pudo enviar");
-      await supabase.rpc("approve_new_campaign" as never, { p_id: req.id } as never);
+      await supabase.functions.invoke("automation-view", { body: { action: "approve", req_id: req.id } });
       toast.success(`Aprobada · copys enviados a ${req.from_email}`);
       loadPendingCampaigns();
     } catch (e: any) { toast.error(`No se pudo aprobar: ${e?.message || e}`); }
@@ -383,8 +375,8 @@ export default function AutomationFlow() {
     if (!req.campaign_id) { toast.error("Aún no hay campaña generada"); return; }
     setLoadingNcrReview(req.id);
     try {
-      const { data: steps } = await supabase.rpc("new_campaign_steps" as never, { p_campaign_id: req.campaign_id } as never);
-      setReviewNcr({ req, steps: (steps as any[]) || [] });
+      const { data: csRes } = await supabase.functions.invoke("automation-view", { body: { action: "campaign_steps", campaign_id: req.campaign_id } });
+      setReviewNcr({ req, steps: ((csRes as any)?.steps as any[]) || [] });
     } catch (e: any) { toast.error(`No se pudieron cargar los mensajes: ${e?.message || e}`); }
     setLoadingNcrReview(null);
   };
@@ -619,7 +611,9 @@ export default function AutomationFlow() {
       const ur = await up.json();
       if (!ur.ok || !ur.link) throw new Error(ur.error || "no se pudo generar el enlace del PDF");
       const { data: accs } = await (supabase as any).from("email_accounts").select("id, email").not("smtp_host", "is", null);
-      const fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso/i.test(a.email))?.id || ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      let fromAcc = ((accs || []) as any[]).find((a) => /support@onepulso/i.test(a.email))?.id || ((accs || []) as any[]).find((a) => /team@onepulso/i.test(a.email))?.id || (accs || [])[0]?.id;
+      // Delegates (equipo@) have no connected mailbox of their own → borrow the automation owner's support@.
+      if (!fromAcc) { const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } }); fromAcc = (sa as any)?.account_id || null; }
       if (!fromAcc) throw new Error("no hay cuenta de envío");
       const message = `Hola ${fc.name || fc.company || ""},\n\nAquí tienes los mensajes de tu campaña para que les des un vistazo:\n${ur.link}\n\nSi está todo bien, solo faltaría añadir los leads y activar la campaña. Si quieres retocar algo, dínoslo por aquí y lo ajustamos.\n\nUn saludo,\nEl equipo de OnePulso`;
       const send = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-report`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` }, body: JSON.stringify({ mode: "send_copys", to: fc.email, from_account_id: fromAcc, subject: "Los mensajes de tu campaña — dales el visto bueno", message }) });
@@ -637,6 +631,8 @@ export default function AutomationFlow() {
       const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
       let fromAcc: string | null = prof?.onboarding_from_account_id || null;
       if (!fromAcc) { const { data: acc } = await (supabase as any).from("email_accounts").select("id").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle(); fromAcc = acc?.id || null; }
+      // Delegates (equipo@) have no mailbox of their own → borrow the automation owner's support@.
+      if (!fromAcc) { const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } }); fromAcc = (sa as any)?.account_id || null; }
       if (!fromAcc) { toast.error("Sin cuenta de envío para el aviso"); return; }
       const col = fc.brandColor || "#6E58F1";
       const hi = fc.name ? `Hola ${fc.name}` : (fc.company ? `Hola ${fc.company}` : "Hola");
@@ -1123,6 +1119,8 @@ export default function AutomationFlow() {
                 const { data: acc } = await (supabase as any).from("email_accounts").select("id, email").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle();
                 fromAcc = acc?.id || null; fromEmail = acc?.email || "";
               }
+              // Delegates (equipo@) have no mailbox of their own → borrow the automation owner's support@.
+              if (!fromAcc) { const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } }); fromAcc = (sa as any)?.account_id || null; fromEmail = (sa as any)?.email || fromEmail; }
               if (!fromAcc) {
                 updateFlowClient(flowId, { emailStatus: "failed", emailError: "sin cuenta de envío" });
                 toast.error("Cliente creado, pero no hay cuenta de envío (Onboarding → Avisos al cliente).");
