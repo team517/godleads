@@ -40,8 +40,31 @@ serve(async (req) => {
   const input = await req.json().catch(() => ({} as any));
   const limit = Math.min(Number(input.limit) || 15, 40);
 
+  // ── CANCEL-ON-REPLY ─────────────────────────────────────────────────────────────────────
+  // If the contact has REPLIED in the thread since a follow-up was scheduled, cancel their
+  // remaining scheduled follow-ups — sending more makes no sense once they answered. Runs every
+  // tick, so a reply on Tuesday cancels the Wed/Thu follow-ups within ~a minute (already-SENT ones
+  // are never touched — only status='scheduled'). The reply lands in the mailbox we send FROM
+  // (the follow-up's account_id, = team@), synced by fetch-inbox-team.
+  let canceled = 0;
+  const repliedSince = async (accountId: string, contact: string, since: string): Promise<boolean> => {
+    if (!accountId || !contact) return false;
+    const { data } = await admin.from("inbox_messages").select("id")
+      .eq("account_id", accountId).ilike("from_email", contact).gt("received_at", since).limit(1);
+    return !!(data && (data as any[]).length);
+  };
+  try {
+    const { data: sched } = await admin.from("follow_ups").select("id, account_id, contact_email, created_at").eq("status", "scheduled");
+    for (const s of (sched || []) as any[]) {
+      if (await repliedSince(s.account_id, s.contact_email, s.created_at)) {
+        const { data: c } = await admin.from("follow_ups").update({ status: "canceled", note: "cancelado: el contacto respondió", updated_at: new Date().toISOString() }).eq("id", s.id).eq("status", "scheduled").select("id");
+        if (c && (c as any[]).length) canceled++;
+      }
+    }
+  } catch { /* non-fatal */ }
+
   const { data: due } = await admin.from("follow_ups").select("*").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString()).order("scheduled_at", { ascending: true }).limit(limit);
-  if (!due?.length) return new Response(JSON.stringify({ sent: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  if (!due?.length) return new Response(JSON.stringify({ sent: 0, canceled }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   let sent = 0; const results: any[] = [];
   for (const f of due as any[]) {
@@ -49,6 +72,12 @@ serve(async (req) => {
       // Claim atomically so overlapping runs don't double-send.
       const { data: claimed } = await admin.from("follow_ups").update({ status: "sending", updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "scheduled").select("id");
       if (!claimed || !(claimed as any[]).length) continue;
+      // Last-moment guard: if the contact replied since this was scheduled (even a second ago),
+      // cancel instead of sending — never message someone who already answered.
+      if (await repliedSince(f.account_id, f.contact_email, f.created_at)) {
+        await admin.from("follow_ups").update({ status: "canceled", note: "cancelado: el contacto respondió", updated_at: new Date().toISOString() }).eq("id", f.id);
+        canceled++; results.push({ id: f.id, canceled: true }); continue;
+      }
       // Sending mailbox: the follow-up's account_id, else team@, else the owner's first connected.
       const { data: accts } = await admin.from("email_accounts").select("id, email, smtp_host, smtp_port, smtp_username, smtp_password").eq("user_id", f.owner_id).eq("status", "connected");
       const acct = (accts || []).find((a: any) => a.id === f.account_id) || (accts || []).find((a: any) => /team@onepulso|support@onepulso/i.test(a.email)) || (accts || [])[0];
@@ -62,5 +91,5 @@ serve(async (req) => {
       sent++; results.push({ id: f.id, to: f.contact_email, ok: true });
     } catch (e) { try { await admin.from("follow_ups").update({ status: "scheduled", note: String((e as Error).message).slice(0, 200) }).eq("id", f.id); } catch { /* */ } }
   }
-  return new Response(JSON.stringify({ sent, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ sent, canceled, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
