@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useReducer } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2 } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2 } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
@@ -118,6 +118,70 @@ export default function CampaignSequences({ campaignId }: Props) {
   };
 
   useEffect(() => { load(); loadVariables(); loadAccounts(); loadLeadEmails(); }, [campaignId]);
+
+  // ── UNDO / REDO ─────────────────────────────────────────────────────────────────────────
+  // The editor auto-saves every change straight to the DB, so an accidental delete is instantly
+  // persisted. We keep an in-session history of full step snapshots; the back/forward arrows
+  // RECONCILE the DB back to a previous snapshot (re-insert deleted steps with their original id,
+  // update changed ones, drop added ones) and reload. Resets when you switch campaigns.
+  const histStack = useRef<any[][]>([]);
+  const histIdx = useRef(-1);
+  const histApplying = useRef(false);
+  const histPending = useRef<string | null>(null);
+  const histTimer = useRef<any>(null);
+  const [, bumpHist] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => { histStack.current = []; histIdx.current = -1; histPending.current = null; bumpHist(); }, [campaignId]);
+  const commitSnap = () => {
+    if (histTimer.current) { clearTimeout(histTimer.current); histTimer.current = null; }
+    const snap = histPending.current; histPending.current = null;
+    if (snap == null) return;
+    const cur = histStack.current[histIdx.current];
+    if (cur && JSON.stringify(cur) === snap) return; // no real change
+    histStack.current = histStack.current.slice(0, histIdx.current + 1);
+    histStack.current.push(JSON.parse(snap));
+    if (histStack.current.length > 50) histStack.current.shift();
+    histIdx.current = histStack.current.length - 1;
+    bumpHist();
+  };
+  useEffect(() => {
+    if (histApplying.current) { histApplying.current = false; return; }
+    // Debounce so a burst of keystrokes becomes ONE history entry (not one per letter).
+    histPending.current = JSON.stringify(steps);
+    if (histTimer.current) clearTimeout(histTimer.current);
+    histTimer.current = setTimeout(commitSnap, 600);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps]);
+  const reconcileDb = async (target: any[]) => {
+    const { data: cur } = await supabase.from("campaign_steps").select("id").eq("campaign_id", campaignId);
+    const targetIds = new Set(target.map((s) => s.id));
+    const toDelete = ((cur || []) as any[]).map((s) => s.id).filter((id) => !targetIds.has(id));
+    if (toDelete.length) await supabase.from("campaign_steps").delete().in("id", toDelete);
+    for (const s of target) {
+      await supabase.from("campaign_steps").upsert({ id: s.id, campaign_id: campaignId, step_order: s.step_order, subject: s.subject ?? "", body: s.body ?? "", delay_days: s.delay_days ?? 0, variants: (s.variants ?? []) as any }, { onConflict: "id" });
+    }
+  };
+  const canUndo = histIdx.current > 0;
+  const canRedo = histIdx.current < histStack.current.length - 1;
+  const undo = async () => {
+    commitSnap(); // flush any pending (debounced) edit into history first
+    if (histIdx.current <= 0) return;
+    const target = histStack.current[histIdx.current - 1];
+    histApplying.current = true;
+    await reconcileDb(target);
+    histIdx.current -= 1; bumpHist();
+    await load();
+    toast.success("Cambio deshecho");
+  };
+  const redo = async () => {
+    commitSnap();
+    if (histIdx.current >= histStack.current.length - 1) return;
+    const target = histStack.current[histIdx.current + 1];
+    histApplying.current = true;
+    await reconcileDb(target);
+    histIdx.current += 1; bumpHist();
+    await load();
+    toast.success("Cambio rehecho");
+  };
 
   const loadVariables = async () => {
     // Get leads assigned to this campaign and extract all custom_field keys
@@ -767,6 +831,26 @@ export default function CampaignSequences({ campaignId }: Props) {
               )}
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={undo}
+                disabled={!canUndo}
+                title="Deshacer — recupera lo que borraste o cambiaste sin querer"
+                aria-label="Deshacer"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={!canRedo}
+                title="Rehacer"
+                aria-label="Rehacer"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <Redo2 className="h-3.5 w-3.5" />
+              </button>
               <Button
                 variant="outline"
                 size="sm"
