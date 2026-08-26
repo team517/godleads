@@ -496,7 +496,12 @@ export default function AutomationFlow() {
   }, [responses, clients, nodes]);
 
   if (!user) return null;
-  if ((user.email || "").toLowerCase() !== "hello@onepulso.blog") return <Navigate to="/dashboard" replace />;
+  // Access: the owner PLUS equipo@onepulso.online (granted Automatización access on top of the
+  // same accesses as support@). Everyone else is redirected.
+  {
+    const _em = (user.email || "").toLowerCase();
+    if (_em !== "hello@onepulso.blog" && _em !== "equipo@onepulso.online") return <Navigate to="/dashboard" replace />;
+  }
 
   const addNode = () => { const n = [...nodes, { id: uid(), label: "Nuevo paso", desc: "Describe qué hace este paso", agent: "manual" as AgentKey }]; persistNodes(n); setEditNode(n[n.length - 1]); };
   const saveNode = (node: Node) => { persistNodes(nodes.map((n) => n.id === node.id ? node : n)); setEditNode(null); };

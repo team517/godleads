@@ -55,13 +55,16 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
   // Owner-only agency tools — never shown to clients/managers.
-  const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
+  const userEmail = (user?.email || "").toLowerCase();
+  const isOwner = userEmail === "hello@onepulso.blog";
+  // Automatización access: the owner PLUS equipo@onepulso.online (granted same access as support@
+  // plus Automatización). Seguimiento stays owner-only.
+  const canAutomation = isOwner || userEmail === "equipo@onepulso.online";
   // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
-  // Automatización: ONLY the owner (hello@onepulso.blog) — not managers.
   const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
-  const OWNER_ONLY = new Set(["/automatizacion", "/seguimiento"]);
   const visibleTools = toolsNav.filter((item) => {
-    if (OWNER_ONLY.has(item.path)) return isOwner;
+    if (item.path === "/automatizacion") return canAutomation;
+    if (item.path === "/seguimiento") return isOwner;
     if (OWNER_OR_MANAGER.has(item.path)) return isOwner || isManager;
     return true;
   });
