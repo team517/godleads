@@ -89,3 +89,8 @@ verify_jwt = false
 # without them owning the mailbox. Does its OWN JWT check inside → verify_jwt=false at the gateway.
 [functions.automation-view]
 verify_jwt = false
+
+# Pulls new Google Form responses into form_responses (service role, owner's stored OAuth token) so
+# the Automatización flow advances on its own. Called by the page poll + a cron → verify_jwt=false.
+[functions.google-forms-sync]
+verify_jwt = false

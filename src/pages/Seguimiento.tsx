@@ -94,8 +94,15 @@ export default function Seguimiento() {
       const d = await callImap({ action: "import", contactEmail: t.contact_email, subject: t.subject });
       const msgs = (d.messages || []) as any[];
       setConv(msgs);
-      const last = msgs[msgs.length - 1];
-      setRefs({ inReplyTo: last?.message_id || "", references: [...(last?.references || []), last?.message_id].filter(Boolean).join(" ") });
+      // Robust threading: In-Reply-To must point at the NEWEST message that actually has a
+      // Message-ID, and References must carry the FULL chain of ids in the thread. Using only
+      // msgs[last].message_id broke threading whenever the newest message was one of OUR sent
+      // emails with a null smtp_message_id (common on older sends) → In-Reply-To ended up empty
+      // and the follow-up went out as a NEW message instead of staying in the hilo. Walk back to
+      // the newest id we DO have, and thread the whole conversation.
+      const idChain = msgs.map((m: any) => m.message_id).filter(Boolean);
+      const target = [...msgs].reverse().find((m: any) => m.message_id);
+      setRefs({ inReplyTo: target?.message_id || "", references: idChain.join(" ") });
       setSubject(t.subject ? "Re: " + String(t.subject).replace(/^\s*((re|rv|fwd)\s*:\s*)+/i, "") : "Seguimiento");
       setBodyText("");
       // Guarda este seguimiento (para verlo en "Mis seguimientos" con su nombre).

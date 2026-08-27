@@ -35,6 +35,12 @@ serve(async (req) => {
       return new Response(JSON.stringify({ inbox: inbox.data || [], service: service.data || [], pending: pending.data || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "responses") {
+      // The owner's Google Form responses (so a delegate advances the flow with the same data).
+      const { data } = await admin.from("form_responses").select("id, form_id, form_title, respondent_email, answers, received_at").eq("owner_id", OWNER).order("received_at", { ascending: false }).limit(100);
+      return new Response(JSON.stringify({ responses: data || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "campaign_steps") {
       // The generated campaign's steps (for the review popup / copys PDF). Verify the campaign
       // belongs to one of the owner's new-campaign requests before returning it.

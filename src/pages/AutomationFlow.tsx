@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -308,6 +308,7 @@ export default function AutomationFlow() {
   const [aiOpen, setAiOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<"" | "secrets" | "token">(""); // reception blocker, if any
   const [reviewClient, setReviewClient] = useState<FlowClient | null>(null);
   const [reviewNcr, setReviewNcr] = useState<{ req: any; steps: any[] } | null>(null);
   const [loadingNcrReview, setLoadingNcrReview] = useState<string | null>(null);
@@ -394,12 +395,20 @@ export default function AutomationFlow() {
 
   const loadResponses = async () => {
     try {
-      const { data } = await (supabase as any)
-        .from("form_responses")
-        .select("id, form_id, form_title, respondent_email, answers, received_at")
-        .order("received_at", { ascending: false })
-        .limit(100);
-      setResponses((data || []) as FormResponse[]);
+      // Pull any NEW Form responses from Google first (server-side, using the owner's stored OAuth
+      // token) so a client who just answered advances immediately — no manual sync, no waiting on a
+      // cron. Non-fatal: if Google isn't reachable/configured we still read what's already stored.
+      try {
+        const { data: sync } = await supabase.functions.invoke("google-forms-sync", { body: {} });
+        const s = sync as any;
+        if (s && s.ok === false && s.reason === "google_secrets_missing") setSyncNote("secrets");
+        else if (s && Array.isArray(s.errors) && s.errors.some((e: string) => /token_refresh_failed/.test(e))) setSyncNote("token");
+        else setSyncNote("");
+      } catch { /* non-fatal */ }
+      // Read through automation-view so it works the same for the owner AND the delegate (equipo@),
+      // who can't read the owner's form_responses directly (RLS).
+      const { data } = await supabase.functions.invoke("automation-view", { body: { action: "responses" } });
+      setResponses(((data as any)?.responses as FormResponse[]) || []);
     } catch { /* ignore */ }
   };
 
@@ -930,6 +939,17 @@ export default function AutomationFlow() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Reception blocker banner — the flow only advances on its own when Google Form responses can
+          be pulled in. If the two Google secrets aren't set (or the token expired), say so clearly. */}
+      {syncNote && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {syncNote === "secrets"
+            ? <p><b>La recepción automática del Form está apagada.</b> Para que los clientes avancen solos al responder, define <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code> en Supabase (Dashboard → Project Settings → Edge Functions → Secrets). En cuanto estén, las respuestas entran solas cada minuto.</p>
+            : <p><b>La conexión con Google caducó.</b> Vuelve a conectar la cuenta de Google en este panel (el token de prueba caduca a los 7 días; publica la pantalla de consentimiento para que no caduque).</p>}
+        </div>
+      )}
 
       {/* ── Clients in flow ── */}
       <Card>
