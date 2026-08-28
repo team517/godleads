@@ -473,6 +473,10 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     const isOwnMailbox = (ownerAccts || []).some((a: any) => String(a.email || "").toLowerCase() === fromEmail);
     if (prospectActive && !isOwnMailbox && (prospectOnly || !known)) {
       const recvAcct = (ownerAccts || []).find((a: any) => a.id === m.account_id) || teamAcct;
+      // Persona = the receiving mailbox's name (maria@… → "Maria"). The model signs the reply with
+      // it, in the prospect's own language, so there's no hardcoded Spanish sign-off.
+      const persona = String(recvAcct?.email || "").split("@")[0].split(/[._-]/)[0];
+      const personaName = persona ? persona.charAt(0).toUpperCase() + persona.slice(1) : "OnePulso";
       const extra = prospectExtra;
       const psys = `Eres el asistente comercial de OnePulso que atiende las RESPUESTAS de prospectos a nuestros emails en frío. Con los interesados tu único objetivo es conseguir una reunión.
 
@@ -483,7 +487,7 @@ CLASIFICA el correo del prospecto:
 ANTE LA DUDA, o si NO hay un interés o una pregunta CLARA sobre nuestro servicio, clasifícalo como NEGATIVO/NEUTRO y NO respondas. Mejor no responder que responder a quien no toca.
 
 REGLAS:
-- Si es POSITIVO: escribe una respuesta BREVE y humana (2-4 frases), en el MISMO idioma del prospecto, que resuelva por encima su duda y le invite a agendar una reunión. Incluye el enlace del calendario TAL CUAL, completo: ${prospectCal}. NO añadas tú la firma ni "Un saludo" (se añade sola). Sin emojis. No inventes datos ni des precios cerrados por email.
+- Si es POSITIVO: PRIMERO detecta el idioma EXACTO del correo del prospecto y escribe TODA tu respuesta ÍNTEGRAMENTE en ESE idioma — el saludo, el cuerpo, la invitación a agendar y la despedida (inglés→inglés, francés→francés, italiano→italiano, alemán→alemán, portugués→portugués, catalán→catalán, etc.; ante la duda, usa el idioma en que está escrito el correo). Respuesta BREVE y humana (2-4 frases) que resuelva por encima su duda e invite a agendar una reunión. Incluye el enlace del calendario TAL CUAL, completo: ${prospectCal}. Termina SIEMPRE con una despedida natural EN ESE MISMO IDIOMA y firma con el nombre "${personaName}" (p. ej. inglés "Best regards, ${personaName}", francés "Cordialement, ${personaName}", español "Un saludo, ${personaName}"). Sin emojis. No inventes datos ni des precios cerrados por email.
 - Si es NEGATIVO/NEUTRO: NO respondas. Deja "reply" vacío.${extra ? "\n\nCONOCIMIENTO E INSTRUCCIONES DEL DUEÑO (respétalas por encima de todo):\n" + extra : ""}
 
 Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>"}`;
@@ -495,12 +499,11 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
       const mode = prospectMode;
       if (pd.interested && String(pd.reply || "").trim()) {
         let replyText = String(pd.reply).trim();
-        if (prospectCal && !replyText.includes(prospectCal)) replyText += `\n\nPuedes agendar aquí directamente: ${prospectCal}`;
-        // Sign as the PERSONA of the receiving mailbox (e.g. maria@… → "Maria"), not the
-        // customer-service "Equipo de OnePulso" — keeps the cold-email persona consistent.
-        const persona = String(recvAcct?.email || "").split("@")[0].split(/[._-]/)[0];
-        const personaName = persona ? persona.charAt(0).toUpperCase() + persona.slice(1) : "OnePulso";
-        const signed = stripEmojis(replyText) + `\n\nUn saludo,\n${personaName}`;
+        // Safety net only: if the model forgot the calendar link, append it BARE (no words → stays
+        // language-neutral). The greeting, calendar invite and sign-off are now written by the model
+        // in the prospect's OWN language, so we no longer bolt on a Spanish "Un saludo".
+        if (prospectCal && !replyText.includes(prospectCal)) replyText += `\n\n${prospectCal}`;
+        const signed = stripEmojis(replyText);
         const blk = signed.split(/\n\n+/).map((x) => x.trim().replace(/\n/g, "<br>")).filter(Boolean);
         if (blk.length >= 2) { const s = blk.pop() as string; blk[blk.length - 1] += `<br><br>${s}`; }
         const htmlBody = blk.map((x) => `<p style="margin:0 0 10px">${x}</p>`).join("") || `<p>${signed.replace(/\n/g, "<br>")}</p>`;
