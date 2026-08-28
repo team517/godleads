@@ -12,16 +12,26 @@ import { lazy, type ComponentType } from "react";
 const RELOAD_TS_KEY = "op:chunk-reload-ts";
 const RELOAD_GUARD_MS = 12000; // don't reload twice inside this window -> breaks any reload loop
 
-/** True when the failure is a stale-deploy chunk fetch (recoverable), not a real code error. */
+/** True when the failure is a stale-deploy chunk problem (recoverable), not a real code error. */
 export function isChunkLoadError(err: unknown): boolean {
   const msg = String((err as { message?: unknown })?.message ?? err ?? "");
   return (
+    // A) the chunk FETCH failed (old hash 404s after a redeploy)
     /failed to fetch dynamically imported module/i.test(msg) ||
     /error loading dynamically imported module/i.test(msg) ||
     /importing a module script failed/i.test(msg) ||
     /dynamically imported module/i.test(msg) ||
     /loading chunk\s+[\w-]+\s+failed/i.test(msg) ||
-    /ChunkLoadError/i.test(msg)
+    /ChunkLoadError/i.test(msg) ||
+    // B) a MIXED old/new chunk set: the chunk loaded but a module resolved to `undefined`, so
+    //    React.lazy's `module.default` (or the module runtime's `.call`) throws. This is the
+    //    "Cannot read properties of undefined (reading 'default')" screen after a deploy. Matched
+    //    across Chrome / Safari / Firefox wording. Very lazy-import-specific → safe to auto-recover
+    //    (the 12s guard breaks any loop if it turns out to be a real bug).
+    /cannot read propert(?:y|ies) of undefined \(reading '(?:default|call)'\)/i.test(msg) ||
+    /undefined is not an object \(evaluating '[^']*\b(?:default|call)'\)/i.test(msg) ||
+    /can't access property ["'](?:default|call)["'][^]*\bundefined/i.test(msg) ||
+    /['"]default['"] of undefined/i.test(msg)
   );
 }
 
@@ -38,7 +48,20 @@ export function reloadForStaleChunk(): boolean {
   } catch {
     /* sessionStorage blocked (private mode) — still reload once below */
   }
-  window.location.reload();
+  // Purge any cached chunks + service workers FIRST, so the browser can't re-serve the same stale
+  // build and loop us straight back to the error. Best-effort + capped at 1s so we always reload.
+  let reloaded = false;
+  const doReload = () => { if (reloaded) return; reloaded = true; try { window.location.reload(); } catch { /* */ } };
+  try {
+    const tasks: Promise<unknown>[] = [];
+    if (typeof caches !== "undefined") tasks.push(caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).catch(() => {}));
+    if (typeof navigator !== "undefined" && navigator.serviceWorker) tasks.push(navigator.serviceWorker.getRegistrations().then((rs) => Promise.all(rs.map((r) => r.unregister()))).catch(() => {}));
+    setTimeout(doReload, 1000); // safety net: never wait more than 1s
+    if (tasks.length) Promise.allSettled(tasks).then(doReload);
+    else doReload();
+  } catch {
+    doReload();
+  }
   return true;
 }
 
@@ -53,7 +76,14 @@ export function lazyWithRetry<T extends ComponentType<unknown>>(
 ) {
   return lazy(async () => {
     try {
-      return await factory();
+      const mod = await factory();
+      // Defensive: a MIXED old/new chunk set can resolve to an empty/undefined module — React.lazy
+      // would then throw "reading 'default'" and dump the error screen. Catch it here instead and
+      // route it through the same silent retry→reload recovery.
+      if (!mod || typeof (mod as { default?: unknown }).default === "undefined") {
+        throw new Error("dynamically imported module resolved without a default export (stale chunk)");
+      }
+      return mod;
     } catch (err) {
       if (!isChunkLoadError(err)) throw err;
       try {
