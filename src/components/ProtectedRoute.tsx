@@ -7,7 +7,7 @@ import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
-  const { loading: subLoading } = useSubscription();
+  const { loading: subLoading, trialExpired, subscribed } = useSubscription();
   const { profile } = useProfile();
   const location = useLocation();
 
@@ -20,6 +20,14 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   }
 
   if (!user) return <Navigate to="/auth" replace />;
+
+  // Paywall: a NEW self-signup whose 5-day trial ended (and hasn't subscribed) must pay to continue.
+  // Staff, admin-created clients, grandfathered accounts and subscribers never reach here — the
+  // SubscriptionContext leaves trialExpired=false for all of them. /settings stays reachable so they
+  // can manage their account. (subscribed is double-checked so a just-paid user is never blocked.)
+  if (trialExpired && !subscribed && location.pathname !== "/settings") {
+    return <TrialExpiredScreen />;
+  }
 
 
   // Redirect restricted users to their first allowed route

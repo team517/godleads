@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { decideAccess } from "@/lib/access";
 
 export type PlanTier = "free" | "starter" | "growth" | "scale";
 
@@ -33,8 +34,6 @@ export const PLAN_CONFIG = {
 
 export const FREE_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };
 export const TRIAL_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };
-
-const SPECIAL_FULL_ACCESS_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "rk@coldabry.com", "oliver@osakaadigital.com", "eric@dekano-core.es", "oliver@clackstudio-creative.com", "alex@vioonyx.com", "oliver@tiarecrew.com"];
 
 function getTierFromProductId(productId: string | null): PlanTier {
   if (!productId) return "free";
@@ -95,74 +94,59 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Check if user is admin — admins skip trial entirely
       const { data: roleData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .single();
-      const isAdminUser = roleData?.role === "admin";
-
-      // Admin users never have trial restrictions and get unlimited everything
-      if (isAdminUser) {
-        setIsTrialing(false);
-        setTrialEnd(null);
-        setTrialDaysLeft(null);
-        setTrialExpired(false);
-        setSubscribed(true);
-        setTier("scale" as PlanTier);
-        return;
-      }
-
-      // Check if user has restricted routes (special managed accounts skip trial)
+        .from("user_roles").select("role").eq("user_id", user.id).single();
       const { data: profileCheck } = await supabase
-        .from("profiles")
-        .select("trial_started_at, allowed_routes, contact_email")
-        .eq("user_id", user.id)
-        .single();
+        .from("profiles").select("allowed_routes, contact_email, is_client_manager, created_at")
+        .eq("user_id", user.id).single();
 
-      const specialAccessEmail = (profileCheck as any)?.contact_email?.toLowerCase?.() ?? null;
-      const hasSpecialFullAccess = !!specialAccessEmail && SPECIAL_FULL_ACCESS_EMAILS.includes(specialAccessEmail);
+      const baseInput = {
+        email: user.email || null,
+        role: (roleData as any)?.role ?? null,
+        isClientManager: !!(profileCheck as any)?.is_client_manager,
+        allowedRoutes: (profileCheck as any)?.allowed_routes ?? null,
+        contactEmail: (profileCheck as any)?.contact_email ?? null,
+        // Immutable account creation time → the trial can't be reset/gamed.
+        createdAt: (user as any)?.created_at || (profileCheck as any)?.created_at || null,
+        stripeSubscribed: false,
+      };
 
-      if (hasSpecialFullAccess) {
-        setIsTrialing(false);
-        setTrialEnd(null);
-        setTrialDaysLeft(null);
-        setTrialExpired(false);
-        setSubscribed(true);
-        setTier("scale");
-        setSubscriptionEnd(null);
-        return;
+      // Decide WITHOUT Stripe first — staff / admin-created / grandfathered accounts never need a
+      // Stripe call. Only a genuine NEW self-signup falls through to the paid/trial branch.
+      let decision = decideAccess(baseInput);
+      let stripeEnd: string | null = null;
+      let stripeProductId: string | null = null;
+      if (decision.kind !== "staff" && decision.kind !== "free") {
+        const { data, error } = await supabase.functions.invoke("check-subscription");
+        if (error) console.error("Sub check error:", error);
+        stripeEnd = data?.subscription_end || null;
+        stripeProductId = data?.product_id || null;
+        decision = decideAccess({ ...baseInput, stripeSubscribed: !!data?.subscribed });
       }
 
-      if ((profileCheck as any)?.allowed_routes && (profileCheck as any).allowed_routes.length > 0) {
-        setSubscribed(false);
-        setSubscriptionEnd(null);
-        setTier("free");
-        setIsTrialing(false);
-        setTrialEnd(null);
-        setTrialDaysLeft(null);
-        setTrialExpired(false);
-        return;
+      switch (decision.kind) {
+        case "staff":
+          setSubscribed(true); setSubscriptionEnd(null); setTier("scale");
+          setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
+          break;
+        case "free":
+        case "trial_unknown":
+          setSubscribed(false); setSubscriptionEnd(null); setTier("free");
+          setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
+          break;
+        case "subscribed":
+          setSubscribed(true); setSubscriptionEnd(stripeEnd); setTier(getTierFromProductId(stripeProductId));
+          setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
+          break;
+        case "trialing":
+          setSubscribed(false); setSubscriptionEnd(null); setTier("free");
+          setIsTrialing(true); setTrialEnd(decision.trialEnd); setTrialDaysLeft(decision.daysLeft); setTrialExpired(false);
+          break;
+        case "expired":
+          setSubscribed(false); setSubscriptionEnd(null); setTier("free");
+          setIsTrialing(false); setTrialEnd(decision.trialEnd); setTrialDaysLeft(0); setTrialExpired(true);
+          break;
       }
-
-      // 1. Check Stripe subscription (paid plans only)
-      const { data, error } = await supabase.functions.invoke("check-subscription");
-      if (error) { console.error("Sub check error:", error); }
-
-      const stripeSubscribed = data?.subscribed || false;
-      const stripeEnd = data?.subscription_end || null;
-      const stripeProductId = data?.product_id || null;
-
-      setSubscribed(stripeSubscribed);
-      setSubscriptionEnd(stripeEnd);
-      setTier(getTierFromProductId(stripeProductId));
-
-      // Trial disabled — no restrictions
-      setIsTrialing(false);
-      setTrialEnd(null);
-      setTrialDaysLeft(null);
-      setTrialExpired(false);
     } catch (e) {
       console.error("Sub check failed:", e);
       resetSubscriptionState();
