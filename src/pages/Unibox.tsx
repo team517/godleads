@@ -3165,17 +3165,18 @@ export default function Unibox() {
                         <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1">
                           {cleanBodyText(msg.body_text, true).slice(0, 120)}
                         </p>
-                        {/* Bottom row: classification mini-tag + AI-replied tag + campaign tag + folder */}
+                        {/* Bottom row: AI-replied tag REPLACES the intent tag for messages the AI
+                            answered (so a contradictory "Fuera / Auto" never shows on an AI reply);
+                            otherwise the normal classification mini-tag + campaign tag + folder. */}
                         {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                            {catCfg.label && (
+                            {aiReplied(msg.from_email) ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/10 px-2 py-0.5 text-[11px] font-semibold text-violet-600 whitespace-nowrap" title="La IA respondió automáticamente a este contacto">
+                                <Sparkles className="h-3 w-3" /> Respondido con IA
+                              </span>
+                            ) : catCfg.label && (
                               <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} /> {catCfg.label}
-                              </span>
-                            )}
-                            {aiReplied(msg.from_email) && (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/10 px-2 py-0.5 text-[11px] font-semibold text-violet-600 whitespace-nowrap" title="La IA respondió automáticamente a este contacto">
-                                <Sparkles className="h-3 w-3" /> Respondido por IA
                               </span>
                             )}
                             {campaignName && (
@@ -3255,15 +3256,14 @@ export default function Unibox() {
                     <div className="flex-1 min-w-0">
                       <h2 className="text-lg md:text-xl font-semibold text-foreground leading-tight flex items-center gap-2 flex-wrap">
                         {decodeSubject(selected.subject)}
-                        {selectedCatConfig?.label && (
+                        {aiReplied(selected.from_email) ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-violet-500/10 text-violet-600" title="La IA respondió automáticamente a este contacto">
+                            <Sparkles className="h-3 w-3" /> Respondido con IA
+                          </span>
+                        ) : selectedCatConfig?.label && (
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
                             <span className={`h-1.5 w-1.5 rounded-full ${selectedCatConfig.dot}`} />
                             {selectedCatConfig.label}
-                          </span>
-                        )}
-                        {aiReplied(selected.from_email) && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-violet-500/10 text-violet-600" title="La IA respondió automáticamente a este contacto">
-                            <Sparkles className="h-3 w-3" /> Respondido por IA
                           </span>
                         )}
                       </h2>
