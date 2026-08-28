@@ -514,6 +514,10 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
           // answered, "como si lo hubiera enviado yo". Non-fatal.
           if (sres?.ok) {
             try { await admin.from("sent_emails").insert({ user_id: ownerId, account_id: recvAcct.id, to_email: m.from_email, subject: reSubject, body: htmlBody, status: "sent", sent_at: new Date().toISOString() }); } catch { /* non-fatal */ }
+            // Also log it in auto_reply_log → the "Asistente IA → Respuestas automáticas" panel reads
+            // THAT table (the running prospect agent only wrote client_service_log, so the panel showed
+            // "Sin respuestas registradas"). Realtime on auto_reply_log picks this up instantly.
+            try { await admin.from("auto_reply_log").insert({ user_id: ownerId, rule_id: (input as any).rule_id || null, inbox_message_id: m.id, to_email: m.from_email, subject: reSubject, ai_response: replyText.slice(0, 4000), status: "sent", sent_at: new Date().toISOString() }); } catch { /* non-fatal */ }
           }
         }
         if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", inbound: body.slice(0, 1200), reply: replyText.slice(0, 1200) });

@@ -104,3 +104,8 @@ verify_jwt = false
 # thread. JWT-checked, scoped to the caller, idempotent → verify_jwt=false at the gateway.
 [functions.ensure-ai-sent-thread]
 verify_jwt = false
+
+# Mirrors the AI agent's replies (client_service_log, service-role only) into auto_reply_log so the
+# "Asistente IA → Respuestas automáticas" panel shows them. JWT-scoped, idempotent → verify_jwt=false.
+[functions.sync-auto-reply-log]
+verify_jwt = false

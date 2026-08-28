@@ -457,6 +457,10 @@ function LogTab() {
 
   const loadLogs = async () => {
     if (!user) return;
+    // The prospect AI agent logs to client_service_log (service-role only); this panel reads
+    // auto_reply_log. Mirror the missing replies across first (idempotent) so the history shows —
+    // both the existing ones and any not yet written directly by the agent.
+    try { await supabase.functions.invoke("sync-auto-reply-log", {}); } catch { /* non-fatal */ }
     const { data } = await supabase
       .from("auto_reply_log")
       .select("*")
@@ -468,6 +472,13 @@ function LogTab() {
   };
 
   useEffect(() => { loadLogs(); }, [user]);
+  // Refresh periodically so a fresh AI reply appears without a manual reload.
+  useEffect(() => {
+    if (!user) return;
+    const iv = setInterval(() => { loadLogs(); }, 60000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Realtime subscription
   useEffect(() => {
