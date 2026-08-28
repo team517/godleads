@@ -2740,15 +2740,22 @@ export default function Unibox() {
       const { data: { session } } = await supabase.auth.getSession();
       const origSubject = decodeSubject(selected.subject) || "";
       const fwdSubject = /^fwd?:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
-      const origText = cleanBodyText(selected.body_text || "");
       const when = new Date(selected.received_at).toLocaleString("es");
+      // Forward the FULL original message exactly as it's shown in the detail view. Prefer the HTML
+      // body (keepQuote=true) so NOTHING is lost — references, part numbers, tables, layout; only
+      // fall back to plain text for text-only mails. (The old forward ran cleanBodyText on body_text,
+      // which is empty for HTML-only emails and strips content → the references disappeared.)
+      const escFwd = (s: string) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const origHtml = (selected.body_html && selected.body_html.trim().length > 20)
+        ? cleanBodyHtml(selected.body_html, true)
+        : `<div style="white-space:pre-wrap">${escFwd(selected.body_text || "")}</div>`;
       const quoted =
-        (forwardNote.trim() ? forwardNote.trim() + "\n\n" : "") +
-        "---------- Mensaje reenviado ----------\n" +
-        `De: ${selected.from_name ? selected.from_name + " " : ""}<${selected.from_email}>\n` +
-        `Fecha: ${when}\n` +
-        `Asunto: ${origSubject}\n\n` +
-        origText;
+        (forwardNote.trim() ? `<p>${escFwd(forwardNote.trim()).replace(/\n/g, "<br>")}</p>` : "") +
+        `<p>---------- Mensaje reenviado ----------<br>` +
+        `De: ${escFwd((selected.from_name ? selected.from_name + " " : "") + `<${selected.from_email}>`)}<br>` +
+        `Fecha: ${escFwd(when)}<br>` +
+        `Asunto: ${escFwd(origSubject)}</p><hr>` +
+        origHtml;
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
