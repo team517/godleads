@@ -2010,20 +2010,18 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
-    // If YOU already replied to this sender from the Unibox, it's a real, ongoing
-    // conversation — never hide it. (Fixes: reply to a FR/EN lead → the inbound vanished.)
-    if (repliedToSet.has((m.from_email || "").toLowerCase())) return false;
-    // WHITELIST (owner's rule): the clean bandeja shows ONLY messages that belong to a campaign —
+    // WHITELIST (owner's rule) — the clean bandeja shows ONLY messages that belong to a campaign:
     // from a lead's email (linked lead_id/campaign_id) OR from a domain that is in the campaign
     // leads (so a colleague at the SAME company still counts). Everything else — warm-up-network
-    // noise, random outreach, mail whose language was misdetected — stays OUT of the clean view;
-    // it's still fully accessible under "Todos". Only enforce once the lead-domain set is loaded,
-    // so the bandeja is never wrongly blanked while it's still fetching.
+    // noise, random outreach, even a message the AI happened to auto-reply to — stays OUT of the
+    // clean view; it's still fully accessible under "Todos". This is AUTHORITATIVE: a non-campaign
+    // sender is hidden even if it's in repliedToSet, so warm-up the AI replied to can't leak back in.
+    // Only enforce once the lead-domain set is loaded, so the bandeja is never wrongly blanked.
     if (leadDomainsReady) {
       return !isCampaignRelevant(m, leadDomains);                   // campaign-relevant → show, else hide
     }
-    // Fallback while lead domains are still loading: keep the previous warm-up/foreign filter so
-    // the view isn't blank for a moment on first load.
+    // Fallback while lead domains are still loading: keep the old exemptions so the view isn't blank.
+    if (repliedToSet.has((m.from_email || "").toLowerCase())) return false;
     if (isWarmupHidden(m)) return true;
     return false;
   }, [isWarmupHidden, repliedToSet, leadDomains, leadDomainsReady]);

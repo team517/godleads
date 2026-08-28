@@ -478,6 +478,25 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
       const persona = String(recvAcct?.email || "").split("@")[0].split(/[._-]/)[0];
       const personaName = persona ? persona.charAt(0).toUpperCase() + persona.slice(1) : "OnePulso";
       const extra = prospectExtra;
+
+      // WARM-UP / non-prospect GATE (runs BEFORE the AI): only reply to a REAL prospect — one linked
+      // to a lead/campaign, or whose email domain is in THIS owner's leads. Warm-up-network mail
+      // (random domains, never a lead: "RE: New Book Recommendation", "RE: Task Priorities"…) is
+      // skipped entirely, so the AI never replies to it and it never gets the "Respondido con IA"
+      // tag. Also saves a DeepSeek call on every warm-up message.
+      let prospectRelevant = !!(m.lead_id || m.campaign_id);
+      if (!prospectRelevant) {
+        const dom = String(m.from_email || "").split("@")[1]?.toLowerCase().trim() || "";
+        if (dom) {
+          const { data: leadHit } = await admin.from("leads").select("id").eq("user_id", ownerId).ilike("email", `%@${dom}`).limit(1);
+          prospectRelevant = !!(leadHit && (leadHit as any[]).length);
+        }
+      }
+      if (!prospectRelevant) {
+        if (!dryRun) { try { await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: "ignore", inbound: (body || "").slice(0, 300), reply: "" }); } catch { /* */ } }
+        results.push({ id: m.id, from: m.from_email, action: "ignore_warmup" });
+        continue;
+      }
       const psys = `Eres el asistente comercial de OnePulso que atiende las RESPUESTAS de prospectos a nuestros emails en frío. Con los interesados tu único objetivo es conseguir una reunión.
 
 CLASIFICA el correo del prospecto:
