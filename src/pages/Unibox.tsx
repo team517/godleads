@@ -2010,21 +2010,17 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
-    // WHITELIST (owner's rule) — the clean bandeja shows ONLY messages that belong to a campaign:
-    // from a lead's email (linked lead_id/campaign_id) OR from a domain that is in the campaign
-    // leads (so a colleague at the SAME company still counts). Everything else — warm-up-network
-    // noise, random outreach, even a message the AI happened to auto-reply to — stays OUT of the
-    // clean view; it's still fully accessible under "Todos". This is AUTHORITATIVE: a non-campaign
-    // sender is hidden even if it's in repliedToSet, so warm-up the AI replied to can't leak back in.
-    // Only enforce once the lead-domain set is loaded, so the bandeja is never wrongly blanked.
-    if (leadDomainsReady) {
-      return !isCampaignRelevant(m, leadDomains);                   // campaign-relevant → show, else hide
-    }
-    // Fallback while lead domains are still loading: keep the old exemptions so the view isn't blank.
-    if (repliedToSet.has((m.from_email || "").toLowerCase())) return false;
+    // 1) CAMPAIGN-RELEVANT → always show: a lead, a lead's DOMAIN (a colleague at the same company
+    //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
+    //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso
+    //    match immediately and the lead-DOMAIN match kicks in as soon as the set is ready.)
+    if (isCampaignRelevant(m, leadDomains)) return false;
+    // 2) Not campaign → hide only the clear WARM-UP / random noise (warm-up codes, or English/foreign
+    //    mail from an unknown sender). Everything else — a legit human email that just isn't from a
+    //    campaign — still shows ("que tenga sentido"). Raw everything stays under "Todos".
     if (isWarmupHidden(m)) return true;
     return false;
-  }, [isWarmupHidden, repliedToSet, leadDomains, leadDomainsReady]);
+  }, [isWarmupHidden, leadDomains]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
@@ -2201,10 +2197,9 @@ export default function Unibox() {
     })();
   }, [user, blockedLoading, messages, isBlockedSender, blockedDomainSet, blockedEmailSet]);
 
-  // Apply the unibox filters ALWAYS for the clean tabs: only messages that BELONG to a campaign
-  // (a lead's email or a lead's domain) — no warm-up, no bounces, no random outreach — in ANY
-  // language. "Todos" (all_mailboxes) and the "Mostrar warmup" toggle bypass this to show the raw
-  // mailbox, so nothing is ever unrecoverable.
+  // Clean tabs show: campaign mail (lead / lead-domain / onepulso) ALWAYS, plus legit human mail —
+  // and drop only the clear warm-up / random noise + bounces. "Todos" (all_mailboxes) and the
+  // "Mostrar warmup" toggle bypass this to show the raw mailbox, so nothing is ever unrecoverable.
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
     if (viewTab === "sent") {

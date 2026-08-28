@@ -23,21 +23,27 @@ describe("inbox visibility — clean bandeja whitelist", () => {
   it("is case-insensitive on the domain", () => {
     expect(rel({ from_email: "Boss@ACME.com" })).toBe(true);
   });
+  it("SHOWS our OWN onepulso domains + variants (always in campaign)", () => {
+    expect(rel({ from_email: "team@onepulso.online" })).toBe(true);
+    expect(rel({ from_email: "hello@onepulso.blog" })).toBe(true);
+    expect(rel({ from_email: "maria@onnepulssoflow.eu" })).toBe(true);
+    expect(rel({ from_email: "x@onnepulsso.eu" })).toBe(true);
+  });
 
-  // The noise the owner is complaining about → must be HIDDEN from the clean view.
-  it("HIDES a warm-up-network message from an unrelated domain", () => {
+  // These are NOT campaign-relevant (isCampaignRelevant=false). Whether they finally show is then
+  // decided by the warm-up filter in the component (warm-up/random → hidden; legit human → shown).
+  it("is NOT campaign-relevant for an unrelated warm-up domain", () => {
     expect(rel({ from_email: "seed4821@warmupmail.co" })).toBe(false);
   });
-  it("HIDES a random nonsensical message (\"Will review the new processes…\")", () => {
-    expect(rel({ from_email: "randomguy@unknown-corp.com", subject: "Will review the new processes and ensure my team is on board" })).toBe(false);
+  it("is NOT campaign-relevant for a stranger's domain", () => {
+    expect(rel({ from_email: "randomguy@unknown-corp.com" })).toBe(false);
   });
-  it("HIDES a message with no from_email", () => {
+  it("is NOT campaign-relevant with no from_email", () => {
     expect(rel({ from_email: "" })).toBe(false);
     expect(rel({ from_email: null })).toBe(false);
     expect(rel({})).toBe(false);
   });
-  it("HIDES a subdomain that is NOT itself in the lead domains", () => {
-    // Strict: only the exact lead domain counts (mail.acme.com is not acme.com).
+  it("a subdomain is NOT the exact lead domain (mail.acme.com ≠ acme.com)", () => {
     expect(rel({ from_email: "noreply@mail.acme.com" })).toBe(false);
   });
 });
