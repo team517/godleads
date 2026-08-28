@@ -1641,6 +1641,10 @@ export default function Unibox() {
         .eq("is_archived", false)
         .order("received_at", { ascending: true });
 
+      // Make sure any AI auto-reply to this contact is recorded as a sent email, so it shows in the
+      // thread "como si lo hubiera enviado yo" (idempotent; only fills what's missing).
+      try { await supabase.functions.invoke("ensure-ai-sent-thread", { body: { contact: msg.from_email, account_id: msg.account_id } }); } catch { /* non-fatal */ }
+
       // Get all sent emails to this contact from this account
       const { data: sentMsgs } = await supabase
         .from("sent_emails")

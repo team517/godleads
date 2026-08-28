@@ -99,3 +99,8 @@ verify_jwt = false
 # por IA" badge). Does its OWN JWT check and scopes to the caller → verify_jwt=false at the gateway.
 [functions.ai-replied-emails]
 verify_jwt = false
+
+# Backfills the missing sent_emails rows for an AI-replied contact so the reply shows in the Unibox
+# thread. JWT-checked, scoped to the caller, idempotent → verify_jwt=false at the gateway.
+[functions.ensure-ai-sent-thread]
+verify_jwt = false

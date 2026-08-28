@@ -505,7 +505,13 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
         if (blk.length >= 2) { const s = blk.pop() as string; blk[blk.length - 1] += `<br><br>${s}`; }
         const htmlBody = blk.map((x) => `<p style="margin:0 0 10px">${x}</p>`).join("") || `<p>${signed.replace(/\n/g, "<br>")}</p>`;
         if (!dryRun && mode !== "draft" && recvAcct) {
-          await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, personaName, m.from_email, reSubject, htmlBody, thread);
+          const sres = await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, personaName, m.from_email, reSubject, htmlBody, thread);
+          // Record the AI reply as a SENT email so it shows in the Unibox conversation thread
+          // (loadThread merges sent_emails by account_id + to_email) → the owner sees what the IA
+          // answered, "como si lo hubiera enviado yo". Non-fatal.
+          if (sres?.ok) {
+            try { await admin.from("sent_emails").insert({ user_id: ownerId, account_id: recvAcct.id, to_email: m.from_email, subject: reSubject, body: htmlBody, status: "sent", sent_at: new Date().toISOString() }); } catch { /* non-fatal */ }
+          }
         }
         if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", inbound: body.slice(0, 1200), reply: replyText.slice(0, 1200) });
         results.push({ id: m.id, from: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", reply_preview: replyText.slice(0, 200) }); processed++;
