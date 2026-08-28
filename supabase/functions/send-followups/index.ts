@@ -41,22 +41,31 @@ serve(async (req) => {
   const limit = Math.min(Number(input.limit) || 15, 40);
 
   // ── CANCEL-ON-REPLY ─────────────────────────────────────────────────────────────────────
-  // If the contact has REPLIED in the thread since a follow-up was scheduled, cancel their
-  // remaining scheduled follow-ups — sending more makes no sense once they answered. Runs every
-  // tick, so a reply on Tuesday cancels the Wed/Thu follow-ups within ~a minute (already-SENT ones
-  // are never touched — only status='scheduled'). The reply lands in the mailbox we send FROM
-  // (the follow-up's account_id, = team@), synced by fetch-inbox-team.
+  // If the contact has REPLIED since a follow-up was scheduled, cancel their remaining scheduled
+  // follow-ups — sending more makes no sense once they answered. Runs every tick, so a reply on
+  // Tuesday cancels the Wed/Thu follow-ups within ~a minute (already-SENT ones are never touched —
+  // only status='scheduled').
+  //
+  // IMPORTANT (fix): we search the reply across ALL of the owner's mailboxes (user_id), NOT just
+  // the mailbox the follow-up is sent FROM (team@). The contact usually replies to the ORIGINAL
+  // cold-email mailbox (the maria@/other account that first wrote them), so their answer lands
+  // there, not in team@. Scoping the check to the follow-up's account_id missed exactly that case
+  // (real bug: a.casado/Idento replied and the follow-up was NOT canceled). `inbox_messages` has
+  // user_id, so an owner-wide search catches the reply wherever it arrives. Match is a tolerant
+  // contains (from_email is stored lowercased, but this also survives any "Name <email>" wrapping).
   let canceled = 0;
-  const repliedSince = async (accountId: string, contact: string, since: string): Promise<boolean> => {
-    if (!accountId || !contact) return false;
+  const repliedSince = async (ownerId: string, contact: string, since: string): Promise<boolean> => {
+    if (!ownerId || !contact) return false;
+    const c = String(contact).trim().toLowerCase();
+    if (!c) return false;
     const { data } = await admin.from("inbox_messages").select("id")
-      .eq("account_id", accountId).ilike("from_email", contact).gt("received_at", since).limit(1);
+      .eq("user_id", ownerId).eq("is_sent", false).ilike("from_email", `%${c}%`).gt("received_at", since).limit(1);
     return !!(data && (data as any[]).length);
   };
   try {
-    const { data: sched } = await admin.from("follow_ups").select("id, account_id, contact_email, created_at").eq("status", "scheduled");
+    const { data: sched } = await admin.from("follow_ups").select("id, owner_id, account_id, contact_email, created_at").eq("status", "scheduled");
     for (const s of (sched || []) as any[]) {
-      if (await repliedSince(s.account_id, s.contact_email, s.created_at)) {
+      if (await repliedSince(s.owner_id, s.contact_email, s.created_at)) {
         const { data: c } = await admin.from("follow_ups").update({ status: "canceled", note: "cancelado: el contacto respondió", updated_at: new Date().toISOString() }).eq("id", s.id).eq("status", "scheduled").select("id");
         if (c && (c as any[]).length) canceled++;
       }
@@ -73,8 +82,8 @@ serve(async (req) => {
       const { data: claimed } = await admin.from("follow_ups").update({ status: "sending", updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "scheduled").select("id");
       if (!claimed || !(claimed as any[]).length) continue;
       // Last-moment guard: if the contact replied since this was scheduled (even a second ago),
-      // cancel instead of sending — never message someone who already answered.
-      if (await repliedSince(f.account_id, f.contact_email, f.created_at)) {
+      // cancel instead of sending — never message someone who already answered. Owner-wide (any mailbox).
+      if (await repliedSince(f.owner_id, f.contact_email, f.created_at)) {
         await admin.from("follow_ups").update({ status: "canceled", note: "cancelado: el contacto respondió", updated_at: new Date().toISOString() }).eq("id", f.id);
         canceled++; results.push({ id: f.id, canceled: true }); continue;
       }
