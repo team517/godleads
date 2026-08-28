@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { classifyMessage as classifyIntent } from "@/lib/classify";
+import { isCampaignRelevant } from "@/lib/inbox-visibility";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
@@ -2010,15 +2011,22 @@ export default function Unibox() {
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
     // If YOU already replied to this sender from the Unibox, it's a real, ongoing
-    // conversation — never hide it from "Todos", whatever language it's written in.
-    // (Fixes: reply to a FR/EN lead → the inbound vanished from the clean bandeja and
-    // only the sent copy remained under "Enviados".)
+    // conversation — never hide it. (Fixes: reply to a FR/EN lead → the inbound vanished.)
     if (repliedToSet.has((m.from_email || "").toLowerCase())) return false;
-    if (isWarmupHidden(m)) return true;               // warmup codes + clearly-foreign language
-    // NOTE: the old "only relevant replies" gate hid normal inbound mail and made the
-    // bandeja look empty. We now show every non-bounce, non-warmup ES/CA message.
+    // WHITELIST (owner's rule): the clean bandeja shows ONLY messages that belong to a campaign —
+    // from a lead's email (linked lead_id/campaign_id) OR from a domain that is in the campaign
+    // leads (so a colleague at the SAME company still counts). Everything else — warm-up-network
+    // noise, random outreach, mail whose language was misdetected — stays OUT of the clean view;
+    // it's still fully accessible under "Todos". Only enforce once the lead-domain set is loaded,
+    // so the bandeja is never wrongly blanked while it's still fetching.
+    if (leadDomainsReady) {
+      return !isCampaignRelevant(m, leadDomains);                   // campaign-relevant → show, else hide
+    }
+    // Fallback while lead domains are still loading: keep the previous warm-up/foreign filter so
+    // the view isn't blank for a moment on first load.
+    if (isWarmupHidden(m)) return true;
     return false;
-  }, [isWarmupHidden, repliedToSet]);
+  }, [isWarmupHidden, repliedToSet, leadDomains, leadDomainsReady]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
@@ -2195,8 +2203,10 @@ export default function Unibox() {
     })();
   }, [user, blockedLoading, messages, isBlockedSender, blockedDomainSet, blockedEmailSet]);
 
-  // Apply the unibox filters ALWAYS (Spanish/Catalan only, no warmup, no bounces,
-  // only real replies). English/other languages never appear anywhere.
+  // Apply the unibox filters ALWAYS for the clean tabs: only messages that BELONG to a campaign
+  // (a lead's email or a lead's domain) — no warm-up, no bounces, no random outreach — in ANY
+  // language. "Todos" (all_mailboxes) and the "Mostrar warmup" toggle bypass this to show the raw
+  // mailbox, so nothing is ever unrecoverable.
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
     if (viewTab === "sent") {
