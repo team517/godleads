@@ -28,6 +28,10 @@ describe("decideAccess — billing / trial gate", () => {
   it("special full-access contact_email is staff", () => {
     expect(decideAccess({ ...base, contactEmail: "alex@vioonyx.com" }).kind).toBe("staff");
   });
+  it("csnovacompany@gmail.com gets free access (staff) by its LOGIN email, unpaid & after cutoff", () => {
+    expect(decideAccess({ ...base, email: "csnovacompany@gmail.com" }).kind).toBe("staff");
+    expect(decideAccess({ ...base, email: "CSNovaCompany@gmail.com" }).kind).toBe("staff"); // case-insensitive
+  });
 
   it("admin-created client (allowed_routes) is free — never gated", () => {
     expect(decideAccess({ ...base, allowedRoutes: ["/dashboard", "/campaigns"] }).kind).toBe("free");

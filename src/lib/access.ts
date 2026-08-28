@@ -8,7 +8,9 @@
 // Only genuinely NEW self-signups face the 5-day trial and then must pay.
 
 export const ADMIN_EMAILS = ["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online"];
-export const SPECIAL_FULL_ACCESS_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "rk@coldabry.com", "oliver@osakaadigital.com", "eric@dekano-core.es", "oliver@clackstudio-creative.com", "alex@vioonyx.com", "oliver@tiarecrew.com"];
+// Free + unlimited access, but NOT admin (no admin panel — that's role="admin", separate). Matched
+// against the LOGIN email OR the profile contact_email.
+export const SPECIAL_FULL_ACCESS_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "rk@coldabry.com", "oliver@osakaadigital.com", "eric@dekano-core.es", "oliver@clackstudio-creative.com", "alex@vioonyx.com", "oliver@tiarecrew.com", "csnovacompany@gmail.com"];
 export const TRIAL_DAYS = 5;
 // Accounts created BEFORE this stay free (grandfathered). Only NEW self-signups from here on trial.
 export const TRIAL_CUTOFF_MS = Date.parse("2026-08-29T00:00:00Z");
@@ -36,8 +38,10 @@ export interface AccessInput {
 export function decideAccess(i: AccessInput): AccessDecision {
   const email = (i.email || "").toLowerCase();
   const contact = (i.contactEmail || "").toLowerCase();
-  // Staff / special → always full access, never gated.
-  if (i.role === "admin" || ADMIN_EMAILS.includes(email) || i.isClientManager || (!!contact && SPECIAL_FULL_ACCESS_EMAILS.includes(contact))) {
+  // Staff / free-access → always full access, never gated. Free-access emails (SPECIAL_*) get
+  // unlimited access but NO admin panel; matched on the login email OR the contact_email.
+  if (i.role === "admin" || ADMIN_EMAILS.includes(email) || i.isClientManager
+      || SPECIAL_FULL_ACCESS_EMAILS.includes(email) || (!!contact && SPECIAL_FULL_ACCESS_EMAILS.includes(contact))) {
     return { kind: "staff" };
   }
   const hasRoutes = !!(i.allowedRoutes && i.allowedRoutes.length > 0);
