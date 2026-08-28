@@ -94,3 +94,8 @@ verify_jwt = false
 # the Automatización flow advances on its own. Called by the page poll + a cron → verify_jwt=false.
 [functions.google-forms-sync]
 verify_jwt = false
+
+# Returns the sender emails the AI auto-reply agent actually REPLIED to (for the Unibox "Respondido
+# por IA" badge). Does its OWN JWT check and scopes to the caller → verify_jwt=false at the gateway.
+[functions.ai-replied-emails]
+verify_jwt = false

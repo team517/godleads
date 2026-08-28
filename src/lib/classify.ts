@@ -86,7 +86,7 @@ const OUT_OF_OFFICE = [
 
 // ── 2) NOT interested ───────────────────────────────────────────────────────
 // Someone asking for info / a call is NOT "not interested" even if they wrote "no".
-const SEND_INFO = /(p[áa]s|env[íi]|mand|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
+const SEND_INFO = /(p[áa]s|env[íi]|mand|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+|more\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
 const ENGAGEMENT = [
   SEND_INFO,
   /(cu[ée]nta|tell)(me|nos|\s+me|\s+us)?\s*(m[áa]s|more|about)/i,
@@ -97,6 +97,9 @@ const ENGAGEMENT = [
   /(cu[ée]nta|d[íi]|expl[íi]ca)(me|nos)\s+(el\s+|los\s+|la\s+|las\s+|un\s+|una\s+|m[áa]s\s+|sobre\s+|acerca\s+de\s+)?(precio|coste|presupuesto|info|informaci[óo]n|detalle|disponibilidad|tarifa|cotizaci[óo]n)/i,
   /(quiero|queremos|me gustar[íi]a|nos gustar[íi]a|i'?d like|we'?d like)\s*(saber|conocer|ver|una demo|a demo|more|m[áa]s)/i,
   /(podemos|podr[íi]amos|can we|could we|let'?s)\s*(hablar|vernos|reunir|quedar|talk|meet|chat|connect|call)/i,
+  // French "envoyez-moi / envoie-nous …" = asking us to send them something → a warm request.
+  // ("ne m'envoyez plus …" stays a no because DO_NOT_CONTACT is checked first.)
+  /envoy\w*[-\s]?(moi|nous)\b/i,
   // NOTE: do NOT put a bare "interested" here — "not interested" contains it and would
   // wrongly flip a clear rejection into engagement.
 ];
@@ -207,6 +210,10 @@ const REFERRAL = [
 const INTERESTED = [
   /me\s+interesa/i, /nos\s+interesa/i, /est(oy|amos)\s+interesad/i, /\binteresad[oa]s?\b/i,
   /(i'?m|we'?re)\s+interested/i, /\binterested\b/i, /interess(a|ato|ati|ante)/i, /suona interessante/i, /sembra interessante/i,
+  // French positive interest with the accented "é" ("ça m'intéresse", "cela nous intéresse",
+  // "nous sommes intéressés"). The negative "(ne) … pas intéressé" is caught earlier by
+  // NOT_INTERESTED, which is checked before this list, so these can't flip a rejection.
+  /\bm['’\s]?int[ée]resse\b/i, /\bnous\s+int[ée]resse\b/i, /sommes\s+int[ée]ress[ée]s\b/i,
   /(me\s+)?parece\s+(interesante|bien|genial)/i, /suena\s+(bien|interesante|genial)/i, /sounds\s+(good|great|interesting)/i,
   /(let'?s|vamos a|podemos)\s+(talk|chat|connect|meet|hablar|vernos|reunir|quedar|agendar)/i,
   /hablemos/i, /me gustar[íi]a (hablar|saber|conocer|una|ver una)/i,

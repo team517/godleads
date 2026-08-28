@@ -936,7 +936,7 @@ const categoryConfig: Record<MessageCategory, { label: string; bg: string; text:
   neutral:        { label: "",              bg: "",                  text: "text-muted-foreground", dot: "bg-muted-foreground" },
 };
 
-type FilterType = "all" | MessageCategory;
+type FilterType = "all" | "ai_replied" | MessageCategory;
 
 const langLabels: Record<string, string> = {
   en: "inglés", fr: "francés", de: "alemán", pt: "portugués", it: "italiano",
@@ -1227,6 +1227,10 @@ export default function Unibox() {
   const [sending, setSending] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<FilterType>("all");
   const [showTodayOnly, setShowTodayOnly] = useState(false);
+  // Senders the AI auto-reply agent ACTUALLY replied to (not the ones it ignored) → "Respondido por
+  // IA" badge. Loaded from the ai-replied-emails edge fn (scoped to this user).
+  const [aiRepliedSet, setAiRepliedSet] = useState<Set<string>>(new Set());
+  const aiReplied = (email?: string | null) => !!email && aiRepliedSet.has(String(email).toLowerCase());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncLockRef = useRef(false);
@@ -1786,6 +1790,22 @@ export default function Unibox() {
   }, [user]);
   useEffect(() => { loadRepliedTo(); }, [loadRepliedTo]);
 
+  // Load the set of senders the AI auto-reply agent actually replied to (for the "Respondido por
+  // IA" badge). Refreshes every 2 min so newly answered prospects light up without a page reload.
+  const loadAiReplied = useCallback(async () => {
+    try {
+      const { data } = await supabase.functions.invoke("ai-replied-emails", {});
+      const emails = ((data as any)?.emails as string[]) || [];
+      setAiRepliedSet(new Set(emails.map((e) => String(e).toLowerCase())));
+    } catch { /* non-fatal */ }
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    loadAiReplied();
+    const iv = setInterval(loadAiReplied, 120000);
+    return () => clearInterval(iv);
+  }, [user, loadAiReplied]);
+
   // Clear the translation ONLY when the selected message changes — not on every
   // 30s messages reload (that used to make a just-made translation disappear).
   useEffect(() => { setTranslatedBody(""); setCcInput(""); setCcOpen(false); }, [selectedId]);
@@ -2224,7 +2244,7 @@ export default function Unibox() {
       })
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
-      .filter(m => categoryFilter === "all" || classifyMessage(m.subject, m.body_text) === categoryFilter)
+      .filter(m => categoryFilter === "all" || (categoryFilter === "ai_replied" ? aiReplied(m.from_email) : classifyMessage(m.subject, m.body_text) === categoryFilter))
       .filter(m => {
         if (!search) return true;
         const q = search.toLowerCase();
@@ -2799,6 +2819,7 @@ export default function Unibox() {
   const filterButtons: { key: FilterType; label: string; dot?: string }[] = [
     { key: "all", label: "Todos" },
     { key: "interested", label: "Interesados", dot: "bg-success" },
+    { key: "ai_replied", label: "Respondido IA", dot: "bg-violet-500" },
     { key: "question", label: "Preguntas", dot: "bg-info" },
     { key: "not_interested", label: "No interesados", dot: "bg-destructive" },
     { key: "no_contactar", label: "No contactar", dot: "bg-rose-600" },
@@ -3144,12 +3165,17 @@ export default function Unibox() {
                         <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1">
                           {cleanBodyText(msg.body_text, true).slice(0, 120)}
                         </p>
-                        {/* Bottom row: classification mini-tag + campaign tag + folder */}
-                        {(catCfg.label || campaignName || msgFolder) && (
+                        {/* Bottom row: classification mini-tag + AI-replied tag + campaign tag + folder */}
+                        {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {catCfg.label && (
                               <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} /> {catCfg.label}
+                              </span>
+                            )}
+                            {aiReplied(msg.from_email) && (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/10 px-2 py-0.5 text-[11px] font-semibold text-violet-600 whitespace-nowrap" title="La IA respondió automáticamente a este contacto">
+                                <Sparkles className="h-3 w-3" /> Respondido por IA
                               </span>
                             )}
                             {campaignName && (
@@ -3233,6 +3259,11 @@ export default function Unibox() {
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
                             <span className={`h-1.5 w-1.5 rounded-full ${selectedCatConfig.dot}`} />
                             {selectedCatConfig.label}
+                          </span>
+                        )}
+                        {aiReplied(selected.from_email) && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-violet-500/10 text-violet-600" title="La IA respondió automáticamente a este contacto">
+                            <Sparkles className="h-3 w-3" /> Respondido por IA
                           </span>
                         )}
                       </h2>
