@@ -13,6 +13,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
 const CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -56,10 +57,16 @@ function flattenAnswers(resp: any, titles: Record<string, string>): Record<strin
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  // SECURITY: require a valid Supabase JWT and scope the sync to the CALLER's OWN connection — never
+  // let an anonymous request drive Google API traffic across every owner's stored refresh tokens.
+  const authHeader = req.headers.get("Authorization") || "";
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authHeader } } });
+  const { data: ud } = await userClient.auth.getUser();
+  if (!ud?.user) return json({ ok: false, reason: "unauthorized", inserted: 0 }, 401);
   if (!CLIENT_ID || !CLIENT_SECRET) return json({ ok: false, reason: "google_secrets_missing", inserted: 0 });
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
-  const body = await req.json().catch(() => ({} as any));
-  const onlyOwner = String(body.owner_id || "").trim();
+  await req.json().catch(() => ({} as any));
+  const onlyOwner = ud.user.id; // always scope to the authenticated caller, ignore any body owner_id
   let connections = 0, formsSeen = 0, inserted = 0; const errors: string[] = [];
   try {
     let q = admin.from("google_connections").select("owner_id, refresh_token, google_email");

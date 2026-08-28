@@ -13,6 +13,12 @@ function toHtml(text: string): string {
 }
 async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string; msgId?: string }> {
   try {
+    // Header-injection guard: strip CR/LF from any value that lands in an email header, so a crafted
+    // subject/recipient can never inject extra headers (defense-in-depth; these come from owner rows).
+    subject = String(subject || "").replace(/[\r\n]+/g, " ").trim();
+    to = String(to || "").replace(/[\r\n]+/g, "").trim();
+    from = String(from || "").replace(/[\r\n]+/g, "").trim();
+    fromName = fromName ? String(fromName).replace(/[\r\n"]+/g, " ").trim() : fromName;
     port = Number(port) || 587;
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
     const read = async () => { const b = new Uint8Array(4096); const n = await conn.read(b); return new TextDecoder().decode(b.subarray(0, n || 0)); };

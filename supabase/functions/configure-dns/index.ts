@@ -44,6 +44,25 @@ serve(async (req) => {
       return json({ ok: false, error: "dominio inválido" }, 400);
     }
 
+    // OWNERSHIP: the shared IONOS account holds EVERY client's zones, so a valid JWT is not enough —
+    // without this any logged-in client could rewrite or delete another tenant's DNS (SPF/DKIM/DMARC).
+    // Allow the agency owner, agency staff (is_client_manager), or a user who already has a mailbox on
+    // this domain (or a sub/parent of it). All reads go through the user client → RLS-scoped to them.
+    const callerEmail = String(user.email || "").toLowerCase();
+    let allowed = callerEmail === "hello@onepulso.blog";
+    if (!allowed) {
+      const { data: prof } = await userClient.from("profiles").select("is_client_manager").eq("user_id", user.id).maybeSingle();
+      if ((prof as any)?.is_client_manager) allowed = true;
+    }
+    if (!allowed) {
+      const { data: myAccts } = await userClient.from("email_accounts").select("email");
+      allowed = ((myAccts as any[]) || []).some((a) => {
+        const d = String(a.email || "").split("@")[1]?.toLowerCase() || "";
+        return !!d && (domain === d || domain.endsWith("." + d) || d.endsWith("." + domain));
+      });
+    }
+    if (!allowed) return json({ ok: false, error: "no autorizado para este dominio" }, 403);
+
     // 1) Find the zone for this domain (exact match, or the longest matching parent zone).
     const zonesResp = await fetch(`${BASE}/zones`, { headers: h });
     if (!zonesResp.ok) return json({ ok: false, error: `IONOS /zones ${zonesResp.status}` }, 502);

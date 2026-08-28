@@ -220,11 +220,20 @@ async function dbThread(admin: any, accountId: string, meEmail: string, contact:
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const url = Deno.env.get("SUPABASE_URL")!;
+    const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // SECURITY: require a valid Supabase JWT AND verify the caller OWNS the mailbox. Without this,
+    // anyone could read the FULL email content of ANY account just by passing its account_id
+    // (the service role bypasses RLS). The Seguimiento page always calls with the user's session.
+    const authHeader = req.headers.get("Authorization") || "";
+    const userClient = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: authHeader } } });
+    const { data: ud, error: aerr } = await userClient.auth.getUser();
+    if (aerr || !ud?.user) return new Response(JSON.stringify({ error: "no autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     const body = await req.json().catch(() => ({} as any));
     const accountId = body.account_id || TEAM_ACCOUNT;
-    const { data: acc } = await admin.from("email_accounts").select("email, imap_host, imap_port, imap_username, imap_password").eq("id", accountId).maybeSingle();
+    const { data: acc } = await admin.from("email_accounts").select("email, imap_host, imap_port, imap_username, imap_password, user_id").eq("id", accountId).maybeSingle();
     if (!acc?.imap_host || !acc?.imap_password) return new Response(JSON.stringify({ error: "cuenta sin IMAP configurado" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (acc.user_id !== ud.user.id) return new Response(JSON.stringify({ error: "no autorizado para esta cuenta" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (body.action === "search") {
       const out = await searchEmails(acc, String(body.query || ""));
       return new Response(JSON.stringify(out), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
