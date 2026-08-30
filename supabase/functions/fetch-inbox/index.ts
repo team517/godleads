@@ -7,7 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-interface ParsedAttachment { name: string; mime: string; base64: string }
+interface ParsedAttachment { name: string; mime: string; base64: string; size?: number; oversized?: boolean }
 
 interface ImapMessage {
   from_email: string;
@@ -21,7 +21,7 @@ interface ImapMessage {
   attachments: ParsedAttachment[];
 }
 
-const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // skip anything bigger than 15 MB
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // store the binary up to 25 MB; bigger → name-only chip
 const MAX_ATTACHMENTS_PER_MSG = 10;
 
 /** Decode an RFC2231/2047 attachment filename best-effort. */
@@ -62,8 +62,11 @@ function extractAttachments(raw: string): ParsedAttachment[] {
     const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
     const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
     if (b64.length < 40) continue;
-    if (b64.length * 0.75 > MAX_ATTACHMENT_BYTES) continue;
-    out.push({ name, mime, base64: b64 });
+    const size = Math.floor(b64.length * 0.75);
+    // Too big to store → still record the NAME + SIZE so the Unibox shows a chip ("un vídeo llegó"),
+    // instead of the file silently vanishing. The binary just isn't downloadable from here.
+    if (size > MAX_ATTACHMENT_BYTES) { out.push({ name, mime, base64: "", size, oversized: true }); continue; }
+    out.push({ name, mime, base64: b64, size });
   }
   return out;
 }
@@ -928,11 +931,16 @@ serve(async (req) => {
           }
           for (const msg of withAtt) {
             if (msg.message_id && alreadyStored.has(msg.message_id)) { (msg as unknown as { _stored: unknown[] })._stored = []; continue; }
-            const stored: { name: string; mime: string; size: number; path: string }[] = [];
+            const stored: { name: string; mime: string; size: number; path: string; oversized?: boolean }[] = [];
             const msgKey = (msg.message_id || `${msg.from_email}-${msg.date}`).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 90) || "msg";
             const nameCount: Record<string, number> = {};
             for (const att of msg.attachments) {
               try {
+                // Too big to store → keep just the metadata so the Unibox shows a name/size chip.
+                if (att.oversized || !att.base64) {
+                  stored.push({ name: att.name, mime: att.mime, size: att.size || 0, path: "", oversized: true });
+                  continue;
+                }
                 const bytes = base64ToBytes(att.base64);
                 let safeName = att.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "adjunto";
                 // De-dupe identical filenames within one message

@@ -1019,7 +1019,7 @@ function humanBytes(bytes: number): string {
   return Math.max(1, Math.round(bytes / 1024)) + " KB";
 }
 
-export type StoredAttachment = { name: string; mime: string; size: number; path: string };
+export type StoredAttachment = { name: string; mime: string; size: number; path: string; oversized?: boolean };
 
 /** Attachment whose binary lives in Supabase Storage. Opens/downloads via a
  *  short-lived signed URL; images get an inline thumbnail. */
@@ -1154,30 +1154,45 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
  *  name-only chip. */
 function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | null; bodyHtml?: string | null; stored?: StoredAttachment[] | null }) {
   // Prefer attachments stored in Storage by the sync (real binary → view/download).
-  const storedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.path) : []), [stored]);
+  const storedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.path && !a.oversized) : []), [stored]);
+  // Too big to store (e.g. a large video) — shown as a name/size chip so it's never invisible.
+  const oversizedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.oversized) : []), [stored]);
 
   const atts = useMemo(() => {
-    if (storedAtts.length > 0) return [];
+    if (storedAtts.length > 0 || oversizedAtts.length > 0) return [];
     const found = [...extractAttachments(bodyHtml || ""), ...extractAttachments(bodyText || "")];
     const byKey = new Map<string, ParsedAttachment>();
     for (const a of found) if (!byKey.has(a.name)) byKey.set(a.name, a);
     return Array.from(byKey.values());
-  }, [bodyText, bodyHtml, storedAtts]);
+  }, [bodyText, bodyHtml, storedAtts, oversizedAtts]);
 
   // Fallback: names only (no stored binary and none decodable from the body).
   const nameOnly = useMemo(() => {
-    if (storedAtts.length > 0 || atts.length > 0) return [];
+    if (storedAtts.length > 0 || atts.length > 0 || oversizedAtts.length > 0) return [];
     const set = new Set<string>();
     extractAttachmentNames(bodyText || "").forEach((n) => set.add(n));
     extractAttachmentNames(bodyHtml || "").forEach((n) => set.add(n));
     return Array.from(set);
-  }, [storedAtts, atts, bodyText, bodyHtml]);
+  }, [storedAtts, atts, oversizedAtts, bodyText, bodyHtml]);
 
-  if (storedAtts.length === 0 && atts.length === 0 && nameOnly.length === 0) return null;
+  if (storedAtts.length === 0 && atts.length === 0 && oversizedAtts.length === 0 && nameOnly.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2.5">
       {storedAtts.map((att) => <StoredAttachmentCard key={att.path} att={att} />)}
       {atts.map((att) => <AttachmentCard key={att.name} att={att} />)}
+      {oversizedAtts.map((att, i) => (
+        <div key={`${att.name}-${i}`} title={`${att.name} — demasiado grande para descargar aquí`} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+            <FileText className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-medium text-foreground">{att.name}</span>
+            <span className="flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+              <Paperclip className="h-3 w-3" /> {att.size ? humanBytes(att.size) + " · " : ""}demasiado grande para descargar aquí
+            </span>
+          </span>
+        </div>
+      ))}
       {nameOnly.map((name) => (
         <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
