@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -309,6 +309,8 @@ export default function AutomationFlow() {
   const [chatOpen, setChatOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [syncNote, setSyncNote] = useState<"" | "secrets" | "token">(""); // reception blocker, if any
+  const [webhookUrl, setWebhookUrl] = useState<string>(""); // no-secret reception via a Form webhook
+  const [copiedWh, setCopiedWh] = useState<"" | "url" | "script">("");
   const [reviewClient, setReviewClient] = useState<FlowClient | null>(null);
   const [reviewNcr, setReviewNcr] = useState<{ req: any; steps: any[] } | null>(null);
   const [loadingNcrReview, setLoadingNcrReview] = useState<string | null>(null);
@@ -442,12 +444,20 @@ export default function AutomationFlow() {
     } catch { /* ignore */ }
   };
 
+  const loadWebhook = async () => {
+    try {
+      const { data } = await supabase.functions.invoke("automation-view", { body: { action: "webhook" } });
+      if ((data as any)?.url) setWebhookUrl(String((data as any).url));
+    } catch { /* */ }
+  };
+
   useEffect(() => {
     setNodes(loadArr(FLOW_KEY, DEFAULT_NODES));
     setClients(loadArr(CLIENTS_KEY, []));
     setAi(load(AI_KEY, DEFAULT_AI));
     checkGoogle();
     loadResponses();
+    loadWebhook();
     loadServiceActivity();
     loadSupportInbox();
     loadPendingCampaigns();
@@ -940,16 +950,47 @@ export default function AutomationFlow() {
         </CardContent>
       </Card>
 
-      {/* Reception blocker banner — the flow only advances on its own when Google Form responses can
-          be pulled in. If the two Google secrets aren't set (or the token expired), say so clearly. */}
-      {syncNote && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          {syncNote === "secrets"
-            ? <p><b>La recepción automática del Form está apagada.</b> Para que los clientes avancen solos al responder, define <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code> en Supabase (Dashboard → Project Settings → Edge Functions → Secrets). En cuanto estén, las respuestas entran solas cada minuto.</p>
-            : <p><b>La conexión con Google caducó.</b> Vuelve a conectar la cuenta de Google en este panel (el token de prueba caduca a los 7 días; publica la pantalla de consentimiento para que no caduque).</p>}
-        </div>
-      )}
+      {/* Reception setup — the flow advances on its own only when Form responses can arrive. Two ways:
+          the WEBHOOK (recommended, no secrets, no token expiry — paste one Apps Script into the Form)
+          or the Google OAuth secrets. Shown when reception isn't confirmed working. */}
+      {syncNote && (() => {
+        const script = `function onFormSubmit(e) {\n  var url = ${JSON.stringify(webhookUrl || "PEGA_AQUI_TU_URL")};\n  var r = e.response, a = {};\n  r.getItemResponses().forEach(function (ir) { a[ir.getItem().getTitle()] = ir.getResponse(); });\n  var f = FormApp.getActiveForm();\n  UrlFetchApp.fetch(url, {\n    method: "post", contentType: "application/json", muteHttpExceptions: true,\n    payload: JSON.stringify({ formId: f.getId(), formTitle: f.getTitle(), email: (r.getRespondentEmail() || ""), answers: a })\n  });\n}`;
+        const copy = (text: string, which: "url" | "script") => { navigator.clipboard?.writeText(text).then(() => { setCopiedWh(which); setTimeout(() => setCopiedWh(""), 1800); }).catch(() => {}); };
+        return (
+          <Card className="border-amber-300 dark:border-amber-500/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base"><AlertTriangle className="h-4 w-4 text-amber-600" /> Conectar la recepción del Form</CardTitle>
+              <p className="text-xs text-muted-foreground">Ahora mismo las respuestas del Form NO entran solas, así que los clientes no avanzan. Conéctala con UNA de estas dos formas (basta una).</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-emerald-300 bg-emerald-50/60 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/5">
+                <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">✅ Recomendado — sin secretos, no caduca</p>
+                <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+                  <li>Abre tu Google Form → menú <b>Extensiones → Apps Script</b>.</li>
+                  <li>Borra lo que haya y <b>pega este script</b> (ya lleva tu enlace):
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <pre className="max-h-40 flex-1 overflow-auto rounded-md bg-muted p-2 text-[10px] leading-relaxed">{script}</pre>
+                      <Button size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-xs" onClick={() => copy(script, "script")}>{copiedWh === "script" ? <><Check className="h-3 w-3" /> Copiado</> : <><Copy className="h-3 w-3" /> Copiar</>}</Button>
+                    </div>
+                  </li>
+                  <li>Arriba, <b>Activadores</b> (reloj) → <b>Añadir activador</b> → función <code>onFormSubmit</code>, evento <b>“Al enviar el formulario”</b> → Guardar (acepta los permisos).</li>
+                </ol>
+                {webhookUrl && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">Tu URL:</span>
+                    <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-[10px]">{webhookUrl}</code>
+                    <Button size="sm" variant="ghost" className="h-6 gap-1 text-[11px]" onClick={() => copy(webhookUrl, "url")}>{copiedWh === "url" ? "✓" : <Copy className="h-3 w-3" />}</Button>
+                  </div>
+                )}
+              </div>
+              <div className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+                <p className="font-semibold text-foreground">Alternativa — 2 secretos de Google</p>
+                <p className="mt-1">Si prefieres la sincronización por OAuth: define <code>GOOGLE_CLIENT_ID</code> y <code>GOOGLE_CLIENT_SECRET</code> en Supabase (<b>Dashboard → Project Settings → Edge Functions → Secrets</b>). Ojo: el token de prueba caduca a los 7 días salvo que publiques la pantalla de consentimiento de Google.</p>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* ── Clients in flow ── */}
       <Card>

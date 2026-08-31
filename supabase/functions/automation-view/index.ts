@@ -35,6 +35,16 @@ serve(async (req) => {
       return new Response(JSON.stringify({ inbox: inbox.data || [], service: service.data || [], pending: pending.data || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "webhook") {
+      // The OWNER's form-webhook URL (creates the key on first call). Paste the URL into a Google
+      // Apps Script on the Form → each submission POSTs here → form_responses → the flow advances.
+      // No Google secrets, no OAuth token expiry. Works for the owner AND the equipo@ delegate.
+      await admin.from("form_webhooks").upsert({ owner_id: OWNER }, { onConflict: "owner_id", ignoreDuplicates: true });
+      const { data: wh } = await admin.from("form_webhooks").select("key").eq("owner_id", OWNER).maybeSingle();
+      const key = (wh as any)?.key || null;
+      return new Response(JSON.stringify({ key, url: key ? `${url}/functions/v1/form-webhook?key=${key}` : null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "responses") {
       // The owner's Google Form responses (so a delegate advances the flow with the same data).
       const { data } = await admin.from("form_responses").select("id, form_id, form_title, respondent_email, answers, received_at").eq("owner_id", OWNER).order("received_at", { ascending: false }).limit(100);
