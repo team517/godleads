@@ -278,6 +278,25 @@ async function decide(apiKey: string, system: string, user: string, temp = 0.3):
   try { return JSON.parse(content); } catch { return {}; }
 }
 
+// Deterministic language detection for the prospect's reply, so the AI answers in THEIR language
+// regardless of the (Spanish) system prompt's bias. Stop-word scoring; only returns a language when
+// the signal is clear and beats the runner-up, otherwise null (let the model decide).
+function detectLang(text: string): string | null {
+  const t = " " + String(text || "").toLowerCase().replace(/[^a-záàâäéèêëíìîïóòôöúùûüñçß'\s]/gi, " ").replace(/\s+/g, " ").trim() + " ";
+  if (t.length < 12) return null;
+  const has = (w: string) => t.includes(" " + w + " ");
+  const score = (ws: string[]) => ws.reduce((n, w) => n + (has(w) ? 1 : 0), 0);
+  const en = score(["the","and","you","your","would","like","can","we","next","week","let","know","availability","thank","thanks","hi","hello","please","interested","opportunity","connect","schedule","meeting","regards","best","looking","forward","are","is","to","for","with","on","this","how","what","when"]);
+  const es = score(["que","de","los","las","para","con","gracias","hola","saludos","interesa","reunión","semana","disponibilidad","información","una","por","como","más","muy","cuándo","podemos","estoy","nosotros"]);
+  const fr = score(["les","vous","nous","merci","bonjour","cordialement","intéresse","semaine","disponibilité","rendez","je","est","pour","avec","votre","bien","nous"]);
+  const it = score(["che","di","per","con","grazie","ciao","saluti","interessa","settimana","disponibilità","sono","molto","questo","siamo"]);
+  const de = score(["der","die","das","und","ich","danke","hallo","mit","für","ist","nicht","auch","sehr","woche","wir","haben"]);
+  const pt = score(["para","com","obrigado","olá","interesse","semana","disponibilidade","você","muito","este","nós","estou"]);
+  const ranked: [string, number][] = [["inglés", en], ["español", es], ["francés", fr], ["italiano", it], ["alemán", de], ["portugués", pt]];
+  ranked.sort((a, b) => b[1] - a[1]);
+  return ranked[0][1] >= 3 && ranked[0][1] > ranked[1][1] ? ranked[0][0] : null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -510,7 +529,12 @@ REGLAS:
 - Si es NEGATIVO/NEUTRO: NO respondas. Deja "reply" vacío.${extra ? "\n\nCONOCIMIENTO E INSTRUCCIONES DEL DUEÑO (respétalas por encima de todo):\n" + extra : ""}
 
 Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>"}`;
-      const pmsg = `CORREO DEL PROSPECTO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}\n\nPERSONALIZA: si sabes el nombre (${m.from_name || "desconocido"}), empieza con "Hola ${(m.from_name || "").split(" ")[0] || ""},". Si no lo sabes, usa un saludo natural sin inventar nombre.`;
+      // Force the reply language deterministically (the model tends to drift to Spanish otherwise).
+      const detectedLang = detectLang(`${m.subject || ""} ${body}`);
+      const langDirective = detectedLang
+        ? `IDIOMA (OBLIGATORIO): el prospecto ha escrito en ${detectedLang.toUpperCase()}. Responde TODO en ${detectedLang} — saludo, cuerpo, invitación a agendar y despedida. No cambies de idioma.\n\n`
+        : "";
+      const pmsg = `${langDirective}CORREO DEL PROSPECTO:\nDe: ${m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email}\nAsunto: ${m.subject}\n${body}\n\nPERSONALIZA: si sabes el nombre (${m.from_name || "desconocido"}), empieza con "Hola ${(m.from_name || "").split(" ")[0] || ""}," (o su equivalente en el idioma del prospecto). Si no lo sabes, usa un saludo natural sin inventar nombre.`;
       let pd: any = {};
       // temp 0 → the interested/not-interested classification is DETERMINISTIC and reliable
       // (at 0.3 the same clear "me interesa, ¿cómo funciona?" flip-flopped between runs).

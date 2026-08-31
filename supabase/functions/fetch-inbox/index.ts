@@ -883,7 +883,21 @@ serve(async (req) => {
         // is the assigned sender; otherwise fall back to the latest sent email from
         // this same account. This prevents replies from being attached to another
         // campaign when the same lead exists in multiple campaigns.
-        const leadIds = [...leadsMap.values()];
+        // DOMAIN-level linking: a reply from a COLLEAGUE at a lead's company (same domain, a
+        // different person — e.g. sarang.ct@locobear.ae when the lead was someone else @locobear.ae)
+        // is still a campaign reply. Link it to that campaign so it lands IN the campaign instead of
+        // being lost in "global". Only for batch domains with NO exact-email lead; capped for speed.
+        const domainToLead = new Map<string, string>();
+        const resolvedDomains = new Set([...leadsMap.keys()].map((e) => e.split("@")[1]).filter(Boolean));
+        const unresolvedDomains = fromDomains.filter((d) => d && !resolvedDomains.has(d)).slice(0, 25);
+        for (const d of unresolvedDomains) {
+          try {
+            const { data: dl } = await adminClient.from("leads").select("id").eq("user_id", account.user_id).ilike("email", `%@${d}`).limit(1);
+            if (dl && dl[0]?.id) domainToLead.set(d, dl[0].id);
+          } catch { /* non-fatal */ }
+        }
+
+        const leadIds = [...new Set([...leadsMap.values(), ...domainToLead.values()])];
         const campaignsMap = new Map<string, string>();
         if (leadIds.length > 0) {
           const { data: assignedCampaigns } = await adminClient
@@ -962,7 +976,12 @@ serve(async (req) => {
           let parsedDate: string;
           try { parsedDate = new Date(msg.date).toISOString(); } catch { parsedDate = new Date().toISOString(); }
           const leadId = leadsMap.get(msg.from_email.toLowerCase()) || null;
-          const campaignId = leadId ? (campaignsMap.get(leadId) || null) : null;
+          // campaign_id: exact-email lead's campaign, else the campaign of a lead at the SAME DOMAIN
+          // (colleague reply) so it still lands in the campaign. lead_id stays exact-only, so a
+          // colleague's reply isn't mis-attributed to a specific lead in the per-lead stats.
+          const dom = (msg.from_email.split("@")[1] || "").toLowerCase();
+          const domLeadId = !leadId && dom ? (domainToLead.get(dom) || null) : null;
+          const campaignId = (leadId ? campaignsMap.get(leadId) : (domLeadId ? campaignsMap.get(domLeadId) : null)) || null;
           return {
             user_id: account.user_id,
             account_id: account.id,
