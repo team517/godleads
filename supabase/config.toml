@@ -109,3 +109,7 @@ verify_jwt = false
 # "Asistente IA → Respuestas automáticas" panel shows them. JWT-scoped, idempotent → verify_jwt=false.
 [functions.sync-auto-reply-log]
 verify_jwt = false
+
+# BYOK: an external user connects their own OpenAI/DeepSeek key. Does its own JWT check → verify_jwt=false.
+[functions.ai-key]
+verify_jwt = false

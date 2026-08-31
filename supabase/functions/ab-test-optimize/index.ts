@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -146,8 +147,10 @@ serve(async (req) => {
         `Variante ${v.label}: Subject="${v.subject}" | Body="${v.body.slice(0, 200)}" | Enviados=${v.sent} | Replies=${v.replied} | Reply Rate=${v.replyRate}%`
       ).join("\n");
 
-      const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-      if (!DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY not configured");
+      const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+      if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (!ai.apiKey) throw new Error("AI key not configured");
 
       const systemPrompt = `Eres un experto en cold email outreach y A/B testing. Tu trabajo es analizar el rendimiento de las variantes actuales de una campaña de email y crear nuevas variantes mejoradas que aumenten la tasa de respuesta.
 
@@ -169,14 +172,14 @@ VARIABLES DISPONIBLES: ${availableVars.join(", ")}
 
 Genera ${variantsToGenerate} nueva(s) variante(s) mejorada(s) basándote en el análisis de rendimiento. Responde SOLO con un JSON array con objetos {subject, body}. Sin explicaciones adicionales.`;
 
-      const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      const aiResp = await fetch(`${ai.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+          Authorization: `Bearer ${ai.apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          model: ai.model,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },

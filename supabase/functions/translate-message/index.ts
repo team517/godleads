@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -21,12 +22,10 @@ serve(async (req) => {
       });
     }
 
-    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!DEEPSEEK_API_KEY) {
-      return new Response(JSON.stringify({ error: "AI not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para traducir.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!ai.apiKey) return new Response(JSON.stringify({ error: "AI not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const { text, target_lang, mode } = await req.json();
     // mode: "detect" → returns detected language code
@@ -39,14 +38,14 @@ serve(async (req) => {
     }
 
     if (mode === "detect") {
-      const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      const aiResp = await fetch(`${ai.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+          Authorization: `Bearer ${ai.apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          model: ai.model,
           messages: [
             {
               role: "system",
@@ -93,14 +92,14 @@ serve(async (req) => {
     };
     const targetName = langNames[targetLang] || targetLang;
 
-    const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const aiResp = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: ai.model,
         messages: [
           {
             role: "system",

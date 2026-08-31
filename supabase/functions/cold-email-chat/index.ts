@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -11,8 +12,10 @@ serve(async (req) => {
 
   try {
     const { messages } = await req.json();
-    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not configured");
+    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para usar el asistente.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!ai.apiKey) throw new Error("AI key not configured");
 
     // Try to get user analytics context
     let analyticsContext = "";
@@ -162,14 +165,14 @@ REGLAS DE RESPUESTA:
 - Estructura tus respuestas con secciones claras usando ## headers
 - Tienes acceso a las analíticas reales de las campañas del usuario. Úsalas para personalizar cada consejo.${analyticsContext}`;
 
-    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const response = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: ai.model,
         messages: [
           { role: "system", content: systemPrompt },
           ...messages,

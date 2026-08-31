@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,12 +11,10 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!DEEPSEEK_API_KEY) {
-      return new Response(JSON.stringify({ error: "AI not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!ai.apiKey) return new Response(JSON.stringify({ error: "AI not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const { body, variables } = await req.json();
 
@@ -58,14 +57,14 @@ CRÍTICO: Genera un asunto ÚNICO y ORIGINAL. No repitas plantillas obvias. Sé 
 
 Responde SOLO con el asunto, sin comillas ni explicaciones.`;
 
-    const aiResp = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const aiResp = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: ai.model,
         temperature: 1.1,
         top_p: 0.95,
         seed,

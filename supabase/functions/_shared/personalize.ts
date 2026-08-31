@@ -44,12 +44,14 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms = 30_000): Pr
   finally { clearTimeout(t); }
 }
 
-async function callDeepSeek(key: string, system: string, prompt: string, temperature: number, maxTokens: number): Promise<string> {
-  const r = await fetchWithTimeout("https://api.deepseek.com/chat/completions", {
+// OpenAI-format chat call (DeepSeek and OpenAI share the format) — baseUrl/model let a BYOK user's
+// own OpenAI or DeepSeek key be used; defaults keep the platform DeepSeek behavior.
+async function callDeepSeek(key: string, system: string, prompt: string, temperature: number, maxTokens: number, baseUrl?: string, model?: string): Promise<string> {
+  const r = await fetchWithTimeout(`${baseUrl || "https://api.deepseek.com"}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: model || "deepseek-chat",
       messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
       max_tokens: maxTokens, temperature, stream: false,
     }),
@@ -73,6 +75,8 @@ export interface GenOpts {
   provider: "deepseek" | "claude";
   deepseekKey?: string;
   claudeKey?: string;
+  baseUrl?: string;   // BYOK: OpenAI-compatible base URL for the deepseek path (e.g. a user's OpenAI)
+  model?: string;     // BYOK: model for the deepseek path
   system?: string;
   userPrompt: string;
   temperature?: number;
@@ -95,7 +99,7 @@ export async function generatePersonalized(opts: GenOpts): Promise<string> {
     try {
       const out = opts.provider === "claude"
         ? await callClaude(opts.claudeKey!, system, opts.userPrompt, temperature, maxTokens)
-        : await callDeepSeek(opts.deepseekKey!, system, opts.userPrompt, temperature, maxTokens);
+        : await callDeepSeek(opts.deepseekKey!, system, opts.userPrompt, temperature, maxTokens, opts.baseUrl, opts.model);
       if (out && out.trim()) return out;
       lastErr = new Error("empty output");
     } catch (e) {

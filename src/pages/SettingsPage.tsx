@@ -27,6 +27,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { EmailDomainHealthCard } from "@/components/settings/EmailDomainHealthCard";
 import { BlocklistCard } from "@/components/settings/BlocklistCard";
+import { AiKeyCard } from "@/components/settings/AiKeyCard";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
   { tier: "starter", features: ["1,000 leads", "3 cuentas de email", "Campañas ilimitadas", "Follow-ups automáticos", "Soporte por email"] },
@@ -450,6 +451,8 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="sending" className="space-y-4 mt-4">
+          <AiKeyCard />
+
           <EmailDomainHealthCard initialDomain={profile.contact_email.split("@")[1] || ""} />
 
           <BlocklistCard />

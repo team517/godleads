@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, applyMapping, generatePersonalized } from "../_shared/personalize.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,15 +33,24 @@ serve(async (req) => {
     if (!rows.length) return new Response(JSON.stringify({ error: "No hay filas" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (rows.length > 25) return new Response(JSON.stringify({ error: "Máximo 25 filas por lote" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
+    // BYOK: agency + agency-created clients use the platform key; external users use their own.
+    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para personalizar.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
     const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
-    const useProvider = provider === "claude" && claudeKey ? "claude" : "deepseek";
-    if (useProvider === "deepseek" && !deepseekKey) {
-      return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY no configurada en el servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    let genBase: Record<string, unknown>;
+    if (ai.source === "user") {
+      genBase = { provider: "deepseek", deepseekKey: ai.apiKey, baseUrl: ai.baseUrl, model: ai.model };
+    } else {
+      const envDeepseek = Deno.env.get("DEEPSEEK_API_KEY");
+      const useProvider = provider === "claude" && claudeKey ? "claude" : "deepseek";
+      if (useProvider === "deepseek" && !envDeepseek) return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY no configurada en el servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      genBase = { provider: useProvider, deepseekKey: envDeepseek, claudeKey };
     }
 
     const gen = (userPrompt: string) =>
-      generatePersonalized({ provider: useProvider as "claude" | "deepseek", deepseekKey, claudeKey, system, userPrompt, temperature: 0.7, retries: 2 });
+      generatePersonalized({ ...(genBase as any), system, userPrompt, temperature: 0.7, retries: 2 });
 
     // Bounded concurrency so a 25-row batch stays well within the edge time budget.
     const results: { index: number; message: string; error?: string }[] = [];

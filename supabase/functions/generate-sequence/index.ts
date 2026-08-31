@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,8 +11,11 @@ serve(async (req) => {
 
   try {
     const { context, variables, numSteps } = await req.json();
-    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not configured");
+    // BYOK: platform key for agency/agency-clients, the user's own key otherwise.
+    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para usar la generación con IA.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!ai.apiKey) throw new Error("AI key not configured");
 
     const variableList = (variables || []).map((v: string) => `{{${v}}}`).join(", ");
 
@@ -33,14 +37,14 @@ Responde EXCLUSIVAMENTE con un JSON array con este formato exacto (sin markdown,
 
 El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
 
-    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const response = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${ai.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: ai.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Genera una secuencia de ${numSteps || 3} emails de cold outreach con este contexto:\n\n${context}\n\nVariables disponibles para personalizar: ${variableList || "ninguna"}` },
