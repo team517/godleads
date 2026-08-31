@@ -526,9 +526,10 @@ ANTE LA DUDA, o si NO hay un interés o una pregunta CLARA sobre nuestro servici
 
 REGLAS:
 - Si es POSITIVO: PRIMERO detecta el idioma EXACTO del correo del prospecto y escribe TODA tu respuesta ÍNTEGRAMENTE en ESE idioma — el saludo, el cuerpo, la invitación a agendar y la despedida (inglés→inglés, francés→francés, italiano→italiano, alemán→alemán, portugués→portugués, catalán→catalán, etc.; ante la duda, usa el idioma en que está escrito el correo). Respuesta BREVE y humana (2-4 frases) que resuelva por encima su duda e invite a agendar una reunión. Incluye el enlace del calendario TAL CUAL, completo: ${prospectCal}. Termina SIEMPRE con una despedida natural EN ESE MISMO IDIOMA y firma con el nombre "${personaName}" (p. ej. inglés "Best regards, ${personaName}", francés "Cordialement, ${personaName}", español "Un saludo, ${personaName}"). Sin emojis. No inventes datos ni des precios cerrados por email.
-- Si es NEGATIVO/NEUTRO: NO respondas. Deja "reply" vacío.${extra ? "\n\nCONOCIMIENTO E INSTRUCCIONES DEL DUEÑO (respétalas por encima de todo):\n" + extra : ""}
+- HORA/AGENDA que no le viene: si está INTERESADO pero dice que la hora o fecha propuesta NO le va, que no está disponible a esa hora, o pide OTRO horario / reprogramar → responde EN SU IDIOMA de forma tranquilizadora, dejando claro que NO hay problema: que te diga qué hora le viene mejor y se la agendas / lo ajustas tú (p. ej. "Sin problema, dime qué hora te viene mejor y te la reservo — lo ajusto encantado"). Hazlo fácil, nunca le des un no. En ESE caso marca "notify_team": true. (Sigue siendo "interested": true.)
+- Si es NEGATIVO/NEUTRO: NO respondas. Deja "reply" vacío y "notify_team": false.${extra ? "\n\nCONOCIMIENTO E INSTRUCCIONES DEL DUEÑO (respétalas por encima de todo):\n" + extra : ""}
 
-Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>"}`;
+Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es interested; vacío si no>", "notify_team": true|false}`;
       // Force the reply language deterministically (the model tends to drift to Spanish otherwise).
       const detectedLang = detectLang(`${m.subject || ""} ${body}`);
       const langDirective = detectedLang
@@ -561,6 +562,19 @@ Devuelve SOLO JSON: {"interested": true|false, "reply": "<cuerpo del email si es
             // THAT table (the running prospect agent only wrote client_service_log, so the panel showed
             // "Sin respuestas registradas"). Realtime on auto_reply_log picks this up instantly.
             try { await admin.from("auto_reply_log").insert({ user_id: ownerId, rule_id: (input as any).rule_id || null, inbox_message_id: m.id, to_email: m.from_email, subject: reSubject, ai_response: replyText.slice(0, 4000), status: "sent", sent_at: new Date().toISOString() }); } catch { /* non-fatal */ }
+            // Scheduling conflict: the prospect wants a DIFFERENT time. The IA already replied "no
+            // problem, tell me your time and I'll book it" — now alert the team so the owner picks the
+            // prospect's time and schedules the meeting manually. Sent from the receiving mailbox.
+            if (pd.notify_team) {
+              try {
+                const esc = (s: string) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string)).replace(/\n/g, "<br>");
+                const alert = `<p><b>⚠️ Un prospecto quiere OTRA hora para la reunión — ajústala y agéndasela.</b></p>`
+                  + `<p><b>Prospecto:</b> ${esc((m.from_name ? m.from_name + " " : "") + "<" + m.from_email + ">")}<br><b>Buzón:</b> ${esc(recvAcct.email)}<br><b>Asunto:</b> ${esc(m.subject || "")}</p>`
+                  + `<p><b>Su mensaje:</b><br>${esc((body || "").slice(0, 1500))}</p>`
+                  + `<p><b>Lo que respondió la IA:</b><br>${esc(replyText.slice(0, 1500))}</p>`;
+                await sendSmtp(recvAcct.smtp_host, recvAcct.smtp_port, recvAcct.smtp_username, recvAcct.smtp_password, recvAcct.email, "OnePulso", "team@onepulso.online", `Cambiar hora reunion - ${m.from_email}`, alert);
+              } catch { /* non-fatal */ }
+            }
           }
         }
         if (!dryRun) await admin.from("client_service_log").insert({ owner_id: ownerId, from_email: m.from_email, action: mode === "draft" ? "prospect_draft" : "prospect_reply", inbound: body.slice(0, 1200), reply: replyText.slice(0, 1200) });
