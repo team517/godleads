@@ -630,7 +630,10 @@ async function fetchImapMessages(
         // completion line ("A005 OK …") and the closing ")" on its own line.
         // The old code `.replace(/\)[\s\S]*$/,"")` cut at the FIRST ")" anywhere,
         // destroying every reply containing a paren ("(VG)", "recipient(s)", etc.).
-        let rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n") : "";
+        // Rejoin the body with "\n\n" (NOT "\n"): the split was on blank lines, so joining with a
+        // single "\n" flattened every paragraph break → the message showed as one cramped blob in
+        // the Unibox. "\n\n" preserves the blank lines between paragraphs (cleanBody caps runs at 2).
+        let rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n\n") : "";
         rawBody = rawBody
           .replace(/(\r?\n)?[A-Za-z0-9]{1,8} (OK|NO|BAD)[^\n]*\s*$/, "")
           .replace(/(\r?\n)?\)\s*$/, "")
