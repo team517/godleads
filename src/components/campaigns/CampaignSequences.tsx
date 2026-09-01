@@ -937,7 +937,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                 variant="outline"
                 size="sm"
                 className="gap-1.5 h-7 text-xs"
-                onClick={() => setShowTestEmail(true)}
+                onClick={() => { if (!testTo || campaignLeadEmails.includes(testTo)) setTestTo(user?.email || "team@onepulso.online"); setShowTestEmail(true); }}
               >
                 <SendHorizonal className="h-3 w-3" /> Test Email
               </Button>
@@ -1290,20 +1290,14 @@ export default function CampaignSequences({ campaignId }: Props) {
               onChange={e => setTestTo(e.target.value)}
               placeholder="email@ejemplo.com"
             />
-            {campaignLeadEmails.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1">
-                <span className="text-[10px] text-muted-foreground mr-1">Leads:</span>
-                {campaignLeadEmails.slice(0, 5).map(email => (
-                  <button
-                    key={email}
-                    onClick={() => setTestTo(email)}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
-                  >
-                    {email}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-1 mt-1">
+              <span className="text-[10px] text-muted-foreground mr-1">Rápido:</span>
+              {user?.email && (
+                <button type="button" onClick={() => setTestTo(user.email!)} className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors">{user.email}</button>
+              )}
+              <button type="button" onClick={() => setTestTo("team@onepulso.online")} className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors">team@onepulso.online</button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">La prueba se envía a TI (a este correo), nunca al prospecto/lead.</p>
           </div>
           <div className="rounded-md bg-muted/50 p-3 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">Vista previa</p>
