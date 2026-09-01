@@ -591,7 +591,13 @@ async function fetchImapMessages(
       // landed. 256KB is far more than any real message top (bodies are sliced to 5000/50000 chars
       // downstream anyway); the client's actual text is always in the first part. Standard IMAP4rev1
       // partial fetch (RFC 3501 §6.4.5) — supported by Gmail/IONOS/etc.
-      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
+      // ROBUSTNESS: fetch in SMALL BATCHES (10 messages per command) so each IMAP response stays tiny
+      // and is ALWAYS read to completion — no matter how many big messages the mailbox has. This is
+      // what guarantees the sync can never again truncate the tail (= the newest mail) or get stuck.
+      const CHUNK = 10;
+      for (let lo = start; lo <= totalMessages; lo += CHUNK) {
+      const hi = Math.min(lo + CHUNK - 1, totalMessages);
+      const fetchResp = await send(nextTag(), `FETCH ${lo}:${hi} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
 
       const parts = fetchResp.split(/\* \d+ FETCH/);
       for (const part of parts) {
@@ -682,6 +688,7 @@ async function fetchImapMessages(
           });
         }
       }
+      } // end batch loop (10 messages per FETCH)
     }
 
     await send(nextTag(), "LOGOUT");
