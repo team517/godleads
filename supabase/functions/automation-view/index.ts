@@ -84,6 +84,31 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "flow_load" || action === "flow_save") {
+      // Shared "Clientes en el flujo" state (per automation owner) so hello@ + equipo@ see the SAME
+      // flow across devices — instead of the old localStorage-only (device-local) storage. Uses
+      // RAW postgres (SUPABASE_DB_URL), NOT the PostgREST client, so it never depends on the schema
+      // cache (a freshly-created table is usable immediately) and bootstraps the table on first call.
+      const postgres = (await import("https://deno.land/x/postgresjs@v3.4.5/mod.js")).default;
+      const sql = postgres(Deno.env.get("SUPABASE_DB_URL")!, { prepare: false });
+      try {
+        await sql.unsafe(`create table if not exists public.automation_flow_state (owner_id uuid primary key, clients jsonb not null default '[]'::jsonb, updated_at timestamptz not null default now()); alter table public.automation_flow_state enable row level security; revoke all on public.automation_flow_state from anon, authenticated;`);
+        if (action === "flow_save") {
+          const clients = Array.isArray((body as any).clients) ? (body as any).clients : [];
+          await sql`insert into public.automation_flow_state (owner_id, clients, updated_at) values (${OWNER}, ${sql.json(clients)}, now()) on conflict (owner_id) do update set clients = excluded.clients, updated_at = now()`;
+          await sql.end();
+          return new Response(JSON.stringify({ ok: true, count: clients.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const rows = await sql`select clients from public.automation_flow_state where owner_id = ${OWNER} limit 1`;
+        await sql.end();
+        const clients = Array.isArray((rows[0] as any)?.clients) ? (rows[0] as any).clients : [];
+        return new Response(JSON.stringify({ clients }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        try { await sql.end(); } catch { /* */ }
+        return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     if (action === "cancel_ncr") {
       // Cancel a client's new-campaign FLOW (removes it from "Clientes en el flujo"). Owner-scoped.
       // Does NOT delete the client account nor any draft campaign already generated — only marks the

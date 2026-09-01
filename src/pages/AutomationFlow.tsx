@@ -463,7 +463,7 @@ export default function AutomationFlow() {
 
   useEffect(() => {
     setNodes(loadArr(FLOW_KEY, DEFAULT_NODES));
-    setClients(loadArr(CLIENTS_KEY, []));
+    setClients(loadArr(CLIENTS_KEY, [])); // instant paint from local cache; loadFlowClients() then syncs from the shared backend
     setAi(load(AI_KEY, DEFAULT_AI));
     checkGoogle();
     loadResponses();
@@ -471,18 +471,34 @@ export default function AutomationFlow() {
     loadServiceActivity();
     loadSupportInbox();
     loadPendingCampaigns();
-    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); loadSupportInbox(); loadPendingCampaigns(); };
+    loadFlowClients();
+    const onFocus = () => { checkGoogle(); loadResponses(); loadServiceActivity(); loadSupportInbox(); loadPendingCampaigns(); loadFlowClients(); };
     window.addEventListener("focus", onFocus);
     // Auto-refresh like the campaigns Unibox: responses every min; the support@ inbox +
-    // agent activity every 2 min (the fetch-inbox cron pulls new mail every minute).
+    // agent activity + shared flow state every 30s (the fetch-inbox cron pulls new mail every minute).
     const iv = setInterval(() => loadResponses(), 60000);
-    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); loadPendingCampaigns(); }, 30000);
+    const iv2 = setInterval(() => { loadSupportInbox(); loadServiceActivity(); loadPendingCampaigns(); loadFlowClients(); }, 30000);
     return () => { window.removeEventListener("focus", onFocus); clearInterval(iv); clearInterval(iv2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const persistNodes = (n: Node[]) => { setNodes(n); save(FLOW_KEY, n); };
-  const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); };
-  const updateFlowClient = (id: string, patch: Partial<FlowClient>) => setClients((prev) => { const next = prev.map((c) => c.id === id ? { ...c, ...patch } : c); save(CLIENTS_KEY, next); return next; });
+  // Persist the flow to the browser (instant) AND to the shared backend, so a flow started on one
+  // device/login (hello@ or equipo@) shows up on every other device/login — not just localStorage.
+  const saveFlowRemote = (c: FlowClient[]) => { supabase.functions.invoke("automation-view", { body: { action: "flow_save", clients: c } }).catch(() => {}); };
+  const persistClients = (c: FlowClient[]) => { setClients(c); save(CLIENTS_KEY, c); saveFlowRemote(c); };
+  const updateFlowClient = (id: string, patch: Partial<FlowClient>) => setClients((prev) => { const next = prev.map((c) => c.id === id ? { ...c, ...patch } : c); save(CLIENTS_KEY, next); saveFlowRemote(next); return next; });
+  // Load the shared flow from the backend. First run on this owner: if the backend is empty but this
+  // device has local flows, migrate them UP (so nothing is lost); otherwise the backend is the truth.
+  const loadFlowClients = async () => {
+    try {
+      const { data } = await supabase.functions.invoke("automation-view", { body: { action: "flow_load" } });
+      const remote = (data as any)?.clients;
+      if (!Array.isArray(remote)) return;
+      const local = (loadArr(CLIENTS_KEY, []) as FlowClient[]) || [];
+      if (remote.length === 0 && local.length > 0) { saveFlowRemote(local); return; }
+      setClients(remote); save(CLIENTS_KEY, remote);
+    } catch { /* keep whatever is in local */ }
+  };
   const persistAi = (a: AIConfig) => { setAi(a); save(AI_KEY, a); };
 
   // When a form response matches a client (email / domain / company), advance that client
