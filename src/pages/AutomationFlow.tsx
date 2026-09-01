@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle, Copy, Check } from "lucide-react";
+import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, Users, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -305,6 +305,9 @@ export default function AutomationFlow() {
   const [google, setGoogle] = useState<GoogleConn>(DEFAULT_GOOGLE);
   const [editNode, setEditNode] = useState<Node | null>(null);
   const [newClient, setNewClient] = useState(false); // se abre solo al pulsar "Nuevo cliente", no al entrar
+  const [pickExisting, setPickExisting] = useState(false); // diálogo para elegir un cliente YA creado
+  const [existingClients, setExistingClients] = useState<any[]>([]);
+  const [existingLoading, setExistingLoading] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
@@ -551,6 +554,55 @@ export default function AutomationFlow() {
       setPendingCampaigns((prev) => prev.filter((r) => r.id !== reqId));
       toast.success("Flujo cancelado (el cliente y su campaña no se tocan)");
     } catch (e: any) { toast.error(`No se pudo cancelar el flujo: ${e?.message || e}`); }
+  };
+
+  // Load the agency's already-created clients (accounts) so you can start a flow for one of them.
+  const loadExistingClients = async () => {
+    setExistingLoading(true);
+    try {
+      const r = await callAdmin({ action: "list_clients" });
+      const list = ((r?.clients as any[]) || []).sort((a, b) => String(a.company_name || a.email).localeCompare(String(b.company_name || b.email)));
+      setExistingClients(list);
+    } catch { toast.error("No se pudieron cargar los clientes"); }
+    finally { setExistingLoading(false); }
+  };
+
+  // Start the flow for an EXISTING client (account already created) — same flow as a new client
+  // but WITHOUT creating an account. Reuses their onboarding slug (or creates one) + sends the intro.
+  const startFlowForExisting = async (cl: any) => {
+    setPickExisting(false);
+    const email = String(cl.email || "").toLowerCase();
+    if (!email) { toast.error("Ese cliente no tiene email"); return; }
+    if (clients.some((c) => (c.clientId && c.clientId === cl.id) || (c.email || "").toLowerCase() === email)) {
+      toast.info("Ese cliente ya está en el flujo"); return;
+    }
+    const company = cl.company_name || cl.full_name || email;
+    let slug = cl.onboarding_slug || "";
+    if (!slug) {
+      slug = `${slugify(company) || "cliente"}-${Math.random().toString(36).slice(2, 5)}`;
+      try { await callAdmin({ action: "update_client", user_id: cl.id, onboarding_slug: slug }); } catch { /* non-fatal */ }
+    }
+    const flowId = uid();
+    const emailStep = emailNodeIdx(nodes);
+    persistClients([{ id: flowId, name: cl.full_name || "", email, company, context: "", step: emailStep, startedAt: new Date().toISOString(), clientId: cl.id, onboardingSlug: slug, brandColor: cl.brand_color || "", emailStatus: "sending" }, ...clients]);
+    toast.success(`Flujo arrancado para ${company}`);
+    (async () => {
+      try {
+        const onboardingUrl = `${window.location.origin}/o/${slug}`;
+        const formUrl = ai.formUrl || "https://forms.gle/QuZsPwTcwkmB6qoF7";
+        const { data: prof } = await (supabase as any).from("profiles").select("onboarding_from_account_id").eq("user_id", user.id).maybeSingle();
+        let fromAcc: string | null = prof?.onboarding_from_account_id || null;
+        let fromEmail = "";
+        if (fromAcc) { const { data: a } = await (supabase as any).from("email_accounts").select("email").eq("id", fromAcc).maybeSingle(); fromEmail = a?.email || ""; }
+        else { const { data: acc } = await (supabase as any).from("email_accounts").select("id, email").eq("user_id", user.id).eq("status", "connected").limit(1).maybeSingle(); fromAcc = acc?.id || null; fromEmail = acc?.email || ""; }
+        if (!fromAcc) { const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } }); fromAcc = (sa as any)?.account_id || null; fromEmail = (sa as any)?.email || fromEmail; }
+        if (!fromAcc) { updateFlowClient(flowId, { emailStatus: "failed", emailError: "sin cuenta de envío" }); toast.error("Flujo arrancado, pero no hay cuenta de envío (Onboarding → Avisos)."); return; }
+        const html = introEmailHtml({ name: cl.full_name || "", company, formUrl, onboardingUrl, color: cl.brand_color || "", email, password: cl.client_password || "", loginUrl: `${window.location.origin}/auth` });
+        const r = await sendIntroEmail(fromAcc, email, "Empezamos con tu campaña 🚀", html);
+        if (r?.success) { const formStep = formNodeIdx(nodes); updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: formStep }); syncOnboarding(cl.id, formStep); toast.success(`Correo enviado desde ${fromEmail}`); }
+        else { updateFlowClient(flowId, { emailStatus: "failed", emailError: r?.error || "error de envío" }); toast.error(`No se pudo enviar el correo: ${r?.error || "error"}`); }
+      } catch (e) { updateFlowClient(flowId, { emailStatus: "failed", emailError: String(e) }); }
+    })();
   };
 
   // When the Form is answered, GENERATE the campaign for real (deployed generate-campaign +
@@ -1013,7 +1065,10 @@ export default function AutomationFlow() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Clientes en el flujo</CardTitle>
-          <Button size="sm" className="gap-1.5" onClick={() => setNewClient(true)}><UserPlus className="h-4 w-4" /> Nuevo cliente</Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setPickExisting(true); loadExistingClients(); }}><Users className="h-4 w-4" /> Cliente existente</Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setNewClient(true)}><UserPlus className="h-4 w-4" /> Nuevo cliente</Button>
+          </div>
         </CardHeader>
         <CardContent>
           {flowItems.length === 0 ? (
@@ -1156,6 +1211,14 @@ export default function AutomationFlow() {
       </Dialog>
 
       {/* New client dialog — creates the REAL client account + its onboarding profile */}
+      <ExistingClientDialog
+        open={pickExisting}
+        onClose={() => setPickExisting(false)}
+        clients={existingClients}
+        loading={existingLoading}
+        onPick={startFlowForExisting}
+      />
+
       <NewClientDialog
         open={newClient}
         onClose={() => setNewClient(false)}
@@ -1239,6 +1302,39 @@ export default function AutomationFlow() {
       {/* Test a conversation with the customer-service agent */}
       <ChatTestDialog open={chatOpen} onClose={() => setChatOpen(false)} prompt={ai.replies} />
     </div>
+  );
+}
+
+function ExistingClientDialog({ open, onClose, clients, loading, onPick }: { open: boolean; onClose: () => void; clients: any[]; loading: boolean; onPick: (c: any) => void }) {
+  const [q, setQ] = useState("");
+  const filtered = (clients || []).filter((c) => `${c.company_name || ""} ${c.full_name || ""} ${c.email || ""}`.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle className="text-center font-display text-xl">Arrancar flujo para un cliente</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-center text-xs text-muted-foreground">Elige un cliente que YA tienes creado y le arrancamos el flujo (le enviamos el formulario y su onboarding), sin crear una cuenta nueva.</p>
+          <Input placeholder="Buscar por empresa, nombre o email…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando clientes…</div>
+            ) : filtered.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">{(clients || []).length === 0 ? "No hay clientes creados todavía." : "Sin resultados."}</p>
+            ) : (
+              filtered.map((c) => (
+                <button key={c.id} type="button" onClick={() => onPick(c)} className="flex w-full items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-left transition-colors hover:bg-muted/50">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{c.company_name || c.full_name || c.email}</p>
+                    <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary"><ArrowRight className="h-3.5 w-3.5" /> Arrancar</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
