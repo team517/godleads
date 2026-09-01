@@ -543,6 +543,16 @@ export default function AutomationFlow() {
   };
   const removeClient = (id: string) => persistClients(clients.filter((x) => x.id !== id));
 
+  // Cancel a "nueva campaña" flow (an ncr card). Removes it from the flow — does NOT delete the
+  // client account nor any draft campaign already created; just marks the request canceled.
+  const cancelNcr = async (reqId: string) => {
+    try {
+      await supabase.functions.invoke("automation-view", { body: { action: "cancel_ncr", req_id: reqId } });
+      setPendingCampaigns((prev) => prev.filter((r) => r.id !== reqId));
+      toast.success("Flujo cancelado (el cliente y su campaña no se tocan)");
+    } catch (e: any) { toast.error(`No se pudo cancelar el flujo: ${e?.message || e}`); }
+  };
+
   // When the Form is answered, GENERATE the campaign for real (deployed generate-campaign +
   // create_client_campaign) as a DRAFT in the client's account, then move to the approval step.
   const generateCampaignFor = async (fc: FlowClient, resp: FormResponse, test = false) => {
@@ -1042,7 +1052,7 @@ export default function AutomationFlow() {
                           : <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => advance(c)} disabled={isFinal}><ChevronRight className="h-3.5 w-3.5" /> Siguiente</Button>}
                         {c.campaignStatus === "done" && <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => setReviewClient(c)}><FileText className="h-3.5 w-3.5" /> Ver mensajes</Button>}
                         {c.clientId && <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => simulateForm(c)} title="Probar: simula la respuesta del Form y genera la campaña"><RefreshCw className="h-3.5 w-3.5" /> Probar Form</Button>}
-                        <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs text-destructive hover:text-destructive" title="Cancela el flujo — NO borra el cliente" onClick={() => removeClient(c.id)}><Trash2 className="h-3.5 w-3.5" /> Cancelar flujo</Button>
                       </div>
                     </div>
                     {/* Real-time status line — the "ruedecita" while it waits/works on this step */}
@@ -1086,6 +1096,7 @@ export default function AutomationFlow() {
                           {Math.min(r.step, nodes.length - 1) + 1}. {stepNode?.label}
                         </span>
                         {isPending && <Button size="sm" className="h-8 gap-1 bg-emerald-600 text-white hover:bg-emerald-700" disabled={loadingNcrReview === r.ncr.id || approvingId === r.ncr.id} onClick={() => openNcrReview(r.ncr)}>{(loadingNcrReview === r.ncr.id || approvingId === r.ncr.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} {approvingId === r.ncr.id ? "Enviando…" : "Revisar y aprobar"}</Button>}
+                        <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs text-destructive hover:text-destructive" title="Cancela el flujo — NO borra el cliente ni su campaña" onClick={() => cancelNcr(r.ncr.id)}><Trash2 className="h-3.5 w-3.5" /> Cancelar flujo</Button>
                       </div>
                     </div>
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">

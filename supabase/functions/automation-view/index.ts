@@ -84,6 +84,16 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "cancel_ncr") {
+      // Cancel a client's new-campaign FLOW (removes it from "Clientes en el flujo"). Owner-scoped.
+      // Does NOT delete the client account nor any draft campaign already generated — only marks the
+      // request canceled so it stops showing and the bot stops working on it.
+      if (!body.req_id) return new Response(JSON.stringify({ error: "req_id required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { error } = await admin.from("new_campaign_requests").update({ status: "canceled", note: "flujo cancelado", updated_at: new Date().toISOString() }).eq("id", String(body.req_id)).eq("owner_id", OWNER);
+      if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // The account to SEND from for automation actions (copys/intro emails) — the owner's support@,
     // else team@. Lets equipo@ run the flow without owning a mailbox.
     if (action === "send_account") {
