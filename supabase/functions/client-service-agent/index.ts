@@ -619,9 +619,9 @@ ENTIENDE EL TIEMPO Y LAS REFERENCIAS: usa la lista SUS CAMPAÑAS (con sus fechas
 - "send_copys_later": cuando te COMPROMETES a enviar los mensajes/copys pero el momento natural es "os ponéis y se lo enviáis cuando esté" (aún no toca soltarlo de golpe). En "reply" das una respuesta natural comprometiéndote ("Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."). El PDF se enviará solo un poco después, cuando esté preparado. Úsalo cuando encaje ese flujo conversacional en vez de soltar el PDF inmediatamente.
 - "send_report": cuando el contenido son RESULTADOS/ANALÍTICAS/un informe de la campaña y TÚ valoras que queda mejor y más profesional presentado como un PDF con métricas. Para un "¿cómo va?" informal, si crees que una respuesta humana breve comunica mejor, usa "reply".
 - "new_campaign": cuando el cliente pide CREAR UNA CAMPAÑA NUEVA u otra campaña ("queremos crear una campaña", "podéis hacernos otra campaña", "quiero una nueva campaña", "hacemos una campaña nueva"). Respóndele que SÍ, encantados de prepararle una nueva campaña; el sistema le enviará el formulario para que os cuente los detalles y, en cuanto lo rellene, la validáis y la creáis. En "reply" pon SOLO una frase cálida de acogida (sin el enlace ni la firma, el sistema los añade). NO es un cambio de copy ni pedir los mensajes; es empezar una campaña nueva.
-- "escalate": SOLO cosas ESENCIALES que necesitan a una persona del equipo: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria. Solo esto se avisa a team@onepulso.online. EXCEPCIÓN: si piden MÁS CUENTAS DE CORREO, NO escales — gestiónalo tú por "reply" (pregunta cuántas → precio a 2€/cuenta → si confirman, derívalos a team@onepulso.online).
+- "escalate": para lo que necesita a una PERSONA del equipo. DOS casos: (a) ESENCIAL/delicado: una REUNIÓN/llamada, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria; (b) FUERA DE TU ÁMBITO: cualquier petición que NO trate de SU CAMPAÑA (cambios de copy, resultados/informes, estado de la campaña, crear una campaña nueva) ni de sus CUENTAS DE CORREO — p. ej. dudas ajenas al servicio, facturación fuera de lo normal, temas raros o que pidan una decisión humana. En AMBOS casos, en "reply" escribe un mensaje NATURAL y cercano derivando al cliente al equipo: dile con naturalidad que ESO lo lleva directamente el equipo y que escriba a team@onepulso.online (que le atienden enseguida); esto además avisa al equipo. EXCEPCIÓN: si piden MÁS CUENTAS DE CORREO, NO escales — gestiónalo tú por "reply" (pregunta cuántas → precio a 2€/cuenta → si confirman, derívalos a team@onepulso.online).
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
-REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: "escalate" ÚNICAMENTE para lo esencial. Si el remitente NO es un cliente REGISTRADO (su correo/dominio no cuadra con ningún usuario ni cuenta de la plataforma), usa SIEMPRE "ignore": no le respondas ni avises a nadie. Solo atiendes a clientes registrados.`;
+REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: usa "escalate" para lo ESENCIAL/delicado O para lo que se salga de tu ámbito (todo lo que no sea su campaña, sus informes o sus cuentas de correo) — ahí SIEMPRE derivas al cliente a team@onepulso.online con un mensaje natural. Lo que SÍ es de tu ámbito, resuélvelo tú y no escales. Si el remitente NO es un cliente REGISTRADO (su correo/dominio no cuadra con ningún usuario ni cuenta de la plataforma), usa SIEMPRE "ignore": no le respondas ni avises a nadie. Solo atiendes a clientes registrados.`;
     const userMsg = (known
       ? `CLIENTE: ${prof?.company_name || dom}\nDATOS DE CUENTA: ${mailboxCount} cuenta(s) de envío conectada(s); ${allCamps.length} campaña(s) en total.\nSUS CAMPAÑAS (de más NUEVA a más antigua):\n${campList}\n\nEMAILS ACTUALES de "${draft?.name || "ninguna"}" (la que edito por defecto, ${(steps || []).length} email(s)):\n${(steps || []).map((s: any) => `#${s.step_order} asunto="${s.subject}" cuerpo="${(s.body || "").replace(/<[^>]+>/g, " ").slice(0, 300)}"`).join("\n") || "(sin pasos)"}\n\n`
       : `REMITENTE DESCONOCIDO (no es un cliente registrado).\n\n`)
@@ -755,12 +755,24 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
       results.push({ ...base, action: "reply" }); processed++; handled = true;
     }
     if (!handled && d.action === "escalate") {
-      // ESSENTIAL only (meeting/refund/money/cancellation/legal/serious complaint) → notify team@.
+      // Two cases → the client is DERIVED to the team AND team@ is notified so a human follows up:
+      //   (a) essential/sensitive (meeting/refund/money/cancellation/legal/serious complaint), or
+      //   (b) OUT OF SCOPE — anything that isn't about their campaign (copy/reports/status/new
+      //       campaign) or their mailboxes. The owner wants: "si no es sobre campaña/cambios/
+      //       informes, dile que eso lo hable con el equipo (team@onepulso.online)".
       if (!dryRun) {
-        const html = textToHtml(`Atención al cliente — ESENCIAL, requiere tu decisión.\n\n${known ? `Cliente: ${prof?.company_name || dom}` : `Remitente (no es cliente): ${m.from_email}`}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
-        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención · esencial] ${prof?.company_name || m.from_email}`, html);
+        // 1) Reply to the client, deriving them to the team (natural; model's reply or a default).
+        if (known) {
+          const derive = (d.reply && d.reply.trim())
+            ? d.reply.trim()
+            : "Gracias por escribir. Esto en concreto lo lleva directamente nuestro equipo, así que te paso con ellos: escríbeles a team@onepulso.online y te atienden enseguida. Para cualquier cosa de tu campaña, aquí me tienes.";
+          await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(derive), thread);
+        }
+        // 2) Notify the team so a person picks it up.
+        const html = textToHtml(`Atención al cliente — requiere a una persona del equipo (derivado).\n\n${known ? `Cliente: ${prof?.company_name || dom}` : `Remitente (no es cliente): ${m.from_email}`}\nDe: ${m.from_email}\nAsunto: ${m.subject}\n\nQué pide: ${d.summary || "(sin resumen)"}\n\nMensaje:\n${body}`);
+        await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", TEAM_EMAIL, `[Atención · derivar] ${prof?.company_name || m.from_email}`, html);
       }
-      results.push({ ...base, action: "escalate" }); processed++; handled = true;
+      results.push({ ...base, action: "escalate", derived: known }); processed++; handled = true;
     }
     if (!handled) {
       // Non-essential / noise → do nothing, notify nobody. Just mark it processed.

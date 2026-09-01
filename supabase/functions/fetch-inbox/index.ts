@@ -526,12 +526,20 @@ async function fetchImapMessages(
     const send = async (tag: string, cmd: string): Promise<string> => {
       await conn.write(encoder.encode(`${tag} ${cmd}\r\n`));
       let response = "";
-      let attempts = 0;
-      while (attempts < 120) {
-        const chunk = await read();
+      // Read until the TAGGED completion (`<tag> OK/NO/BAD`) appears, bounded by a WALL-CLOCK
+      // deadline + a byte cap — NOT a fixed iteration count. A large FETCH (many/large bodies with
+      // quoted threads) streams in many small TLS chunks; the old `attempts < 120` cap bailed
+      // mid-response on such mailboxes, silently dropping the TAIL of the stream — i.e. the NEWEST
+      // messages (highest sequence numbers) — so new mail never synced (support@ symptom). Each
+      // read() already has its own 15s timeout; here we keep reading until the response is complete.
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        let chunk: string;
+        try { chunk = await read(); } catch { break; } // read timeout / socket dropped → return what we have
+        if (!chunk) break; // EOF (socket closed)
         response += chunk;
         if (response.includes(`${tag} OK`) || response.includes(`${tag} NO`) || response.includes(`${tag} BAD`)) break;
-        attempts++;
+        if (response.length > 10_000_000) break; // hard safety cap (far above any real fetch window)
       }
       return response;
     };
@@ -575,8 +583,15 @@ async function fetchImapMessages(
       if (totalMessages === 0) continue;
 
       const start = Math.max(1, totalMessages - limit + 1);
-      // BODY.PEEK keeps messages unread on the server.
-      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT])`);
+      // BODY.PEEK keeps messages unread on the server. PARTIAL fetch `<0.262144>` caps each message
+      // body at the first 256KB: a big forwarded/quoted thread or an inline-attachment mail can be
+      // MEGABYTES, and fetching every recent message's FULL body in one command produced a multi-MB
+      // response that (a) overflowed the read loop → newest messages truncated, and (b) blew the edge
+      // worker memory on decode (WORKER_RESOURCE_LIMIT) → the whole sync failed and new mail never
+      // landed. 256KB is far more than any real message top (bodies are sliced to 5000/50000 chars
+      // downstream anyway); the client's actual text is always in the first part. Standard IMAP4rev1
+      // partial fetch (RFC 3501 §6.4.5) — supported by Gmail/IONOS/etc.
+      const fetchResp = await send(nextTag(), `FETCH ${start}:${totalMessages} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
 
       const parts = fetchResp.split(/\* \d+ FETCH/);
       for (const part of parts) {
