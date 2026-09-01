@@ -53,14 +53,14 @@ LO QUE PUEDES HACER TÚ (resuélvelo tú, sin derivar, con tus herramientas):
   • Responder dudas sobre SU campaña: estado, nº de emails, nº de cuentas, nombre de la campaña, cómo van los follow-ups, resultados, cómo funciona algo del servicio.
   • Poner en marcha una campaña NUEVA (new_campaign: le mandas el formulario).
   • MÁS CUENTAS de correo: llevar la conversación y el precio (2€/cuenta); al confirmar, derivar el alta a team@.
-LO QUE NO PUEDES HACER → DERIVA A team@onepulso.online (acción escalate; en el "reply" dile con naturalidad que ESO lo lleva directamente el equipo y que escriba a team@onepulso.online, que le atienden enseguida):
+LO QUE NO PUEDES HACER → DERIVA AL EQUIPO (acción escalate; en el "reply" deja claro con naturalidad que ESTE buzón (support@onepulso.online) es SOLO para gestionar su campaña y sus cambios, y que para eso —o cualquier cosa no relacionada con su campaña— escriba a team@onepulso.online o equipo@onepulso.online, que le atienden enseguida):
   • CREAR o CONFIGURAR herramientas/integraciones: un Calendly, un calendario, conectar apps/CRMs, dominios, DNS, nuevos buzones a nivel técnico, accesos, automatizaciones.
   • AGENDAR o reprogramar una reunión, llamada, cita o demo, y cualquier tema de disponibilidad/horarios (lo cuadra una persona). NO repartas tú enlaces de Calendly ni propongas horas.
   • DINERO: pagos, facturación, precios especiales, descuentos, devoluciones, reembolsos, cancelaciones o bajas.
   • LEGAL o quejas serias.
   • Cambios que NO son de copy: base de datos/leads, subir o cambiar listas, ampliar el alcance, o cualquier ajuste técnico de la cuenta.
   • Cualquier cosa fuera del servicio, que requiera una decisión/acción humana, o que simplemente NO puedas ejecutar con tus herramientas.
-REGLA DE ORO: si es EDITAR sus mensajes o una CONSULTA sobre su campaña/resultados → lo haces tú. Si es CREAR/CONFIGURAR algo, AGENDAR, DINERO, LEGAL, o algo que no controlas → derivas a team@onepulso.online. Ante la duda de si puedes hacerlo con tus herramientas, deriva. NUNCA digas que has hecho algo que en realidad no puedes hacer.`;
+REGLA DE ORO: si es EDITAR sus mensajes o una CONSULTA sobre su campaña/resultados → lo haces tú. Si es CREAR/CONFIGURAR algo, AGENDAR, DINERO, LEGAL, o algo que no controlas → derivas al equipo (team@onepulso.online o equipo@onepulso.online), recordándole que este buzón es solo para gestionar su campaña. Ante la duda de si puedes hacerlo con tus herramientas, deriva. NUNCA digas que has hecho algo que en realidad no puedes hacer.`;
 
 const domainOf = (email: string) => (email || "").toLowerCase().split("@")[1]?.trim() || "";
 
@@ -84,6 +84,11 @@ function textToHtml(text: string): string {
 function stripEmojis(text: string): string {
   return (text || "")
     .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{1F1E6}-\u{1F1FF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}]/gu, "")
+    // SAFETY: the model sometimes MISTYPES the OnePulso domain (seen: "onpulso.online" — dropped
+    // the "e"). Normalize any near-miss of the brand domain so we NEVER hand a client/prospect a
+    // wrong email address. Idempotent for the correct spelling. Matches on(e)?[sep]pulso.(online|blog).
+    .replace(/@on(?:e)?[.\-\s]?pulso\.online\b/gi, "@onepulso.online")
+    .replace(/@on(?:e)?[.\-\s]?pulso\.blog\b/gi, "@onepulso.blog")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .trim();
@@ -356,7 +361,9 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     const user = `${input.company ? `Empresa del cliente: ${input.company}\n` : ""}${hist ? hist + "\n" : ""}Cliente: ${input.message || ""}`;
     let d: any = {};
     try { d = await decide(dkKey, system, user); } catch { /* */ }
-    return new Response(JSON.stringify({ reply: d.reply || "Perdona, ¿me lo repites?" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Run the reply through the same sanitizer as real emails (strips emojis + corrects any
+    // mistyped OnePulso domain) so the "Probar chat" preview matches what a client would receive.
+    return new Response(JSON.stringify({ reply: stripEmojis(d.reply || "Perdona, ¿me lo repites?") }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const { owner_user_id, account_id, limit, dry_run } = input;
@@ -633,7 +640,7 @@ ENTIENDE EL TIEMPO Y LAS REFERENCIAS: usa la lista SUS CAMPAÑAS (con sus fechas
 - "send_copys_later": cuando te COMPROMETES a enviar los mensajes/copys pero el momento natural es "os ponéis y se lo enviáis cuando esté" (aún no toca soltarlo de golpe). En "reply" das una respuesta natural comprometiéndote ("Perfecto, nos ponemos ahora mismo y te envío los mensajes en cuanto estén listos."). El PDF se enviará solo un poco después, cuando esté preparado. Úsalo cuando encaje ese flujo conversacional en vez de soltar el PDF inmediatamente.
 - "send_report": cuando el contenido son RESULTADOS/ANALÍTICAS/un informe de la campaña y TÚ valoras que queda mejor y más profesional presentado como un PDF con métricas. Para un "¿cómo va?" informal, si crees que una respuesta humana breve comunica mejor, usa "reply".
 - "new_campaign": cuando el cliente pide CREAR UNA CAMPAÑA NUEVA u otra campaña ("queremos crear una campaña", "podéis hacernos otra campaña", "quiero una nueva campaña", "hacemos una campaña nueva"). Respóndele que SÍ, encantados de prepararle una nueva campaña; el sistema le enviará el formulario para que os cuente los detalles y, en cuanto lo rellene, la validáis y la creáis. En "reply" pon SOLO una frase cálida de acogida (sin el enlace ni la firma, el sistema los añade). NO es un cambio de copy ni pedir los mensajes; es empezar una campaña nueva.
-- "escalate": para lo que necesita a una PERSONA del equipo. DOS casos: (a) ESENCIAL/delicado: AGENDAR o reprogramar una REUNIÓN, llamada, cita o demo —INCLUIDO cualquier mención de Calendly, un enlace de calendario, disponibilidad, horarios o "cuándo podemos hablar/vernos"—, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria; (b) FUERA DE TU ÁMBITO: cualquier petición que NO trate de SU CAMPAÑA (cambios de copy, resultados/informes, estado de la campaña, crear una campaña nueva) ni de sus CUENTAS DE CORREO — p. ej. dudas ajenas al servicio, facturación fuera de lo normal, temas raros o que pidan una decisión humana. En AMBOS casos, en "reply" escribe un mensaje NATURAL y cercano derivando al cliente al equipo: dile con naturalidad que ESO lo lleva directamente el equipo y que escriba a team@onepulso.online (que le atienden enseguida); esto además avisa al equipo. EXCEPCIÓN: si piden MÁS CUENTAS DE CORREO, NO escales — gestiónalo tú por "reply" (pregunta cuántas → precio a 2€/cuenta → si confirman, derívalos a team@onepulso.online).
+- "escalate": para lo que necesita a una PERSONA del equipo. DOS casos: (a) ESENCIAL/delicado: AGENDAR o reprogramar una REUNIÓN, llamada, cita o demo —INCLUIDO cualquier mención de Calendly, un enlace de calendario, disponibilidad, horarios o "cuándo podemos hablar/vernos"—, una DEVOLUCIÓN o reembolso, dinero/pagos, una cancelación, un tema legal o una queja seria; (b) FUERA DE TU ÁMBITO: cualquier petición que NO trate de SU CAMPAÑA (cambios de copy, resultados/informes, estado de la campaña, crear una campaña nueva) ni de sus CUENTAS DE CORREO — p. ej. dudas ajenas al servicio, facturación fuera de lo normal, temas raros o que pidan una decisión humana. En AMBOS casos, en "reply" escribe un mensaje NATURAL y cercano derivando al cliente al equipo: déjale claro que ESTE buzón (support@) es SOLO para gestionar su campaña y sus cambios, y que para eso escriba a team@onepulso.online o equipo@onepulso.online (que le atienden enseguida); esto además avisa al equipo. EXCEPCIÓN: si piden MÁS CUENTAS DE CORREO, NO escales — gestiónalo tú por "reply" (pregunta cuántas → precio a 2€/cuenta → si confirman, derívalos a team@onepulso.online).
 - "ignore": todo lo demás NO esencial — ruido, newsletters, agradecimientos, confirmaciones, o un remitente desconocido sin nada importante. NO se avisa a nadie.
 REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. Los PDFs (send_copys/send_report) salen por CRITERIO TUYO de presentación — cuando piensas "esto queda mejor y da mejor imagen en un PDF" — NO porque el cliente lo pida o insista, ni por cualquier mención. NO avises al equipo por cada correo: usa "escalate" para lo ESENCIAL/delicado O para lo que se salga de tu ámbito (todo lo que no sea su campaña, sus informes o sus cuentas de correo) — ahí SIEMPRE derivas al cliente a team@onepulso.online con un mensaje natural. Lo que SÍ es de tu ámbito, resuélvelo tú y no escales. Si el remitente NO es un cliente REGISTRADO (su correo/dominio no cuadra con ningún usuario ni cuenta de la plataforma), usa SIEMPRE "ignore": no le respondas ni avises a nadie. Solo atiendes a clientes registrados.`;
     const userMsg = (known
@@ -779,7 +786,7 @@ REGLA CLAVE: por defecto RESPONDE con palabras (reply) bien escritas y humanas. 
         if (known) {
           const derive = (d.reply && d.reply.trim())
             ? d.reply.trim()
-            : "Gracias por escribir. Esto en concreto lo lleva directamente nuestro equipo, así que te paso con ellos: escríbeles a team@onepulso.online y te atienden enseguida. Para cualquier cosa de tu campaña, aquí me tienes.";
+            : "Gracias por escribir. Este buzón es solo para gestionar tu campaña y sus cambios, así que esto en concreto lo lleva directamente nuestro equipo: escríbeles a team@onepulso.online o equipo@onepulso.online y te atienden enseguida. Para cualquier cosa de tu campaña, aquí me tienes.";
           await sendSmtp(teamAcct.smtp_host, teamAcct.smtp_port, teamAcct.smtp_username, teamAcct.smtp_password, teamAcct.email, "OnePulso", m.from_email, reSubject, signedHtml(derive), thread);
         }
         // 2) Notify the team so a person picks it up.
