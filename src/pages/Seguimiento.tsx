@@ -178,6 +178,28 @@ export default function Seguimiento() {
     } catch (e: any) { toast.error(`No se pudo enviar: ${e?.message || e}`); }
     setFuSending(false);
   };
+  const [fuTesting, setFuTesting] = useState(false);
+  const sendFollowupTest = async (f: any) => {
+    // Send the SAME message to team@onepulso.online (to yourself), from team@, so you can SEE how it
+    // arrives — WITHOUT sending anything to the real client and WITHOUT touching the follow-up (it
+    // stays scheduled in the calendar; no status change, nothing consumed).
+    setFuTesting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-email", {
+        body: {
+          account_id: f.account_id || TEAM_ACCOUNT,
+          to_email: "team@onepulso.online",
+          subject: `[PRUEBA] ${f.subject || "Seguimiento"}`,
+          body: f.body || "",
+          is_test: true,
+        },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Prueba enviada a team@onepulso.online — el follow-up sigue programado, no se ha enviado al cliente");
+    } catch (e: any) { toast.error(`No se pudo enviar la prueba: ${e?.message || e}`); }
+    setFuTesting(false);
+  };
   // Drag a follow-up card onto a day → reprograma a ese día (misma hora).
   const dropOnDay = async (dayStart: Date) => {
     if (!dragId) return;
@@ -395,6 +417,7 @@ export default function Seguimiento() {
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
             <div className="flex gap-2">
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { if (fuDetail) openFuConversation(fuDetail); }}><Mail className="h-4 w-4" /> Ver conversación</Button>
+              <Button variant="outline" size="sm" className="gap-1.5" disabled={fuTesting} title="Te envía este mensaje a team@onepulso.online para ver cómo llega — no se envía al cliente y el follow-up sigue programado" onClick={() => { if (fuDetail) sendFollowupTest(fuDetail); }}>{fuTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar prueba</Button>
               <Button size="sm" className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700" disabled={fuSending} onClick={() => { if (fuDetail) sendFollowNow(fuDetail); }}>{fuSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar ahora</Button>
             </div>
             <div className="flex gap-2">
