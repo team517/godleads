@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2 } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
@@ -157,7 +157,7 @@ export default function CampaignSequences({ campaignId }: Props) {
     const toDelete = ((cur || []) as any[]).map((s) => s.id).filter((id) => !targetIds.has(id));
     if (toDelete.length) await supabase.from("campaign_steps").delete().in("id", toDelete);
     for (const s of target) {
-      await supabase.from("campaign_steps").upsert({ id: s.id, campaign_id: campaignId, step_order: s.step_order, subject: s.subject ?? "", body: s.body ?? "", delay_days: s.delay_days ?? 0, variants: (s.variants ?? []) as any }, { onConflict: "id" });
+      await supabase.from("campaign_steps").upsert({ id: s.id, campaign_id: campaignId, step_order: s.step_order, subject: s.subject ?? "", body: s.body ?? "", delay_days: s.delay_days ?? 0, variants: (s.variants ?? []) as any, attachments: (s.attachments ?? []) as any }, { onConflict: "id" });
     }
   };
   const canUndo = histIdx.current > 0;
@@ -289,6 +289,9 @@ export default function CampaignSequences({ campaignId }: Props) {
         }
       } catch { /* default false */ }
 
+      // Carry THIS step's attachments so the test email is a faithful copy of the real send.
+      const testAttachments = await resolveAttachmentsForSend();
+
       const { data, error } = await supabase.functions.invoke("send-email", {
         body: {
           account_id: testAccountId,
@@ -299,6 +302,7 @@ export default function CampaignSequences({ campaignId }: Props) {
           custom_fields: sampleFields,
           is_test: true,
           include_unsubscribe: includeUnsub,
+          attachments: testAttachments,
         },
       });
 
@@ -533,6 +537,66 @@ export default function CampaignSequences({ campaignId }: Props) {
     // Surface silent auto-save failures (e.g. delay_days / subject / body) so a
     // lost change is visible instead of the user assuming it saved.
     if (error) toast.error(`No se pudo guardar el cambio: ${error.message}`);
+  };
+
+  // ── Attachments (per step): uploaded to Storage, referenced from campaign_steps.attachments.
+  // The engine (process-campaign-queue) downloads each file and sends it with EVERY email of
+  // the step. Files live in the shared `godtube-media` bucket under a per-campaign/step path. ──
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingAttach, setUploadingAttach] = useState(false);
+  const MAX_ATTACH_BYTES = 5 * 1024 * 1024; // 5 MB per file (provider limits + keeps the SMTP session sane)
+  const stepAttachments: any[] = selectedStep && Array.isArray(selectedStep.attachments) ? selectedStep.attachments : [];
+  const fmtBytes = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+  const uploadAttachment = async (file: File) => {
+    if (!selectedStep) return;
+    if (file.size > MAX_ATTACH_BYTES) { toast.error(`"${file.name}" supera 5 MB — usa un archivo más pequeño`); return; }
+    setUploadingAttach(true);
+    try {
+      const safe = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 120) || "archivo";
+      const path = `campaign-attachments/${campaignId}/${selectedStep.id}/${crypto.randomUUID()}-${safe}`;
+      const { error: upErr } = await supabase.storage.from("godtube-media").upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+      if (upErr) throw upErr;
+      const entry = { name: file.name, path, mime: file.type || "application/octet-stream", size: file.size };
+      const next = [...stepAttachments, entry];
+      await updateStepField(selectedStep.id, "attachments", next);
+      setSteps((prev) => prev.map((s) => (s.id === selectedStep.id ? { ...s, attachments: next } : s)));
+      toast.success(`Adjuntado: ${file.name}`);
+    } catch (e: any) {
+      toast.error(`No se pudo adjuntar: ${e?.message || e}`);
+    } finally {
+      setUploadingAttach(false);
+      if (attachInputRef.current) attachInputRef.current.value = "";
+    }
+  };
+
+  const removeAttachment = async (idx: number) => {
+    if (!selectedStep) return;
+    const target = stepAttachments[idx];
+    const next = stepAttachments.filter((_, i) => i !== idx);
+    await updateStepField(selectedStep.id, "attachments", next);
+    setSteps((prev) => prev.map((s) => (s.id === selectedStep.id ? { ...s, attachments: next } : s)));
+    if (target?.path) { try { await supabase.storage.from("godtube-media").remove([target.path]); } catch { /* non-fatal orphan */ } }
+    toast.success("Adjunto quitado");
+  };
+
+  // Download this step's attachments from Storage and base64-encode them for send-email
+  // ([{filename, mime, base64}]) — used by the Test Email so a test faithfully carries the files.
+  const resolveAttachmentsForSend = async (): Promise<{ filename: string; mime: string; base64: string }[]> => {
+    const out: { filename: string; mime: string; base64: string }[] = [];
+    for (const a of stepAttachments) {
+      if (!a?.path) continue;
+      try {
+        const { data, error } = await supabase.storage.from("godtube-media").download(a.path);
+        if (error || !data) continue;
+        const buf = new Uint8Array(await data.arrayBuffer());
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < buf.length; i += chunk) binary += String.fromCharCode(...buf.subarray(i, i + chunk));
+        out.push({ filename: a.name || "adjunto", mime: a.mime || "application/octet-stream", base64: btoa(binary) });
+      } catch { /* skip unreadable file */ }
+    }
+    return out;
   };
 
   // Review every step + variant and fix mistyped variables to match real lead fields.
@@ -1017,8 +1081,28 @@ export default function CampaignSequences({ campaignId }: Props) {
             )}
           </div>
 
+          {/* Attached files for this step — shown ONLY when there are any. The "Adjuntar archivo"
+              button lives in the bottom toolbar. Each file rides with EVERY email of the step. */}
+          {stepAttachments.length > 0 && (
+            <div className="border-t px-4 py-2 bg-muted/10">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos de este paso:</span>
+                {stepAttachments.map((a, i) => (
+                  <span key={a.path || i} className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-[11px]">
+                    <FileText className="h-3 w-3 text-muted-foreground" />
+                    <span className="max-w-[160px] truncate" title={a.name}>{a.name}</span>
+                    <span className="text-muted-foreground">· {fmtBytes(a.size || 0)}</span>
+                    <button type="button" onClick={() => removeAttachment(i)} className="ml-0.5 text-muted-foreground hover:text-destructive" title="Quitar adjunto">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Bottom toolbar */}
-          <div className="border-t px-4 py-2 flex items-center gap-1 bg-muted/30">
+          <div className="border-t px-4 py-2 flex flex-wrap items-center gap-1 bg-muted/30">
             <div className="flex items-center gap-1.5 mr-3 pr-3 border-r">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Follow-up tras</span>
@@ -1135,6 +1219,21 @@ export default function CampaignSequences({ campaignId }: Props) {
                 </Button>
               </PopoverContent>
             </Popover>
+
+            <div className="border-l pl-1 ml-1 flex items-center gap-1">
+              <input ref={attachInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAttachment(f); }} />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 h-7 text-xs"
+                disabled={uploadingAttach}
+                onClick={() => attachInputRef.current?.click()}
+                title="Adjuntar un archivo que se enviará con cada email de este paso (máx. 5 MB)"
+              >
+                {uploadingAttach ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />} Adjuntar archivo
+                {stepAttachments.length > 0 && <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10px]">{stepAttachments.length}</Badge>}
+              </Button>
+            </div>
 
             <div className="border-l pl-1 ml-1 flex items-center gap-1">
               <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => { setShowSaveTemplate(true); }}>

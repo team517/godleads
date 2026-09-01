@@ -333,6 +333,50 @@ function wrapMimeBase64(value: string): string {
   return encoded.match(/.{1,76}/g)?.join("\r\n") ?? "";
 }
 
+// ─── Attachment helpers (for campaign_steps attachments → multipart/mixed) ───
+// Wrap an already-base64 string into 76-char CRLF lines (RFC 2045).
+function wrapB64Lines(b64: string): string {
+  return ((b64 || "").replace(/\s+/g, "").match(/.{1,76}/g) || []).join("\r\n");
+}
+// Raw bytes → base64, chunked to avoid call-stack limits on large files.
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+// Safe filename for the Content-Disposition header (no CRLF/quotes/path).
+function safeAttachmentName(name: string): string {
+  return String(name || "adjunto").replace(/[\r\n"\\]/g, "").replace(/^.*[\/\\]/, "").slice(0, 200) || "adjunto";
+}
+// Resolve a step's stored attachments ([{name, path, mime, size}]) into MIME-ready
+// {filename, mime, base64} parts by downloading each file from Storage (service-role).
+// Cached by storage path so a step's file is fetched once, not once per lead.
+const _attachmentCache = new Map<string, { filename: string; mime: string; base64: string }>();
+async function resolveStepAttachments(adminClient: any, step: any): Promise<{ filename: string; mime: string; base64: string }[]> {
+  const list = Array.isArray(step?.attachments) ? step.attachments : [];
+  if (!list.length) return [];
+  if (_attachmentCache.size > 100) _attachmentCache.clear();
+  const out: { filename: string; mime: string; base64: string }[] = [];
+  for (const a of list) {
+    const path = String(a?.path || "").trim();
+    if (!path) continue;
+    let cached = _attachmentCache.get(path);
+    if (!cached) {
+      try {
+        const { data, error } = await adminClient.storage.from("godtube-media").download(path);
+        if (error || !data) continue;
+        const buf = new Uint8Array(await data.arrayBuffer());
+        if (buf.byteLength > 8 * 1024 * 1024) continue; // 8MB raw cap — provider limits + protect the SMTP session
+        cached = { filename: safeAttachmentName(a?.name || "adjunto"), mime: String(a?.mime || "application/octet-stream").replace(/[\r\n]/g, ""), base64: bytesToBase64(buf) };
+        _attachmentCache.set(path, cached);
+      } catch { continue; }
+    }
+    out.push(cached);
+  }
+  return out;
+}
+
 function normalizeMimeText(value: string): string {
   return value.replace(/\r?\n/g, "\r\n");
 }
@@ -557,6 +601,7 @@ async function sendSmtpEmail(
     userId?: string;
     campaignId?: string | null;
     unsubscribeUrl?: string;
+    attachments?: { filename: string; mime: string; base64: string }[];
   } = {}
 ): Promise<{ ok: boolean; error?: string; messageId?: string; errorClass?: string }> {
   try {
@@ -624,16 +669,38 @@ async function sendSmtpEmail(
     }
 
 
-    let body: string;
+    // Build the message content (text/plain or multipart/alternative) as a self-contained MIME
+    // entity described by its own Content-Type line(s). With attachments, we wrap this entity +
+    // each attachment inside a multipart/mixed envelope; without, it sits at the top level
+    // (byte-for-byte identical to the previous behavior).
+    let contentTypeLines: string[];
+    let contentBody: string;
     if (opts.textOnly) {
-      headers.push("Content-Type: text/plain; charset=UTF-8");
-      headers.push("Content-Transfer-Encoding: quoted-printable");
-      body = `\r\n${quotedPrintableEncode(plainTextPart)}`;
+      contentTypeLines = ["Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: quoted-printable"];
+      contentBody = quotedPrintableEncode(plainTextPart);
     } else {
-      headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+      contentTypeLines = [`Content-Type: multipart/alternative; boundary="${boundary}"`];
       const qpText = quotedPrintableEncode(plainTextPart);
       const qpHtml = quotedPrintableEncode(htmlPart);
-      body = `\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qpText}\r\n--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qpHtml}\r\n--${boundary}--`;
+      contentBody = `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qpText}\r\n--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qpHtml}\r\n--${boundary}--`;
+    }
+
+    const atts = (opts.attachments || []).filter((a) => a && a.base64);
+    let body: string;
+    if (atts.length === 0) {
+      headers.push(...contentTypeLines);
+      body = `\r\n${contentBody}`;
+    } else {
+      const mixed = `--==_mixed_${randomString(16)}_${randomString(12)}`;
+      headers.push(`Content-Type: multipart/mixed; boundary="${mixed}"`);
+      let b = `\r\n--${mixed}\r\n${contentTypeLines.join("\r\n")}\r\n\r\n${contentBody}\r\n`;
+      for (const a of atts) {
+        const nm = safeAttachmentName(a.filename);
+        const mime = (a.mime || "application/octet-stream").replace(/[\r\n]/g, "");
+        b += `--${mixed}\r\nContent-Type: ${mime}; name="${nm}"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${nm}"\r\n\r\n${wrapB64Lines(a.base64)}\r\n`;
+      }
+      b += `--${mixed}--`;
+      body = b;
     }
 
 
@@ -1909,6 +1976,9 @@ serve(async (req) => {
           }
         }
 
+        // Files attached to THIS step (from Storage, cached by path) ride along with every send.
+        const stepAttachments = await resolveStepAttachments(adminClient, step);
+
         // The SMTP handoff as a thunk — run inline (sequential) or dispatched with
         // a concurrent batch (parallel). All captured vars are already finalised here.
         const doSend = (): Promise<SmtpResult> => sendSmtpEmail(
@@ -1926,6 +1996,7 @@ serve(async (req) => {
             userId: campaign.user_id,
             campaignId: campaign.id,
             unsubscribeUrl,
+            attachments: stepAttachments,
           }
         );
 

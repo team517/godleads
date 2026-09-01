@@ -87,6 +87,12 @@ serve(async (req) => {
       // Claim atomically so overlapping runs don't double-send.
       const { data: claimed } = await admin.from("follow_ups").update({ status: "sending", updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "scheduled").select("id");
       if (!claimed || !(claimed as any[]).length) continue;
+      // CANCEL-WINS guard: the owner may hit "delete" between our claim and the actual SMTP send.
+      // The frontend cancel flips scheduled/sending → 'canceled'. Re-read the row here; if it's no
+      // longer 'sending' (i.e. it was canceled in this tiny window), abort WITHOUT sending. This is
+      // what guarantees "deleted = never sent" for anything canceled before the mail goes out.
+      const { data: fresh } = await admin.from("follow_ups").select("status").eq("id", f.id).maybeSingle();
+      if ((fresh as any)?.status !== "sending") { results.push({ id: f.id, canceled: true }); continue; }
       // Last-moment guard: if the contact replied since this was scheduled (even a second ago),
       // cancel instead of sending — never message someone who already answered. Owner-wide (any mailbox).
       if (await repliedSince(f.owner_id, f.contact_email, f.created_at)) {
@@ -99,12 +105,14 @@ serve(async (req) => {
       if (!acct?.smtp_host) { await admin.from("follow_ups").update({ status: "error", note: "sin cuenta de envío" }).eq("id", f.id); results.push({ id: f.id, error: "no account" }); continue; }
       const subject = f.subject && f.subject.trim() ? f.subject : "Seguimiento";
       const r = await sendSmtp(acct.smtp_host, acct.smtp_port, acct.smtp_username, acct.smtp_password, acct.email, "OnePulso", f.contact_email, subject, toHtml(f.body || ""), { inReplyTo: f.in_reply_to || "", references: f.references_hdr || f.in_reply_to || "" });
-      if (!r.ok) { await admin.from("follow_ups").update({ status: "scheduled", note: `reintento: ${r.error || ""}`.slice(0, 200), updated_at: new Date().toISOString() }).eq("id", f.id); results.push({ id: f.id, error: r.error }); continue; }
+      // Reset for retry ONLY if it's still 'sending' — never resurrect a follow-up the owner
+      // canceled while the send was in flight (.eq status sending guards against that).
+      if (!r.ok) { await admin.from("follow_ups").update({ status: "scheduled", note: `reintento: ${r.error || ""}`.slice(0, 200), updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "sending"); results.push({ id: f.id, error: r.error }); continue; }
       await admin.from("follow_ups").update({ status: "sent", sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", f.id);
       // Record in sent_emails so it appears in the conversation timeline.
       try { await admin.from("sent_emails").insert({ user_id: f.owner_id, account_id: acct.id, to_email: f.contact_email, subject, body: toHtml(f.body || ""), status: "sent", sent_at: new Date().toISOString(), smtp_message_id: r.msgId || null }); } catch { /* non-fatal */ }
       sent++; results.push({ id: f.id, to: f.contact_email, ok: true });
-    } catch (e) { try { await admin.from("follow_ups").update({ status: "scheduled", note: String((e as Error).message).slice(0, 200) }).eq("id", f.id); } catch { /* */ } }
+    } catch (e) { try { await admin.from("follow_ups").update({ status: "scheduled", note: String((e as Error).message).slice(0, 200) }).eq("id", f.id).eq("status", "sending"); } catch { /* */ } }
   }
   return new Response(JSON.stringify({ sent, canceled, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

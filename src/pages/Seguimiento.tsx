@@ -59,7 +59,9 @@ export default function Seguimiento() {
   const deleteSegThread = async (t: any) => {
     try {
       await (supabase as any).from("seg_threads").delete().eq("id", t.id);
-      await (supabase as any).from("follow_ups").update({ status: "canceled" }).eq("contact_email", t.contact_email).eq("status", "scheduled");
+      // Cancel every pending follow-up for this contact (scheduled OR mid-send OR errored) so deleting
+      // the thread never leaves one that still fires. 'sent' ones are untouched (already delivered).
+      await (supabase as any).from("follow_ups").update({ status: "canceled", note: "cancelado: seguimiento eliminado", updated_at: new Date().toISOString() }).eq("contact_email", t.contact_email).in("status", ["scheduled", "sending", "error"]);
       setSegThreads((p) => p.filter((x) => x.id !== t.id)); loadFollowups();
       toast.success("Seguimiento eliminado");
     } catch { toast.error("No se pudo eliminar"); }
@@ -145,7 +147,24 @@ export default function Seguimiento() {
   };
 
   const cancelFollowup = async (id: string) => {
-    try { await (supabase as any).from("follow_ups").update({ status: "canceled" }).eq("id", id); setFollowups((p) => p.filter((f) => f.id !== id)); } catch { /* */ }
+    try {
+      // Cancel ONLY if it hasn't gone out yet (scheduled/sending/error). We check the RESULT: if the
+      // update touched a row, it's truly canceled and the cron will skip it. If it touched nothing, the
+      // follow-up was already sent — so we DON'T pretend it's deleted (that was the old bug: optimistic
+      // removal hid an already-sent follow-up). Include 'sending' so a delete during the send window
+      // still aborts it (send-followups re-checks the status right before the SMTP send).
+      const { data, error } = await (supabase as any).from("follow_ups")
+        .update({ status: "canceled", note: "cancelado manualmente", updated_at: new Date().toISOString() })
+        .eq("id", id).in("status", ["scheduled", "sending", "error"]).select("id");
+      if (error) { toast.error("No se pudo cancelar el follow-up"); return; }
+      if (!data || !(data as any[]).length) {
+        toast.error("Ese follow-up ya se había enviado — no se pudo cancelar");
+        loadFollowups();
+        return;
+      }
+      toast.success("Follow-up cancelado — no se enviará");
+      setFollowups((p) => p.filter((f) => f.id !== id));
+    } catch { toast.error("No se pudo cancelar el follow-up"); }
   };
   const [fuSending, setFuSending] = useState(false);
   const sendFollowNow = async (f: any) => {
