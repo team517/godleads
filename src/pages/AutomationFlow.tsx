@@ -417,19 +417,19 @@ export default function AutomationFlow() {
   const loadForms = async () => {
     setFormsLoading(true);
     try {
+      // The OWNER's cached forms via automation-view, so the delegate (equipo@) sees the SAME list
+      // as the owner (google_forms is RLS-scoped to the caller's own uid, so a direct read would be
+      // empty for equipo@). Falls back to the live OAuth list only if the shared list is empty.
       let list: GForm[] = [];
-      // Preferred: live list via the edge function (needs Google creds set).
       try {
-        const { data } = await supabase.functions.invoke("google-forms-list");
+        const { data } = await supabase.functions.invoke("automation-view", { body: { action: "gforms" } });
         list = ((data as any)?.forms || []) as GForm[];
       } catch { /* ignore */ }
-      // Fallback: the server-synced snapshot table.
       if (!list.length) {
-        const { data } = await (supabase as any)
-          .from("google_forms")
-          .select("form_id, name, url, modified_time")
-          .order("modified_time", { ascending: false });
-        list = ((data || []) as any[]).map((f) => ({ id: f.form_id, name: f.name, url: f.url, modifiedTime: f.modified_time }));
+        try {
+          const { data } = await supabase.functions.invoke("google-forms-list");
+          list = ((data as any)?.forms || []) as GForm[];
+        } catch { /* ignore */ }
       }
       setForms(list);
     } catch { setForms([]); } finally { setFormsLoading(false); }
@@ -437,10 +437,17 @@ export default function AutomationFlow() {
 
   const checkGoogle = async () => {
     try {
-      const { data } = await supabase.rpc("my_google_connection" as never);
-      const row = Array.isArray(data) ? (data[0] as any) : (data as any);
-      if (row && row.connected) { setGoogle({ connected: true, account: row.email || "", connectedAt: row.connected_at || "" }); loadForms(); }
-      else setGoogle(DEFAULT_GOOGLE);
+      // Resolve the OWNER's Google connection through automation-view (service role) so hello@ AND
+      // equipo@ see the IDENTICAL "Conectado · cuenta" banner. my_google_connection() is scoped to
+      // the caller's own uid → equipo@ (no connection of its own) would wrongly show "No conectado".
+      const { data } = await supabase.functions.invoke("automation-view", { body: { action: "gforms" } });
+      const row = data as any;
+      if (row && row.connected) {
+        setGoogle({ connected: true, account: row.account || "", connectedAt: row.connected_at || "" });
+        setForms(((row.forms || []) as GForm[]));
+      } else {
+        setGoogle(DEFAULT_GOOGLE);
+      }
     } catch { /* ignore */ }
   };
 

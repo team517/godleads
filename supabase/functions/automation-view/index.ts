@@ -51,6 +51,23 @@ serve(async (req) => {
       return new Response(JSON.stringify({ responses: data || [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "gforms") {
+      // The OWNER's Google connection STATUS (never the tokens) + cached Forms list, via service role,
+      // so equipo@ sees the SAME "Conectado · cuenta" banner and the same forms as the owner —
+      // instead of my_google_connection()/google_forms which are scoped to the caller's own uid.
+      const [conn, forms] = await Promise.all([
+        admin.from("google_connections").select("google_email, connected_at").eq("owner_id", OWNER).maybeSingle(),
+        admin.from("google_forms").select("form_id, name, url, modified_time").eq("owner_id", OWNER).order("modified_time", { ascending: false }),
+      ]);
+      const c = conn.data as any;
+      return new Response(JSON.stringify({
+        connected: !!c,
+        account: c?.google_email || null,
+        connected_at: c?.connected_at || null,
+        forms: ((forms.data as any[]) || []).map((f) => ({ id: f.form_id, name: f.name, url: f.url, modifiedTime: f.modified_time })),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "campaign_steps") {
       // The generated campaign's steps (for the review popup / copys PDF). Verify the campaign
       // belongs to one of the owner's new-campaign requests before returning it.
