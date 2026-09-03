@@ -271,6 +271,21 @@ function sanitizeHtmlForDelivery(html: string): string {
 // Render a signature as a TIGHT block: collapse paragraph breaks into single <br>
 // line breaks so the email client's default ~16px <p> margins don't blow the
 // signature apart (the "no llega bien la firma" gaps).
+// A signature is the sender's OWN branded HTML (logo image, colours, links). The body sanitizer
+// (sanitizeHtmlForDelivery) STRIPS <img>, which killed any logo in the signature. Keep the
+// signature RICH — images, inline styles, tables, links — removing ONLY genuinely unsafe bits
+// (scripts, event handlers, forms, javascript: urls). Signature images should use a HOSTED https
+// URL (uploaded from the app), which every client renders; data: URIs are blocked by Gmail.
+function sanitizeSignatureRich(html: string): string {
+  return (html || "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|iframe|object|embed|form|input|textarea|noscript)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(script|iframe|object|embed|form|input|meta|link|base)[^>]*>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    .trim();
+}
+
 function normalizeSignatureHtml(sanitized: string): string {
   let s = (sanitized || "").trim();
   if (!s) return "";
@@ -611,7 +626,11 @@ async function sendSmtpEmail(
     const isReply = !!opts.inReplyTo;
 
     const normalizedBody = opts.textOnly ? htmlBody : sanitizeHtmlForDelivery(htmlBody);
-    const signatureHtml = !opts.textOnly ? normalizeSignatureHtml(sanitizeHtmlForDelivery(opts.signatureHtml?.trim() || "")) : "";
+    // Keep the signature RICH (sanitizeSignatureRich preserves images + inline styles) instead of
+    // running it through sanitizeHtmlForDelivery (which strips <img>, killing any logo) + the
+    // flattening normalizer. Same treatment as send-email → the branded signature (with a hosted
+    // logo image) lands identically in campaign emails and in Unibox replies.
+    const signatureHtml = !opts.textOnly ? sanitizeSignatureRich(opts.signatureHtml?.trim() || "") : "";
     const fullHtml = !opts.textOnly && signatureHtml
       ? `${normalizedBody}<br><br>${signatureHtml}`
       : normalizedBody;

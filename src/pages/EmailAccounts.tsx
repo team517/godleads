@@ -135,6 +135,27 @@ export default function EmailAccounts() {
   const [sigScope, setSigScope] = useState<"all" | "tag" | "selected">("all");
   const [sigTag, setSigTag] = useState("");
   const [sigSaving, setSigSaving] = useState(false);
+  const [sigImgUploading, setSigImgUploading] = useState(false);
+  const sigImgInputRef = useRef<HTMLInputElement | null>(null);
+  // Upload an image to Storage and insert a hosted <img> into the signature HTML. A hosted https
+  // URL is what renders reliably in email (Gmail blocks data: URIs); both send-email and the
+  // campaign engine keep signature images (sanitizeSignatureRich) so it lands as designed.
+  const uploadSigImage = async (file: File) => {
+    if (!file.type.startsWith("image/")) { toast.error("Sube una imagen (PNG, JPG…)"); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error(`"${file.name}" supera 2 MB — usa una imagen más pequeña`); return; }
+    setSigImgUploading(true);
+    try {
+      const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "logo";
+      const path = `signatures/${crypto.randomUUID()}-${safe}`;
+      const { error: upErr } = await supabase.storage.from("godtube-media").upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) throw upErr;
+      const url = supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl;
+      const imgTag = `<img src="${url}" alt="" style="max-width:180px;height:auto;display:block;margin-top:8px" />`;
+      setSigHtml(prev => (prev.trim() ? `${prev}\n${imgTag}` : imgTag));
+      toast.success("Imagen añadida a la firma");
+    } catch (e: any) { toast.error(`No se pudo subir la imagen: ${e?.message || e}`); }
+    finally { setSigImgUploading(false); if (sigImgInputRef.current) sigImgInputRef.current.value = ""; }
+  };
 
   // ── Per-account domain authentication (SPF / DKIM / DMARC) ──
   type AuthStatus = "pass" | "warn" | "fail";
@@ -1583,6 +1604,13 @@ export default function EmailAccounts() {
                 className="min-h-[130px] font-mono text-xs leading-relaxed"
                 spellCheck={false}
               />
+              <div className="flex items-center gap-2">
+                <input ref={sigImgInputRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadSigImage(f); }} />
+                <Button type="button" variant="outline" size="sm" className="gap-1.5 h-8 text-xs" disabled={sigImgUploading} onClick={() => sigImgInputRef.current?.click()}>
+                  {sigImgUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir imagen (logo)
+                </Button>
+                <span className="text-[11px] text-muted-foreground">Se inserta como imagen en la firma (máx. 2 MB).</span>
+              </div>
               <div className="rounded-md border border-border/60 bg-background p-3">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Vista previa</p>
                 {sigHtml.trim() ? (
