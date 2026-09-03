@@ -240,17 +240,38 @@ serve(async (req) => {
         /no\s*(me\s*)?(contacte|escriba|envie)\b/i,
       ];
 
+      // Automated / notification SENDERS — NEVER let the AI reply to a robot. These are tested
+      // against the FROM ADDRESS ONLY (not the body): a real prospect writing "book me on
+      // calendly.com/juan" or "we pay via stripe" must still get a reply.
+      const senderSkipPatterns = [
+        /^notifications?@/i, /^no-?reply/i, /^donotreply/i, /^do-not-reply/i, /^postmaster@/i,
+        /^mailer-daemon/i, /^bounces?[@+-]/i, /^alerts?@/i, /^support@.*\.(calendly|hubspot|intercom|zendesk)\./i,
+        /@(?:[a-z0-9-]+\.)*(calendly\.com|mailchimp\.com|sendgrid\.net|mailgun\.org|amazonses\.com|sparkpostmail\.com|hubspot\.com|intercom\.io|zendesk\.com|freshdesk\.com|stripe\.com|paypal\.com|docusign\.(?:com|net)|hellosign\.com|typeform\.com|acuityscheduling\.com|cal\.com)$/i,
+      ];
+      // Automated SUBJECTS (system notifications), tested against the subject line only.
+      const subjectSkipPatterns = [/^new\s+event:/i, /(verification|confirmation)\s*code/i, /^(your|tu) .*(code|código)/i];
+
       const filteredMessages: typeof messages = [];
       const skippedIds: string[] = [];
 
       for (const msg of messages) {
         const body = (msg.body_text || msg.body_html || "").toLowerCase().slice(0, 500);
         const fromEmail = (msg.from_email || "").toLowerCase();
-        const combined = `${body} ${fromEmail}`;
+        const subject = (msg.subject || "").toLowerCase();
+        // Each pattern family is tested against ITS OWN text: sender patterns vs the from
+        // address, subject patterns vs the subject, intent patterns (OOO / unsubscribe / "not
+        // interested") vs subject+body. Mixing them into one string made a legit prospect
+        // mentioning "calendly.com" or quoting a "notifications@" header get skipped forever.
+        const intentText = `${subject} ${body}`;
+        const checks: Array<[RegExp, string]> = [
+          ...senderSkipPatterns.map((p) => [p, fromEmail] as [RegExp, string]),
+          ...subjectSkipPatterns.map((p) => [p, subject] as [RegExp, string]),
+          ...skipPatterns.map((p) => [p, intentText] as [RegExp, string]),
+        ];
 
         let skip = false;
-        for (const pattern of skipPatterns) {
-          if (pattern.test(combined)) {
+        for (const [pattern, text] of checks) {
+          if (pattern.test(text)) {
             console.log(`Skipping message ${msg.id} - matched skip pattern: ${pattern}`);
             skippedIds.push(msg.id);
             skip = true;

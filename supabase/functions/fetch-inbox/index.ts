@@ -115,6 +115,71 @@ async function ensureAttachmentInfra(adminClient: ReturnType<typeof createClient
   }
 }
 
+// Bootstrap the batched domain-resolution RPC (idempotent, fast — CREATE OR REPLACE only; the
+// supporting indexes idx_sent_emails_acct_to_email / _to_domain were created CONCURRENTLY out of
+// band by migration 20260903200000 and must NOT be built inside a sync tick).
+let sentResolveRpcReady = false;
+async function ensureSentResolveRpc(): Promise<boolean> {
+  if (sentResolveRpcReady) return true;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (!dbUrl) return false;
+  try {
+    const sql = postgres(dbUrl, { prepare: false, max: 1 });
+    try {
+      await sql.unsafe(`
+        create or replace function public.resolve_sent_by_domains(p_account uuid, p_domains text[])
+        returns table(dom text, lead_id uuid, campaign_id uuid)
+        language sql stable security definer set search_path to 'public' as $fn$
+          select distinct on (d) d as dom, s.lead_id, s.campaign_id
+          from (
+            select lower(split_part(to_email,'@',2)) as d, lead_id, campaign_id, sent_at
+            from public.sent_emails
+            where account_id = p_account
+              and lower(split_part(to_email,'@',2)) = any(p_domains)
+              and campaign_id is not null and lead_id is not null
+          ) s
+          order by d, sent_at desc nulls last;
+        $fn$;
+        grant execute on function public.resolve_sent_by_domains(uuid, text[]) to service_role, authenticated;
+        notify pgrst, 'reload schema';
+      `);
+    } finally {
+      await sql.end({ timeout: 3 });
+    }
+    sentResolveRpcReady = true;
+    return true;
+  } catch (e) {
+    console.error("resolve_sent_by_domains bootstrap failed:", (e as Error).message);
+    return false;
+  }
+}
+
+// Bootstrap the per-account incremental-sync state column (idempotent; once per warm isolate).
+// email_accounts.imap_uid_state jsonb = { "<folder>": { v: UIDVALIDITY, u: last synced UID } }.
+// Also asks PostgREST to reload its schema cache so `select("*")`/`update` see the column at once.
+let uidStateColReady = false;
+async function ensureUidStateColumn(): Promise<boolean> {
+  if (uidStateColReady) return true;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (!dbUrl) return false;
+  try {
+    const sql = postgres(dbUrl, { prepare: false, max: 1 });
+    try {
+      await sql.unsafe(`
+        alter table public.email_accounts add column if not exists imap_uid_state jsonb;
+        notify pgrst, 'reload schema';
+      `);
+    } finally {
+      await sql.end({ timeout: 3 });
+    }
+    uidStateColReady = true;
+    return true;
+  } catch (e) {
+    console.error("imap_uid_state bootstrap failed:", (e as Error).message);
+    return false;
+  }
+}
+
 // Bootstrap the global-suppression RPC (mirrors migration
 // 20260705120000_suppress_email_global.sql) so the feature works even before the
 // migration is pushed. Idempotent; once per warm isolate.
@@ -490,9 +555,14 @@ function isForeignMessage(subject: string, body: string): boolean {
   return false;                                      // ambiguous → keep
 }
 
+// Per-folder UID high-water mark, persisted in email_accounts.imap_uid_state as
+// { "INBOX": { v: <UIDVALIDITY>, u: <last UID synced> }, "Spam": {...} }.
+type UidState = Record<string, { v: number; u: number }>;
+
 async function fetchImapMessages(
-  host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50
-): Promise<{ ok: boolean; messages: ImapMessage[]; bouncedRecipients?: string[]; error?: string }> {
+  host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50,
+  uidState: UidState | null = null, budgetMs = 45_000
+): Promise<{ ok: boolean; messages: ImapMessage[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[] }> {
   // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
   // block the whole rotating window forever. On timeout the socket is dropped
   // and the account fails cleanly (recorded in errors[] + last_sync stays old).
@@ -505,10 +575,13 @@ async function fetchImapMessages(
   try {
     let conn: Deno.Conn;
 
+    // Connect cap 12s→7s: a healthy IMAP handshake is <2s, so 7s still clears slow-but-alive
+    // servers while making an unreachable mailbox fail fast instead of stalling its whole wave
+    // (a stuck connect was the main reason a wave dragged toward the worker's 150s wall).
     if (port === 993) {
-      conn = await withTimeout(Deno.connectTls({ hostname: host, port }), 12000, "connect");
+      conn = await withTimeout(Deno.connectTls({ hostname: host, port }), 7000, "connect");
     } else {
-      conn = await withTimeout(Deno.connect({ hostname: host, port }), 12000, "connect");
+      conn = await withTimeout(Deno.connect({ hostname: host, port }), 7000, "connect");
     }
 
     // Read the IMAP socket as windows-1252 — preserves every byte 1:1 (no U+FFFD replacement).
@@ -532,7 +605,11 @@ async function fetchImapMessages(
       // mid-response on such mailboxes, silently dropping the TAIL of the stream — i.e. the NEWEST
       // messages (highest sequence numbers) — so new mail never synced (support@ symptom). Each
       // read() already has its own 15s timeout; here we keep reading until the response is complete.
-      const deadline = Date.now() + 60000;
+      // Cap at 30s per command (was 60s): each FETCH now streams a 10-message chunk (≤~2.5MB), which
+      // completes in well under 30s — the cap only guillotines a pathological stall so one slow
+      // mailbox can't push a whole sync tick over the edge worker's 150s wall. A truncated mailbox
+      // just finishes on the next tick (dedupe makes re-reads free).
+      const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         let chunk: string;
         try { chunk = await read(); } catch { break; } // read timeout / socket dropped → return what we have
@@ -574,34 +651,72 @@ async function fetchImapMessages(
     const seenIds = new Set<string>();
     const limit = Math.max(50, Math.min(fetchLimit, 1000));
 
+    // ── INCREMENTAL (UID) SYNC ────────────────────────────────────────────────
+    // This is what makes the Unibox near-realtime with 1k+ mailboxes. Every SELECT returns
+    // [UIDVALIDITY n] and [UIDNEXT n]. We remember, per folder, the last UID we synced. If
+    // UIDNEXT hasn't moved → NO new mail → skip the FETCH entirely (the whole mailbox costs
+    // connect+login+SELECT ≈ 0.3-1s instead of 5-10s re-downloading the last 50 messages).
+    // If it moved, `UID FETCH last+1:*` pulls ONLY the new messages. First sync / UIDVALIDITY
+    // change / too-big backlog → fall back to the proven sequence-based "last N" path. A
+    // per-mailbox time budget guarantees one pathological mailbox can never hog a wave.
+    const uidStateOut: UidState = {};
+    const unchangedFolders: string[] = [];
+    let maxUidSeen = 0; // reset per folder; the highest UID actually parsed
+    const mailboxStart = Date.now();
+    const overBudget = () => Date.now() - mailboxStart > budgetMs;
+
     for (const folder of targets) {
+      if (overBudget()) break;
       const selTag = nextTag();
       const selectResp = await send(selTag, `SELECT "${folder}"`);
       if (!selectResp.includes(`${selTag} OK`)) continue; // folder missing / not selectable
       const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
       const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
-      if (totalMessages === 0) continue;
+      const uvM = selectResp.match(/\[UIDVALIDITY (\d+)\]/i);
+      const unM = selectResp.match(/\[UIDNEXT (\d+)\]/i);
+      const uidValidity = uvM ? parseInt(uvM[1]) : 0;
+      const uidNext = unM ? parseInt(unM[1]) : 0;
+      const prev = uidState?.[folder];
+      const canIncremental = uidValidity > 0 && uidNext > 0 && !!prev && prev.v === uidValidity && prev.u > 0;
+      maxUidSeen = canIncremental ? prev.u : 0;
+      let cut = false; // set when the time budget stops this folder before all ranges were read
 
+      if (totalMessages === 0) {
+        if (uidValidity && uidNext) uidStateOut[folder] = { v: uidValidity, u: uidNext - 1 };
+        continue;
+      }
+      // Fast path: nothing new since last sync → skip the FETCH altogether.
+      if (canIncremental && uidNext - 1 <= prev.u) {
+        unchangedFolders.push(folder);
+        uidStateOut[folder] = { v: uidValidity, u: prev.u };
+        continue;
+      }
+
+      const newCount = canIncremental ? (uidNext - 1 - prev.u) : Infinity;
+      const useUid = canIncremental && newCount <= limit; // bigger backlog → sequence "last N"
       const start = Math.max(1, totalMessages - limit + 1);
       // BODY.PEEK keeps messages unread on the server. PARTIAL fetch `<0.262144>` caps each message
-      // body at the first 256KB: a big forwarded/quoted thread or an inline-attachment mail can be
-      // MEGABYTES, and fetching every recent message's FULL body in one command produced a multi-MB
-      // response that (a) overflowed the read loop → newest messages truncated, and (b) blew the edge
-      // worker memory on decode (WORKER_RESOURCE_LIMIT) → the whole sync failed and new mail never
-      // landed. 256KB is far more than any real message top (bodies are sliced to 5000/50000 chars
-      // downstream anyway); the client's actual text is always in the first part. Standard IMAP4rev1
-      // partial fetch (RFC 3501 §6.4.5) — supported by Gmail/IONOS/etc.
-      // ROBUSTNESS: fetch in SMALL BATCHES (10 messages per command) so each IMAP response stays tiny
-      // and is ALWAYS read to completion — no matter how many big messages the mailbox has. This is
-      // what guarantees the sync can never again truncate the tail (= the newest mail) or get stuck.
+      // body at the first 256KB (a huge quoted thread could be MEGABYTES and blew the worker memory).
+      // ROBUSTNESS: fetch in SMALL BATCHES (10 per command) so each IMAP response stays tiny and is
+      // ALWAYS read to completion — this is what guarantees the newest mail is never truncated.
       const CHUNK = 10;
-      for (let lo = start; lo <= totalMessages; lo += CHUNK) {
-      const hi = Math.min(lo + CHUNK - 1, totalMessages);
-      const fetchResp = await send(nextTag(), `FETCH ${lo}:${hi} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
+      const ranges: string[] = [];
+      if (useUid) {
+        for (let lo = prev!.u + 1; lo <= uidNext - 1; lo += CHUNK) ranges.push(`UID FETCH ${lo}:${Math.min(lo + CHUNK - 1, uidNext - 1)}`);
+      } else {
+        for (let lo = start; lo <= totalMessages; lo += CHUNK) ranges.push(`FETCH ${lo}:${Math.min(lo + CHUNK - 1, totalMessages)}`);
+      }
+      for (const rangeCmd of ranges) {
+      if (overBudget()) { cut = true; break; }
+      // `UID` is requested explicitly so BOTH paths report each message's UID → high-water mark.
+      const fetchResp = await send(nextTag(), `${rangeCmd} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
 
       const parts = fetchResp.split(/\* \d+ FETCH/);
       for (const part of parts) {
         if (!part.trim()) continue;
+        // High-water mark: the item's UID comes first in the FETCH response (" (UID 4567 BODY[...").
+        const uidM = part.match(/^\s*\(?\s*UID (\d+)/);
+        if (uidM) maxUidSeen = Math.max(maxUidSeen, parseInt(uidM[1]));
 
         // Capture header value INCLUDING folded continuation lines (RFC 5322: a
         // header can wrap onto following lines that start with space/tab). The old
@@ -613,7 +728,18 @@ async function fetchImapMessages(
           return m ? m[1].replace(/\r?\n[ \t]+/g, " ").trim() : "";
         };
         const fromStr = headerVal(/From:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
-        const subjectStr = headerVal(/Subject:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
+        // Subject uses [ \t]* (NOT \s*): with an EMPTY "Subject:" header, \s* swallowed the
+        // newline + the leading space of the next IMAP line (" BODY[TEXT]<0> {262}") and stored
+        // that section marker as the subject — a real reply then went out as
+        // "Re: BODY[TEXT]<0> {262}". Horizontal whitespace only means an empty subject stays
+        // empty ("(sin asunto)"). The guard below also rejects any leaked IMAP framing.
+        // Scope the Subject lookup to the HEADER block only (before the first blank line) and
+        // anchor it to a line start — otherwise an EMPTY "Subject:" let the unanchored regex run
+        // on into the body and pick up a QUOTED "> Subject: …" from the original mail.
+        const headerBlockForSubject = part.split(/\r?\n\r?\n/)[0] || "";
+        const subjM = headerBlockForSubject.match(/^Subject:[ \t]*(.*(?:\r?\n[ \t]+.+)*)/im);
+        let subjectStr = subjM ? subjM[1].replace(/\r?\n[ \t]+/g, " ").trim() : "";
+        if (/^\s*(BODY\[|BODY\.PEEK\[|\{\d+\}\s*$)/i.test(subjectStr)) subjectStr = "";
         const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
         // Message-ID — folded-aware, and pull the <id@host> reliably (a missing/
         // mangled Message-ID is what makes a reply land as a NEW message instead of
@@ -689,12 +815,19 @@ async function fetchImapMessages(
         }
       }
       } // end batch loop (10 messages per FETCH)
+      // Persist the folder's high-water mark. If the time budget cut this folder short, only
+      // advance to the highest UID we ACTUALLY parsed (never to UIDNEXT-1) so the unread tail is
+      // picked up next tick instead of being skipped forever.
+      if (uidValidity && uidNext) {
+        const advanceTo = cut ? Math.max(prev?.u || 0, maxUidSeen) : (uidNext - 1);
+        if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo };
+      }
     }
 
     await send(nextTag(), "LOGOUT");
     conn.close();
 
-    return { ok: true, messages, bouncedRecipients: Array.from(bouncedRecipients) };
+    return { ok: true, messages, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders };
   } catch (e) {
     return { ok: false, messages: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
   }
@@ -713,6 +846,10 @@ serve(async (req) => {
     // warm isolate) so the sending queue, bounce path and campaign list can use them.
     const suppressReady = await ensureSuppressFn();
     const metricsReady = await ensureMetricsFn();
+    // Incremental (UID) sync state column — enables the "nothing new → skip FETCH" fast path.
+    const uidStateReady = await ensureUidStateColumn();
+    // Batched domain-resolution RPC (1 indexed query per mailbox instead of 25 seq-scans).
+    await ensureSentResolveRpc();
 
     let targetUserId: string | null = null;
     let specificAccountId: string | null = null;
@@ -745,11 +882,28 @@ serve(async (req) => {
     const requestedOffset = offsetProvided ? Math.max(0, Number(body.offset)) : 0;
     // Cron (anon, no user) self-chains through all accounts in small windows (each
     // window stays under the edge worker's CPU/memory budget). Keep the default small.
-    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 10);
-    // Cron default raised 50→120: if a mailbox was disconnected for a while and
-    // reconnects with a backlog, a bigger window drains more of it per pass so real
-    // replies below the old cutoff aren't stranded forever.
-    const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(50, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 120);
+    // Cron window size (anon path) raised 10→60: with ~1.1k connected mailboxes a window of 10
+    // meant the rotating cover took ~⌈1156/10⌉≈116 min, so ~40% of inboxes were >1h stale. 60
+    // processed 4-at-a-time (see CONCURRENCY) is ~15 waves ≈ 75s per tick — well under budget —
+    // and cuts the full-cover cycle to ~⌈1156/60⌉≈20 min. Peak load is UNCHANGED (still 4 IMAP at
+    // once); only the number of sequential waves per tick grows. A wall-clock guard below caps the
+    // tick so a big window can never time out.
+    // Cron window raised to 150 once the incremental UID sync + indexed resolution landed: a
+    // mailbox now costs ~0.25s (nothing new → SELECT only) to ~1s (new mail), so 150 at
+    // concurrency 4 is ~15-40s per tick — far inside the 70s guard. With 4 staggered crons
+    // (phase_ratio 0 / .25 / .5 / .75) that's 600 mailboxes/min → the whole fleet every ~2 min.
+    // 150 per tick is safe ONLY because MAX_MSGS_PER_TICK (below) caps the CPU-heavy MIME parsing:
+    // a tick of 150 first-sync mailboxes once blew the worker's CPU budget (HTTP 546, ~7k messages).
+    // In steady state a mailbox on the UID fast path costs ~0.12s and parses nothing, so 150 ≈ 15-20s.
+    // With 4 staggered crons that's 600 mailboxes/min → the whole fleet (~1.2k) every ~2 min.
+    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 150);
+    // Per-mailbox fetch depth. The CRON path uses 50 (was 120): re-reading the last 120 messages
+    // every tick meant ~12 IMAP round-trips per mailbox (chunks of 10), which is what made a window
+    // of backlogged inboxes crawl. 50 recent messages (~5 round-trips) is far more than the new
+    // mail any mailbox gets between ticks, and dedupe skips the rest — so replies still sync while
+    // each mailbox finishes ~2.4× faster, letting more accounts sync per tick. Manual/user syncs
+    // keep 120 for a deeper one-off backfill.
+    const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(40, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 50);
 
     let accounts: any[] = [];
     let totalAccounts = 0;
@@ -804,9 +958,25 @@ serve(async (req) => {
       if (offsetProvided) {
         usedOffset = requestedOffset;
       } else {
+        // `phase` lets several staggered cron jobs cover DIFFERENT windows in the same minute so
+        // total coverage scales with the number of crons (2 crons at phase 0 and ⌊windows/2⌋ →
+        // 2 windows/min → half the cover time) WITHOUT raising per-invocation concurrency. Each
+        // cron still only opens CONCURRENCY(=4) IMAP sockets, so IONOS load stays modest.
         const windows = Math.max(1, Math.ceil(totalAccounts / requestedBatchSize));
         const minuteIndex = Math.floor(Date.now() / 60000);
-        usedOffset = (minuteIndex % windows) * requestedBatchSize;
+        // Prefer a RELATIVE phase (`phase_ratio` 0..1 → floor(windows*ratio)) so the stagger stays
+        // "the opposite half" as the account count (and thus `windows`) changes. An absolute
+        // `phase` is still accepted, but a value that is ≡ 0 mod windows (e.g. 17 when windows=17,
+        // or anything when windows=1) would make both crons hit the SAME window every minute —
+        // doubling IMAP load on the same mailboxes for zero extra coverage — so it is remapped to
+        // half a rotation. Falls back to 0 (the main cron) when nothing is given.
+        const ratio = Number(body.phase_ratio);
+        let phase = Number.isFinite(ratio) && ratio > 0 && ratio < 1
+          ? Math.floor(windows * ratio)
+          : (Number.isFinite(Number(body.phase)) ? Math.floor(Number(body.phase)) : 0);
+        if (phase !== 0 && windows > 1 && phase % windows === 0) phase = Math.floor(windows / 2);
+        if (windows === 1) phase = 0;
+        usedOffset = ((minuteIndex + phase) % windows) * requestedBatchSize;
       }
       const { data } = await adminClient
         .from("email_accounts")
@@ -819,18 +989,41 @@ serve(async (req) => {
 
     let totalNew = 0;
     const errors: string[] = [];
+    // Per-mailbox timings surfaced in the response (`slowest`) so sync latency is diagnosable
+    // from the outside without digging through logs.
+    const timings: { email: string; ms: number; ok: boolean; msgs?: number; unchanged?: number; err?: string }[] = [];
+    // CPU guard: the edge worker's compute budget is per request, and MIME parsing is what burns
+    // it. Cap the messages PARSED per tick; mailboxes on the UID fast path parse 0 so they are
+    // effectively free — only first-syncs / big backlogs count, and those get deferred instead
+    // of taking the whole tick down with HTTP 546 (WORKER_RESOURCE_LIMIT).
+    // 1500 ≈ 25 first-sync mailboxes per tick — still 4-5× below the ~7k that produced HTTP 546.
+    const MAX_MSGS_PER_TICK = 1500;
+    let parsedThisTick = 0;
 
     // Process account: fetch IMAP + insert messages (relies on dedupe_hash unique constraint to skip duplicates)
     async function processAccount(account: any): Promise<number> {
       let newCount = 0;
+      const t0 = Date.now();
       try {
         const result = await fetchImapMessages(
           account.imap_host, account.imap_port,
           account.imap_username, account.imap_password,
           account.email || account.imap_username,
           account.imap_username,
-          requestedFetchLimit
+          requestedFetchLimit,
+          // Incremental UID state (per folder) — only when the column is confirmed to exist.
+          uidStateReady ? ((account.imap_uid_state as UidState) || null) : null,
+          45_000 // per-mailbox time budget: one slow mailbox can never hog a whole wave
         );
+        timings.push({
+          email: account.email, ms: Date.now() - t0, ok: result.ok,
+          msgs: result.ok ? result.messages.length : undefined,
+          unchanged: result.unchangedFolders?.length, err: result.ok ? undefined : result.error,
+        });
+        parsedThisTick += result.ok ? result.messages.length : 0;
+        // Phase clocks for the DB post-processing (resolution queries / attachments / insert).
+        const tFetch = Date.now();
+        let tResolve = 0, tAtt = 0;
 
         if (!result.ok) {
           console.error(`IMAP fetch failed for ${account.email}:`, result.error);
@@ -842,9 +1035,21 @@ serve(async (req) => {
 
         // Record that this mailbox was checked — makes sync health visible
         // (last_sync was previously never written, so coverage bugs were invisible).
-        await adminClient.from("email_accounts")
-          .update({ last_sync: new Date().toISOString() })
+        // Also persist the per-folder UID high-water mark so the NEXT tick can skip the FETCH
+        // when nothing is new (merged over the stored state so folders we didn't touch keep
+        // theirs). If the update is rejected (PostgREST schema cache not yet aware of the new
+        // column) fall back to writing last_sync only — the sync itself must never fail on this.
+        if (result.unchangedFolders?.length) console.log(`${account.email}: unchanged ${result.unchangedFolders.join(",")}`);
+        const nowIso = new Date().toISOString();
+        const mergedUid = uidStateReady && result.uidState
+          ? { ...((account.imap_uid_state as UidState) || {}), ...result.uidState }
+          : null;
+        const { error: syncUpdErr } = await adminClient.from("email_accounts")
+          .update(mergedUid ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
           .eq("id", account.id);
+        if (syncUpdErr && mergedUid) {
+          await adminClient.from("email_accounts").update({ last_sync: nowIso }).eq("id", account.id);
+        }
 
         // ── Async bounce suppression ──────────────────────────────────────
         // mailer-daemon DSNs caught during this fetch → suppress the failed
@@ -869,16 +1074,41 @@ serve(async (req) => {
         // where it is reversible — never destructive here.
         if (result.messages.length === 0) return 0;
 
-        // Batch lead lookup: get all unique from_emails at once
+        // Resolve each inbound reply to the lead + campaign we ACTUALLY emailed — using sent_emails
+        // as the source of truth (that's what the "replied" stat and campaign membership are keyed
+        // on). This makes real replies count in two cases they previously didn't:
+        //   (a) DUPLICATE lead rows for the same email → the reply used to attach to a copy we never
+        //       emailed (no sent_emails row → replied_at never set, campaign_id null).
+        //   (b) a COLLEAGUE at the lead's company replies from a different address (same domain).
         const fromEmails = [...new Set(result.messages.map(m => m.from_email.toLowerCase()))];
-        let leadsMap = new Map<string, string>();
+
+        // (a/exact) sent_emails whose recipient == the sender → the EMAILED lead + its campaign.
+        const emailSent = new Map<string, { lead_id: string; campaign_id: string }>();
+        if (fromEmails.length > 0) {
+          const { data: se } = await adminClient
+            .from("sent_emails")
+            .select("to_email, lead_id, campaign_id, sent_at, created_at")
+            .eq("account_id", account.id)
+            .not("campaign_id", "is", null)
+            .not("lead_id", "is", null)
+            .in("to_email", fromEmails)
+            .order("sent_at", { ascending: false, nullsFirst: false })
+            .order("created_at", { ascending: false });
+          for (const r of se || []) {
+            const k = (r.to_email || "").toLowerCase();
+            if (k && !emailSent.has(k)) emailSent.set(k, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+          }
+        }
+        // leads-table exact match — fallback for lead_id ONLY (inbound we never campaign-emailed,
+        // e.g. a manually added lead), so the Unibox still associates the message with a lead.
+        const leadsMap = new Map<string, string>();
         if (fromEmails.length > 0) {
           const { data: leads } = await adminClient
             .from("leads")
             .select("id, email")
             .eq("user_id", account.user_id)
             .in("email", fromEmails);
-          for (const l of leads || []) leadsMap.set(l.email.toLowerCase(), l.id);
+          for (const l of leads || []) if (!leadsMap.has(l.email.toLowerCase())) leadsMap.set(l.email.toLowerCase(), l.id);
         }
 
         // Blocklist check — import blocked senders' mail but mark is_archived so it never
@@ -904,52 +1134,51 @@ serve(async (req) => {
           return d ? blockedDomainSet.has(d) : false;
         };
 
-        // Batch campaign lookup. Prefer the campaign where this exact inbox account
-        // is the assigned sender; otherwise fall back to the latest sent email from
-        // this same account. This prevents replies from being attached to another
-        // campaign when the same lead exists in multiple campaigns.
-        // DOMAIN-level linking: a reply from a COLLEAGUE at a lead's company (same domain, a
-        // different person — e.g. sarang.ct@locobear.ae when the lead was someone else @locobear.ae)
-        // is still a campaign reply. Link it to that campaign so it lands IN the campaign instead of
-        // being lost in "global". Only for batch domains with NO exact-email lead; capped for speed.
-        const domainToLead = new Map<string, string>();
-        const resolvedDomains = new Set([...leadsMap.keys()].map((e) => e.split("@")[1]).filter(Boolean));
-        const unresolvedDomains = fromDomains.filter((d) => d && !resolvedDomains.has(d)).slice(0, 25);
-        for (const d of unresolvedDomains) {
+        // (b/domain) for domains with NO exact-email send, find the lead + campaign we emailed at
+        // that SAME domain (a colleague reply — e.g. ivan.romera@adwake.ai when we emailed a
+        // different person @adwake.ai). Capped for speed. Also keyed on sent_emails so the reply
+        // both lands in the campaign AND gets counted.
+        const domainSent = new Map<string, { lead_id: string; campaign_id: string }>();
+        // NEVER domain-match on shared/free-mail providers: "random@gmail.com" is NOT a colleague of
+        // "pepe@gmail.com" — matching there would mark Pepe as replied on ANY unrelated gmail mail.
+        const GENERIC_DOMAINS = /^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|protonmail|proton|gmx|mail|zoho|yandex|hey|fastmail|tutanota|qq|163|126|web|t-online|orange|wanadoo|free|libero|virgilio|telefonica|movistar|terra|ono)\.[a-z.]+$/i;
+        // Domains already resolved EXACTLY (by a send or by a known lead) never take the domain path.
+        const resolvedDomains = new Set([...emailSent.keys(), ...leadsMap.keys()].map((e) => e.split("@")[1]).filter(Boolean));
+        const unresolvedDomains = fromDomains.filter((d) => d && !resolvedDomains.has(d) && !GENERIC_DOMAINS.test(d)).slice(0, 25);
+        // ONE indexed RPC for all domains (was up to 25 sequential `ilike '%@d'` scans per mailbox —
+        // measured at 63 s for a 55-message first sync; now ~1 ms). Falls back to a small capped
+        // loop only if the RPC isn't callable yet (PostgREST schema cache still warming up).
+        if (unresolvedDomains.length > 0) {
+          let resolvedViaRpc = false;
           try {
-            const { data: dl } = await adminClient.from("leads").select("id").eq("user_id", account.user_id).ilike("email", `%@${d}`).limit(1);
-            if (dl && dl[0]?.id) domainToLead.set(d, dl[0].id);
-          } catch { /* non-fatal */ }
-        }
-
-        const leadIds = [...new Set([...leadsMap.values(), ...domainToLead.values()])];
-        const campaignsMap = new Map<string, string>();
-        if (leadIds.length > 0) {
-          const { data: assignedCampaigns } = await adminClient
-            .from("campaign_leads")
-            .select("lead_id, campaign_id, assigned_account_id")
-            .in("lead_id", leadIds)
-            .eq("assigned_account_id", account.id);
-          for (const c of assignedCampaigns || []) {
-            if (!campaignsMap.has(c.lead_id)) campaignsMap.set(c.lead_id, c.campaign_id);
-          }
-
-          const unresolvedLeadIds = leadIds.filter((id) => !campaignsMap.has(id));
-          if (unresolvedLeadIds.length > 0) {
-            const { data: sentCampaigns } = await adminClient
-              .from("sent_emails")
-              .select("lead_id, campaign_id, sent_at, created_at")
-              .in("lead_id", unresolvedLeadIds)
-              .eq("account_id", account.id)
-              .not("campaign_id", "is", null)
-              .order("sent_at", { ascending: false, nullsFirst: false })
-              .order("created_at", { ascending: false });
-            for (const c of sentCampaigns || []) {
-              if (c.lead_id && c.campaign_id && !campaignsMap.has(c.lead_id)) campaignsMap.set(c.lead_id, c.campaign_id);
+            const { data: rows, error: rpcErr } = await adminClient
+              .rpc("resolve_sent_by_domains", { p_account: account.id, p_domains: unresolvedDomains });
+            if (!rpcErr && Array.isArray(rows)) {
+              resolvedViaRpc = true;
+              for (const r of rows as { dom: string; lead_id: string; campaign_id: string }[]) {
+                if (r?.dom && r.lead_id && r.campaign_id) domainSent.set(r.dom, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+              }
+            }
+          } catch { /* fall through */ }
+          if (!resolvedViaRpc) {
+            for (const d of unresolvedDomains.slice(0, 5)) {
+              try {
+                const { data: se } = await adminClient
+                  .from("sent_emails")
+                  .select("lead_id, campaign_id")
+                  .eq("account_id", account.id)
+                  .not("campaign_id", "is", null)
+                  .not("lead_id", "is", null)
+                  .ilike("to_email", `%@${d}`)
+                  .order("sent_at", { ascending: false, nullsFirst: false })
+                  .limit(1);
+                if (se && se[0]?.lead_id) domainSent.set(d, { lead_id: se[0].lead_id, campaign_id: se[0].campaign_id });
+              } catch { /* non-fatal */ }
             }
           }
         }
 
+        tResolve = Date.now();
         // ── Attachments → Storage ──────────────────────────────────────────
         // Bootstrap the column/bucket/policy if missing. If it fails, sync
         // continues WITHOUT attachments (rows must not reference the column).
@@ -996,17 +1225,26 @@ serve(async (req) => {
           }
         }
 
+        tAtt = Date.now();
+        Object.assign(timings[timings.length - 1], { resolve_ms: tResolve - tFetch, att_ms: tAtt - tResolve });
         // Build batch insert payload (dedupe_hash trigger + unique constraint will reject duplicates)
         const rows = result.messages.map(msg => {
           let parsedDate: string;
           try { parsedDate = new Date(msg.date).toISOString(); } catch { parsedDate = new Date().toISOString(); }
-          const leadId = leadsMap.get(msg.from_email.toLowerCase()) || null;
-          // campaign_id: exact-email lead's campaign, else the campaign of a lead at the SAME DOMAIN
-          // (colleague reply) so it still lands in the campaign. lead_id stays exact-only, so a
-          // colleague's reply isn't mis-attributed to a specific lead in the per-lead stats.
-          const dom = (msg.from_email.split("@")[1] || "").toLowerCase();
-          const domLeadId = !leadId && dom ? (domainToLead.get(dom) || null) : null;
-          const campaignId = (leadId ? campaignsMap.get(leadId) : (domLeadId ? campaignsMap.get(domLeadId) : null)) || null;
+          // Prefer the lead + campaign we ACTUALLY emailed (exact recipient), else a colleague at
+          // the same domain, else a plain leads-table match (no campaign). This makes replies from
+          // duplicate lead rows AND from colleagues land in the campaign and count as a reply.
+          const fe = msg.from_email.toLowerCase();
+          const dom = (fe.split("@")[1] || "").toLowerCase();
+          // Priority is EXACT first: (1) the lead we actually emailed at this exact address,
+          // (2) an exact leads-table match, and only then (3) a colleague at the same domain.
+          // Domain must never override an exact identity (that mis-attributed replies and
+          // flipped the wrong lead to "replied"). Generic providers are already excluded above.
+          const exactSent = emailSent.get(fe) || null;
+          const exactLead = leadsMap.get(fe) || null;
+          const domHit = (!exactSent && !exactLead && dom) ? (domainSent.get(dom) || null) : null;
+          const leadId = exactSent?.lead_id || exactLead || domHit?.lead_id || null;
+          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || null;
           return {
             user_id: account.user_id,
             account_id: account.id,
@@ -1101,11 +1339,42 @@ serve(async (req) => {
     // edge function's compute budget and returns WORKER_RESOURCE_LIMIT (the sync
     // error). 4 keeps each wave safely under the limit.
     const CONCURRENCY = 4;
+    // Wall-clock guard: never let a tick run long enough to hit the edge worker's
+    // hard timeout. If we're within reach of the limit, stop starting new waves and
+    // leave the rest for the next rotating-window tick (they are NOT lost — the
+    // window keeps advancing, so unprocessed accounts are picked up next cycle).
+    // 70s so that even the wave in flight (bounded below) finishes well inside the 150s wall.
+    const TICK_DEADLINE_MS = 70_000;
+    const tickStart = Date.now();
+    let stoppedEarly = 0;
+    // Shuffle the window so the time-guard doesn't ALWAYS defer the same tail accounts. Windows are
+    // deterministic (offset by id), so without this a window full of slow IONOS mailboxes would
+    // process its first ~15 every visit and STARVE the rest forever. Shuffling makes the deferred
+    // subset rotate → every account is covered within a few cycles even in a slow window.
+    for (let s = accounts.length - 1; s > 0; s--) { const j = Math.floor(Math.random() * (s + 1)); [accounts[s], accounts[j]] = [accounts[j], accounts[s]]; }
     for (let i = 0; i < accounts.length; i += CONCURRENCY) {
+      const elapsed = Date.now() - tickStart;
+      if (elapsed > TICK_DEADLINE_MS) { stoppedEarly = accounts.length - i; break; }
+      if (parsedThisTick >= MAX_MSGS_PER_TICK) {
+        stoppedEarly = accounts.length - i;
+        console.warn(`fetch-inbox tick hit CPU guard (${parsedThisTick} messages parsed): ${stoppedEarly} account(s) deferred`);
+        break;
+      }
       const batch = accounts.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(batch.map(a => processAccount(a)));
+      // The wave itself is ALSO bounded: a wave started late can't run past the tick deadline
+      // (+ a small grace for the slowest account to close). Without this, a wave launched at
+      // second 69 with one stuck mailbox could still blow through the worker's hard timeout and
+      // lose the whole tick (no response, no deferred count). Race = the wave keeps running in
+      // the background of this isolate but we stop WAITING and return cleanly.
+      const remaining = Math.max(5_000, TICK_DEADLINE_MS - elapsed + 20_000);
+      const results = await Promise.race([
+        Promise.all(batch.map(a => processAccount(a))),
+        new Promise<number[]>((res) => setTimeout(() => res([]), remaining)),
+      ]);
       totalNew += results.reduce((a, b) => a + b, 0);
+      if (results.length === 0) { stoppedEarly = accounts.length - i - batch.length; console.warn(`fetch-inbox wave timed out (${batch.length} account(s) still in flight)`); break; }
     }
+    if (stoppedEarly > 0) console.warn(`fetch-inbox tick hit time guard: ${stoppedEarly} account(s) deferred to next window`);
 
     const nextOffset = specificAccountId ? null : usedOffset + accounts.length;
     const hasMore = specificAccountId ? false : (nextOffset as number) < totalAccounts;
@@ -1123,7 +1392,8 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
-      accounts_checked: accounts.length,
+      accounts_checked: accounts.length - stoppedEarly,
+      accounts_deferred: stoppedEarly,
       accounts_total: totalAccounts,
       new_messages: totalNew,
       next_offset: hasMore ? nextOffset : null,
@@ -1132,6 +1402,11 @@ serve(async (req) => {
       suppress_ready: suppressReady,
       metrics_ready: metricsReady,
       errors: errors.length > 0 ? errors : undefined,
+      // Diagnostics: the slowest mailboxes of this tick (ms, ok, msgs fetched, folders skipped as
+      // unchanged, error). Lets latency be understood from outside without reading logs.
+      slowest: timings.sort((a, b) => b.ms - a.ms).slice(0, 8),
+      unchanged_fast_path: timings.filter((t) => (t.unchanged || 0) > 0).length,
+      parsed_messages: parsedThisTick,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("fetch-inbox error:", e);

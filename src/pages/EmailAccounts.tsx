@@ -1683,7 +1683,7 @@ export default function EmailAccounts() {
                         return (
                           <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
                             <CheckCircle className="h-3 w-3" /> IMAP conectado
-                            {ic.reverifying && <Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" title="Verificando la conexión en vivo…" />}
+                            {ic.reverifying && <span title="Verificando la conexión en vivo…" className="inline-flex"><Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" /></span>}
                           </span>
                         );
                       }

@@ -1647,14 +1647,16 @@ export default function Unibox() {
     if (!user || !msg) { setThreadMessages([]); return; }
     setThreadLoading(true);
     try {
-      // Get all inbox messages from this contact to this account
+      // Get all inbox messages from this contact to this account. NOTE: we deliberately do NOT
+      // filter is_archived here — the thread detail must show the WHOLE conversation. Filtering
+      // archived left GAPS in the thread whenever a message got auto-archived (language/warmup
+      // heuristics) or archived by hand. Warmup noise is excluded explicitly below instead.
       const { data: inboxMsgs } = await supabase
         .from("inbox_messages")
         .select("*")
         .eq("user_id", user.id)
         .eq("account_id", msg.account_id)
         .eq("from_email", msg.from_email)
-        .eq("is_archived", false)
         .order("received_at", { ascending: true });
 
       // Make sure any AI auto-reply to this contact is recorded as a sent email, so it shows in the
@@ -1681,8 +1683,10 @@ export default function Unibox() {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         // Keep every real reply in the thread (codes are stripped on display);
-        // only drop delivery-failure / system noise.
+        // only drop delivery-failure / system noise and warmup traffic.
         if (isBounceOrNoise(m.from_email)) continue;
+        // is_warmup exists in the DB but not in the (stale) generated row type → narrow via cast.
+        if ((m as { is_warmup?: boolean }).is_warmup) continue;
         thread.push({ ...m, _type: "received", _date: m.received_at });
       }
 

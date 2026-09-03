@@ -105,8 +105,10 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       const [stepsRes, campaignRes, metricsRes, dailyRes] = await Promise.all([
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         supabase.from("campaigns").select("name").eq("id", campaignId).single(),
+        // RPC is created at runtime (fetch-inbox bootstrap) so the generated types don't
+        // know it — same `(supabase as any).rpc` pattern as campaign_daily_sends below.
         user
-          ? supabase.rpc("campaign_metrics_for_user", { p_user_id: user.id })
+          ? (supabase as any).rpc("campaign_metrics_for_user", { p_user_id: user.id })
           : Promise.resolve({ data: [] as any[] }),
         // Per-day sends + replies, counted server-side (exact, not capped) — same
         // RPC the CampaignSendsChart uses. Powers the Estadísticas-style area chart.

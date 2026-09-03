@@ -305,7 +305,10 @@ export default function Leads() {
     setImportProgress({ current: 0, total: selectedRows.length, active: true });
 
     try {
-      const BATCH_SIZE = 2000;
+      // 500 per INSERT (was 2000): each batch now completes in well under a second (the blocklist
+      // trigger is index-backed), so smaller batches cost nothing and the progress bar advances
+      // smoothly instead of sitting at 0 until a huge batch returns.
+      const BATCH_SIZE = 500;
       let imported = 0;
       // Yield to main thread between batches so UI stays responsive
       const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
