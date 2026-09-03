@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban } from "lucide-react";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 interface Props { campaignId: string; }
@@ -124,6 +124,27 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [expertRotation, setExpertRotation] = useState(false);
   const [deduping, setDeduping] = useState(false);
   const [signatureHtml, setSignatureHtml] = useState("");
+  const [sigImgUploading, setSigImgUploading] = useState(false);
+  const sigImgInputRef = useRef<HTMLInputElement | null>(null);
+  // Upload an image to Storage and insert a hosted <img> into the campaign signature HTML. A hosted
+  // https URL renders in email (Gmail blocks data: URIs); the campaign engine keeps signature images
+  // (sanitizeSignatureRich) so the logo lands as designed at the end of every email of this campaign.
+  const uploadSigImage = async (file: File) => {
+    if (!file.type.startsWith("image/")) { toast.error("Sube una imagen (PNG, JPG…)"); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error(`"${file.name}" supera 2 MB — usa una imagen más pequeña`); return; }
+    setSigImgUploading(true);
+    try {
+      const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "logo";
+      const path = `signatures/${crypto.randomUUID()}-${safe}`;
+      const { error: upErr } = await supabase.storage.from("godtube-media").upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) throw upErr;
+      const url = supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl;
+      const imgTag = `<img src="${url}" alt="" style="max-width:180px;height:auto;display:block;margin-top:8px" />`;
+      setSignatureHtml(prev => (prev.trim() ? `${prev}\n${imgTag}` : imgTag)); markDirty();
+      toast.success("Imagen añadida a la firma");
+    } catch (e: any) { toast.error(`No se pudo subir la imagen: ${e?.message || e}`); }
+    finally { setSigImgUploading(false); if (sigImgInputRef.current) sigImgInputRef.current.value = ""; }
+  };
   const [showSignaturePreview, setShowSignaturePreview] = useState(false);
   const [breakThreadAfter, setBreakThreadAfter] = useState(0);
   const [accountsExpanded, setAccountsExpanded] = useState(false);
@@ -819,6 +840,13 @@ export default function CampaignOptions({ campaignId }: Props) {
               placeholder='<p style="color:#555">— <br/>Tu Nombre<br/>tu@empresa.com</p>'
               className="min-h-[110px] font-mono text-xs"
             />
+            <div className="flex items-center gap-2">
+              <input ref={sigImgInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSigImage(f); }} />
+              <Button type="button" variant="outline" size="sm" className="gap-1.5 h-8 text-xs" disabled={sigImgUploading} onClick={() => sigImgInputRef.current?.click()}>
+                {sigImgUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir imagen (logo)
+              </Button>
+              <span className="text-[11px] text-muted-foreground">Se inserta como imagen en la firma (máx. 2 MB).</span>
+            </div>
             {signatureHtml.trim() && (
               <div className="space-y-2">
                 <Button variant="outline" size="sm" className="text-xs" onClick={() => setShowSignaturePreview(!showSignaturePreview)}>
