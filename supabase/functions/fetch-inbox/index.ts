@@ -77,6 +77,46 @@ function extractAttachments(raw: string): ParsedAttachment[] {
 // the feature works even if the migration hasn't been pushed yet. Idempotent,
 // and guarded so it executes at most once per warm isolate — and only does the
 // DDL round-trip when the column is actually missing.
+// ── ONE read-only catalog probe instead of DDL on every invocation ────────────────────
+// Edge isolates do NOT keep module state between requests, so the "once per warm isolate"
+// guards below ran their ALTER TABLE / CREATE OR REPLACE FUNCTION / NOTIFY pgrst on EVERY tick
+// (measured: ~12-20 DDL/min). Each DDL takes an ACCESS EXCLUSIVE lock and forces PostgREST to
+// re-introspect the whole schema (~130 ms of DB CPU each) — a large share of DB CPU.
+// This probe is a single ~1 ms SELECT over the catalogs; when everything is present (always,
+// after the first deploy) it flips all the flags and NO DDL/NOTIFY runs at all. The ensure*
+// functions are kept only as the rare self-healing path for a fresh project.
+let infraProbed = false;
+async function probeInfra(): Promise<void> {
+  if (infraProbed) return;
+  infraProbed = true;
+  const dbUrl = Deno.env.get("SUPABASE_DB_URL");
+  if (!dbUrl) return;
+  try {
+    const sql = postgres(dbUrl, { prepare: false, max: 1 });
+    try {
+      const r = await sql`
+        select
+          exists(select 1 from information_schema.columns where table_schema='public' and table_name='email_accounts' and column_name='imap_uid_state') as col_uid,
+          exists(select 1 from information_schema.columns where table_schema='public' and table_name='inbox_messages' and column_name='ref_chain') as col_ref,
+          exists(select 1 from information_schema.columns where table_schema='public' and table_name='inbox_messages' and column_name='attachments') as col_att,
+          exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='resolve_sent_by_domains') as fn_resolve,
+          exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='suppress_email_global') as fn_suppress,
+          exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='campaign_metrics_for_user') as fn_metrics,
+          exists(select 1 from storage.buckets where id='inbox-attachments') as bucket_att`;
+      const x = (r as any[])[0] || {};
+      if (x.col_uid) uidStateColReady = true;
+      if (x.fn_resolve) sentResolveRpcReady = true;
+      if (x.fn_suppress) suppressFnReady = true;
+      if (x.col_ref && x.fn_metrics) metricsFnReady = true;
+      if (x.col_att && x.bucket_att) attachmentInfraReady = true;
+    } finally {
+      await sql.end({ timeout: 3 });
+    }
+  } catch (e) {
+    console.error("infra probe failed (falling back to ensure* DDL path):", (e as Error).message);
+  }
+}
+
 let attachmentInfraReady = false;
 async function ensureAttachmentInfra(adminClient: ReturnType<typeof createClient>): Promise<boolean> {
   if (attachmentInfraReady) return true;
@@ -842,6 +882,9 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Read-only catalog probe FIRST (≈1 ms): flips every *Ready flag when the objects exist, so
+    // none of the ensure* calls below touch DDL / NOTIFY pgrst on a normal tick.
+    await probeInfra();
     // Make sure the global-suppression + campaign-metrics RPCs exist (once per
     // warm isolate) so the sending queue, bounce path and campaign list can use them.
     const suppressReady = await ensureSuppressFn();
@@ -1044,11 +1087,20 @@ serve(async (req) => {
         const mergedUid = uidStateReady && result.uidState
           ? { ...((account.imap_uid_state as UidState) || {}), ...result.uidState }
           : null;
-        const { error: syncUpdErr } = await adminClient.from("email_accounts")
-          .update(mergedUid ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
-          .eq("id", account.id);
-        if (syncUpdErr && mergedUid) {
-          await adminClient.from("email_accounts").update({ last_sync: nowIso }).eq("id", account.id);
+        // Skip the write when it would change nothing: same UID state, no mail fetched, and
+        // last_sync refreshed < 3 min ago. Mailboxes are visited every ~2 min, so this halves
+        // ~500 no-op UPDATEs/min (WAL + logical decoding for Realtime + autovacuum churn) while
+        // last_sync still stays within a few minutes (>15 min old = a real problem, unchanged).
+        const uidChanged = !!mergedUid && JSON.stringify(mergedUid) !== JSON.stringify((account.imap_uid_state as UidState) || {});
+        const lastSyncAgeMs = Date.now() - (Date.parse(account.last_sync || "") || 0);
+        const mustWrite = uidChanged || result.messages.length > 0 || lastSyncAgeMs > 180_000;
+        if (mustWrite) {
+          const { error: syncUpdErr } = await adminClient.from("email_accounts")
+            .update(mergedUid ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
+            .eq("id", account.id);
+          if (syncUpdErr && mergedUid) {
+            await adminClient.from("email_accounts").update({ last_sync: nowIso }).eq("id", account.id);
+          }
         }
 
         // ── Async bounce suppression ──────────────────────────────────────
