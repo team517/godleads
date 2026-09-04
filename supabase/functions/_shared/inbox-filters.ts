@@ -62,6 +62,62 @@ export function hasWarmupCodes(subject: string | null, body: string | null): boo
   return false;
 }
 
+
+// ── Warm-up network traffic (2026-09-04) ─────────────────────────────────────
+// The uppercase-code detector above misses the newer warm-up pools: lowercase nonsense word
+// pairs dropped mid-sentence ("noise-waste", "clock-speed"), generic office subjects ("Book
+// Club Meeting", "Sprint Retrospective"), base64 bodies, and mail exchanged between OUR OWN
+// mailboxes. ~84% of daily inbound is this traffic; it must never be labelled or counted.
+const HYPHEN_WHITELIST = /\b(e-?mail|follow-?up|cold-?email|in-?house|third-?party|up-to-date|long-?term|short-?term|on-?site|real-?time|co-?founder|opt-?in|opt-?out|sign-?up|log-?in|check-?in|one-on-one|face-to-face|end-to-end|know-?how|start-?up|pop-?up|add-?on|plug-?in|built-?in|hands-?on|drop-?down|e-?commerce|re-?engagement|self-?service|well-?known|state-of-the-art|b2b|b2c|non-?profit|part-?time|full-?time|high-?level|low-?cost|out-of-office|pre-?sales|post-?sales|cross-?sell|up-?sell|go-to-market|multi-?channel|omni-?channel|open-?source|white-?label|pay-?as-you-go|well-?being|decision-?makers?|high-?speed|high-?end|top-?notch|first-?class|world-?class|user-?friendly|cost-?effective|data-?driven|time-?consuming|long-?standing|cutting-?edge|problem-?solving)\b/i;
+// exactly two hyphen-joined lowercase words, NOT part of a longer chain ("state-of-the-art").
+const WARMUP_PAIR_RE = /(?<![a-z-])[a-z]{3,9}-[a-z]{3,9}(?![a-z-])/g;
+const WARMUP_SUBJECT_RE = /^(re|fw|fwd|rv)?\s*:?\s*(book (club|recommendation)|(upcoming |virtual |quarterly |weekly |monthly |team )?(project|team|marketing|sales|client|budget|planning|strategy|status|kickoff|sync|review) (meeting|update|review|recap|reminder)|sprint retrospective|retrospective meeting|(annual|upcoming) (conference|industry conference|networking event|training( event)?)|webinar invite|volunteer program|wellness workshop|customer service workshop|leadership training|feature request|task priorities|financial report|sales performance|quarterly performance review|year-end review|new (software|internal compliance) (training|policy)|corporate social responsibility|travel plans|operations improvement)\b/i;
+const BASE64_BODY_RE = /^\s*(?:BODY\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*)?[A-Za-z0-9+\/=]{40,}(?:\s+[A-Za-z0-9+\/=]{16,})*\s*$/;
+
+/** A REAL hyphenated compound usually has an adjective/participle side ("cost-effective",
+ *  "data-driven", "user-friendly", "well-being"); warm-up pairs are two bare nouns/verbs glued at
+ *  random ("noise-waste", "clock-speed", "sugar-place", "write-clear"). */
+const COMPOUND_SIDE_RE = /(ed|ing|ly|ive|able|ible|ful|less|ness|ous|al|er|est|ic|ish|ward|wise|free|based|like|proof|wide|ready|made|led|tech|time|term)$/i;
+/** Count nonsense lowercase word pairs. Whitelisted real terms never count. In STRICT mode
+ *  (mail linked to a lead/campaign, or unknown) compound-looking pairs are also excluded so a
+ *  real prospect's "cost-effective" never counts; in non-strict mode (mail NOT linked to any
+ *  lead — never a campaign reply) any remaining pair counts ("clock-speed", "noise-waste"). */
+export function warmupPairCount(text: string | null, strict = true): number {
+  const t = (text || "").slice(0, 1200);
+  let n = 0;
+  for (const m of t.match(WARMUP_PAIR_RE) || []) {
+    if (HYPHEN_WHITELIST.test(m)) continue;
+    if (strict) { const [a, b] = m.split("-"); if (COMPOUND_SIDE_RE.test(a) || COMPOUND_SIDE_RE.test(b)) continue; }
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Full warm-up decision. Signals (any one is enough unless noted):
+ *  - the classic uppercase-code detector (hasWarmupCodes);
+ *  - the sender is one of OUR OWN mailboxes (ownMailboxes) — agency addresses excluded by the caller;
+ *  - a nonsense lowercase pair + (generic office subject OR base64 body OR a second pair);
+ *  - generic office subject + base64 body.
+ * A single pair alone is NOT enough (a real prospect could write an unusual hyphenation).
+ */
+export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null }): boolean {
+  const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
+  if (hasWarmupCodes(s, b)) return true;
+  if (from && input.ownMailboxes && input.ownMailboxes.has(from)) return true;
+  const pairs = warmupPairCount(s + " " + b, input.linked !== false);
+  const generic = WARMUP_SUBJECT_RE.test(s.trim());
+  const b64 = BASE64_BODY_RE.test(b.slice(0, 600));
+  if (pairs >= 2) return true;
+  if (pairs >= 1 && (generic || b64)) return true;
+  // A nonsense pair in a mail that is NOT a reply to any lead/campaign of ours (linked === false)
+  // is warm-up: real prospect replies are always attached to the lead we wrote to. When the
+  // caller cannot tell (linked undefined/null) a single pair alone is NOT enough.
+  if (pairs >= 1 && input.linked === false) return true;
+  if (generic && b64) return true;
+  return false;
+}
+
 const BOUNCE_LOCALPARTS = /^(mailer-daemon|postmaster|bounce|bounces|delivery|deliverability|abuse|failure-notice|mailer)@/i;
 const IONOS_DOMAINS = new Set(["ionos.com", "ionos.es", "ionos.de", "ionos.fr", "ionos.co.uk"]);
 const IONOS_LOCALS = new Set([

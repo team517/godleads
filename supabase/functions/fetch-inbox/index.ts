@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
+import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -438,15 +439,49 @@ function reinterpretBytes(text: string, charset: string): string {
   return safeDecode(bytes, charset);
 }
 
+/** Multipart-aware: pick the text/plain part (else the first non-multipart part) of a multipart body and
+ *  decode it by ITS OWN Content-Transfer-Encoding / charset. The old whole-body path ran atob() over
+ *  "part1 + boundary + part2" (which fails) and stored Outlook replies as raw base64 (~6k unreadable
+ *  bodies). Returns null when the body is not multipart so the single-part path handles it. */
+function decodeMultipartPlain(raw: string, defaultCharset: string): string | null {
+  const bm = raw.match(/(?:^|\r?\n)--([A-Za-z0-9'()+_,./:=?-]{10,})\r?\n/);
+  if (!bm) return null;
+  const esc = bm[1].replace(/[^A-Za-z0-9_]/g, (c) => "\\" + c);
+  const parts = raw.split(new RegExp("(?:^|\r?\n)--" + esc + "(?:--)?(?:\r?\n|$)"));
+  const cands = parts.map((p) => { const i = p.search(/\r?\n\r?\n/); return i < 0 ? null : { hdr: p.slice(0, i), body: p.slice(i).replace(/^\r?\n\r?\n/, "") }; })
+    .filter((x): x is { hdr: string; body: string } => !!x && /content-type\s*:/i.test(x.hdr) && x.body.trim().length > 0);
+  if (!cands.length) return null;
+  const pick = cands.find((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr)) || cands.find((c) => !/content-type\s*:\s*multipart\//i.test(c.hdr)) || cands[0];
+  const cte = (pick.hdr.match(/Content-Transfer-Encoding\s*:\s*([^\r\n;]+)/i)?.[1] || "7bit").trim().toLowerCase();
+  const cs = (pick.hdr.match(/charset="?([^"\s;]+)"?/i)?.[1] || defaultCharset).toLowerCase();
+  let body = pick.body;
+  if (cte === "base64") {
+    try { const bin = atob(body.replace(/\s+/g, "")); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); body = safeDecode(bytes, cs); } catch { return null; }
+  } else if (cte === "quoted-printable") {
+    body = body.replace(/=\r?\n/g, "").replace(/(?:=[0-9A-Fa-f]{2})+/g, (m) => { const by: number[] = []; for (let i = 0; i < m.length; i += 3) by.push(parseInt(m.substring(i + 1, i + 3), 16)); return safeDecode(new Uint8Array(by), cs); });
+  } else if (cs !== "utf-8" && /[\x80-\xFF]/.test(body)) {
+    body = reinterpretBytes(body, cs);
+  }
+  if (/content-type\s*:\s*text\/html/i.test(pick.hdr)) body = body.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ");
+  return body;
+}
+
 /** Clean raw IMAP body_text into readable plain text (charset-aware) */
 function cleanBody(raw: string, defaultCharset = "utf-8"): string {
   if (!raw) return "";
+  // Multipart → decode the right part by its own headers, then continue with the generic cleanup
+  // (transfer-encoding already applied, so the whole-body decode below must not run again).
+  const mp = decodeMultipartPlain(raw.replace(/^\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*/i, ""), defaultCharset);
+  if (mp !== null) raw = "Content-Transfer-Encoding: 8bit\n\n" + mp;
   // The charset declared in the part header (if present) overrides the default
   const charset = detectCharset(raw) || defaultCharset;
   const transferEnc = detectTransferEncoding(raw);
 
   let text = raw;
-  text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
+  // Strip the IMAP item marker. With a PARTIAL fetch the server answers "BODY[TEXT]<0> {N}" — the old
+  // regex lacked the "<0>" part, so the marker survived and the HTML-tag stripper below turned it into
+  // "BODY[TEXT] {N}" at the top of ~38k stored bodies. Also tolerate BODY.PEEK and a stray leading space.
+  text = text.replace(/^\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*/i, "");
   // Outlook/Exchange multipart preamble + the boundary token right after it (with or
   // without its leading "--") — otherwise "This is a multi-part message in MIME format."
   // and a bare boundary line leak into the stored body.
@@ -486,6 +521,16 @@ function cleanBody(raw: string, defaultCharset = "utf-8"): string {
     }
   }
 
+  // Last resort: if what we have is still one pure base64 blob (headers missing/misread), decode it.
+  if (/^[A-Za-z0-9+\/=\s]{40,}$/.test(text) && !/\s[a-z]{2,}\s[a-z]{2,}\s/i.test(text)) {
+    try {
+      const bin = atob(text.replace(/\s+/g, ""));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const dec = safeDecode(bytes, charset);
+      if (dec && !/\uFFFD{3,}/.test(dec) && /[A-Za-z]{3,}/.test(dec)) text = dec;
+    } catch { /* keep as is */ }
+  }
   text = text.replace(/<[^>]+>/g, " ");
   text = text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"');
   // Strip any U+FFFD that might still leak (last resort cleanup)
@@ -749,7 +794,7 @@ async function fetchImapMessages(
       for (const rangeCmd of ranges) {
       if (overBudget()) { cut = true; break; }
       // `UID` is requested explicitly so BOTH paths report each message's UID → high-water mark.
-      const fetchResp = await send(nextTag(), `${rangeCmd} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)] BODY.PEEK[TEXT]<0.262144>)`);
+      const fetchResp = await send(nextTag(), `${rangeCmd} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO CONTENT-TYPE CONTENT-TRANSFER-ENCODING)] BODY.PEEK[TEXT]<0.262144>)`);
 
       const parts = fetchResp.split(/\* \d+ FETCH/);
       for (const part of parts) {
@@ -825,6 +870,18 @@ async function fetchImapMessages(
           .replace(/(\r?\n)?[A-Za-z0-9]{1,8} (OK|NO|BAD)[^\n]*\s*$/, "")
           .replace(/(\r?\n)?\)\s*$/, "")
           .trim();
+        // Single-part messages carry Content-Type / Content-Transfer-Encoding in the TOP headers
+        // (which we now fetch), not inside BODY[TEXT]. Without them cleanBody saw a bare base64
+        // blob and stored it verbatim (~6k unreadable bodies). Prepend them when the body has no
+        // MIME headers of its own so the existing charset/encoding decoding just works.
+        if (!/^[\s\S]{0,400}?Content-Transfer-Encoding\s*:/i.test(rawBody)) {
+          const topCte = headerVal(/Content-Transfer-Encoding:[ \t]*([^\r\n]+)/i);
+          const topCt = headerVal(/Content-Type:[ \t]*([^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);
+          if (topCte || topCt) {
+            const hdr = (topCt ? "Content-Type: " + topCt.replace(/\r?\n[ \t]+/g, " ") + "\r\n" : "") + (topCte ? "Content-Transfer-Encoding: " + topCte + "\r\n" : "");
+            rawBody = rawBody.replace(/^(\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*)/i, "$1" + hdr + "\r\n");
+          }
+        }
 
         if (fromEmail) {
           const decodedSubject = decodeMimeWords(subjectStr);
@@ -1151,6 +1208,17 @@ serve(async (req) => {
             if (k && !emailSent.has(k)) emailSent.set(k, { lead_id: r.lead_id, campaign_id: r.campaign_id });
           }
         }
+        // Warm-up: mail coming from one of OUR OWN mailboxes is warm-up network traffic (agency
+        // addresses excluded so a real team@/support@ test still lands normally).
+        const ownMailboxes = new Set<string>();
+        if (fromEmails.length > 0) {
+          const { data: ownRows } = await adminClient.from("email_accounts").select("email").in("email", fromEmails);
+          for (const r of ownRows || []) {
+            const e = (r.email || "").toLowerCase();
+            if (e && !/^(team|support|hello|equipo)@onepulso\./.test(e)) ownMailboxes.add(e);
+          }
+        }
+
         // leads-table exact match — fallback for lead_id ONLY (inbound we never campaign-emailed,
         // e.g. a manually added lead), so the Unibox still associates the message with a lead.
         const leadsMap = new Map<string, string>();
@@ -1312,6 +1380,10 @@ serve(async (req) => {
             // Blocked sender → import (keeps threading/dedupe intact) but pre-archived so it
             // never appears in the Unibox nor counts as a reply.
             is_archived: isBlockedSender(msg.from_email),
+            // Warm-up network traffic (own mailboxes, nonsense word pairs, generic office subjects,
+            // base64 blobs, uppercase codes). Flagged at sync so NO consumer — Unibox labels, AI
+            // agents, digest, reports, "replied" stats — ever counts it as a prospect reply.
+            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) }),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),
@@ -1338,7 +1410,7 @@ serve(async (req) => {
           const { data: inserted, error: insertError } = await adminClient
             .from("inbox_messages")
             .upsert(chunk, { onConflict: "user_id,dedupe_hash", ignoreDuplicates: true })
-            .select("id, lead_id, campaign_id, received_at");
+            .select("id, lead_id, campaign_id, received_at, message_id");
 
           if (insertError) {
             // If batch fails (likely due to dedupe), fall back to individual inserts
@@ -1350,7 +1422,7 @@ serve(async (req) => {
                 .single();
               if (!e && ins) {
                 newCount++;
-                if (row.lead_id) {
+                if (row.lead_id && !(row as any).is_warmup) {
                   await adminClient.from("leads").update({ status: "replied" }).eq("id", row.lead_id);
                   await adminClient.from("sent_emails").update({ replied_at: row.received_at })
                     .eq("lead_id", row.lead_id).eq("user_id", account.user_id).is("replied_at", null);
@@ -1365,7 +1437,8 @@ serve(async (req) => {
           } else if (inserted) {
             newCount += inserted.length;
             // Mark replied for leads that produced a new message
-            const repliedLeadIds = inserted.filter(r => r.lead_id).map(r => r.lead_id);
+            const warmIds = new Set(rows.filter((r: any) => r.is_warmup).map((r: any) => r.message_id).filter(Boolean));
+            const repliedLeadIds = inserted.filter(r => r.lead_id && !warmIds.has((r as any).message_id)).map(r => r.lead_id);
             if (repliedLeadIds.length > 0) {
               await adminClient.from("leads").update({ status: "replied" }).in("id", repliedLeadIds);
               await adminClient.from("sent_emails").update({ replied_at: new Date().toISOString() })

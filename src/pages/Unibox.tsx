@@ -1,3 +1,4 @@
+import { isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { classifyMessage as classifyIntent } from "@/lib/classify";
@@ -1450,6 +1451,10 @@ export default function Unibox() {
     const updates: Array<{ id: string; labels: string[] }> = [];
     for (const m of msgs) {
       if (isSpam(m.subject, m.body_text, m.from_email)) continue;
+      // Warm-up network mail and bounces are NOT prospect replies: never label them (they were
+      // getting "Interesado" by the thousand and polluting every count/report/digest).
+      if ((m as { is_warmup?: boolean }).is_warmup) continue;
+      if (isBounceOrFailure(m.from_email) || isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email })) continue;
       const newLabel = labelFor(classifyMessage(m.subject, m.body_text));
       if (!newLabel) continue;
       const current: string[] = m.labels || [];

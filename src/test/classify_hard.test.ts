@@ -115,6 +115,28 @@ const CASES: Array<[string[], string]> = [
   [["interested"], "Sí, hablemos la semana que viene.\n\nEl lun, 1 sept, Javier escribió:\n> ¿Tienes 10 minutos esta semana? Y si ahora mismo no es una prioridad, dímelo sin problema y no vuelvo a molestar."],
   // an auto-reply that itself STARTS with a footer-like phrase must still be out_of_office
   [["out_of_office"], "Este correo no será leído hasta el 22 de septiembre. Para urgencias contacta con recepcion@empresa.es"],
+  // ── "I'm BACK from holidays and interested" is the opposite of an absence (real case, Circutor).
+  [["interested"], "Hola Javier, Acabo de regresar de las vacaciones y estaría interesado en escucharte. Si te va bien, envíame una convocatoria de reunión para la semana que viene."],
+  [["interested"], "Ya he vuelto de vacaciones, hablemos cuando quieras."],
+  [["interested", "question"], "Just got back from holiday — can we set up a call next week?"],
+  // …but a genuine absence stays out_of_office
+  [["out_of_office"], "Estoy de vacaciones hasta el 15 de septiembre, sin acceso al correo."],
+  [["out_of_office"], "Me encuentro fuera de la oficina. Vuelvo el lunes 8."],
+  // ── REAL prospect replies (7-day audit, 2026-09-04) that the rules used to miss
+  [["interested"], "Hi Maria, This sounds interesting - happy to schedule a call. Libby Aldred Principal Argentum Law Your “Outside In-House Counsel”"],
+  [["interested"], "Sure - lets see a demo Regards Shobha Moni Director – Business Development"],
+  [["interested"], "5:00 pm Dubai time tomorrow Krish Kothari Founder KKD Studio"],
+  [["interested", "question"], "Hi dear I have not seen a slot for 9 am dubai time, please send across the invite. Thanks Rima"],
+  [["interested"], "Buenos días Alfons, Encantado de conocerte. Por nuestra parte vemos muy interesante lo que planteas."],
+  [["not_interested"], "Eric, tenemos un equipo dedicado exclusivamente a generacion de mas leads + agentes de IA. Gracias"],
+  [["not_interested", "no_contactar"], "Dear Maria, Not interested, pls delete my contact. Regards, Fabio"],
+  [["derivado"], "Adding Sanvi/Sukhdev in the loop. Hi Maria, please connect with Sanvi and she will take it from here."],
+  [["derivado"], "Hola, este tema deberías tratarlo con la persona de comunicación. Rita"],
+  [["no_contactar"], "Go away"],
+  [["out_of_office"], "Estimados colaboradores: La cuenta de correo angel.jimenez@tourdiez.com dejará de estar operativa en breve. Rogamos envíen sus comunicados a contratacion@tourdiez.com"],
+  [["question", "interested"], "Maria, Before I consider a meeting do you have some idea on costs?"],
+  // "in-house" in a signature tagline must NOT be a rejection; real in-house statements still are
+  [["not_interested"], "Thanks, but we handle lead generation in-house."],
 ];
 
 describe("classifier hard battery", () => {
