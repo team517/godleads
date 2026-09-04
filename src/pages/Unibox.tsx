@@ -1435,43 +1435,43 @@ export default function Unibox() {
     cacheSet("unibox:messages", msgs); // instant paint on next visit
     setLoading(false);
 
-    // Auto-label messages classified as "Interesado" that don't already have the label
-    const toLabel = msgs.filter(m => {
-      if (isSpam(m.subject, m.body_text, m.from_email)) return false;
-      const cat = classifyMessage(m.subject, m.body_text);
-      const labels: string[] = m.labels || [];
-      if (cat === "interested" && !labels.includes("Interesado")) return true;
-      if (cat === "not_interested" && !labels.includes("No interesado")) return true;
-      if (cat === "no_contactar" && !labels.includes("No contactar")) return true;
-      if (cat === "derivado" && !labels.includes("Derivado")) return true;
-      if (cat === "out_of_office" && !labels.includes("Fuera / Auto")) return true;
-      if (cat === "question" && !labels.includes("Pregunta")) return true;
-      return false;
-    });
-
-    for (const m of toLabel) {
-      const cat = classifyMessage(m.subject, m.body_text);
-      const currentLabels: string[] = m.labels || [];
-      let newLabel = "";
-      if (cat === "interested") newLabel = "Interesado";
-      else if (cat === "not_interested") newLabel = "No interesado";
-      else if (cat === "no_contactar") newLabel = "No contactar";
-      else if (cat === "derivado") newLabel = "Derivado";
-      else if (cat === "out_of_office") newLabel = "Fuera / Auto";
-      else if (cat === "question") newLabel = "Pregunta";
-      if (newLabel && !currentLabels.includes(newLabel)) {
-        const updatedLabels = [...currentLabels, newLabel];
-        supabase
-          .from("inbox_messages")
-          .update({ labels: updatedLabels })
-          .eq("id", m.id)
-          .then(() => {
-            // Update local state too
-            setMessages(prev => prev.map(msg =>
-              msg.id === m.id ? { ...msg, labels: updatedLabels } : msg
-            ));
-          });
+    // Auto-label from the classifier. Labels used to be ADDITIVE and sticky: a message that
+    // was once (wrongly) tagged "Interesado" kept it forever, and a later classification just
+    // appended a second category. Now: (1) a message with no category label gets one; (2) an
+    // OPTIMISTIC auto label ("Interesado" / "Pregunta") is DOWNGRADED when the classifier now
+    // reads a clear rejection / unsubscribe / auto-reply / referral (real case: ANIMSA's polite
+    // "no tenemos la necesidad de…" sat under Interesado). We never upgrade over an existing
+    // label and never touch non-category labels (e.g. "Importante"), so a manual correction
+    // (someone hand-setting "No interesado") is always respected.
+    const CATEGORY_LABELS = ["Interesado", "No interesado", "No contactar", "Derivado", "Fuera / Auto", "Pregunta"];
+    const OPTIMISTIC = new Set(["Interesado", "Pregunta"]);
+    const DOWNGRADE_TO = new Set(["No interesado", "No contactar", "Fuera / Auto", "Derivado"]);
+    const labelFor = (cat: MessageCategory): string => (cat === "neutral" ? "" : categoryConfig[cat].label);
+    const updates: Array<{ id: string; labels: string[] }> = [];
+    for (const m of msgs) {
+      if (isSpam(m.subject, m.body_text, m.from_email)) continue;
+      const newLabel = labelFor(classifyMessage(m.subject, m.body_text));
+      if (!newLabel) continue;
+      const current: string[] = m.labels || [];
+      const currentCats = current.filter((l) => CATEGORY_LABELS.includes(l));
+      if (currentCats.includes(newLabel)) continue; // already right
+      const others = current.filter((l) => !CATEGORY_LABELS.includes(l));
+      if (currentCats.length === 0) {
+        updates.push({ id: m.id, labels: [...others, newLabel] });
+      } else if (currentCats.every((l) => OPTIMISTIC.has(l)) && DOWNGRADE_TO.has(newLabel)) {
+        updates.push({ id: m.id, labels: [...others, newLabel] });
       }
+    }
+    if (updates.length > 0) {
+      // Apply in small parallel batches so a big backlog doesn't fire hundreds of requests at once.
+      const BATCH = 10;
+      (async () => {
+        for (let i = 0; i < updates.length; i += BATCH) {
+          const slice = updates.slice(i, i + BATCH);
+          await Promise.all(slice.map((u) => supabase.from("inbox_messages").update({ labels: u.labels }).eq("id", u.id)));
+          setMessages((prev) => prev.map((msg) => { const u = slice.find((x) => x.id === msg.id); return u ? { ...msg, labels: u.labels } : msg; }));
+        }
+      })();
     }
   }, [user]);
 

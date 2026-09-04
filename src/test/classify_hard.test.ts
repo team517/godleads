@@ -84,6 +84,37 @@ const CASES: Array<[string[], string]> = [
   [["not_interested"], "Gracias, en estos momentos no es nuestro caso."],
   // not the decision-maker → derivado
   [["derivado", "neutral"], "No decido nada en los temas que me mencionas. Saludos."],
+  // ── REAL (ANIMSA, 2026-09-04): polite out-of-scope rejection with NO literal "no me interesa".
+  // Was labelled Interesado in prod and "question" by the old rules (the relative clause
+  // "clientes que tienen otras empresas" matched the wh-word pattern). Must be a NO.
+  [["not_interested"], "Hola. ANIMSA es una empresa pública, que solo presta servicios a las Entidades Públicas de Navarra que son accionistas de ANIMSA, por lo que no tenemos la necesidad de captación de clientes que tienen otras empresas. Gracias, y un saludo"],
+  [["not_interested"], "Gracias, pero no tenemos necesidad de este servicio."],
+  [["not_interested"], "No necesitamos captar clientes, trabajamos solo con socios."],
+  [["not_interested"], "Solo prestamos servicios a nuestros asociados, no captamos clientes externos."],
+  [["not_interested"], "Somos una empresa pública y no hacemos captación comercial."],
+  [["not_interested"], "Esto no aplica a nuestro caso. Un saludo."],
+  [["not_interested"], "No procede, no trabajamos con proveedores externos."],
+  [["not_interested"], "No nos hace falta, gracias."],
+  // a relative clause "que tiene(n)" is NOT a question (must never read as Pregunta)
+  [["neutral", "not_interested"], "Trabajamos con clientes que tienen otras necesidades y proveedores que ya conocen."],
+  // …but a real interrogative still is
+  [["question"], "¿Qué tiene de especial vuestro servicio?"],
+  [["question"], "Hola. Cuánto cuesta al mes?"],
+  // a no-need sentence next to an explicit info request stays warm (engagement wins)
+  [["interested", "question"], "Ahora mismo no tenemos necesidad, pero mándame la información y el precio por si acaso."],
+  // ── REAL threads with OUR quoted outreach + legal footers (the text that must be IGNORED).
+  // emxys: hot lead; the footer "return the original message" used to flag it out_of_office.
+  [["interested"], "Hola John, Casualmente estamos buscando un IC de categoría RadHard que nos está costando encontrar: TI M4FR5969SRGZT (Qty: 3). A ver si puedes averiguar si tienes disponibles. Saludos, Francisco\n\nEl 05/08/2026 a las 9:48, John Lopez escribió:\n> Hola Francisco, si tenéis algún componente que os esté costando localizar, enviadnos el número de pieza.\n> Sin compromiso.\n\nThis message and any attachments are confidential. If you have received this in error please notify us immediately and return the original message to us."],
+  // adarsa: engaged reply; the RGPD footer ("datos personales… tratamiento") used to force no_contactar.
+  [["interested", "question"], "Buenas tardes, John. Lo comento con el cliente y te informo. Por otra parte, ¿me puedes pasar los datos de tu empresa? Gracias. Emilio\n\nInformación básica sobre protección de datos. Responsable: Adarsa. Finalidad: gestión de contactos. De conformidad con el Reglamento (UE) 2016/679 en lo que respecta al tratamiento de datos personales."],
+  // kalkan: rescheduling a call = interest; "looking forward to" in OUR quoted mail used to read as a referral.
+  [["interested"], "Buen día Gavin, we need to move the call for 11AM Spanish time, I have an investor meeting at 10AM. Cosmin\n\n> On Tue, Gavin wrote:\n> Looking forward to speaking with you both!\n> Kind regards"],
+  // rtvcyl: "debes dirigirte a la dirección" = referral; the LOPD footer used to make it no_contactar.
+  [["derivado"], "Hola Javier; debes dirigirte a la dirección de la empresa porque yo estoy en la redacción de informativos; si quieres te paso su correo. Saludos\n\nInformación básica sobre protección de datos. Responsable: Radio Televisión de Castilla y León. Ley Orgánica 3/2018, de Protección de Datos Personales y garantía de los derechos digitales."],
+  // OUR quoted "si ahora mismo no es una prioridad, dímelo" must never turn THEIR reply into a no
+  [["interested"], "Sí, hablemos la semana que viene.\n\nEl lun, 1 sept, Javier escribió:\n> ¿Tienes 10 minutos esta semana? Y si ahora mismo no es una prioridad, dímelo sin problema y no vuelvo a molestar."],
+  // an auto-reply that itself STARTS with a footer-like phrase must still be out_of_office
+  [["out_of_office"], "Este correo no será leído hasta el 22 de septiembre. Para urgencias contacta con recepcion@empresa.es"],
 ];
 
 describe("classifier hard battery", () => {

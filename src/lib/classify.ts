@@ -23,16 +23,53 @@ export type MessageCategory =
   | "out_of_office"
   | "neutral";
 
+// ── Author-only text ─────────────────────────────────────────────────────────
+// Classification must read ONLY what the prospect wrote. Real false positives came from text
+// that is not theirs: (1) OUR quoted outreach below "X escribió:" / "On … wrote:" / ">" lines
+// ("looking forward to" → Derivado, "si ahora mismo no es una prioridad" → No interesado);
+// (2) legal footers ("return the original message" → Fuera/Auto, "protección de datos /
+// datos personales" → No contactar, "los interesados" → Interesado); (3) raw MIME noise.
+// We cut the text at the EARLIEST quote/footer marker — but never when the marker sits at the
+// very start (an auto-reply that itself begins with "Este correo no será leído…" must survive).
+const QUOTE_MARKERS: RegExp[] = [
+  /(^|\n)\s*>/,
+  /(^|\n)[^\n]{0,80}\b(escribi[óo]|wrote|a écrit|schrieb|ha scritto|escreveu)\s*:/i,
+  /-{2,}\s*(original message|mensaje original|message d'origine|ursprüngliche nachricht)\s*-{2,}/i,
+  /(^|\n)\s*(de|from|von)\s*:\s*[^\n]{1,120}\n\s*(enviado|sent|gesendet|date|fecha|envoyé)\s*:/i,
+];
+const FOOTER_MARKERS: RegExp[] = [
+  /\b(aviso legal|legal notice|disclaimer|cláusula de confidencialidad)\b/i,
+  /\b(este (mensaje|correo|e-?mail)|el presente (mensaje|correo)|this (e-?mail|message))\b[^.\n]{0,60}\b(confidencial|confidential|destinatari|intended|privileged|contiene|contains|may contain|puede contener)/i,
+  /\b(la información contenida|the information (contained|in this))\b/i,
+  /\b(si (usted )?no es el destinatario|if you (are not the intended|have received this))\b/i,
+  /\b(protecci[óo]n de datos|data protection|datos personales|personal data|reglamento \(ue\)|ley org[áa]nica|rgpd|gdpr)\b[^.\n]{0,40}\b(responsable|finalidad|derechos|rights|tratamiento|processing|inform|conformidad|2016\/679|3\/2018)/i,
+  /\b(informaci[óo]n b[áa]sica sobre|de conformidad con|en cumplimiento de|puede ejercer (sus|los) derechos)\b/i,
+  /\b(please (notify|delete|destroy)|return the original message|notify (us|the sender) immediately)\b/i,
+];
+const MIME_NOISE = /(^|\n)\s*(--[_=]?[A-Za-z0-9_=.-]{12,}\s*(--)?|this message is in mime format[^\n]*|content-(type|transfer-encoding)\s*:[^\n]*|charset=[^\n]*)/gi;
+
+/** Keep only the author's own text: strip MIME noise, then cut at the earliest quote or
+ *  legal-footer marker (ignored when it sits in the first 15 chars). */
+export function authorText(raw: string): string {
+  const t = raw.replace(MIME_NOISE, '\n');
+  let cut = t.length;
+  for (const re of [...QUOTE_MARKERS, ...FOOTER_MARKERS]) {
+    const m = re.exec(t);
+    if (m && m.index >= 15 && m.index < cut) cut = m.index;
+  }
+  return t.slice(0, cut);
+}
+
 /** Light normalization — strip any leftover tags/entities, collapse spaces, lowercase.
  *  The Unibox already decodes base64/MIME/quoted-printable before calling this, but we
  *  stay robust in case raw text arrives (e.g. the unit tests). */
 function prep(s: string | null): string {
-  return (s || "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z#0-9]+;/gi, " ")
-    .replace(/https?:\/\/\S+/gi, " ")   // URLs shouldn't feed word/"?" matching
-    .replace(/[\r\n]+/g, " ")
-    .replace(/\s+/g, " ")
+  return authorText(s || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z#0-9]+;/gi, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')   // URLs shouldn't feed word/"?" matching
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
     .toLowerCase()
     .trim();
 }
@@ -51,7 +88,7 @@ const LEFT_COMPANY = [
   /no longer (available|with|employ|work|here|at|part of|the correct)/i,
   /(email|e-mail|mail)?\s*(address|adress|adresse)?\s*is no longer/i,
   /has left (the )?(company|organi|business)/i,
-  /(ya )?no (trabaja|est[áa]|pertenece|forma parte|se encuentra)/i,
+  /(ya )?no (trabaja|est[áa]|pertenece|forma parte|se encuentra)\b(?!mos)/i,
   /n['e ]est plus (disponible|dans|en poste|chez|l[ae])/i,
   /non (è|e) pi[uù] (disponibile|in azienda|presente)/i,
   /nicht mehr (verf[üu]gbar|bei|besch[äa]ftigt)/i,
@@ -86,7 +123,7 @@ const OUT_OF_OFFICE = [
 
 // ── 2) NOT interested ───────────────────────────────────────────────────────
 // Someone asking for info / a call is NOT "not interested" even if they wrote "no".
-const SEND_INFO = /(p[áa]s|env[íi]|mand|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+|more\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
+const SEND_INFO = /(p[áa]s|env[íi]|m[áa]nd|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+|more\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
 const ENGAGEMENT = [
   SEND_INFO,
   /(cu[ée]nta|tell)(me|nos|\s+me|\s+us)?\s*(m[áa]s|more|about)/i,
@@ -140,6 +177,22 @@ const NOT_INTERESTED = [
   /(hacemos|tenemos|desarrollamos|fabricamos|producimos|montamos)\s+(lo\s+|el\s+|la\s+|nuestro\s+|nuestra\s+|nuestros\s+|nuestras\s+)*propi[oa]s?\b/i,
   /siamo\s+a\s+posto/i, /non\s+fa\s+per\s+noi/i,
   /no\s+es\s+(nuestro\s+caso|para\s+nosotros)/i, /no\s+es\s+lo\s+que\s+(buscamos|necesitamos|nos\s+interesa)/i,
+  // ── "No need" / out-of-scope rejections in Spanish (real case, ANIMSA: a public company that
+  // "solo presta servicios a … por lo que no tenemos la necesidad de captación de clientes").
+  // None of the above matched, and the "clientes que tienen otras empresas" clause even leaked
+  // into QUESTION. Polite but unambiguous NOs.
+  /\bno\s+(tenemos|tengo|hay|existe|vemos|veo)\s+(la\s+|ninguna\s+|esa\s+|tal\s+)?necesidad\b/i,
+  /\bsin\s+(la\s+)?necesidad\s+de\b/i,
+  /\bno\s+(lo\s+|la\s+|los\s+|las\s+)?(necesitamos|necesito|precisamos|requerimos)\b/i,
+  /\bno\s+(nos\s+)?(hace|har[íi]a)\s+falta\b/i,
+  /\bno\s+(hacemos|realizamos|llevamos\s+a\s+cabo)\s+(captaci[óo]n|prospecci[óo]n|acciones?\s+comercial|marketing|publicidad)/i,
+  /\bno\s+(captamos|buscamos|contratamos|subcontratamos|externalizamos)\b/i,
+  /\bno\s+(vamos\s+a|pensamos|tenemos\s+previsto|prevemos)\s+(contratar|necesitar|incorporar|externalizar|cambiar)/i,
+  /\bno\s+trabajamos\s+con\s+(proveedores|empresas|agencias|terceros|externos)/i,
+  /\b(solo|s[óo]lo|[úu]nicamente|exclusivamente)\s+(prest|trabaj|atend|oper|vend)\w*\s+(servicios?\s+)?(a|para|con)\b/i,
+  /\b(somos|es)\s+(una\s+)?(empresa|entidad|organismo|sociedad|fundaci[óo]n|administraci[óo]n)\s+p[úu]blic[oa]/i,
+  /\bno\s+(aplica|procede|corresponde|es\s+aplicable|es\s+de\s+aplicaci[óo]n)\b/i,
+  /\bno\s+(nos\s+)?encaja\s+(en|con|para)\b/i,
 ];
 
 // ── 2a-bis) SOFT rejections — polite "we're covered / not looking" replies that carry NO
@@ -193,7 +246,7 @@ const REFERRAL = [
   /(la persona|el|la)\s+(encargad[oa]|responsable|indicad[oa]|adecuad[oa])\s+(es|ser[íi]a|de esto)/i,
   /te\s+(paso|pongo|dejo|reenv[íi]o|derivo)\s+(con|a|el|la|los|su|tu|el correo)/i,
   /no\s+soy\s+(yo|la persona|el|la)\s+(indicad|adecuad|correct|encargad|responsable|qui[ée]n)/i,
-  /(deber[íi]as|mejor|te recomiendo)\s+(hablar|contactar|escribir|dirigirte)\s+(con|a)\b/i,
+  /(debes|debe|deb[ée]is|deber[íi]as?|mejor|te recomiendo)\s+(hablar|contactar|escribir|dirigirte)\s+(con|a)\b/i,
   /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
   /reach out to\s+/i, /you (should|can|may want to)\s+(contact|reach|talk to|speak with)\s+/i,
   /(is|es)\s+the\s+(right|best)\s+person/i, /(qui[ée]n|who)\s+(lo\s+)?(lleva|gestiona|se encarga|handles)/i,
@@ -248,7 +301,9 @@ const UNCERTAIN = [
   /(quiz[áa]s|tal vez|maybe|perhaps)\b/i,
 ];
 const QUESTION = [
-  /(cu[áa]nto|qu[ée]|c[óo]mo|cu[áa]l|cu[áa]ndo|d[óo]nde|por qu[ée])\s+(cuesta|vale|precio|cost|incluye|funciona|es|ser[íi]a|hac|puedo|podemos|ser|tiene)/i,
+  // Interrogative ONLY at a sentence/clause start or right after "¿" — a bare "que tiene" is a
+  // relative clause ("clientes que tienen otras empresas", real ANIMSA false positive).
+  /(^|[.!?¿;:]\s*|\s¿\s*)(cu[áa]nto|qu[ée]|c[óo]mo|cu[áa]l|cu[áa]ndo|d[óo]nde|por qu[ée])\s+(cuesta|vale|precio|cost|incluye|funciona|es|ser[íi]a|hac|puedo|podemos|ser|tiene)/i,
   /(how|what|which|when|where|why)\s+(much|does|is|are|can|would|about|kind|type|exactly)/i,
   /\b(pregunta|duda|consulta)\b/i, /tengo una (pregunta|duda|consulta)/i, /a\s+question/i,
   /(podr[íi]as?|podr[íi]ais|puedes|pod[ée]is|could you|can you|would you)\b/i,
