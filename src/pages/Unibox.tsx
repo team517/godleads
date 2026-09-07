@@ -1347,7 +1347,9 @@ export default function Unibox() {
   // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
   // filter is correct from the first render (not only after visiting "Enviados").
   const [repliedToSet, setRepliedToSet] = useState<Set<string>>(new Set());
-  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string; manager_id?: string | null }[]>([]);
+  // Responsables ("quién se encarga") — creados en Opciones de campaña; aquí solo se muestran.
+  const [managers, setManagers] = useState<{ id: string; name: string; color: string }[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>("all");
   const [translatedBody, setTranslatedBody] = useState("");
   const [translating, setTranslating] = useState(false);
@@ -1591,14 +1593,16 @@ export default function Unibox() {
   useEffect(() => {
     if (!user) return;
     const loadAI = async () => {
-      const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }] = await Promise.all([
+      const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }, { data: managersData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
         supabase.from("email_accounts").select("id, email, tags, signature_html").eq("user_id", user.id),
-        supabase.from("campaigns").select("id, name").eq("user_id", user.id).order("name"),
+        (supabase as any).from("campaigns").select("id, name, manager_id").eq("user_id", user.id).order("name"),
         (supabase as any).from("unibox_folders").select("*").eq("user_id", user.id).order("created_at"),
+        (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
       ]);
       setAiPrompts(prompts || []);
       setCampaigns(campaignsData || []);
+      setManagers(managersData || []);
       setFolders(foldersData || []);
       const map: Record<string, string[]> = {};
       // tcx = accounts EXPLICITLY tagged "tcx" (international → allow any language).
@@ -3146,7 +3150,10 @@ export default function Unibox() {
                 const due = isReminderDue(msg.id);
                 const hasReminder = !!reminders[msg.id];
                 const msgFolder = msg.folder_id ? folders.find((f) => f.id === msg.folder_id) : null;
-                const campaignName = msg.campaign_id ? (campaigns.find((c) => c.id === msg.campaign_id)?.name || null) : null;
+                const msgCampaign = msg.campaign_id ? (campaigns.find((c) => c.id === msg.campaign_id) || null) : null;
+                const campaignName = msgCampaign?.name || null;
+                // Responsable de la campaña ("cargo de Samuel") — badge junto al chip de campaña.
+                const campaignManager = msgCampaign?.manager_id ? (managers.find((m) => m.id === msgCampaign.manager_id) || null) : null;
                 const isChecked = bulkSelected.has(msg.id);
                 return (
                   <div
@@ -3220,6 +3227,18 @@ export default function Unibox() {
                             {campaignName && (
                               <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/5 px-2 py-0.5 text-[11px] font-semibold text-primary whitespace-nowrap">
                                 <Megaphone className="h-3 w-3" /> {campaignName}
+                              </span>
+                            )}
+                            {campaignManager && (
+                              <span
+                                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-semibold whitespace-nowrap"
+                                style={{ backgroundColor: campaignManager.color + "14", color: campaignManager.color, border: "1px solid " + campaignManager.color + "33" }}
+                                title={"Responsable: " + campaignManager.name}
+                              >
+                                <span className="flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ backgroundColor: campaignManager.color }}>
+                                  {campaignManager.name.charAt(0).toUpperCase()}
+                                </span>
+                                {campaignManager.name}
                               </span>
                             )}
                             {msgFolder && (

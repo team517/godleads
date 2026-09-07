@@ -14,6 +14,9 @@ import { Textarea } from "@/components/ui/textarea";
 
 interface Props { campaignId: string; }
 
+// Paleta para los responsables — un color bonito y distinto por nombre, asignado al crearlo.
+const MANAGER_COLORS = ["#7A5AF8", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#14B8A6", "#F97316", "#6366F1", "#84CC16"];
+
 /* ── Smartlead-style design primitives ─────────────────────────── */
 
 /** Uppercase section label + a card that divides its rows cleanly. */
@@ -190,6 +193,39 @@ export default function CampaignOptions({ campaignId }: Props) {
     setDeduping(false);
   };
 
+  // ── Responsables ("quién se encarga") ──
+  const [managers, setManagers] = useState<{ id: string; name: string; color: string }[]>([]);
+  const [managerId, setManagerId] = useState<string | null>(null);
+  const [newManagerName, setNewManagerName] = useState("");
+  const [creatingManager, setCreatingManager] = useState(false);
+
+  const createManager = async () => {
+    const name = newManagerName.trim();
+    if (!name || !user) return;
+    if (managers.some((m) => m.name.toLowerCase() === name.toLowerCase())) { toast.error("Ese nombre ya existe"); return; }
+    setCreatingManager(true);
+    const color = MANAGER_COLORS[managers.length % MANAGER_COLORS.length];
+    const { data, error } = await (supabase as any).from("campaign_managers")
+      .insert({ user_id: user.id, name, color }).select("id, name, color").single();
+    setCreatingManager(false);
+    if (error) { toast.error("No se pudo crear: " + error.message); return; }
+    setManagers((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewManagerName("");
+    // Asignarlo directamente a esta campaña — es lo que se espera al crearlo desde aquí.
+    setManagerId(data.id);
+    markDirty();
+    toast.success("Responsable «" + name + "» creado");
+  };
+
+  const deleteManager = async (id: string) => {
+    const m = managers.find((x) => x.id === id);
+    const { error } = await (supabase as any).from("campaign_managers").delete().eq("id", id);
+    if (error) { toast.error("No se pudo eliminar: " + error.message); return; }
+    setManagers((prev) => prev.filter((x) => x.id !== id));
+    if (managerId === id) { setManagerId(null); markDirty(); }
+    toast.success("«" + (m?.name || "Responsable") + "» eliminado");
+  };
+
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     savedTags.forEach((t) => tags.add(t));               // tags creados en Cuentas de email
@@ -213,14 +249,16 @@ export default function CampaignOptions({ campaignId }: Props) {
   useEffect(() => {
     const load = async () => {
       if (!user) return;
-      const [accRes, caRes, campRes, stepsRes, tagsRes] = await Promise.all([
+      const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes] = await Promise.all([
         supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id).eq("status", "connected"),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         supabase.from("email_tags").select("name").eq("user_id", user.id).order("name"),
+        (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
       ]);
       setSavedTags((tagsRes.data || []).map((t: any) => t.name));
+      setManagers((mgrRes.data as any) || []);
       setAccounts(accRes.data || []);
       setSelectedAccounts((caRes.data || []).map((r: any) => r.account_id));
       const steps = stepsRes.data || [];
@@ -257,6 +295,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         setExpertRotation(d.expert_rotation ?? false);
         setSignatureHtml(d.signature_html ?? "");
         setBreakThreadAfter(d.break_thread_after ?? 0);
+        setManagerId(d.manager_id ?? null);
       }
     };
     load();
@@ -302,6 +341,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       expert_rotation: expertRotation,
       signature_html: signatureHtml,
       break_thread_after: breakThreadAfter,
+      manager_id: managerId,
     } as any).eq("id", campaignId);
     // Only confirm when the DB actually accepted the update — otherwise a failed
     // save used to still show "guardadas" and the options were silently lost.
@@ -860,6 +900,51 @@ export default function CampaignOptions({ campaignId }: Props) {
                 )}
               </div>
             )}
+          </div>
+        </Row>
+      </Section>
+
+      {/* ── EQUIPO: responsable de la campaña ── */}
+      <Section label="Equipo">
+        <Row icon={<Users className="h-4 w-4" />} tint="violet" title="Responsable de la campaña"
+          desc="Quién se encarga. Se muestra en la lista de campañas y junto a cada mensaje en el Unibox.">
+          <div className="space-y-3">
+            {managers.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button type="button" onClick={() => { setManagerId(null); markDirty(); }}
+                  className={"rounded-full border px-3 py-1 text-xs font-medium transition " + (managerId === null ? "border-foreground/50 bg-foreground/5 text-foreground" : "border-border/60 text-muted-foreground hover:border-foreground/30")}>
+                  Sin responsable
+                </button>
+                {managers.map((m) => (
+                  <span key={m.id} className="group relative inline-flex">
+                    <button type="button" onClick={() => { setManagerId(managerId === m.id ? null : m.id); markDirty(); }}
+                      className="inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold transition"
+                      style={managerId === m.id
+                        ? { backgroundColor: m.color, color: "#fff", boxShadow: "0 0 0 2px " + m.color + "55" }
+                        : { backgroundColor: m.color + "14", color: m.color, border: "1px solid " + m.color + "33" }}>
+                      <span className="flex items-center justify-center rounded-full text-[10px] font-bold"
+                        style={managerId === m.id ? { backgroundColor: "#ffffff33", color: "#fff", width: 18, height: 18 } : { backgroundColor: m.color, color: "#fff", width: 18, height: 18 }}>
+                        {m.name.charAt(0).toUpperCase()}
+                      </span>
+                      {m.name}
+                      {managerId === m.id && <Check className="h-3 w-3" />}
+                    </button>
+                    <button type="button" title={"Eliminar " + m.name} onClick={(e) => { e.stopPropagation(); deleteManager(m.id); }}
+                      className="absolute -right-1 -top-1 hidden h-4 w-4 items-center justify-center rounded-full bg-background text-muted-foreground shadow ring-1 ring-border group-hover:flex hover:text-red-500">
+                      <Minus className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Input value={newManagerName} onChange={(e) => setNewManagerName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createManager(); } }}
+                placeholder="Crear nombre (p. ej. Samuel)…" className="h-8 max-w-[220px] text-sm" />
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={creatingManager || !newManagerName.trim()} onClick={createManager}>
+                {creatingManager ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Crear
+              </Button>
+            </div>
           </div>
         </Row>
       </Section>

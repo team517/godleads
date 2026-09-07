@@ -67,6 +67,7 @@ export default function Campaigns() {
   const { user } = useAuth();
   // Instant re-entry: paint the cached list immediately, refresh in background.
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("campaigns:list") || []);
+  const [managers, setManagers] = useState<{ id: string; name: string; color: string }[]>([]);
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("campaigns:list"));
   // All campaigns' metrics from ONE server-side RPC → cards render instantly with
   // zero per-card queries (was: up to 5000 sent_emails rows downloaded PER card).
@@ -84,6 +85,9 @@ export default function Campaigns() {
   const load = async () => {
     if (!user) return;
     const { data } = await supabase.from("campaigns").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    // Responsables ("quién se encarga") — para el badge de cada tarjeta.
+    (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id)
+      .then(({ data: mgrs }: any) => setManagers(mgrs || []));
     setCampaigns(data || []);
     cacheSet("campaigns:list", data || []);
     setLoading(false);
@@ -428,6 +432,19 @@ export default function Campaigns() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-medium text-sm sm:text-base truncate">{campaign.name}</h3>
                         <Badge variant={status.variant} className="text-[10px] sm:text-xs">{status.label}</Badge>
+                        {(() => {
+                          const mgr = (campaign as any).manager_id ? managers.find((m) => m.id === (campaign as any).manager_id) : null;
+                          return mgr ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[10px] sm:text-[11px] font-semibold whitespace-nowrap"
+                              style={{ backgroundColor: mgr.color + "14", color: mgr.color, border: "1px solid " + mgr.color + "33" }}
+                              title={"Responsable: " + mgr.name}>
+                              <span className="flex items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ backgroundColor: mgr.color, width: 16, height: 16 }}>
+                                {mgr.name.charAt(0).toUpperCase()}
+                              </span>
+                              {mgr.name}
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
                       <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
                         {new Date(campaign.created_at).toLocaleDateString()}
