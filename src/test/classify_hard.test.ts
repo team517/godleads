@@ -137,6 +137,14 @@ const CASES: Array<[string[], string]> = [
   [["question", "interested"], "Maria, Before I consider a meeting do you have some idea on costs?"],
   // "in-house" in a signature tagline must NOT be a rejection; real in-house statements still are
   [["not_interested"], "Thanks, but we handle lead generation in-house."],
+  // ── REAL (2026-09-07): soft "we're covered" + a MEETING OFFER = interested, not a no.
+  [["interested"], "Hola. Ahora estamos cubiertos de estas necesidades con los proveedores que tenemos. No obstante, si quieres reservo un rato. El mañana si te va bien sobre los 9 am? Enviado desde Outlook para Android"],
+  [["interested"], "Te reservo un hueco el jueves y lo vemos, ¿te va bien?"],
+  [["interested", "question"], "¿Te va bien mañana a las 10?"],
+  [["interested"], "Si quieres reservo un momento la semana que viene."],
+  // …but a plain covered-no with NO meeting offer must STAY a no
+  [["not_interested"], "Estamos cubiertos con nuestros proveedores actuales, gracias."],
+  [["not_interested"], "Ya tenemos proveedor, no hace falta que reserves nada."],
 ];
 
 describe("classifier hard battery", () => {

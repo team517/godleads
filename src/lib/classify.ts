@@ -127,6 +127,13 @@ const OUT_OF_OFFICE = [
 const SEND_INFO = /(p[áa]s|env[íi]|m[áa]nd|send|shar|remit)\w*\s+(me\s+|nos\s+|us\s+)?(la\s+|el\s+|los\s+|las\s+|una?\s+|the\s+|a\s+|some\s+|m[áa]s\s+|more\s+)*(info|informaci[óo]n|detalle|details|dato|propuesta|presupuesto|proposal|pricing|quote|precio|price|demo|cotizaci[óo]n)/i;
 const ENGAGEMENT = [
   SEND_INFO,
+  // The prospect PROPOSES a meeting/slot — "si quieres reservo un rato", "¿te va bien mañana
+  // sobre los 9 am?". A soft rejection followed by an offer to meet ("estamos cubiertos, no
+  // obstante si quieres reservo un rato…") is a warm lead, not a no: someone offering you a
+  // time slot wants the meeting. ENGAGEMENT is checked before NOT_INTERESTED, so these win.
+  /reserv\w+\b[^.?!]{0,30}\b(un\s+)?(rat[oi]to|rato|hueco|momento|slot|espacio|reuni[óo]n|llamada|cita)/i,
+  /(te|os|le|les|me|nos)\s+va\s+bien\b[^.?!]{0,40}\b(ma[ñn]ana|hoy|pasado\s+ma[ñn]ana|el\s+(lunes|martes|mi[eé]rcoles|jueves|viernes)|l[ao]s\s+\d{1,2}|\d{1,2}\s*(:\d{2})?\s*(am|pm|h|hs|hrs)\b)/i,
+  /\b(ma[ñn]ana|tomorrow)\b[^.?!]{0,40}\b(sobre|a|about|at|around)\s+l[ao]s\s*\d{1,2}\b/i,
   // "happy to schedule a call", "let's see a demo", "send across the invite" — direct asks to move
   // forward. Listed as ENGAGEMENT so a stray rejection-looking word elsewhere can't win.
   /\bhappy\s+to\s+(schedule|talk|chat|meet|discuss|jump\s+on|connect|hop\s+on)/i,
@@ -305,8 +312,8 @@ const INTERESTED = [
   // A proposed time ONLY counts as interest when it sits next to a meeting word. A bare
   // "a las 10:00" / "el jueves 20" / "10h" is NOT interest — it shows up in timestamps,
   // signatures and out-of-office notes, which used to leak as false "Interesado".
-  /(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar)\b[^.?!]{0,30}\b((a|sobre) las \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes|monday|tuesday|wednesday|thursday|friday))/i,
-  /((a|sobre) las \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes))\b[^.?!]{0,30}(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar|me (viene|va) bien|te (viene|va) bien|perfecto)/i,
+  /(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar)\b[^.?!]{0,30}\b((a|sobre) l[ao]s \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes|monday|tuesday|wednesday|thursday|friday))/i,
+  /((a|sobre) l[ao]s \d{1,2}|\d{1,2}\s*(h|hrs|am|pm)\b|(lunes|martes|mi[ée]rcoles|jueves|viernes))\b[^.?!]{0,30}(reuni[óo]n|llamada|call|meeting|demo|cita|vernos|quedar|hablar|me (viene|va) bien|te (viene|va) bien|perfecto)/i,
   SEND_INFO,
   /(quiero|queremos|me gustar[íi]a)\s+(una demo|probar|ver[l]?o|conocer)/i,
   /(s[íi]|yes)[,! ]+(claro|por supuesto|encantad|adelante|please|sure|absolutely|of course|me interesa|hablamos)/i,
