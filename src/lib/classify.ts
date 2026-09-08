@@ -322,7 +322,7 @@ const INTERESTED = [
   // que comentas… Quedo pendiente de tus noticias" — a skeptical but ENGAGED yes, was sitting
   // under a stale "No contactar"). Kept in INTERESTED (not ENGAGEMENT) so an explicit
   // rejection in the same mail still wins.
-  /^\s*(de acuerdo|ok|vale|perfecto)\b[.,!\s]/i,
+  /^\s*(de acuerdo|ok|vale|perfecto)\b[.,!;\s]+(?=\S.{3,})/i, // un "Ok." a secas NO es interés — exige que siga contenido
   /(vamos a|queremos|quiero|me gustar[íi]a)\s+ver\s+(ese?|esa|el|la|los|las|vuestr[oa]|tu)?\s*(an[áa]lisis|propuesta|informe|demo|documento|material|datos|estudio)/i,
   /quedo\s+(pendiente|a\s+la\s+espera|atent[oa])\s+de\s+(tus?|sus?|vuestras?)\s+(noticias?|respuesta|env[íi]o|informaci[óo]n|propuesta|an[áa]lisis)/i,
 ];
