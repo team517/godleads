@@ -195,6 +195,10 @@ const NOT_INTERESTED = [
   /(hacemos|tenemos|desarrollamos|fabricamos|producimos|montamos)\s+(lo\s+|el\s+|la\s+|nuestro\s+|nuestra\s+|nuestros\s+|nuestras\s+)*propi[oa]s?\b/i,
   /siamo\s+a\s+posto/i, /non\s+fa\s+per\s+noi/i,
   /no\s+es\s+(nuestro\s+caso|para\s+nosotros)/i, /no\s+es\s+lo\s+que\s+(buscamos|necesitamos|nos\s+interesa)/i,
+  // "vuestras soluciones no tienen cabida aquí" (real case, Grupo Álava — was sitting under a
+  // stale Interesado because nothing matched and neutral never downgrades a label).
+  /no\s+(tienen?|tendr[íi]an?)\s+cabida/i,
+  /\bno\s+(nos\s+)?(encaja|cuadra)\b/i, /\bno\s+va\s+con\s+nosotros\b/i,
   // ── "No need" / out-of-scope rejections in Spanish (real case, ANIMSA: a public company that
   // "solo presta servicios a … por lo que no tenemos la necesidad de captación de clientes").
   // None of the above matched, and the "clientes que tienen otras empresas" clause even leaked
@@ -231,6 +235,8 @@ const SOFT_REJECTION = [
   /(tenemos|contamos con|disponemos de)\s+(nuestro|un|una)\s+(propi[oa]|equipo\s+(interno|propio|dedicado|especializado|in[- ]?house)|soluci[óo]n\s+propia)/i,
   /\bequipo\s+(dedicado|especializado)\s+(exclusivamente\s+)?(a|en)\b/i,
   /(ya\s+)?lo\s+(tenemos|llevamos|gestionamos)\s+(cubierto|resuelto|montado)/i,
+  /gracias\s+por\s+(el\s+ofrecimiento|la\s+oferta|tu\s+ofrecimiento)/i,
+  /thanks?\s+for\s+the\s+offer\b/i,
 ];
 
 // ── 2b) DO NOT CONTACT — unsubscribe / RGPD / spam / hostile. "La baja manda":
@@ -374,7 +380,9 @@ export function classifyMessage(subject: string | null, body: string | null): Me
 
   // 3b) SOFT rejection ("we have our own team / not looking to add …") — only when there is NO
   // interest OR engagement signal at all, so a genuine warm reply is never misread as a no.
-  if (!hasEngagement && !hasInterest && any(SOFT_REJECTION, text)) return "not_interested";
+  // A soft-rejection formula next to a GENUINE question must not swallow the question
+  // (real case, Tomebamba: "Gracias por la oferta ¿Qué tipo de productos puedes encontrar?").
+  if (!hasEngagement && !hasInterest && !any(QUESTION, text) && any(SOFT_REJECTION, text)) return "not_interested";
 
   // Doubt about fit reads as a question even if they also ask for info.
   if (any(UNCERTAIN, text)) return "question";

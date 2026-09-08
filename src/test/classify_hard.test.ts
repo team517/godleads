@@ -151,6 +151,13 @@ const CASES: Array<[string[], string]> = [
   // …but acceptance words must NOT rescue an explicit rejection or an unsubscribe
   [["not_interested"], "De acuerdo, pero no nos interesa, gracias."],
   [["no_contactar"], "Vale, pero dadme de baja de la lista, por favor."],
+  // ── REAL (Grupo Álava, 2026-09-08): out-of-scope polite decline = not_interested
+  [["not_interested"], "Hola Sergio, Nosotros somos una empresa de distribución/ventas, vuestras soluciones no tienen cabida aquí. Gracias por el ofrecimiento. Saludos, Maxi"],
+  [["not_interested"], "Esto no encaja con lo que hacemos, gracias por la oferta."],
+  [["not_interested"], "No va con nosotros, gracias."],
+  // …but a polite-decline formula next to real engagement stays warm
+  [["interested", "question"], "Gracias por el ofrecimiento, ¿podemos agendar una llamada esta semana?"],
+  [["question", "interested"], "Buen día John. Gracias por la oferta ¿Qué tipo de productos puedes encontrar? Saludos"],
 ];
 
 describe("classifier hard battery", () => {

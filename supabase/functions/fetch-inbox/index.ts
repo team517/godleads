@@ -439,6 +439,24 @@ function reinterpretBytes(text: string, charset: string): string {
   return safeDecode(bytes, charset);
 }
 
+function stripCssText(t: string): string {
+  // (1) whole rule blocks — selector/@media + { declarations } — only when the inside LOOKS like
+  // CSS (has ":" plus ";" or "!important"), so real prose with braces survives. Runs 3x so the
+  // outer of a nested "@media { .x { … } }" falls once its inner block is gone.
+  for (let i = 0; i < 3; i++) {
+    // selector must stay on ONE line (no \n in the class) or it swallows the words before the
+    // block ("Invitation\n\nbody{…}" used to lose "Invitation").
+    t = t.replace(/(^|[\s>])(@(?:media|font-face|keyframes|import|charset)[^{}\n]{0,120}|[.#]?[A-Za-z*][\w.,:#>*[\]"'=-]*(?:[ \t]+[\w.,:#>*[\]"'=(-]+){0,6}\)?)\{[^{}]{0,600}(?:!important|;|:)[^{}]{0,600}\}/g, " ");
+    t = t.replace(/(^|[\s>])[^\s{}]{0,80}\{\s*\}/g, " "); // now-empty shells
+  }
+  // (2) leftover pure-CSS lines: "padding-left: 10px !important;" / stray "}" / "selector {"
+  t = t.replace(/^\s*[a-zA-Z-]{2,40}\s*:\s*[^;{}\n]{1,160};\s*(?:!important;?\s*)?$/gm, "");
+  t = t.replace(/^[^\n{}]{0,100}\{\s*$/gm, "");
+  t = t.replace(/^\s*\}\s*$/gm, "");
+  t = t.replace(/^[ \t]*@(media|font-face|keyframes|import|charset)[^\n]*$/gim, ""); // headerless leftovers
+  return t;
+}
+
 /** Multipart-aware: pick the text/plain part (else the first non-multipart part) of a multipart body and
  *  decode it by ITS OWN Content-Transfer-Encoding / charset. The old whole-body path ran atob() over
  *  "part1 + boundary + part2" (which fails) and stored Outlook replies as raw base64 (~6k unreadable
@@ -531,7 +549,11 @@ function cleanBody(raw: string, defaultCharset = "utf-8"): string {
       if (dec && !/\uFFFD{3,}/.test(dec) && /[A-Za-z]{3,}/.test(dec)) text = dec;
     } catch { /* keep as is */ }
   }
+  // HTML-only emails: drop <style>/<script>/<head>/comments BEFORE stripping tags, or their
+  // CSS/JS text survives as body content (real case: mailinblack invitation showing raw CSS).
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<head[\s\S]*?<\/head>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   text = text.replace(/<[^>]+>/g, " ");
+  text = stripCssText(text); // already-tagless CSS (partial fetch cut the tags off)
   text = text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"');
   // Strip any U+FFFD that might still leak (last resort cleanup)
   text = text.replace(/\uFFFD/g, "");

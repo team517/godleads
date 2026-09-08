@@ -301,6 +301,24 @@ function cleanBodyText(raw: string | null, keepCodes = false): string {
   _cleanTextCache.set(key, out);
   return out;
 }
+function stripCssText(t: string): string {
+  // (1) whole rule blocks — selector/@media + { declarations } — only when the inside LOOKS like
+  // CSS (has ":" plus ";" or "!important"), so real prose with braces survives. Runs 3x so the
+  // outer of a nested "@media { .x { … } }" falls once its inner block is gone.
+  for (let i = 0; i < 3; i++) {
+    // selector must stay on ONE line (no \n in the class) or it swallows the words before the
+    // block ("Invitation\n\nbody{…}" used to lose "Invitation").
+    t = t.replace(/(^|[\s>])(@(?:media|font-face|keyframes|import|charset)[^{}\n]{0,120}|[.#]?[A-Za-z*][\w.,:#>*[\]"'=-]*(?:[ \t]+[\w.,:#>*[\]"'=(-]+){0,6}\)?)\{[^{}]{0,600}(?:!important|;|:)[^{}]{0,600}\}/g, " ");
+    t = t.replace(/(^|[\s>])[^\s{}]{0,80}\{\s*\}/g, " "); // now-empty shells
+  }
+  // (2) leftover pure-CSS lines: "padding-left: 10px !important;" / stray "}" / "selector {"
+  t = t.replace(/^\s*[a-zA-Z-]{2,40}\s*:\s*[^;{}\n]{1,160};\s*(?:!important;?\s*)?$/gm, "");
+  t = t.replace(/^[^\n{}]{0,100}\{\s*$/gm, "");
+  t = t.replace(/^\s*\}\s*$/gm, "");
+  t = t.replace(/^[ \t]*@(media|font-face|keyframes|import|charset)[^\n]*$/gim, ""); // headerless leftovers
+  return t;
+}
+
 function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   if (!raw) return "";
   // Decode base64-encoded bodies that arrived un-decoded (whole body or per-line)
@@ -312,7 +330,11 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   text = stripQuotedReply(text);
 
   // Remove IMAP artifacts
-  text = text.replace(/^BODY\[TEXT\]\s*\{\d+\}\s*/i, "");
+  text = text.replace(/^BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*/i, "");
+  // CSS leaked from HTML-only mails (style-tag content survived the tag strip) → junk like
+  // "body{width:100% !important;…}" at the top of the preview. Scrub it here too so already-
+  // stored rows render clean without waiting for a DB backfill.
+  text = stripCssText(text);
 
   // Outlook/Exchange multipart preamble + the boundary token that follows it. That token
   // sometimes reaches us with its leading "--" already stripped, so it dodged the "^--…"
