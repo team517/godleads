@@ -164,6 +164,10 @@ const CASES: Array<[string[], string]> = [
   // …and a real RGPD complaint still lands no_contactar
   [["no_contactar"], "Borrad mis datos de vuestra base, esto viola el RGPD."],
   [["no_contactar"], "No os he dado permiso para usar mis datos: eliminadlos y no me escribáis más."],
+  // ── REAL (Surinver, 2026-09-08): budget rejection with tener/disponer conjugation
+  [["not_interested"], "Buenos días, en este momento no tenemos presupuesto disponible para esta inversión.\n\nGracias"],
+  [["not_interested"], "No disponemos de presupuesto para esto ahora mismo."],
+  [["question", "interested"], "¿Qué presupuesto haría falta para empezar?"],
 ];
 
 describe("classifier hard battery", () => {

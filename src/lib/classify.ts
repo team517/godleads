@@ -181,6 +181,10 @@ const NOT_INTERESTED = [
   // solo puede distribuirse internamente…") made real referrals/replies read as not_interested.
   // "lo hacemos internamente" is still caught by the contextual pattern just above.
   /(no hay|sin)\s+(presupuesto|budget)/i, /(no es el|not the right)\s+momento/i, /(ahora|now)\s+no\s+(es el momento|toca)/i, /not?\s+(right\s+)?now/i,
+  // "no tenemos presupuesto (disponible) para esta inversión" (real, Surinver) — the old
+  // (no hay|sin) form missed the tener/disponer conjugations.
+  /\bno\s+(tenemos|tengo|disponemos\s+de|contamos\s+con|queda|habr[áa])\s+(m[áa]s\s+)?(presupuesto|budget|partida|fondos)\b/i,
+  /presupuesto\s+(disponible\s+)?(agotado|cerrado|congelado)/i,
   /no\s+es\s+(una\s+)?prioridad/i, /not\s+a\s+priority/i, /no\s+(es\s+)?prioritari/i,
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
   /(no,?\s*)?(gracias|thanks|thank you)[.! ]*$/i, /no\s+thank/i,

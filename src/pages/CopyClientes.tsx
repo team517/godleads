@@ -92,14 +92,21 @@ export default function CopyClientes() {
     setter(n);
   };
 
-  const sendCopy = async () => {
+  const [testing, setTesting] = useState(false);
+
+  const sendCopy = async (test = false) => {
     if (!selected || checked.size === 0) { toast.info("Selecciona al menos una campaña"); return; }
-    setSending(true);
-    const r = await callAdmin({ action: "send_copy", user_id: selected.id, campaign_ids: [...checked], to_email: toEmail.trim() });
-    setSending(false);
+    (test ? setTesting : setSending)(true);
+    const r = await callAdmin({
+      action: "send_copy", user_id: selected.id, campaign_ids: [...checked],
+      ...(test ? { test: true } : { to_email: toEmail.trim() }),
+    });
+    (test ? setTesting : setSending)(false);
     if (r?.ok) {
-      setSentOk(true);
-      toast.success(`Copy enviado a ${r.sent_to} desde ${r.sent_from || senderEmail || "el buzón de agencia"} (${r.campaigns} campaña${r.campaigns === 1 ? "" : "s"})`);
+      if (!test) setSentOk(true);
+      toast.success(test
+        ? `Prueba enviada a TU correo (${r.sent_to}) — PDF de ${r.pdf_kb} KB`
+        : `Copy enviado a ${r.sent_to} desde ${r.sent_from || senderEmail || "el buzón de agencia"} (${r.campaigns} campaña${r.campaigns === 1 ? "" : "s"}, PDF ${r.pdf_kb} KB)`);
     } else {
       toast.error(`No se pudo enviar: ${r?.error || "error desconocido"}`);
     }
@@ -209,11 +216,16 @@ export default function CopyClientes() {
               </div>
               <div className="flex items-center gap-2">
                 <Input value={toEmail} onChange={(e) => { setToEmail(e.target.value); setSentOk(false); }} placeholder="¿A qué correo lo enviamos?" className="h-10 flex-1 text-sm" />
-                <Button onClick={sendCopy} disabled={sending || checked.size === 0} className="h-10 gap-2 px-5">
+                <Button variant="outline" onClick={() => sendCopy(true)} disabled={testing || sending || checked.size === 0} className="h-10 gap-2" title="Envía el PDF a TU correo para revisarlo antes">
+                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  Prueba
+                </Button>
+                <Button onClick={() => sendCopy(false)} disabled={sending || testing || checked.size === 0} className="h-10 gap-2 px-5">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : sentOk ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
                   {sending ? "Enviando…" : sentOk ? "Enviado" : `Enviar copy (${checked.size})`}
                 </Button>
               </div>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">El copy se envía como <span className="font-semibold text-foreground/80">PDF adjunto</span> con el diseño de OnePulso. «Prueba» lo manda a tu propio correo.</p>
             </div>
           </div>
         )}
