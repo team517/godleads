@@ -420,7 +420,16 @@ serve(async (req) => {
         const hasLongText = Object.values(cf).some((v: any) => typeof v === "string" && v.length > 120);
         if (hasLongText) { sampleLead = l; break; }
       }
-      return new Response(JSON.stringify({ campaigns, sampleLead }), {
+      // Effective sender for the Copy section: equipo@onepulso.online when that mailbox is
+      // connected with SMTP; otherwise the client-facing support@ mailbox. Surfaced so the UI
+      // can show "Se envía desde …" at the top (and flips to equipo@ the day it gets connected).
+      const { data: sndRows } = await supabase.from("email_accounts")
+        .select("email").in("email", ["equipo@onepulso.online", "support@onepulso.online"])
+        .not("smtp_host", "is", null).eq("status", "connected");
+      const senderEmails = (sndRows || []).map((r: any) => r.email);
+      const sender_email = senderEmails.includes("equipo@onepulso.online") ? "equipo@onepulso.online"
+        : (senderEmails[0] || "support@onepulso.online");
+      return new Response(JSON.stringify({ campaigns, sampleLead, sender_email }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -486,20 +495,23 @@ serve(async (req) => {
         + '<p style="font-size:13px;color:#8B8699;margin:20px 0 0">¿Quieres cambiar algo del copy? Responde a este correo y lo ajustamos.</p>'
         + '</div></div>';
 
-      // sender: the agency client-facing mailbox (overridable via from_account_id)
+      // Sender: PREFER equipo@onepulso.online (the address the agency wants clients to see);
+      // fall back to support@ while equipo@ isn't connected as a mailbox. from_account_id overrides.
       let acctQ = supabase.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password, first_name, last_name");
-      acctQ = body.from_account_id ? acctQ.eq("id", body.from_account_id) : acctQ.eq("email", "support@onepulso.online");
-      const { data: senders } = await acctQ.limit(1);
-      const acct = (senders || [])[0];
-      if (!acct?.smtp_host) throw new Error("no se encontró el buzón remitente (support@onepulso.online)");
+      acctQ = body.from_account_id
+        ? acctQ.eq("id", body.from_account_id)
+        : acctQ.in("email", ["equipo@onepulso.online", "support@onepulso.online"]).not("smtp_host", "is", null).eq("status", "connected");
+      const { data: senders } = await acctQ.limit(5);
+      const acct = (senders || []).find((a: any) => a.email === "equipo@onepulso.online") || (senders || [])[0];
+      if (!acct?.smtp_host) throw new Error("no se encontró un buzón remitente conectado (equipo@ / support@)");
 
       const subject = camps.length === 1 ? ("Copy de tu campaña: " + camps[0].name) : "Copy de tus campañas";
       const result = await sendSmtpReply(
         acct.smtp_host, acct.smtp_port, acct.smtp_username, acct.smtp_password,
-        acct.email, clientEmail, subject, html, null, null, "OnePulso",
+        acct.email, clientEmail, subject, html, null, null, "Equipo OnePulso",
       );
       if (!result.ok) throw new Error("SMTP: " + (result.error || "fallo de envío"));
-      return new Response(JSON.stringify({ ok: true, sent_to: clientEmail, campaigns: camps.length }), {
+      return new Response(JSON.stringify({ ok: true, sent_to: clientEmail, sent_from: acct.email, campaigns: camps.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

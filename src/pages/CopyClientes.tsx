@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { ADMIN_EMAILS } from "@/lib/access";
-import { ChevronLeft, ChevronDown, ChevronRight, Loader2, Send, Check, FileText, Users } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Loader2, Send, Check, FileText, Users, Mail, RotateCcw } from "lucide-react";
 
 // ── Copy: agency-only section (hello@ / support@ / equipo@) ─────────────────────
 // Lists every client; opening one shows their campaigns' full copy (steps + variants)
@@ -59,6 +59,7 @@ export default function CopyClientes() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [toEmail, setToEmail] = useState("");
+  const [senderEmail, setSenderEmail] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sentOk, setSentOk] = useState(false);
 
@@ -76,6 +77,7 @@ export default function CopyClientes() {
     setSentOk(false);
     setToEmail(c.email);
     const r = await callAdmin({ action: "client_campaign_copy", user_id: c.id });
+    setSenderEmail(r.sender_email || null);
     const camps: CampaignCopy[] = (r.campaigns || []).filter((x: CampaignCopy) => (x.steps || []).length > 0);
     setCampaigns(camps);
     // Preselect the ACTIVE campaigns (what the client is actually running); expand the first one.
@@ -97,7 +99,7 @@ export default function CopyClientes() {
     setSending(false);
     if (r?.ok) {
       setSentOk(true);
-      toast.success(`Copy enviado a ${r.sent_to} (${r.campaigns} campaña${r.campaigns === 1 ? "" : "s"})`);
+      toast.success(`Copy enviado a ${r.sent_to} desde ${r.sent_from || senderEmail || "el buzón de agencia"} (${r.campaigns} campaña${r.campaigns === 1 ? "" : "s"})`);
     } else {
       toast.error(`No se pudo enviar: ${r?.error || "error desconocido"}`);
     }
@@ -119,11 +121,21 @@ export default function CopyClientes() {
             : <span className="flex h-11 w-11 items-center justify-center rounded-xl text-base font-bold text-white" style={{ backgroundColor: selected.brand_color || "#7A5AF8" }}>
                 {(selected.company_name || selected.email).charAt(0).toUpperCase()}
               </span>}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="font-display text-xl font-semibold truncate">{selected.company_name || selected.full_name || selected.email}</h1>
             <p className="text-xs text-muted-foreground truncate">{selected.email}</p>
           </div>
+          {senderEmail && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary whitespace-nowrap" title="Buzón desde el que se envía el copy">
+              <Mail className="h-3.5 w-3.5" /> Se envía desde {senderEmail}
+            </span>
+          )}
         </div>
+        {senderEmail && (
+          <span className="sm:hidden inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary">
+            <Mail className="h-3.5 w-3.5" /> Se envía desde {senderEmail}
+          </span>
+        )}
 
         {campaigns === null ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando copy…</div>
@@ -158,6 +170,16 @@ export default function CopyClientes() {
                             </p>
                             <p className="text-sm font-semibold mb-1.5"><CopyText text={s.subject || "(sin asunto)"} /></p>
                             <p className="text-[13px] leading-relaxed text-muted-foreground"><CopyText text={s.body || ""} /></p>
+                            {Array.isArray(s.variants) && s.variants.map((v, vi) => {
+                              const vv = (v && typeof v === "object" ? v : {}) as { subject?: string; body?: string };
+                              return (
+                                <div key={vi} className="mt-3 border-t border-dashed border-border/70 pt-3">
+                                  <p className="text-[11px] font-semibold text-primary mb-1.5">Variante {String.fromCharCode(66 + vi)}</p>
+                                  {vv.subject && <p className="text-sm font-semibold mb-1.5"><CopyText text={vv.subject} /></p>}
+                                  <p className="text-[13px] leading-relaxed text-muted-foreground"><CopyText text={String(vv.body || "")} /></p>
+                                </div>
+                              );
+                            })}
                           </div>
                         ))}
                       </div>
@@ -172,12 +194,26 @@ export default function CopyClientes() {
         {/* Sticky send bar */}
         {campaigns && campaigns.length > 0 && (
           <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border/60 bg-background/90 backdrop-blur">
-            <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
-              <Input value={toEmail} onChange={(e) => { setToEmail(e.target.value); setSentOk(false); }} placeholder="email del cliente" className="h-10 flex-1 text-sm" />
-              <Button onClick={sendCopy} disabled={sending || checked.size === 0} className="h-10 gap-2 px-5">
-                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : sentOk ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-                {sending ? "Enviando…" : sentOk ? "Enviado" : `Enviar copy (${checked.size})`}
-              </Button>
+            <div className="mx-auto max-w-3xl px-4 py-3">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                {senderEmail && <span>Desde <span className="font-semibold text-foreground/80">{senderEmail}</span></span>}
+                <span className="ml-auto flex items-center gap-1.5">
+                  Cliente:
+                  <button type="button" onClick={() => { setToEmail(selected.email); setSentOk(false); }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold transition ${toEmail.trim().toLowerCase() === selected.email.toLowerCase() ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"}`}
+                    title="Usar el correo del cliente">
+                    {toEmail.trim().toLowerCase() !== selected.email.toLowerCase() && <RotateCcw className="h-3 w-3" />}
+                    {selected.email}
+                  </button>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input value={toEmail} onChange={(e) => { setToEmail(e.target.value); setSentOk(false); }} placeholder="¿A qué correo lo enviamos?" className="h-10 flex-1 text-sm" />
+                <Button onClick={sendCopy} disabled={sending || checked.size === 0} className="h-10 gap-2 px-5">
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : sentOk ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                  {sending ? "Enviando…" : sentOk ? "Enviado" : `Enviar copy (${checked.size})`}
+                </Button>
+              </div>
             </div>
           </div>
         )}
