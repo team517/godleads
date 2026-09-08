@@ -45,6 +45,12 @@ const FOOTER_MARKERS: RegExp[] = [
   /\b(protecci[óo]n de datos|data protection|datos personales|personal data|reglamento \(ue\)|ley org[áa]nica|rgpd|gdpr)\b[^.\n]{0,40}\b(responsable|finalidad|derechos|rights|tratamiento|processing|inform|conformidad|2016\/679|3\/2018)/i,
   /\b(informaci[óo]n b[áa]sica sobre|de conformidad con|en cumplimiento de|puede ejercer (sus|los) derechos)\b/i,
   /\b(please (notify|delete|destroy)|return the original message|notify (us|the sender) immediately)\b/i,
+  // "Los datos personales … se almacenan/conservan…", "Puede acceder, rectificar o eliminar sus
+  // datos", "Se conservarán mientras exista…" — the ASG-style privacy footer that dodged the
+  // markers above and made a warm reply classify as No contactar from its own signature.
+  /\b(los\s+)?datos\s+personales\b[^\n]{0,90}\b(se\s+(almacenan|conservan|tratan|utilizan|recaban)|almacenad|conservad|tratad|recabad)/i,
+  /\bpuede[n]?\s+(acceder|rectificar|suprimir|eliminar|oponerse|limitar|ejercer|ejercitar)\b/i,
+  /\bse\s+conservar[áa]n\s+(mientras|durante|el\s+tiempo)/i,
 ];
 const MIME_NOISE = /(^|\n)\s*(--[_=]?[A-Za-z0-9_=.-]{12,}\s*(--)?|this message is in mime format[^\n]*|content-(type|transfer-encoding)\s*:[^\n]*|charset=[^\n]*)/gi;
 
@@ -259,7 +265,13 @@ const DO_NOT_CONTACT = [
   /no\s+(me\s+|nos\s+)?(escrib[áa]is|escribas|contact[ée]is|mand[ée]is)\s+(m[áa]s|nunca m[áa]s)?/i,
   /leave (me|us) alone/i, /d[ée]jad?(me|nos) en paz/i, /\bgo away\b/i, /\bpls\s+delete\s+my\s+contact\b/i, /delete\s+my\s+(contact|details|data|email)/i,
   // RGPD / data protection
-  /\brgpd\b/i, /\bgdpr\b/i, /\blopd\b/i, /protecci[óo]n de datos/i, /data protection/i, /datos personales/i,
+  /\brgpd\b/i, /\bgdpr\b/i, /\blopd\b/i,
+  // NOT the bare footer phrases ("protección de datos", "datos personales") — those live in every
+  // corporate signature and mislabeled warm replies as No contactar when the footer cut missed.
+  // Only the sender's own complaint about THEIR data counts:
+  /\b(mis|nuestros)\s+datos\b[^.?!\n]{0,60}(borr|elimin|suprim|quit|sacad|obtenid|conseguid|viol|protecci|rgpd|gdpr)/i,
+  /(borra|elimina|quita|suprime|borrad|eliminad|quitad)\w*\s+(mis|nuestros)\s+datos/i,
+  /(viola|infringe|incumple)\w*\s+(el\s+|la\s+)?(rgpd|gdpr|lopd|protecci[óo]n\s+de\s+datos)/i,
   // spam accusation
   /\bspam\b/i, /correo (no deseado|basura)/i, /junk mail/i, /unsolicited/i,
 ];

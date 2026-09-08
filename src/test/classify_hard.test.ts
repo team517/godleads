@@ -158,6 +158,12 @@ const CASES: Array<[string[], string]> = [
   // …but a polite-decline formula next to real engagement stays warm
   [["interested", "question"], "Gracias por el ofrecimiento, ¿podemos agendar una llamada esta semana?"],
   [["question", "interested"], "Buen día John. Gracias por la oferta ¿Qué tipo de productos puedes encontrar? Saludos"],
+  // ── REAL (ASG full stored body): the sender's OWN privacy footer ("Los datos personales… se
+  // almacenan… Puede acceder, rectificar o eliminar sus datos") must never flip a warm reply.
+  [["interested"], "De acuerdo. Vamos a ver ese análisis que comentas. Quedo pendiente de tus noticias.\n\nPablo Neira | CEO | asgagencia.com\n\nLos datos personales en nuestras comunicaciones por correo electrónico se almacenan para gestionar correctamente dichas interacciones. Se conservarán mientras exista una relación comercial. Puede acceder, rectificar o eliminar sus datos, así como limitar su uso."],
+  // …and a real RGPD complaint still lands no_contactar
+  [["no_contactar"], "Borrad mis datos de vuestra base, esto viola el RGPD."],
+  [["no_contactar"], "No os he dado permiso para usar mis datos: eliminadlos y no me escribáis más."],
 ];
 
 describe("classifier hard battery", () => {
