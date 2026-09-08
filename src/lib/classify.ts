@@ -74,6 +74,13 @@ function prep(s: string | null): string {
     .replace(/<[^>]+>/g, ' ')
     .replace(/&[a-z#0-9]+;/gi, ' ')
     .replace(/https?:\/\/\S+/gi, ' ')   // URLs shouldn't feed word/"?" matching
+    // Booking-link SIGNATURE boilerplate (MS Bookings / Calendly labels): a static link in the
+    // sender's signature, never their own meeting offer. Real 'reservamos un momento para hablar'
+    // is untouched (it lacks the fixed '…conmigo/with me' tail).
+    .replace(/reservar\s+(un\s+)?(momento|hueco|espacio|una\s+cita|tiempo)\s+para\s+(reunirse|reunirte|reunirme|vernos|hablar|una\s+reuni[óo]n)\s+conmigo/gi, ' ')
+    .replace(/reservar\s+una\s+reuni[óo]n\s+conmigo/gi, ' ')
+    .replace(/\b(book|schedule|grab|find|pick)\s+(a\s+|some\s+)?(time|meeting|slot|call)\s+with\s+me\b/gi, ' ')
+    .replace(/\bbook\s+time\s+to\s+meet\b/gi, ' ')
     .replace(/[\r\n]+/g, ' ')
     .replace(/\s+/g, ' ')
     .toLowerCase()
@@ -288,6 +295,11 @@ const REFERRAL = [
   /te\s+(paso|pongo|dejo|reenv[íi]o|derivo)\s+(con|a|el|la|los|su|tu|el correo)/i,
   /no\s+soy\s+(yo|la persona|el|la)\s+(indicad|adecuad|correct|encargad|responsable|qui[ée]n)/i,
   /(debes|debe|deb[ée]is|deber[íi]as?|mejor|te recomiendo)\s+(hablar|contactar|escribir|dirigirte)\s+(con|a)\b/i,
+  // 'con quién debes hablar es con Joaquín…' — redirect to a named person (old pattern needed
+  // 'debes hablar con' adjacent; here it's 'quien debes hablar es con').
+  /\bqui[ée]n\s+(debes|deber[íi]as|tienes\s+que|hay\s+que|puedes|ten[ée]is\s+que)\s+(hablar|contactar|dirigirte|escribir|tratarlo)/i,
+  /\bdebes\s+(hablar|contactar|dirigirte|escribir)\s+(es\s+)?(con|a)\b/i,
+  /\bcon\s+qui[ée]n\s+(hablar|contactar|tratarlo|verlo)\b/i,
   /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
   /reach out to\s+/i,
   /\b(please\s+)?(connect|coordinate|liaise|follow\s+up|speak|talk)\s+with\s+(?!me\b|us\b)[A-Z][a-z]+/,

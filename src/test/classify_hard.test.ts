@@ -168,6 +168,11 @@ const CASES: Array<[string[], string]> = [
   [["not_interested"], "Buenos días, en este momento no tenemos presupuesto disponible para esta inversión.\n\nGracias"],
   [["not_interested"], "No disponemos de presupuesto para esto ahora mismo."],
   [["question", "interested"], "¿Qué presupuesto haría falta para empezar?"],
+  // ── REAL (audit 2026-09-08): a booking-link signature must NOT rescue a rejection
+  [["not_interested"], "Hola. Por el momento no nos interesa, ya tenemos a una persona que se dedica a esto. Saludos y mantengo tu contacto para futuras colaboraciones. Christian Acevedo | S/4HANA Leader | Reservar un momento para reunirse conmigo"],
+  [["not_interested"], "Thanks but we're all set. Best, Jane | Book time with me"],
+  [["derivado"], "Hola Alfons, nuestro planteamiento es promover la innovación. Con quien debes hablar es con joaquinvilaplana@aiju.es y con el responsable del área de automatización juanmico@aiju.es. Un saludo"],
+  [["interested"], "¿Reservamos un momento para hablar esta semana?"],
 ];
 
 describe("classifier hard battery", () => {
