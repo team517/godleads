@@ -318,6 +318,13 @@ const INTERESTED = [
   /(quiero|queremos|me gustar[íi]a)\s+(una demo|probar|ver[l]?o|conocer)/i,
   /(s[íi]|yes)[,! ]+(claro|por supuesto|encantad|adelante|please|sure|absolutely|of course|me interesa|hablamos)/i,
   /(adelante|dale|perfecto,?\s*hablamos|vamos adelante|go ahead|let'?s do it)/i,
+  // Acceptance + awaiting-your-reply (real case, ASG: "De acuerdo. Vamos a ver ese análisis
+  // que comentas… Quedo pendiente de tus noticias" — a skeptical but ENGAGED yes, was sitting
+  // under a stale "No contactar"). Kept in INTERESTED (not ENGAGEMENT) so an explicit
+  // rejection in the same mail still wins.
+  /^\s*(de acuerdo|ok|vale|perfecto)\b[.,!\s]/i,
+  /(vamos a|queremos|quiero|me gustar[íi]a)\s+ver\s+(ese?|esa|el|la|los|las|vuestr[oa]|tu)?\s*(an[áa]lisis|propuesta|informe|demo|documento|material|datos|estudio)/i,
+  /quedo\s+(pendiente|a\s+la\s+espera|atent[oa])\s+de\s+(tus?|sus?|vuestras?)\s+(noticias?|respuesta|env[íi]o|informaci[óo]n|propuesta|an[áa]lisis)/i,
 ];
 
 // ── 4) Question / doubt ─────────────────────────────────────────────────────

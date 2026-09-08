@@ -145,6 +145,12 @@ const CASES: Array<[string[], string]> = [
   // …but a plain covered-no with NO meeting offer must STAY a no
   [["not_interested"], "Estamos cubiertos con nuestros proveedores actuales, gracias."],
   [["not_interested"], "Ya tenemos proveedor, no hace falta que reserves nada."],
+  // ── REAL (ASG, 2026-09-07): skeptical but ENGAGED acceptance = interested (was stale "No contactar")
+  [["interested"], "De acuerdo. Vamos a ver ese análisis que comentas. Espero que la conclusión no sea que nos haga falta una herramienta basada en el envío masivo de emails a clientes desconocidos. En nuestro sector la actividad comercial nunca se basa en la puerta fría. Si vuestro producto se basa en eso, será una pérdida de tiempo para los dos... Quedo pendiente de tus noticias."],
+  [["interested"], "Vale, mándame el estudio y lo vemos. Quedo a la espera de tu respuesta."],
+  // …but acceptance words must NOT rescue an explicit rejection or an unsubscribe
+  [["not_interested"], "De acuerdo, pero no nos interesa, gracias."],
+  [["no_contactar"], "Vale, pero dadme de baja de la lista, por favor."],
 ];
 
 describe("classifier hard battery", () => {
