@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import { sendSmtpReply } from "../_shared/smtp.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,7 +40,8 @@ serve(async (req) => {
       .select("is_client_manager")
       .eq("user_id", caller.id)
       .single();
-    const isManager = !!callerProfile?.is_client_manager;
+    const AGENCY_EMAILS = new Set(["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online"]);
+    const isManager = !!callerProfile?.is_client_manager || AGENCY_EMAILS.has((caller.email || "").toLowerCase());
     if (!isAdmin && !isManager) throw new Error("Forbidden: admin only");
 
     const body = await req.json().catch(() => ({}));
@@ -48,7 +50,7 @@ serve(async (req) => {
     // A client manager is restricted to client CRUD — never the full-admin actions.
     // NOTE: "delete" is deliberately NOT here — only a full admin can delete clients.
     // A client-manager (e.g. support@) can create/edit/list clients + campaigns, not delete.
-    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "list_client_accounts", "list_client_reports", "create_client_campaign", "client_campaign_copy"]);
+    const MANAGER_ACTIONS = new Set(["list_clients", "create_user", "update_client", "list_client_accounts", "list_client_reports", "create_client_campaign", "client_campaign_copy", "send_copy"]);
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
@@ -419,6 +421,85 @@ serve(async (req) => {
         if (hasLongText) { sampleLead = l; break; }
       }
       return new Response(JSON.stringify({ campaigns, sampleLead }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (action === "send_copy") {
+      // Email a client the COPY of their campaigns (Copy section for the agency accounts).
+      // Sends from the agency's client-facing mailbox (support@onepulso.online) via SMTP.
+      const { user_id, campaign_ids, to_email, note } = body;
+      if (!user_id) throw new Error("user_id required");
+      const { data: clientUser } = await supabase.auth.admin.getUserById(user_id);
+      const clientEmail = (to_email || clientUser?.user?.email || "").trim();
+      if (!clientEmail || !clientEmail.includes("@")) throw new Error("destino sin email válido");
+      const { data: prof } = await supabase.from("profiles").select("company_name, full_name").eq("user_id", user_id).single();
+      const clientName = prof?.company_name || prof?.full_name || clientEmail.split("@")[0];
+
+      let q = supabase.from("campaigns").select("id, name, status").eq("user_id", user_id).order("created_at", { ascending: false });
+      if (Array.isArray(campaign_ids) && campaign_ids.length > 0) q = q.in("id", campaign_ids);
+      const { data: camps } = await q;
+      if (!camps || camps.length === 0) throw new Error("el cliente no tiene campañas que enviar");
+
+      const esc = (t: string) => (t || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      // {{variables}} shown as purple chips; newlines kept.
+      const fmt = (t: string) => esc(t)
+        .replace(/\{\{\s*([\w. ]+)\s*\}\}/g, '<span style="background:#E7E2F5;color:#7A5AF8;border-radius:6px;padding:0 6px;font-weight:600;white-space:nowrap">{{$1}}</span>')
+        .replace(/\r?\n/g, "<br>");
+
+      let campHtml = "";
+      for (const c of camps) {
+        const { data: steps } = await supabase.from("campaign_steps")
+          .select("step_order, subject, body, variants, delay_days")
+          .eq("campaign_id", c.id).order("step_order", { ascending: true });
+        let stepsHtml = "";
+        for (const st of steps || []) {
+          const delay = st.step_order === 1 ? "Primer correo" : ("+" + (st.delay_days ?? 0) + " días");
+          stepsHtml += '<div style="border:1px solid rgba(20,19,25,0.08);border-radius:12px;padding:16px 18px;margin:0 0 12px">'
+            + '<div style="font-size:12px;color:#8B8699;font-weight:600;margin-bottom:6px">Paso ' + st.step_order + ' · ' + delay + '</div>'
+            + '<div style="font-size:14px;color:#141319;font-weight:700;margin-bottom:8px">Asunto: ' + fmt(st.subject || "(sin asunto)") + '</div>'
+            + '<div style="font-size:14px;color:#57565F;line-height:1.6">' + fmt(st.body || "") + '</div>';
+          const variants = Array.isArray(st.variants) ? st.variants : [];
+          let vi = 0;
+          for (const v of variants) {
+            vi++;
+            const vs = (v && typeof v === "object") ? (v as Record<string, unknown>) : {};
+            stepsHtml += '<div style="border-top:1px dashed rgba(20,19,25,0.12);margin-top:12px;padding-top:12px">'
+              + '<div style="font-size:12px;color:#8B8699;font-weight:600;margin-bottom:6px">Variante ' + String.fromCharCode(65 + vi) + '</div>'
+              + (vs.subject ? '<div style="font-size:14px;color:#141319;font-weight:700;margin-bottom:8px">Asunto: ' + fmt(String(vs.subject)) + '</div>' : "")
+              + '<div style="font-size:14px;color:#57565F;line-height:1.6">' + fmt(String(vs.body || "")) + '</div></div>';
+          }
+          stepsHtml += '</div>';
+        }
+        campHtml += '<div style="margin:0 0 28px">'
+          + '<div style="font-size:17px;color:#141319;font-weight:700;margin:0 0 4px">' + esc(c.name) + '</div>'
+          + '<div style="font-size:12px;color:#8B8699;margin:0 0 12px">' + ((steps || []).length) + ' paso' + ((steps || []).length === 1 ? "" : "s") + '</div>'
+          + stepsHtml + '</div>';
+      }
+
+      const noteHtml = note ? '<p style="font-size:14px;color:#57565F;line-height:1.6;margin:0 0 20px">' + fmt(String(note)) + '</p>' : "";
+      const html = '<div style="background:#F7F6F9;padding:28px 12px"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid rgba(20,19,25,0.08);border-radius:14px;padding:32px 30px;font-family:Inter,Segoe UI,Arial,sans-serif">'
+        + '<div style="font-size:13px;font-weight:700;letter-spacing:0.06em;color:#7A5AF8;margin-bottom:6px">ONEPULSO</div>'
+        + '<h1 style="font-size:21px;font-weight:600;color:#141319;margin:0 0 6px">Copy de tus campañas</h1>'
+        + '<p style="font-size:14px;color:#57565F;line-height:1.6;margin:0 0 20px">Hola ' + esc(clientName) + ', aquí tienes el copy que está funcionando en tus campañas. Las <span style="background:#E7E2F5;color:#7A5AF8;border-radius:6px;padding:0 6px;font-weight:600">{{variables}}</span> se rellenan automáticamente con los datos de cada contacto.</p>'
+        + noteHtml + campHtml
+        + '<p style="font-size:13px;color:#8B8699;margin:20px 0 0">¿Quieres cambiar algo del copy? Responde a este correo y lo ajustamos.</p>'
+        + '</div></div>';
+
+      // sender: the agency client-facing mailbox (overridable via from_account_id)
+      let acctQ = supabase.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password, first_name, last_name");
+      acctQ = body.from_account_id ? acctQ.eq("id", body.from_account_id) : acctQ.eq("email", "support@onepulso.online");
+      const { data: senders } = await acctQ.limit(1);
+      const acct = (senders || [])[0];
+      if (!acct?.smtp_host) throw new Error("no se encontró el buzón remitente (support@onepulso.online)");
+
+      const subject = camps.length === 1 ? ("Copy de tu campaña: " + camps[0].name) : "Copy de tus campañas";
+      const result = await sendSmtpReply(
+        acct.smtp_host, acct.smtp_port, acct.smtp_username, acct.smtp_password,
+        acct.email, clientEmail, subject, html, null, null, "OnePulso",
+      );
+      if (!result.ok) throw new Error("SMTP: " + (result.error || "fallo de envío"));
+      return new Response(JSON.stringify({ ok: true, sent_to: clientEmail, campaigns: camps.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

@@ -39,6 +39,7 @@ const Community = lazyWithRetry(() => import("./pages/Community"));
 const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 const OnboardingPortal = lazyWithRetry(() => import("./pages/OnboardingPortal"));
 const ClientCampaigns = lazyWithRetry(() => import("./pages/ClientCampaigns"));
+const CopyClientes = lazyWithRetry(() => import("./pages/CopyClientes"));
 const AutomationFlow = lazyWithRetry(() => import("./pages/AutomationFlow"));
 const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
 const GodTube = lazyWithRetry(() => import("./pages/GodTube"));
@@ -86,6 +87,7 @@ const App = () => (
                 <Route path="/community" element={<Community />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/client-campaigns" element={<ClientCampaigns />} />
+                <Route path="/copy" element={<CopyClientes />} />
                 <Route path="/automatizacion" element={<AutomationFlow />} />
                 <Route path="/seguimiento" element={<Seguimiento />} />
                 <Route path="/godtube" element={<GodTube />} />

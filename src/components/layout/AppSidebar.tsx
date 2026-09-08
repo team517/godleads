@@ -1,8 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2,
-} from "lucide-react";
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,6 +27,7 @@ const toolsNav = [
   { icon: Brain, label: "IA", path: "/ai-prompts" },
   { icon: Rocket, label: "Onboarding", path: "/onboarding" },
   { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
+  { icon: FileText, label: "Copy", path: "/copy" },
   { icon: Workflow, label: "Automatización", path: "/automatizacion" },
   { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
 ];
@@ -64,6 +64,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
   const visibleTools = toolsNav.filter((item) => {
     if (item.path === "/automatizacion") return canAutomation;
+    // Copy (enviar el copy de las campañas a cada cliente): agencia — owner, managers (support@) y equipo@.
+    if (item.path === "/copy") return isOwner || isManager || userEmail === "equipo@onepulso.online";
     if (item.path === "/seguimiento") return isOwner;
     if (OWNER_OR_MANAGER.has(item.path)) return isOwner || isManager;
     return true;
