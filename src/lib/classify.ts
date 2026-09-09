@@ -173,6 +173,9 @@ const NOT_INTERESTED = [
   // Interested because the bare word "interesado" matched. NOTE: unsubscribe / "don't
   // contact me" phrasing lives in DO_NOT_CONTACT below (checked first — la baja manda).
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+|estamos?\s+|est[áa]n?\s+)?interesad[oa]s?\b/i,
+  // "no estoy/estás/está/estáis interesado" — the most common Spanish rejection; the line above
+  // only had estamos/están, so "no estoy interesado" leaked to Interesado via the bare word.
+  /\bno\s+est(oy|[áa]s|[áa]|[áa]is)\s+interesad[oa]s?\b/i,
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa\b/i,
   /\bno\s+(hay\s+)?inter[ée]s\b/i, /sin\s+inter[ée]s/i,
   /\bnot\s+interested\b/i, /\bno\s+interest\b/i, /pas\s+int[ée]ress[ée]/i, /kein\s+interesse/i, /non\s+(mi|ci)\s+interessa/i,
@@ -269,6 +272,11 @@ const DO_NOT_CONTACT = [
   // common Spanish unsubscribe phrasing the "de baja" / "de la lista" patterns above missed. The
   // "verbo + de" shape keeps a service request ("eliminar duplicados de la base de datos") out.
   /(b[áa]j|quit|borr|elimin|s[áa]c)\w*\s+de\s+(la\s+|las\s+|vuestr[oa]s?\s+|su\s+|sus\s+|nuestr[oa]s?\s+|tu\s+)?(base\s+de\s+datos|bbdd|listas?|registro|contactos?)\b/i,
+  // "elimina mi correo de todas tus bases de datos" — removal verb SEPARATED from the target by
+  // a few words (mi correo / todas tus). And "no quiero/deseo recibir (más) correos".
+  /(elimin|borr|quit|b[áa]j|s[áa]c|dar\s+de\s+baja|dad\s+de\s+baja)\w*[^.?!\n]{0,45}\b(base[s]?\s+de\s+datos|bbdd|lista[s]?\s+de\s+(correo|distribuci[óo]n|env[íi]o)|lista[s]?\b|registro|distribuci[óo]n)\b/i,
+  /\bno\s+(quiero|queremos|deseo|deseamos)\s+(recibir|que\s+me\s+(escrib|mand|env|contact|lleg))\w*(\s+m[áa]s)?\b[^.?!\n]{0,30}(correo|email|e-mail|comunicaci|newsletter|publicidad|comercial|mensaje)/i,
+  /\bno\s+(quiero|queremos|deseo|deseamos)\s+(recibir\s+)?(m[áa]s\s+)?(correos?|emails?|e-mails?|comunicaciones|newsletters?|publicidad|spam)\b/i,
   /stop\s+(contact|email|writ|send|messag|reach)/i,
   /(no|don'?t|do not)\s+(me\s+|nos\s+)?(contact|email|write|escrib|contacte|env[íi]e|manden?|mand[ée]is)/i,
   /deja(d|r)?\s+de\s+(enviar|escribir|contactar|molestar|mandar)/i,

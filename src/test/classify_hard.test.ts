@@ -173,6 +173,15 @@ const CASES: Array<[string[], string]> = [
   [["not_interested"], "Thanks but we're all set. Best, Jane | Book time with me"],
   [["derivado"], "Hola Alfons, nuestro planteamiento es promover la innovación. Con quien debes hablar es con joaquinvilaplana@aiju.es y con el responsable del área de automatización juanmico@aiju.es. Un saludo"],
   [["interested"], "¿Reservamos un momento para hablar esta semana?"],
+  // ── REAL (Nowords/Fran, 2026-09-09): "no estoy interesado" + baja = no_contactar (baja manda)
+  [["no_contactar"], "No estoy interesado. Por favor, por un tema de foco, elimina mi correo de todas tus bases de datos, no quiero recibir correos comerciales. Gracias de antemano, F"],
+  // the plain "no estoy interesado" (obvious gap) must be a rejection, never Interesado
+  [["not_interested"], "Hola, no estoy interesado, gracias."],
+  [["not_interested"], "No está interesado en este momento."],
+  [["no_contactar"], "No quiero recibir más correos comerciales."],
+  [["no_contactar"], "Eliminadme de vuestra base de datos por favor."],
+  // …but a positive "estoy interesado" is still Interesado
+  [["interested"], "Hola, sí, estoy interesado. ¿Cuándo hablamos?"],
 ];
 
 describe("classifier hard battery", () => {
