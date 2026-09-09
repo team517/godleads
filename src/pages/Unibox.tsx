@@ -1470,7 +1470,11 @@ export default function Unibox() {
     // (someone hand-setting "No interesado") is always respected.
     const CATEGORY_LABELS = ["Interesado", "No interesado", "No contactar", "Derivado", "Fuera / Auto", "Pregunta"];
     const OPTIMISTIC = new Set(["Interesado", "Pregunta"]);
-    const DOWNGRADE_TO = new Set(["No interesado", "No contactar", "Fuera / Auto", "Derivado"]);
+    // SPEC §7 / case 65: "Fuera / Auto" is an OPERATIONAL state, not a commercial one — an
+    // out-of-office auto-reply arriving after a human "Interesado" must NOT overwrite it
+    // ("Conservar el estado comercial humano anterior"). It is still applied to a message that
+    // has no commercial label yet.
+    const DOWNGRADE_TO = new Set(["No interesado", "No contactar", "Derivado"]);
     const labelFor = (cat: MessageCategory): string => (cat === "neutral" ? "" : categoryConfig[cat].label);
     const updates: Array<{ id: string; labels: string[] }> = [];
     for (const m of msgs) {

@@ -10,15 +10,20 @@ const CASES: Array<[string[], string]> = [
   [["no_contactar"], "Me interesa pero quitadme de la lista, no quiero más correos."],
   [["no_contactar"], "Interesting, but please unsubscribe me."],
   // courtesy then rejection
-  [["not_interested"], "Gracias por la info, pero ya tenemos proveedor."],
+  // SPEC §7 (2026-09-09): a bare "ya tenemos proveedor" is an OBJECTION, not a rejection —
+  // it frequently precedes an opening, so the correct outcome is REVIEW (neutral), which keeps
+  // whatever label the lead already had instead of closing it.
+  [["neutral"], "Gracias por la info, pero ya tenemos proveedor."],
   [["not_interested"], "Thanks, we're all set for now."],
   // engagement wins over a soft doubt
   [["interested"], "Interesante, ¿cuándo podemos hablar?"],
   [["interested"], "Cuéntame precios y disponibilidad."],
   [["interested"], "Estem interessats, quan podem parlar?"],
   // doubt → PREGUNTA (no inflar interesados)
-  [["question"], "¿Podéis mandarme el precio? Aunque no sé si encaja."],
-  [["question"], "No estoy seguro, ¿qué incluye exactamente?"],
+  // SPEC §6: asking the PRICE or what the service INCLUDES is commercial exploration →
+  // Interesado, even when wrapped in doubt ("aunque no sé si encaja", "no estoy seguro").
+  [["interested"], "¿Podéis mandarme el precio? Aunque no sé si encaja."],
+  [["interested"], "No estoy seguro, ¿qué incluye exactamente?"],
   // short/terse rejection vs neutral
   [["not_interested"], "No, gracias."],
   [["not_interested", "neutral"], "Ok, gracias."], // ambiguo: cortesía seca → lado seguro
@@ -99,7 +104,7 @@ const CASES: Array<[string[], string]> = [
   [["neutral", "not_interested"], "Trabajamos con clientes que tienen otras necesidades y proveedores que ya conocen."],
   // …but a real interrogative still is
   [["question"], "¿Qué tiene de especial vuestro servicio?"],
-  [["question"], "Hola. Cuánto cuesta al mes?"],
+  [["interested"], "Hola. Cuánto cuesta al mes?"], // SPEC §6 case 20: price question = Interesado
   // a no-need sentence next to an explicit info request stays warm (engagement wins)
   [["interested", "question"], "Ahora mismo no tenemos necesidad, pero mándame la información y el precio por si acaso."],
   // ── REAL threads with OUR quoted outreach + legal footers (the text that must be IGNORED).
@@ -190,8 +195,11 @@ const CASES: Array<[string[], string]> = [
   [["not_interested"], "No lo necesitamos."],
   [["not_interested"], "No me hace falta."],
   [["not_interested"], "No nos hace falta."],
-  [["not_interested"], "Ya tengo proveedor."],
-  [["not_interested"], "Ya tenemos proveedor."],
+  // SPEC §7 / case 29: the bare provider objection alone → REVIEW, never an automatic rejection.
+  // "Ya tenemos proveedor Y NO QUEREMOS CAMBIAR" (case 30) is still not_interested.
+  [["neutral"], "Ya tengo proveedor."],
+  [["neutral"], "Ya tenemos proveedor."],
+  [["not_interested"], "Ya tenemos proveedor y no queremos cambiar."],
   [["not_interested"], "No tengo presupuesto para esto."],
   [["no_contactar"], "Quítame de tu lista."],
   [["no_contactar"], "Quítanos de vuestra lista."],

@@ -9,14 +9,19 @@ describe("classifyMessage", () => {
   });
 
   it("detects QUESTION", () => {
-    expect(classifyMessage("Duda", "¿Cómo funciona exactamente? ¿Qué incluye?")).toBe("question");
-    expect(classifyMessage(null, "No sé si me interesa, cuéntame un poco más.")).toBe("question");
+    // SPEC §6: "cómo funciona / qué incluye / cuéntame más" are COMMERCIAL exploration about our
+    // offer → Interesado, not a neutral question (a neutral question is "¿quién eres?").
+    expect(classifyMessage("Duda", "¿Cómo funciona exactamente? ¿Qué incluye?")).toBe("interested");
+    expect(classifyMessage(null, "No sé si me interesa, cuéntame un poco más.")).toBe("interested");
     expect(classifyMessage("Re:", "Could you tell me what is the price?")).toBe("question");
+    expect(classifyMessage(null, "¿Quién eres y por qué me escribes?")).toBe("question");
   });
 
   it("detects NOT INTERESTED (rejection without a baja request)", () => {
     expect(classifyMessage("Re:", "No me interesa, gracias.")).toBe("not_interested");
-    expect(classifyMessage(null, "Ya trabajamos con otra agencia.")).toBe("not_interested");
+    // SPEC §7 case 29: the bare provider objection is REVIEW, not a rejection.
+    expect(classifyMessage(null, "Ya trabajamos con otra agencia.")).toBe("neutral");
+    expect(classifyMessage(null, "Ya trabajamos con otra agencia y no queremos cambiar.")).toBe("not_interested");
     expect(classifyMessage(null, "Ahora no es el momento.")).toBe("not_interested");
     expect(classifyMessage(null, "Lo hacemos internamente, gracias.")).toBe("not_interested");
     // The plain "No interesado" reply (no "me"/"estoy") used to leak as Interested.
@@ -51,7 +56,8 @@ describe("classifyMessage", () => {
   });
 
   it("does not mark engaged-but-doubtful as not_interested", () => {
-    // doubt + asking for info → question, not not_interested
-    expect(classifyMessage(null, "No estoy seguro, pero pásame más información.")).toBe("question");
+    // SPEC §6: asking for information about the offer IS commercial exploration → Interesado,
+    // and the accompanying doubt ("no estoy seguro") must not downgrade it.
+    expect(classifyMessage(null, "No estoy seguro, pero pásame más información.")).toBe("interested");
   });
 });

@@ -12,15 +12,19 @@ const CASES: Array<[string, string]> = [
   ["INT", "Estoy disponible el martes a las 10h, ¿te va bien?"],
   ["INT", "Sounds good, let's schedule a call."],
   ["INT", "Envíame info y un presupuesto, por favor."],
-  // ── PREGUNTA ──
-  ["PRE", "¿Cómo funciona y qué precios manejáis?"],
+  // SPEC §6 (2026-09-09): a question ABOUT THE OFFER (price, scope, how it works, proof) is
+  // commercial exploration → INTERESADO. Only neutral/administrative questions stay PREGUNTA.
+  ["INT", "¿Cómo funciona y qué precios manejáis?"],
+  ["INT", "How much does it cost?"],
+  ["INT", "Tengo una duda antes de decidir, ¿tenéis casos de éxito?"],
+  ["INT", "No sé si me interesa, pásame más información."], // la duda no anula la petición (§6)
+  // ── PREGUNTA (neutral: sobre nosotros o el origen del dato, no sobre la oferta) ──
   ["PRE", "¿Quiénes sois y en qué os diferenciáis?"],
   ["PRE", "¿De dónde habéis sacado mi contacto?"], // neutral curiosity → PREGUNTA (not RGPD)
-  ["PRE", "How much does it cost?"],
-  ["PRE", "Tengo una duda antes de decidir, ¿tenéis casos de éxito?"],
-  ["PRE", "No sé si me interesa, pásame más información."], // duda → PREGUNTA aunque pida info
   // ── NO_INTERESADO ──
-  ["NOI", "Ya trabajamos con otra agencia."],
+  // SPEC §7 case 29: "ya trabajamos con otra agencia" A SECAS es objeción → REVISIÓN (neutral).
+  ["NEU", "Ya trabajamos con otra agencia."],
+  ["NOI", "Ya trabajamos con otra agencia y no queremos cambiar."],
   ["NOI", "Gracias, pero no es el momento."],
   ["NOI", "Lo hacemos internamente."],
   ["NOI", "No hay presupuesto ahora mismo."],

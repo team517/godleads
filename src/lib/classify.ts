@@ -201,7 +201,14 @@ const NOT_INTERESTED = [
   /presupuesto\s+(disponible\s+)?(agotado|cerrado|congelado)/i,
   /no\s+es\s+(una\s+)?prioridad/i, /not\s+a\s+priority/i, /no\s+(es\s+)?prioritari/i,
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
-  /(no,?\s*)?(gracias|thanks|thank you)[.! ]*$/i, /no\s+thank/i,
+  // A bare "Gracias." is NOT a rejection (§13 case 46 → review): the "no" is now REQUIRED, so
+  // courtesy alone can no longer close a lead, while "No, gracias." still rejects (case 51).
+  /\bno,?\s+(gracias|thanks|thank\s*you|gr[àa]cies)\b/i, /no\s+thank/i,
+  /\bno\s+(tengo|tenemos)\s+inter[ée]s\b/i,
+  // "no queremos cambiar / contratar / una reunión / seguir con la propuesta" (cases 13, 30, 75).
+  /\bno\s+(queremos|quiero|deseamos|deseo|vamos\s+a)\s+(cambiar|contratar|reunirnos|seguir|continuar|una\s+reuni[óo]n|ninguna\s+reuni[óo]n)\b/i,
+  // A trailing bare "ahora no" (case 36: "Si nos interesara, pediríamos una reunión; ahora no").
+  /(^|[.;,]\s*)ahora\s+no\s*[.!]*$/i,
   /no\s+(me\s+|nos\s+|le\s+|les\s+)?(interesan?|hace falta|necesit(o|a|amos|an)|encaja)/i,
   // ── French rejections (REVIMA & other FR prospects). "pas intéressé" is covered
   // above; add the "ne … pas" forms, "we don't need", and the fit-rejection
@@ -284,6 +291,11 @@ const DO_NOT_CONTACT = [
   /stop\s+(contact|email|writ|send|messag|reach)/i,
   /(no|don'?t|do not)\s+(me\s+|nos\s+)?(contact|email|write|escrib|contacte|env[íi]e|manden?|mand[ée]is)/i,
   /deja(d|r)?\s+de\s+(enviar|escribir|contactar|molestar|mandar)/i,
+  /dej[ée]is\s+de\s+(enviar|escribir|contactar|molestar|mandar)/i,
+  // "No quiero información ni llamadas" — an explicit stop to ALL communications (case 15).
+  /\bno\s+quiero\b[^.?!]{0,30}\bni\b[^.?!]{0,25}\b(llamadas?|correos?|emails?|informaci[óo]n|que\s+me\s+llam)/i,
+  // Catalan unsubscribe (cases 58 and real CA traffic).
+  /\bno\s+m['’]escriviu\b/i, /\bno\s+em\s+(contacteu|escriviu|truqueu)\b/i, /doneu-?me\s+de\s+baixa/i, /\besborreu\b/i,
   /no\s+(me\s+|nos\s+)?(volv[áa]is|vuelvas?|volver)\s+a\s+(escribir|contactar|enviar|molestar|mandar)/i,
   /no\s+(me\s+|nos\s+)?(escrib[áa]is|escribas|contact[ée]is|mand[ée]is)\s+(m[áa]s|nunca m[áa]s)?/i,
   /leave (me|us) alone/i, /d[ée]jad?(me|nos) en paz/i, /\bgo away\b/i, /\bpls\s+delete\s+my\s+contact\b/i, /delete\s+my\s+(contact|details|data|email)/i,
@@ -331,6 +343,9 @@ const REFERRAL = [
   // referral to the right team, NOT a rejection (the disclaimer word "internamente" used
   // to leak these to not_interested).
   /reenvi\w+[^.?!]{0,30}\b(compras|departament\w*|[áa]rea|responsable|direcci[óo]n|equipo)\b/i,
+  // "He pasado / se lo he trasladado vuestra propuesta al responsable" — a completed hand-off
+  // (case 38). Past/participle forms only, so it can never read as a request to send us something.
+  /\b(he|hemos|se\s+lo\s+he|se\s+lo\s+hemos|le\s+he|les\s+he)\s+(pasado|trasladado|reenviado|enviado|derivado|remitido|comentado)\b[^.?!]{0,40}\b(responsable|departament\w*|[áa]rea|direcci[óo]n|equipo|compras|jefe|encargad[oa]|direcci[óo]n)\b/i,
   // "No decido nada" / "no soy quien decide" — not the decision-maker → redirect, not a no.
   /\bno\s+decido\b/i, /no\s+soy\s+qui[ée]n\s+(decide|lo\s+decide)/i, /no\s+(soy\s+el\s+que\s+)?tom[oa]\s+(la|las|esa|estas)\s+decisi/i,
 ];
@@ -353,7 +368,9 @@ const INTERESTED = [
   /agend(a|ar|amos|emos|é)/i, /\breuni[óo]n\b/i, /\bmeeting\b/i, /schedule (a )?(call|meeting|time)/i,
   /(book|set up|schedule|reserv\w+|agend\w+|apunt\w+|organic\w+|concert\w+)\b[^.?!]{0,25}(call|time|slot|meeting|demo|llamada|reuni[óo]n|cita|hueco|chat)/i,
   /(me|nos)\s+encaja/i, /(me|nos)\s+(viene|va)\s+(bien|genial|perfecto)/i,
-  /\bcalendly\b/i, /\bcalendar\b/i,
+  // NOTE: the bare words "calendly"/"calendar" were REMOVED (§8): the seller's own booking link
+  // quoted back by the lead does not prove interest — it sits in every signature. A real
+  // "pásame tu Calendly" is caught by MEETING_OPENING instead.
   /(when|cu[áa]ndo)\s+(are you|est[áa]s|est[áa]is|puedes|podemos|would you|te viene)/i,
   // A prospect stating THEIR OWN availability to meet = interest. The bare
   // "disponible"/"available" was REMOVED: it matched "servicio disponible 24/7",
@@ -376,7 +393,9 @@ const INTERESTED = [
   // que comentas… Quedo pendiente de tus noticias" — a skeptical but ENGAGED yes, was sitting
   // under a stale "No contactar"). Kept in INTERESTED (not ENGAGEMENT) so an explicit
   // rejection in the same mail still wins.
-  /^\s*(de acuerdo|ok|vale|perfecto)\b[.,!;\s]+(?=\S.{3,})/i, // un "Ok." a secas NO es interés — exige que siga contenido
+  // "De acuerdo/Ok/Vale" + real content = acceptance. A bare "Ok." is not interest, and neither
+  // is "Ok, gracias." — §8: courtesy ("gracias", "recibido") never creates interest on its own.
+  /^\s*(de acuerdo|ok|vale|perfecto)\b[.,!;\s]+(?!(gracias|gr[àa]cies|thanks|thank|saludos|un\s+saludo|salut|regards|atentamente|recibido)\b)(?=\S.{3,})/i,
   /(vamos a|queremos|quiero|me gustar[íi]a)\s+ver\s+(ese?|esa|el|la|los|las|vuestr[oa]|tu)?\s*(an[áa]lisis|propuesta|informe|demo|documento|material|datos|estudio)/i,
   /quedo\s+(pendiente|a\s+la\s+espera|atent[oa])\s+de\s+(tus?|sus?|vuestras?)\s+(noticias?|respuesta|env[íi]o|informaci[óo]n|propuesta|an[áa]lisis)/i,
 ];
@@ -399,31 +418,168 @@ const QUESTION = [
   /\?/,
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPEC "reglas_clasificacion_leads" (2026-09-09) — commercial-opening precedence.
+//
+// Core invariant (§1 / §5 steps 3-4): a lead who ASKS FOR or ACCEPTS a meeting, call,
+// demo or a price/proposal is INTERESADO **even if they voice objections** ("ya tenemos
+// proveedor, pero podemos conoceros"). Only an opening that is REAL and AFFIRMED counts —
+// a negated one ("no queremos una reunión"), a mere mention ("estoy en una reunión"), a
+// quoted seller line or a signature booking link never create interest (§8).
+//
+// This block runs BEFORE referral/rejection so the invariant holds; everything it does not
+// decide falls through to the original, real-case-tuned ladder below (no regression).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Adversative/sentence boundaries. Splitting on these (NOT on commas — "No, gracias" must
+// stay one clause) is what lets "No estoy interesado, PERO podemos reunirnos" read as an
+// opening while "No queremos una reunión" stays negated.
+// NOTE the lookaheads instead of a trailing \b on the accented words: "ò" is not a \w character,
+// so `per[òo]\b` never matched Catalan "però" — the sentence was not split and the negation of
+// the first clause wrongly cancelled the opening in the second (case 56).
+const ACC_END = String.raw`(?![\wáéíóúàèòïüçñ])`;
+const CLAUSE_SPLIT = new RegExp(
+  String.raw`[.;!?¡¿\n]+|\bpero\b|\baunque\b|\bsin\s+embargo\b|\bno\s+obstante\b|\beso\s+s[íi]${ACC_END}|\bahora\s+bien\b|\bbut\b|\bthough\b|\balthough\b|\bhowever\b|\bper[òo]${ACC_END}|\btot\s+i\s+aix[íò]${ACC_END}`,
+  "i",
+);
+
+/** A negation ("no/ni/nunca…") within the 4 words before the phrase cancels it. "sin" is
+ *  deliberately NOT a negator — "sin compromiso podemos vernos" is still an opening (§8). */
+// The window is TIGHT (2 words): a negation must sit right next to the phrase it cancels.
+// With a wider window "No sé si me interesa, pásame más información" had its info request
+// cancelled by the distant "no" — yet §6 makes that request Interesado.
+const NEG_BEFORE = /\b(no|ni|nunca|jam[áa]s|tampoco|not|don'?t|doesn'?t|won'?t|neither)\b(?:\W+\w+){0,2}\W*$/i;
+/** "si nos interesara, pediríamos…" — a counterfactual is not a real offer (case 36). */
+const COUNTERFACTUAL = /\bsi\b[^.;!?]{0,40}\b\w+(ar[íi]a|er[íi]a|ir[íi]a|ara|iera|ase|iese)\w*\b/i;
+/** The opening must concern OUR offer, not support/billing (case 74, §6). */
+const NON_COMMERCIAL_TOPIC = /\b(soporte|support|factura|invoice|incidencia|reclamaci[óo]n|aver[íi]a|garant[íi]a|pedido\s+n|ticket|devoluci[óo]n)\b/i;
+
+const MEET_VERB = String.raw`(quiero|queremos|quisiera|quisi[ée]ramos|me\s+gustar[íi]a|nos\s+gustar[íi]a|podemos|podr[íi]amos|puedo|podr[íi]a|pod[ée]is|podr[ée]is|hagamos|hacemos|montamos|organizamos|programemos|agendamos|agendemos|agendar|reservemos|quedamos|necesito|solicito|pido|acepto|podem|podr[íi]em|fem|farem)`;
+const MEET_NOUN = String.raw`(reuni[óo]n\w*|reunirnos|reunirme|reunir\w*|reuni[óo]|llamada|videollamada|videoconferencia|demo\w*|presentaci[óo]n|cita|hueco|call|meeting|conocer\w*|con[èe]ixer\w*|hablar|parlar|vernos|veure'?ns|verlo|verlos|comentarlo|escuchar\w*)`;
+
+const MEETING_OPENING: RegExp[] = [
+  // The tail is a LOOKAHEAD, not \b: an accented ending ("reunió") is not a \w character, so a
+  // trailing \b never matched it and the whole Catalan opening was missed (case 56).
+  new RegExp(String.raw`\b${MEET_VERB}\b[^.;!?]{0,35}\b${MEET_NOUN}(?![\wáéíóúàèòïüçñ])`, "i"),
+  /\b(agendamos|agendemos|agendam[oa]s?|agendar|quedamos|reservemos)\b/i,
+  /\b(os|te|le|les)\s+escucho\b/i, /\bpuedo\s+escuchar\w*/i,
+  /\b(ll[áa]ma(me|nos)|ll[áa]meme|ll[áa]menme|truca'?m)\b/i,
+  /\bp[áa]sa(me|nos)\b[^.;!?]{0,25}\b(calendly|calendario|agenda|enlace|link|disponibilidad)\b/i,
+  /\b(env[íi]a|manda|pasa)\w*\s*(me|nos)?\b[^.;!?]{0,20}\b(invitaci[óo]n|invite|enlace\s+(de|para)\s+la\s+(reuni[óo]n|llamada))\b/i,
+  /\btengo\s+(un\s+)?hueco\b/i, /\btengo\s+disponibilidad\b/i,
+  /\b(happy|glad)\s+to\s+(chat|talk|meet|connect|discuss|jump\s+on|hop\s+on|learn\s+more)\b/i,
+  /\blet'?s\s+(meet|talk|chat|connect|discuss|schedule|set\s+up)\b/i,
+  /\b(book|schedule|set\s+up|arrange)\s+(a|the)\s+(call|meeting|demo|time)\b/i,
+  /\bsend\s+(me\s+|us\s+)?(your\s+)?(calendar|booking\s+link|availability)\b/i,
+  /\b(me\s+va\s+bien|me\s+encaja|em\s+va\s+b[ée]|works\s+for\s+me|sounds\s+good)\b/i,
+  // A concrete slot offered as a SHORT reply to an invitation ("El martes a las 12.")
+  /^\W*(el\s+)?(lunes|martes|mi[ée]rcoles|jueves|viernes|dilluns|dimarts|dimecres|dijous|divendres)\b[^.]{0,25}\b\d{1,2}([:.]\d{2})?\s*(h|hrs|am|pm)?\b/i,
+];
+
+const COMMERCIAL_EXPLORATION: RegExp[] = [
+  /\b(cu[áa]nto\s+(cuesta|vale|ser[íi]a|cobr\w*)|qu[ée]\s+precio|how\s+much|\bpricing\b|\bquote\b)\b/i,
+  /\b(qu[ée]\s+incluye|qu[ée]\s+ofrec[ée]is|what'?s\s+included|what\s+does\s+it\s+include)\b/i,
+  // The verb must be an IMPERATIVE or a first-person desire — the \b after the group is what
+  // keeps "He pasado vuestra propuesta al responsable" (a REFERRAL, case 38) from reading as a
+  // request: "pasa" there is followed by "do", so the boundary fails.
+  /\b(?:(?:env[íi]a|m[áa]nda|p[áa]sa)(?:d?(?:me|nos))?|(?:enviar|mandar|pasar|facilitar|remitir)(?:me|nos)|d[ií](?:me|nos)|dame|dadme|necesito|necesitamos|quiero|queremos|quisiera|me\s+gustar[íi]a|nos\s+gustar[íi]a|solicito|send|share)\b\s*(?:me|us|nos)?\b[^.;!?]{0,28}\b(precios?|presupuesto|tarifas?|cotizaci[óo]n|propuesta|proposal|dossier|informaci[óo]n|info\b|detalles?|material|more\s+information|details)\b/i,
+  // Concrete future follow-up ("escríbeme en octubre para revisarlo") = SEGUIMIENTO_FUTURO,
+  // which §6 classifies as Interesado. A vague "ya veremos" never matches (needs a real date).
+  /\b(escr[íi]be(me|nos)|escrib[íi]dme|contacta(me|nos|dme)?|ll[áa]ma(me|nos)|ret[óo]ma\w*|habla\w*)\b[^.;!?]{0,25}\b(en|el|despu[ée]s\s+de|tras|a\s+partir\s+de)\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|verano|vacaciones|navidad|semana|mes|trimestre|\d{1,2})/i,
+  /\b(c[óo]mo\s+(funciona|empezamos|empiezo|comenzamos|lo\s+hacemos|ser[íi]a\s+el\s+proceso)|how\s+(does\s+it\s+work|do\s+we\s+start))\b/i,
+  /\b(cu[ée]nta|expl[íi]ca|d[íi])(me|nos)\b[^.;!?]{0,20}\b(m[áa]s|sobre|acerca)\b/i, /\btell\s+me\s+more\b/i,
+  /\b(ejemplos?|casos?\s+(de\s+)?([ée]xito|clientes|pr[áa]cticos)|referencias|case\s+stud|testimonios)\b/i,
+  /\b(m[ée]s\s+informaci[óo]|envia'?m\s+informaci[óo])\b/i,
+];
+
+/** Does an AFFIRMED, commercially-relevant match of `pats` exist in some clause? */
+function hasAffirmedOpening(text: string, pats: RegExp[]): boolean {
+  for (const clause of text.split(CLAUSE_SPLIT)) {
+    const c = clause.trim();
+    if (!c) continue;
+    if (NON_COMMERCIAL_TOPIC.test(c)) continue;   // support/billing, not our offer
+    if (COUNTERFACTUAL.test(c)) continue;         // "si nos interesara, pediríamos…"
+    for (const p of pats) {
+      const re = new RegExp(p.source, p.flags.replace("g", ""));
+      const m = re.exec(c);
+      if (m && !NEG_BEFORE.test(c.slice(0, m.index))) return true;
+    }
+  }
+  return false;
+}
+
+/** Purely automatic mail — stop the commercial analysis (§5 step 2). A HUMAN message that
+ *  merely mentions being away ("estoy fuera, pero podemos hablar el lunes") does NOT. */
+const STRONG_AUTO = [
+  /respuesta\s+autom[áa]tica/i, /automatic(ally)?\s+repl/i, /auto(mated)?[- ]?reply/i, /automated\s+response/i,
+  /automatische\s+antwort/i, /r[ée]ponse\s+automatique/i, /risposta\s+automatica/i, /resposta\s+autom[àa]tica/i,
+  /^\s*auto\s*:/i, /\bout\s+of\s+office\s+(auto)?repl/i,
+  /\b(hemos|he)\s+recibido\s+(su|tu)\s+(mensaje|correo|solicitud)/i, /we\s+have\s+received\s+your\s+(message|email|request)/i,
+  /acuse\s+de\s+recibo/i, /this\s+is\s+an\s+automated/i, /no\s+responda\s+a\s+este\s+(correo|mensaje)/i,
+];
+
+/** "Ya tenemos proveedor" ALONE is ambiguous — it can precede an opening, so per §7 it is a
+ *  REVIEW, not a rejection. With any other rejection signal it stays not_interested. */
+const BARE_PROVIDER = /\b(ya\s+)?(teng[oa]|tienes?|tienen|tenemos|contamos\s+con|cuento\s+con|trabajamos?\s+con|trabajo\s+con|disponemos\s+de|ja\s+tenim)\s+(un[oa]?\s+|otro\s+|otra\s+|nuestro\s+|nuestra\s+)?(proveedor\w*|agencia\w*|partner\w*|prove[ïi]dor\w*)\b/i;
+/** "No soy la persona adecuada" with NO named target → review, never an invented referral (case 40). */
+const NOT_RIGHT_PERSON = /\bno\s+soy\s+(yo\s+)?(la\s+|el\s+)?(persona\s+)?(indicad[oa]|adecuad[oa]|correct[oa]|encargad[oa]|responsable|qui[ée]n)/i;
+const HAS_EMAIL = /\b[\w.+-]+@[\w.-]+\.\w{2,}\b/;
+
 export function classifyMessage(subject: string | null, body: string | null): MessageCategory {
   const subjectText = prep(subject);
   const bodyText = prep(body);
   const text = `${subjectText} ${bodyText}`.trim();
   if (text.replace(/\s+/g, "").length < 2) return "neutral"; // nothing meaningful to read
 
-  // 1) Bounce / left the company / auto-reply / OOO — always wins.
-  // …except when the person says they are BACK ("acabo de regresar de las vacaciones y estaría
-  // interesado"): a past-tense return is the opposite of an absence, yet "de vacaciones" used to
-  // flag it out_of_office (real case, Circutor). Bounces still win.
-  const RETURNED = /(acabo|acabamos|reci[ée]n|ya)\s+(de\s+)?(regres|volv|vuelt)\w*|\b(he|hemos)\s+(vuelto|regresado)\b|\b(regres|volv|vuelv)\w*\s+de\s+(las?\s+|mis\s+)?vacaciones|\bde\s+vuelta\s+(de|en|al?)\b|\bestoy\s+de\s+vuelta\b|\bback\s+from\s+(my\s+|the\s+)?(holiday|vacation|leave|trip)\b|\b(just|now)\s+(got\s+)?back\b/i;
-  const returned = RETURNED.test(text);
-  if (any(SYSTEM_BOUNCE, text) || (!returned && (any(LEFT_COMPANY, text) || any(OUT_OF_OFFICE, text)))) return "out_of_office";
+  // ── §5.1 Delivery events: a bounce is a delivery fact, never a human intent (case 68).
+  if (any(SYSTEM_BOUNCE, text)) return "out_of_office";
 
-  // 2) Unsubscribe / RGPD / spam / hostile — "la baja manda": beats rejection AND is
-  // NOT saved by an accompanying question or engagement (they want it to STOP).
+  // ── §5.1 An explicit cessation request outranks EVERYTHING, including an accompanying
+  // interest ("me interesa, pero eliminadme de la lista") or a call asked for only to demand
+  // that we stop writing (cases 15, 18, 27, 53, 55). "La baja manda".
   if (any(DO_NOT_CONTACT, text)) return "no_contactar";
 
-  // 2b) Hands you off to someone else ("esto lo lleva Marta") — a redirect, not a no.
+  // ── §5.2 A PURELY automatic message stops the commercial analysis (cases 41, 42, 45).
+  if (any(STRONG_AUTO, text)) return "out_of_office";
+
+  // ── §5.3 / §5.4 THE INVARIANT: a real, AFFIRMED commercial opening (meeting/call/demo, or a
+  // price/proposal/info request) is INTERESADO even alongside objections — "ya tenemos proveedor
+  // pero podemos conoceros", "no tengo presupuesto ahora, pero hagamos una reunión". Runs before
+  // referral and rejection so an objection can never bury a genuine opening.
+  if (hasAffirmedOpening(text, MEETING_OPENING)) return "interested";
+  if (hasAffirmedOpening(text, COMMERCIAL_EXPLORATION)) return "interested";
+
+  // Absence / left-the-company — evaluated only now, so a HUMAN "estoy fuera, pero podemos hablar
+  // el lunes" already returned Interesado above (case 43). "Acabo de volver de vacaciones" is a
+  // RETURN, not an absence (real case, Circutor).
+  const RETURNED = /(acabo|acabamos|reci[ée]n|ya)\s+(de\s+)?(regres|volv|vuelt)\w*|\b(he|hemos)\s+(vuelto|regresado)\b|\b(regres|volv|vuelv)\w*\s+de\s+(las?\s+|mis\s+)?vacaciones|\bde\s+vuelta\s+(de|en|al?)\b|\bestoy\s+de\s+vuelta\b|\bback\s+from\s+(my\s+|the\s+)?(holiday|vacation|leave|trip)\b|\b(just|now)\s+(got\s+)?back\b/i;
+  const returned = RETURNED.test(text);
+  // A PERMANENT exit with an explicit hand-off is a referral, not an absence (§7).
+  if (!returned && any(LEFT_COMPANY, text)) return any(REFERRAL, text) ? "derivado" : "out_of_office";
+  if (!returned && any(OUT_OF_OFFICE, text)) return "out_of_office";
+
+  // ── §7 "No soy la persona adecuada" with NO named target or address → REVIEW. Never invent a
+  // referral contact (case 40).
+  if (NOT_RIGHT_PERSON.test(text)) {
+    const rest = text.replace(new RegExp(NOT_RIGHT_PERSON.source, "gi"), " ");
+    if (!HAS_EMAIL.test(text) && !any(REFERRAL, rest)) return "neutral";
+  }
+
+  // ── §5.5 Hands you off to someone else ("esto lo lleva Marta") — a redirect, not a no.
   if (any(REFERRAL, text)) return "derivado";
 
   const hasEngagement = any(ENGAGEMENT, text);
   const hasInterest = any(INTERESTED, text);
 
-  // 3) Clearly not interested (unless they still asked for info / a call).
+  // ── §7 A BARE "ya tenemos proveedor" does NOT prove a rejection — it often precedes an
+  // opening. With no other rejection signal left once that phrase is removed, keep the previous
+  // state and review (case 29). "…y no queremos cambiar" still rejects (case 30).
+  if (BARE_PROVIDER.test(text)) {
+    const rest = text.replace(new RegExp(BARE_PROVIDER.source, "gi"), " ");
+    if (!hasEngagement && !hasInterest && !any(NOT_INTERESTED, rest) && !any(SOFT_REJECTION, rest)) return "neutral";
+  }
+
+  // ── §5.6 Clearly not interested (unless they still asked for info / a call).
   if (!hasEngagement && any(NOT_INTERESTED, text)) return "not_interested";
 
   // 3b) SOFT rejection ("we have our own team / not looking to add …") — only when there is NO
@@ -432,14 +588,21 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   // (real case, Tomebamba: "Gracias por la oferta ¿Qué tipo de productos puedes encontrar?").
   if (!hasEngagement && !hasInterest && !any(QUESTION, text) && any(SOFT_REJECTION, text)) return "not_interested";
 
-  // Doubt about fit reads as a question even if they also ask for info.
-  if (any(UNCERTAIN, text)) return "question";
+  // ── §5.8 Pure doubt with no decision behind it ("quizás algún día", "no lo tengo claro") is
+  // NOT a question to answer: keep the previous state and review (case 33). Returning "neutral"
+  // is exactly that — the labeler never overwrites an existing label with it.
+  if (any(UNCERTAIN, text)) return "neutral";
+
+  // §6 — the opening must concern OUR offer. "Me gustaría hablar con vuestro soporte por una
+  // factura" (case 74) is a support/billing request, not new commercial interest, so the legacy
+  // interest/engagement lists must not fire on it either.
+  const nonCommercial = NON_COMMERCIAL_TOPIC.test(text);
 
   // 3) Interested (positive buying signals).
-  if (hasInterest) return "interested";
+  if (hasInterest && !nonCommercial) return "interested";
 
   // Asked for info / a call (without doubt or a rejection) → that's a warm lead.
-  if (hasEngagement) return "interested";
+  if (hasEngagement && !nonCommercial) return "interested";
 
   // 4) A genuine question.
   if (any(QUESTION, text)) return "question";
