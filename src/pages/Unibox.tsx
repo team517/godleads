@@ -1481,8 +1481,11 @@ export default function Unibox() {
       if (isSpam(m.subject, m.body_text, m.from_email)) continue;
       // Warm-up network mail and bounces are NOT prospect replies: never label them (they were
       // getting "Interesado" by the thousand and polluting every count/report/digest).
-      if ((m as { is_warmup?: boolean }).is_warmup) continue;
-      if (isBounceOrFailure(m.from_email) || isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email })) continue;
+      // A LINKED message (real lead/campaign) is a genuine reply: it must still be classified even
+      // if the stored warm-up flag says otherwise — those 373 replies were never labelled at all.
+      const linked = !!(m.lead_id || m.campaign_id);
+      if ((m as { is_warmup?: boolean }).is_warmup && !linked) continue;
+      if (isBounceOrFailure(m.from_email) || isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked })) continue;
       const newLabel = labelFor(classifyMessage(m.subject, m.body_text));
       if (!newLabel) continue;
       const current: string[] = m.labels || [];
@@ -1721,7 +1724,10 @@ export default function Unibox() {
         // only drop delivery-failure / system noise and warmup traffic.
         if (isBounceOrNoise(m.from_email)) continue;
         // is_warmup exists in the DB but not in the (stale) generated row type → narrow via cast.
-        if ((m as { is_warmup?: boolean }).is_warmup) continue;
+        // A message LINKED to a lead/campaign is a real reply and stays in the thread whatever the
+        // stored flag says — a phone number or a base64 image in the sender's signature used to
+        // trip the warm-up detector, so the reply showed in the list but VANISHED when opened.
+        if ((m as { is_warmup?: boolean }).is_warmup && !m.lead_id && !m.campaign_id) continue;
         thread.push({ ...m, _type: "received", _date: m.received_at });
       }
 
@@ -2068,7 +2074,8 @@ export default function Unibox() {
     //    is_warmup at sync. Hide it FIRST — otherwise its own-brand domain (onepulso/onnepuls*)
     //    reads as "campaign relevant" below and the whole warm-up flood shows in the clean
     //    bandeja and inflates every count. A real lead reply is never is_warmup.
-    if (m.is_warmup) return true;
+    // …but only when it is NOT tied to a real lead/campaign: a linked message is a genuine reply.
+    if (m.is_warmup && !m.lead_id && !m.campaign_id) return true;
     // 1) CAMPAIGN-RELEVANT → always show: a lead, a lead's DOMAIN (a colleague at the same company
     //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso

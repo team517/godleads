@@ -109,8 +109,15 @@ export function warmupPairCount(text: string | null, strict = true): number {
  */
 export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null }): boolean {
   const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
-  if (hasWarmupCodes(s, b)) return true;
+  // Our OWN seed mailboxes are warm-up whatever they write, and an explicit marker is definitive.
   if (from && input.ownMailboxes && input.ownMailboxes.has(from)) return true;
+  if (WARMUP_MARKER_RE.test(`${s} ${b.slice(0, 800)}`)) return true;
+  // A message LINKED to a real lead/campaign is a genuine prospect reply — NEVER warm-up. Warm-up
+  // traffic comes from other seed mailboxes, never from someone we actually emailed. Without this
+  // guard the code detector tripped on ordinary signatures (a phone/reference number, a base64
+  // image blob) and silently hid 373 real replies from their own thread.
+  if (input.linked === true) return false;
+  if (hasWarmupCodes(s, b)) return true;
   const pairs = warmupPairCount(s + " " + b, input.linked !== false);
   const generic = WARMUP_SUBJECT_RE.test(s.trim());
   const b64 = BASE64_BODY_RE.test(b.slice(0, 600));
