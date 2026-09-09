@@ -176,12 +176,12 @@ const NOT_INTERESTED = [
   // "no estoy/estás/está/estáis interesado" — the most common Spanish rejection; the line above
   // only had estamos/están, so "no estoy interesado" leaked to Interesado via the bare word.
   /\bno\s+est(oy|[áa]s|[áa]|[áa]is)\s+interesad[oa]s?\b/i,
-  /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa\b/i,
+  /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa[n]?\b/i,
   /\bno\s+(hay\s+)?inter[ée]s\b/i, /sin\s+inter[ée]s/i,
   /\bnot\s+interested\b/i, /\bno\s+interest\b/i, /pas\s+int[ée]ress[ée]/i, /kein\s+interesse/i, /non\s+(mi|ci)\s+interessa/i,
   /no\s+ens\s+interessa/i,
   /(no|not).{0,15}(a\s+)?(fit|good fit|match|lo que (buscamos|necesitamos))/i,
-  /ya\s+(tenemos|contamos con|trabajamos con|disponemos)/i, /already\s+(have|work with|use|using|got)/i,
+  /ya\s+(teng[oa]|tienes?|tienen|tenemos|cuent[oa]\s+con|cuentan\s+con|contamos con|trabaj[oa]\s+con|trabajan\s+con|trabajamos con|dispon(go|e|en|emos)\s+de|disponemos)/i, /already\s+(have|work with|use|using|got)/i,
   /(lo hacemos|lo llevamos|lo gestionamos|ho fem|ho gestionem|ho portem)\s+(internamente|internament|in[- ]?house|nosotros|nosaltres)/i,
   // "in-house" ONLY with a doing/having verb or a team/solution noun — a bare "in-house" matched a
   // signature tagline ("Your Outside In-House Counsel") and flipped a warm reply to not_interested.
@@ -198,7 +198,7 @@ const NOT_INTERESTED = [
   /no\s+es\s+(una\s+)?prioridad/i, /not\s+a\s+priority/i, /no\s+(es\s+)?prioritari/i,
   /(we'?re|estamos|estoy)\s+(all set|cubiertos|servidos)/i,
   /(no,?\s*)?(gracias|thanks|thank you)[.! ]*$/i, /no\s+thank/i,
-  /no\s+(nos\s+)?(interesa|hace falta|necesitamos|encaja)/i,
+  /no\s+(me\s+|nos\s+|le\s+|les\s+)?(interesan?|hace falta|necesit(o|a|amos|an)|encaja)/i,
   // ── French rejections (REVIMA & other FR prospects). "pas intéressé" is covered
   // above; add the "ne … pas" forms, "we don't need", and the fit-rejection
   // "nous n'avons pas dans nos … de composants/références/produits" (= we don't deal
@@ -226,7 +226,7 @@ const NOT_INTERESTED = [
   /\bno\s+(tenemos|tengo|hay|existe|vemos|veo)\s+(la\s+|ninguna\s+|esa\s+|tal\s+)?necesidad\b/i,
   /\bsin\s+(la\s+)?necesidad\s+de\b/i,
   /\bno\s+(lo\s+|la\s+|los\s+|las\s+)?(necesitamos|necesito|precisamos|requerimos)\b/i,
-  /\bno\s+(nos\s+)?(hace|har[íi]a)\s+falta\b/i,
+  /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?(hace|har[íi]a)\s+falta\b/i,
   /\bno\s+(hacemos|realizamos|llevamos\s+a\s+cabo)\s+(captaci[óo]n|prospecci[óo]n|acciones?\s+comercial|marketing|publicidad)/i,
   /\bno\s+(captamos|buscamos|contratamos|subcontratamos|externalizamos)\b/i,
   /\bno\s+(vamos\s+a|pensamos|tenemos\s+previsto|prevemos)\s+(contratar|necesitar|incorporar|externalizar|cambiar)/i,
@@ -271,10 +271,10 @@ const DO_NOT_CONTACT = [
   // "bájame / quítame / bórrame / elimíname DE la base de datos / lista / registro" — a very
   // common Spanish unsubscribe phrasing the "de baja" / "de la lista" patterns above missed. The
   // "verbo + de" shape keeps a service request ("eliminar duplicados de la base de datos") out.
-  /(b[áa]j|quit|borr|elimin|s[áa]c)\w*\s+de\s+(la\s+|las\s+|vuestr[oa]s?\s+|su\s+|sus\s+|nuestr[oa]s?\s+|tu\s+)?(base\s+de\s+datos|bbdd|listas?|registro|contactos?)\b/i,
+  /(b[áa]j|qu[íi]t|b[óo]rr|elim[íi]n|s[áa]c)\w*\s+de\s+(la\s+|las\s+|vuestr[oa]s?\s+|su\s+|sus\s+|nuestr[oa]s?\s+|tus?\s+|mi\s+)?(base\s+de\s+datos|bbdd|listas?|registro|contactos?)\b/i,
   // "elimina mi correo de todas tus bases de datos" — removal verb SEPARATED from the target by
   // a few words (mi correo / todas tus). And "no quiero/deseo recibir (más) correos".
-  /(elimin|borr|quit|b[áa]j|s[áa]c|dar\s+de\s+baja|dad\s+de\s+baja)\w*[^.?!\n]{0,45}\b(base[s]?\s+de\s+datos|bbdd|lista[s]?\s+de\s+(correo|distribuci[óo]n|env[íi]o)|lista[s]?\b|registro|distribuci[óo]n)\b/i,
+  /(elim[íi]n|b[óo]rr|qu[íi]t|b[áa]j|s[áa]c|dar\s+de\s+baja|dad\s+de\s+baja)\w*[^.?!\n]{0,45}\b(base[s]?\s+de\s+datos|bbdd|lista[s]?\s+de\s+(correo|distribuci[óo]n|env[íi]o)|lista[s]?\b|registro|distribuci[óo]n)\b/i,
   /\bno\s+(quiero|queremos|deseo|deseamos)\s+(recibir|que\s+me\s+(escrib|mand|env|contact|lleg))\w*(\s+m[áa]s)?\b[^.?!\n]{0,30}(correo|email|e-mail|comunicaci|newsletter|publicidad|comercial|mensaje)/i,
   /\bno\s+(quiero|queremos|deseo|deseamos)\s+(recibir\s+)?(m[áa]s\s+)?(correos?|emails?|e-mails?|comunicaciones|newsletters?|publicidad|spam)\b/i,
   /stop\s+(contact|email|writ|send|messag|reach)/i,
@@ -380,7 +380,7 @@ const QUESTION = [
   // relative clause ("clientes que tienen otras empresas", real ANIMSA false positive).
   /(^|[.!?¿;:]\s*|\s¿\s*)(cu[áa]nto|qu[ée]|c[óo]mo|cu[áa]l|cu[áa]ndo|d[óo]nde|por qu[ée])\s+(cuesta|vale|precio|cost|incluye|funciona|es|ser[íi]a|hac|puedo|podemos|ser|tiene)/i,
   /(how|what|which|when|where|why)\s+(much|does|is|are|can|would|about|kind|type|exactly)/i,
-  /\b(pregunta|duda|consulta)\b/i, /tengo una (pregunta|duda|consulta)/i, /a\s+question/i,
+  /\b(pregunta|duda|consulta)s?\b/i, /tengo una (pregunta|duda|consulta)/i, /a\s+question/i,
   /(podr[íi]as?|podr[íi]ais|puedes|pod[ée]is|could you|can you|would you)\b/i,
   /(do|does|are|is|can)\s+you\s+(offer|have|provide|support|work|charge|include)/i,
   /me puedes? (decir|explicar|contar|mandar|enviar|dar)/i,

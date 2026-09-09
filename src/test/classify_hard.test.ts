@@ -182,6 +182,27 @@ const CASES: Array<[string[], string]> = [
   [["no_contactar"], "Eliminadme de vuestra base de datos por favor."],
   // …but a positive "estoy interesado" is still Interesado
   [["interested"], "Hola, sí, estoy interesado. ¿Cuándo hablamos?"],
+  // ── singular/plural + persona (matriz de estrés 2026-09-09) — que da igual estar en 1ª/3ª
+  [["not_interested"], "No está interesada en esto."],
+  [["not_interested"], "No me interesan estos servicios."],
+  [["not_interested"], "No nos interesan estas herramientas."],
+  [["not_interested"], "No lo necesito."],
+  [["not_interested"], "No lo necesitamos."],
+  [["not_interested"], "No me hace falta."],
+  [["not_interested"], "No nos hace falta."],
+  [["not_interested"], "Ya tengo proveedor."],
+  [["not_interested"], "Ya tenemos proveedor."],
+  [["not_interested"], "No tengo presupuesto para esto."],
+  [["no_contactar"], "Quítame de tu lista."],
+  [["no_contactar"], "Quítanos de vuestra lista."],
+  [["no_contactar"], "Elimíname de la base de datos."],
+  [["no_contactar"], "Bórrame de vuestros contactos."],
+  [["no_contactar"], "No queremos recibir más correos comerciales."],
+  [["interested"], "Estamos interesados, ¿cuándo hablamos?"],
+  [["interested"], "Queremos una demo."],
+  [["interested"], "Nos gustaría agendar una reunión."],
+  [["question"], "Tenemos algunas dudas."],
+  [["derivado"], "Con quien tienes que hablar es con María."],
 ];
 
 describe("classifier hard battery", () => {
