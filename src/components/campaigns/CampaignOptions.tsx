@@ -76,7 +76,15 @@ function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; o
       <button type="button" onClick={dec} className="flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Minus className="h-3.5 w-3.5" /></button>
       <input
         type="number" value={value}
-        onChange={(e) => onChange(parseInt(e.target.value) || min)}
+        onChange={(e) => {
+          // Clamp to [min,max]: raw typing let NaN ("") and NEGATIVE values through into
+          // slow_ramp_max / increment / domain_daily_limit — a negative cap silently stops sending.
+          let v = parseInt(e.target.value);
+          if (Number.isNaN(v)) v = min;
+          v = Math.max(min, v);
+          if (max != null) v = Math.min(max, v);
+          onChange(v);
+        }}
         className="h-9 w-12 border-x border-border bg-transparent text-center text-sm font-semibold tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
       />
       <button type="button" onClick={inc} className="flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Plus className="h-3.5 w-3.5" /></button>
@@ -155,20 +163,26 @@ export default function CampaignOptions({ campaignId }: Props) {
     if (!user) return;
     setDeduping(true);
     try {
-      // Get leads in this campaign
-      const { data: thisLeads } = await supabase
-        .from("campaign_leads")
-        .select("id, lead_id")
-        .eq("campaign_id", campaignId);
-      if (!thisLeads?.length) { toast.info("No hay leads en esta campaña"); setDeduping(false); return; }
+      // Get ALL leads in this campaign (paged — a single select is capped at 1000 rows, so a
+      // big campaign only ever deduped an arbitrary ~10% slice).
+      const thisLeads: { id: string; lead_id: string }[] = [];
+      for (let off = 0; ; off += 1000) {
+        const { data } = await supabase.from("campaign_leads").select("id, lead_id").eq("campaign_id", campaignId).range(off, off + 999);
+        if (!data?.length) break;
+        thisLeads.push(...(data as any[]));
+        if (data.length < 1000) break;
+      }
+      if (!thisLeads.length) { toast.info("No hay leads en esta campaña"); setDeduping(false); return; }
 
-      // Get leads in OTHER campaigns
-      const { data: otherLeads } = await supabase
-        .from("campaign_leads")
-        .select("lead_id, campaign_id")
-        .neq("campaign_id", campaignId);
-
-      const otherLeadIds = new Set((otherLeads || []).map((cl: any) => cl.lead_id));
+      // Which of THOSE lead_ids also appear in another campaign? Query by this campaign's ids in
+      // chunks (bounded) instead of pulling EVERY other campaign_leads row (also 1000-capped).
+      const otherLeadIds = new Set<string>();
+      const thisLeadIds = [...new Set(thisLeads.map((l) => l.lead_id))];
+      for (let i = 0; i < thisLeadIds.length; i += 300) {
+        const chunk = thisLeadIds.slice(i, i + 300);
+        const { data } = await supabase.from("campaign_leads").select("lead_id").neq("campaign_id", campaignId).in("lead_id", chunk);
+        for (const r of (data || [])) otherLeadIds.add((r as any).lead_id);
+      }
       const duplicates = thisLeads.filter(cl => otherLeadIds.has(cl.lead_id));
 
       if (!duplicates.length) {

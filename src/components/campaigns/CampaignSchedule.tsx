@@ -71,12 +71,12 @@ export default function CampaignSchedule({ campaignId }: Props) {
         <div className="flex items-center gap-3">
           <div className="space-y-1">
             <Label className="text-xs">From</Label>
-            <Input type="number" min={0} max={23} value={startHour} onChange={e => { setStartHour(parseInt(e.target.value)); setSaved(false); }} className="w-20" />
+            <Input type="number" min={0} max={23} value={startHour} onChange={e => { const v = parseInt(e.target.value); setStartHour(Number.isNaN(v) ? 0 : Math.max(0, Math.min(23, v))); setSaved(false); }} className="w-20" />
           </div>
           <span className="text-muted-foreground mt-5">—</span>
           <div className="space-y-1">
             <Label className="text-xs">To</Label>
-            <Input type="number" min={0} max={23} value={endHour} onChange={e => { setEndHour(parseInt(e.target.value)); setSaved(false); }} className="w-20" />
+            <Input type="number" min={0} max={23} value={endHour} onChange={e => { const v = parseInt(e.target.value); setEndHour(Number.isNaN(v) ? 23 : Math.max(0, Math.min(23, v))); setSaved(false); }} className="w-20" />
           </div>
         </div>
       </div>

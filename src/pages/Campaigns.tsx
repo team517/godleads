@@ -224,11 +224,17 @@ export default function Campaigns() {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from("campaign_steps").delete().eq("campaign_id", id);
-    await supabase.from("campaign_accounts").delete().eq("campaign_id", id);
-    await supabase.from("campaign_leads").delete().eq("campaign_id", id);
-    await supabase.from("campaigns").delete().eq("id", id);
-    toast.success("Campaign deleted");
+    // Confirm (the trash icon is a small target) + check every step's error (a failed final
+    // delete used to leave the campaign stripped of steps/leads yet showing a success toast).
+    const camp = campaigns.find((c) => c.id === id);
+    if (!confirm(`¿Eliminar la campaña "${camp?.name || id}"?\n\nSe borrarán sus pasos, cuentas asignadas y leads de campaña. Esta acción no se puede deshacer.`)) return;
+    const r1 = await supabase.from("campaign_steps").delete().eq("campaign_id", id);
+    const r2 = await supabase.from("campaign_accounts").delete().eq("campaign_id", id);
+    const r3 = await supabase.from("campaign_leads").delete().eq("campaign_id", id);
+    const r4 = await supabase.from("campaigns").delete().eq("id", id);
+    const err = r1.error || r2.error || r3.error || r4.error;
+    if (err) { toast.error(`No se pudo eliminar la campaña: ${err.message}`); load(); return; }
+    toast.success("Campaña eliminada");
     if (selectedId === id) setSelectedId(null);
     load();
   };

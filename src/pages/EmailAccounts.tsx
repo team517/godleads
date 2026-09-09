@@ -517,9 +517,11 @@ export default function EmailAccounts() {
     if (!user) return;
     const { error } = await supabase.from("email_accounts").insert({
       user_id: user.id, email: form.email, first_name: form.first_name, last_name: form.last_name,
-      imap_username: form.imap_username, imap_password: form.imap_password, imap_host: form.imap_host, imap_port: parseInt(form.imap_port),
-      smtp_username: form.smtp_username, smtp_password: form.smtp_password, smtp_host: form.smtp_host, smtp_port: parseInt(form.smtp_port),
-      daily_limit: parseInt(form.daily_limit), status: "pending",
+      // Fall back to the standard ports / a 30/day cap when a field is blank or non-numeric —
+      // parseInt("") is NaN, which was stored as a NULL port and left the account unable to connect.
+      imap_username: form.imap_username, imap_password: form.imap_password, imap_host: form.imap_host, imap_port: parseInt(form.imap_port) || 993,
+      smtp_username: form.smtp_username, smtp_password: form.smtp_password, smtp_host: form.smtp_host, smtp_port: parseInt(form.smtp_port) || 587,
+      daily_limit: parseInt(form.daily_limit) || 30, status: "pending",
     });
     if (error) { toast.error(error.message); return; }
     toast.success("Cuenta añadida correctamente");

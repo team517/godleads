@@ -35,12 +35,15 @@ function getTrialInfo(trialStartedAt: string | null, subscribed: boolean) {
   if (subscribed) return { status: "paid" as const, daysLeft: null, label: "Suscrito" };
   if (!trialStartedAt) return { status: "unknown" as const, daysLeft: null, label: "Sin trial" };
 
+  // The ENFORCED trial (src/lib/access.ts) is 5 days — the panel showed 7, so it displayed
+  // "Día 4 de 7 / 3 días restantes" for users ProtectedRoute had already blocked.
+  const TRIAL = 5;
   const start = new Date(trialStartedAt);
-  const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + TRIAL * 24 * 60 * 60 * 1000);
   const now = new Date();
-  const daysLeft = Math.min(7, Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))));
+  const daysLeft = Math.min(TRIAL, Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))));
 
-  if (daysLeft > 3) return { status: "active" as const, daysLeft, label: `Día ${7 - daysLeft + 1} de 7` };
+  if (daysLeft > 3) return { status: "active" as const, daysLeft, label: `Día ${TRIAL - daysLeft + 1} de ${TRIAL}` };
   if (daysLeft > 0) return { status: "warning" as const, daysLeft, label: `${daysLeft} días restantes` };
   return { status: "expired" as const, daysLeft: 0, label: "Trial expirado" };
 }

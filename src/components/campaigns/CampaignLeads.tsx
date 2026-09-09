@@ -204,8 +204,16 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   const assignList = async (listId: string) => {
     if (!user) return;
-    const { data: listLeads } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("list_id", listId);
-    if (!listLeads?.length) { toast.info("La lista está vacía"); return; }
+    // Page through the whole list — a single select is capped at 1000 rows, so a 4,000-lead list
+    // only assigned 1,000 while the toast claimed all were "procesados".
+    const listLeads: { id: string }[] = [];
+    for (let off = 0; ; off += 1000) {
+      const { data } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("list_id", listId).range(off, off + 999);
+      if (!data?.length) break;
+      listLeads.push(...data);
+      if (data.length < 1000) break;
+    }
+    if (!listLeads.length) { toast.info("La lista está vacía"); return; }
     const batchSize = 500;
     let added = 0;
     for (let i = 0; i < listLeads.length; i += batchSize) {

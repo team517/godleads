@@ -246,7 +246,7 @@ const IMPORTANT_LABEL = "Importante";
 
 /** Columns the list/search/thread need (NOT body_html — fetched only when a message
  *  is opened). Typed loosely because the generated types.ts is stale. */
-const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain";
+const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain, is_warmup";
 
 /** Rejoin words that a sender's client hard-wrapped MID-WORD (e.g. "respo\nnsable de…"
  *  "explic\nar", "ofre\ncéis"). We only act when the message is CLEARLY wrapped that
@@ -2060,6 +2060,11 @@ export default function Unibox() {
   // Hidden from the CLEAN bandeja (Global / Campaigns / Recordatorios).
   const hiddenFromClean = useCallback((m: any): boolean => {
     if (isBounceOrNoise(m.from_email)) return true;   // bounces / system senders
+    // 0) Own-mailbox WARM-UP traffic (our seed mailboxes emailing each other) is flagged
+    //    is_warmup at sync. Hide it FIRST — otherwise its own-brand domain (onepulso/onnepuls*)
+    //    reads as "campaign relevant" below and the whole warm-up flood shows in the clean
+    //    bandeja and inflates every count. A real lead reply is never is_warmup.
+    if (m.is_warmup) return true;
     // 1) CAMPAIGN-RELEVANT → always show: a lead, a lead's DOMAIN (a colleague at the same company
     //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso
@@ -2553,9 +2558,15 @@ export default function Unibox() {
       // in the window — so none linger unarchived (that was leaving hundreds still visible).
       await supabase.from("inbox_messages").update({ is_archived: true }).eq("user_id", user.id).eq("is_archived", false).ilike("from_email", `%@${value}`);
       const n = await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase().endsWith(`@${value}`));
-      const { data: leads } = await supabase.from("leads").select("id, email").eq("user_id", user.id);
-      for (const lead of (leads || []).filter((l) => (l.email || "").toLowerCase().endsWith(`@${value}`))) {
-        await supabase.from("campaign_leads").delete().eq("lead_id", lead.id);
+      // Remove the domain's leads from every campaign. Filter by domain SERVER-side and page:
+      // the old code fetched the first 1000 of ALL the user's leads and filtered in memory, so a
+      // user with >1000 leads could have the blocked domain fall entirely outside that window and
+      // its leads kept getting emailed.
+      for (let off = 0; ; off += 1000) {
+        const { data: leads } = await supabase.from("leads").select("id").eq("user_id", user.id).ilike("email", `%@${value}`).range(off, off + 999);
+        if (!leads?.length) break;
+        await supabase.from("campaign_leads").delete().in("lead_id", leads.map((l) => l.id));
+        if (leads.length < 1000) break;
       }
       loadBlockedEntries();
       toast.success(`Dominio @${domain} bloqueado — ${n} mensaje(s) ocultados`);
