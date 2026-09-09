@@ -1173,11 +1173,17 @@ serve(async (req) => {
         const uidChanged = !!mergedUid && JSON.stringify(mergedUid) !== JSON.stringify((account.imap_uid_state as UidState) || {});
         const lastSyncAgeMs = Date.now() - (Date.parse(account.last_sync || "") || 0);
         const mustWrite = uidChanged || result.messages.length > 0 || lastSyncAgeMs > 180_000;
+        // The UID high-water mark is advanced ONLY once the fetched messages are safely in the
+        // DB. It used to be persisted here, BEFORE the upsert below — so if the isolate died in
+        // between (wave timeout, WORKER_RESOURCE_LIMIT/546, an upsert error) the next tick started
+        // past those UIDs and that mail was lost for good. With no messages there is nothing to
+        // insert, so the state can be written now; otherwise it is written after the upsert.
+        const deferUidWrite = !!mergedUid && result.messages.length > 0;
         if (mustWrite) {
           const { error: syncUpdErr } = await adminClient.from("email_accounts")
-            .update(mergedUid ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
+            .update(mergedUid && !deferUidWrite ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
             .eq("id", account.id);
-          if (syncUpdErr && mergedUid) {
+          if (syncUpdErr && mergedUid && !deferUidWrite) {
             await adminClient.from("email_accounts").update({ last_sync: nowIso }).eq("id", account.id);
           }
         }
@@ -1473,6 +1479,12 @@ serve(async (req) => {
               }
             }
           }
+        }
+        // Messages are in the DB → NOW advance the UID high-water mark (see deferUidWrite above).
+        // On any throw before this line the state stays put and the same UIDs are re-fetched next
+        // tick; the dedupe_hash upsert makes that re-read free.
+        if (deferUidWrite) {
+          await adminClient.from("email_accounts").update({ imap_uid_state: mergedUid }).eq("id", account.id);
         }
       } catch (accountErr) {
         console.error(`Error processing account ${account.email}:`, accountErr);

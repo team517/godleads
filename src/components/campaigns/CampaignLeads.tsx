@@ -1218,20 +1218,29 @@ export default function CampaignLeads({ campaignId }: Props) {
               onClick={async () => {
                 if (!confirm(`¿Eliminar TODOS los ${totalLeadCount.toLocaleString()} leads de esta campaña?`)) return;
                 setDeletingBulk(true);
-                // Delete all campaign_leads
-                await supabase.from("campaign_leads").delete().eq("campaign_id", campaignId);
-                // Delete campaign-only leads in batches
-                let offset = 0;
-                while (true) {
-                  const { data } = await supabase.from("leads").select("id").eq("user_id", user!.id).eq("is_campaign_only", true).range(offset, offset + 999);
+                // 1) Collect THIS campaign's lead ids first (ordered + paged: no 1000-row cap).
+                //    The old code selected every is_campaign_only lead of the USER (no campaign
+                //    filter) and bulk-deleted them all → "Eliminar todos" in campaign A wiped the
+                //    imported leads (+ their sent log and Unibox replies) of every other campaign.
+                const thisCampaignLeadIds: string[] = [];
+                for (let off = 0; ; off += 1000) {
+                  const { data } = await supabase.from("campaign_leads").select("lead_id").eq("campaign_id", campaignId).order("lead_id").range(off, off + 999);
                   if (!data?.length) break;
-                  // Check if these leads are orphaned (no campaign_leads)
-                  for (let i = 0; i < data.length; i += 100) {
-                    const batch = data.slice(i, i + 100).map(d => d.id);
-                    await supabase.rpc("bulk_delete_leads", { lead_ids: batch });
-                  }
+                  thisCampaignLeadIds.push(...data.map((d) => d.lead_id));
                   if (data.length < 1000) break;
-                  offset += 1000;
+                }
+                // 2) Detach them from this campaign.
+                await supabase.from("campaign_leads").delete().eq("campaign_id", campaignId);
+                // 3) Hard-delete ONLY campaign-only leads that are now orphaned (in no other campaign).
+                for (let i = 0; i < thisCampaignLeadIds.length; i += 200) {
+                  const chunk = thisCampaignLeadIds.slice(i, i + 200);
+                  const [{ data: stillUsed }, { data: campaignOnly }] = await Promise.all([
+                    supabase.from("campaign_leads").select("lead_id").in("lead_id", chunk),
+                    supabase.from("leads").select("id").in("id", chunk).eq("is_campaign_only", true),
+                  ]);
+                  const used = new Set((stillUsed || []).map((r) => r.lead_id));
+                  const orphans = (campaignOnly || []).map((l) => l.id).filter((id) => !used.has(id));
+                  if (orphans.length) await supabase.rpc("bulk_delete_leads", { lead_ids: orphans });
                 }
                 toast.success(`Leads eliminados`);
                 setSelectedCampaignLeads(new Set());

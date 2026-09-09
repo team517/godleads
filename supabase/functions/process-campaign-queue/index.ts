@@ -1442,16 +1442,24 @@ serve(async (req) => {
       if (paceBudgetThisRun <= 0) continue; // on pace for this hour — nothing due yet
 
       // ═══ Blocklist check (load once per campaign) ═══
-      const { data: blocklist } = await adminClient
-        .from("blocklist")
-        .select("value, entry_type")
-        .eq("user_id", campaign.user_id);
-
+      // Paged: an unpaged select is silently capped at PostgREST's 1000 rows, and every hard
+      // bounce + unsubscribe adds a row, so a busy tenant crosses 1000 within weeks — after which
+      // an arbitrary subset of suppressed/unsubscribed addresses was NOT blocked and kept
+      // receiving follow-ups (the async-bounce path is protected ONLY by this list).
       const blockedEmails = new Set<string>();
       const blockedDomains = new Set<string>();
-      for (const b of blocklist || []) {
-        if (b.entry_type === "domain") blockedDomains.add(b.value.toLowerCase());
-        else blockedEmails.add(b.value.toLowerCase());
+      for (let off = 0; ; off += 1000) {
+        const { data: blPage } = await adminClient
+          .from("blocklist")
+          .select("value, entry_type")
+          .eq("user_id", campaign.user_id)
+          .order("id")
+          .range(off, off + 999);
+        for (const b of blPage || []) {
+          if (b.entry_type === "domain") blockedDomains.add(b.value.toLowerCase());
+          else blockedEmails.add(b.value.toLowerCase());
+        }
+        if (!blPage || blPage.length < 1000) break;
       }
 
       // ═══ Domain daily limit tracking ═══
@@ -1942,7 +1950,9 @@ serve(async (req) => {
             .select("status")
             .eq("campaign_id", campaign.id)
             .eq("campaign_step_id", step.id)
-            .ilike("to_email", leadEmail)
+            // ilike is SQL LIKE: `_` = any single char, `%` = any run. Unescaped, j_smith@… also
+            // matched j.smith@… and the wrong lead's rows satisfied the dedup / retry cap.
+            .ilike("to_email", leadEmail.replace(/[\\%_]/g, "\\$&"))
             .limit(200);
           const okAlready = (priorRows || []).some((r: any) => r.status === "sent" || r.status === "bounced");
           if (okAlready) {

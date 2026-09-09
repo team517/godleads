@@ -55,7 +55,10 @@ serve(async (req) => {
       if ((prof as any)?.is_client_manager) allowed = true;
     }
     if (!allowed) {
-      const { data: myAccts } = await userClient.from("email_accounts").select("email");
+      // Only a CONNECTED mailbox proves domain ownership (connecting requires the real IMAP/SMTP
+      // credentials). Any user can INSERT an unverified email_accounts row for "x@victim.com"
+      // via RLS, which used to pass this check and let them rewrite the victim's DNS zone.
+      const { data: myAccts } = await userClient.from("email_accounts").select("email").eq("status", "connected");
       allowed = ((myAccts as any[]) || []).some((a) => {
         const d = String(a.email || "").split("@")[1]?.toLowerCase() || "";
         return !!d && (domain === d || domain.endsWith("." + d) || d.endsWith("." + domain));

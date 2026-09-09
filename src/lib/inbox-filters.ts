@@ -35,7 +35,10 @@ export function isWarmupCode(token: string): boolean {
   return true;
 }
 
-const WARMUP_LONG_DIGIT_RE = /\b\d{8,}\b/;
+// 12+ digits: warm-up codes are long; real phone / order numbers are 9–11 digits. \d{8,} flagged
+// genuine "Me interesa, llámame al 612345678" replies as warm-up (never marked replied, hidden
+// from the thread, follow-ups kept going). Mirrors the Unibox stripper's own \d{12,} rule.
+const WARMUP_LONG_DIGIT_RE = /\b\d{12,}\b/;
 const WARMUP_UUID_LIKE_RE = /\b[a-f0-9]{4,}-[a-f0-9-]{8,}\b/i;
 const WARMUP_DOTTED_LOWER_RE = /\b[a-z]+\.[a-z]+(?:\.[a-z]+)+\b/;
 const WARMUP_MARKER_RE = /#warmup|instantly-warmup|warmup-|x-warmup/i;

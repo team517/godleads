@@ -40,11 +40,14 @@ serve(async (req) => {
 
     const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
     let genBase: Record<string, unknown>;
+    // Hoisted: it was `const` inside the else-branch but read at the response below → every
+    // request threw ReferenceError AFTER spending the AI tokens (always 500).
+    let useProvider: "claude" | "deepseek" = "deepseek";
     if (ai.source === "user") {
       genBase = { provider: "deepseek", deepseekKey: ai.apiKey, baseUrl: ai.baseUrl, model: ai.model };
     } else {
       const envDeepseek = Deno.env.get("DEEPSEEK_API_KEY");
-      const useProvider = provider === "claude" && claudeKey ? "claude" : "deepseek";
+      useProvider = provider === "claude" && claudeKey ? "claude" : "deepseek";
       if (useProvider === "deepseek" && !envDeepseek) return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY no configurada en el servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       genBase = { provider: useProvider, deepseekKey: envDeepseek, claudeKey };
     }

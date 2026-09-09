@@ -601,7 +601,15 @@ export default function CampaignSequences({ campaignId }: Props) {
 
   // Review every step + variant and fix mistyped variables to match real lead fields.
   const correctAllVariables = async () => {
-    const valid: ValidVar[] = dynamicVars.map((v) => ({ key: v.label, norm: normVar(v.label) }));
+    // Engine-provided variables (process-campaign-queue fills these from the SENDING account /
+    // lead email). They must be treated as valid so the fuzzy matcher never "corrects" them into
+    // a lead field: "senderfirstname" CONTAINS "firstname" and was being rewritten to
+    // {{first_name}} — the prospect's own name landed in the signature of every email.
+    const ENGINE_VARS = ["Email", "SenderFirstName", "SenderLastName", "SenderEmail"];
+    const valid: ValidVar[] = [
+      ...dynamicVars.map((v) => ({ key: v.label, norm: normVar(v.label) })),
+      ...ENGINE_VARS.map((k) => ({ key: k, norm: normVar(k) })),
+    ];
     if (!valid.length) { toast.error("No hay variables de leads para comparar"); return; }
     setCorrecting(true);
     try {

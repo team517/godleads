@@ -45,6 +45,15 @@ serve(async (req) => {
       .single();
     const AGENCY_EMAILS = new Set(["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online"]);
     const isManager = !!callerProfile?.is_client_manager || AGENCY_EMAILS.has((caller.email || "").toLowerCase());
+    // A (non-admin) manager may only act on CLIENT accounts (users with allowed_routes). Without
+    // this, update_client let a manager reset the ADMIN's password (full takeover) and the
+    // read actions exposed any tenant's campaign copy / reports.
+    const assertManagerTargetIsClient = async (targetUserId: string) => {
+      if (isAdmin) return;
+      if (targetUserId === caller.id) return;
+      const { data: tgt } = await supabase.from("profiles").select("allowed_routes").eq("user_id", targetUserId).single();
+      if (!tgt?.allowed_routes || (tgt.allowed_routes as string[]).length === 0) throw new Error("Forbidden: managers can only act on client accounts");
+    };
     if (!isAdmin && !isManager) throw new Error("Forbidden: admin only");
 
     const body = await req.json().catch(() => ({}));
@@ -315,6 +324,7 @@ serve(async (req) => {
         ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode,
         onboarding_slug, onboarding_status } = body;
       if (!user_id) throw new Error("user_id required");
+      await assertManagerTargetIsClient(user_id);
       const upd: Record<string, unknown> = {};
       if (allowed_routes !== undefined) upd.allowed_routes = allowed_routes || null;
       if (company_name !== undefined) upd.company_name = company_name || null;
@@ -369,6 +379,7 @@ serve(async (req) => {
       // (the bucket is private; only the service role can mint these).
       const { user_id } = body;
       if (!user_id) throw new Error("user_id required");
+      await assertManagerTargetIsClient(user_id);
       const { data: rows } = await supabase
         .from("client_reports")
         .select("id, kind, period_label, pdf_path, sent_to, sent_ok, error, created_at, message")
@@ -394,6 +405,7 @@ serve(async (req) => {
       // and, if present, a personalized message (long text in custom_fields).
       const { user_id } = body;
       if (!user_id) throw new Error("user_id required");
+      await assertManagerTargetIsClient(user_id);
       const { data: camps } = await supabase
         .from("campaigns")
         .select("id, name, status, created_at")
@@ -439,9 +451,13 @@ serve(async (req) => {
 
     if (action === "send_copy") {
       // Email a client the COPY of their campaigns as a branded PDF ATTACHMENT (Copy section).
-      // test:true sends to the CALLER's own email with a [PRUEBA] subject — never the client.
+      // to_email is the destination chosen in the UI (defaults to the client's email). test:true
+      // only prefixes the subject with [PRUEBA]; it still goes to to_email (so the agency can
+      // send a test to its own address). If to_email is missing, it falls back to the client's
+      // email (real send) or the caller's email (test).
       const { user_id, campaign_ids, to_email, note, test } = body;
       if (!user_id) throw new Error("user_id required");
+      await assertManagerTargetIsClient(user_id);
       const { data: clientUser } = await supabase.auth.admin.getUserById(user_id);
       const clientEmail = test
         ? ((to_email || caller.email || "").trim())
@@ -477,13 +493,19 @@ serve(async (req) => {
 
       // Sender: PREFER equipo@onepulso.online when that mailbox exists; else support@. Gmail
       // DROPS a spoofed From (verified live), so we always send as the real mailbox address.
-      let acctQ = supabase.from("email_accounts").select("email, smtp_host, smtp_port, smtp_username, smtp_password");
+      let acctQ = supabase.from("email_accounts").select("email, user_id, smtp_host, smtp_port, smtp_username, smtp_password");
       acctQ = body.from_account_id
         ? acctQ.eq("id", body.from_account_id)
         : acctQ.in("email", ["equipo@onepulso.online", "support@onepulso.online"]).not("smtp_host", "is", null).eq("status", "connected");
       const { data: senders } = await acctQ.limit(5);
       const acct = (senders || []).find((a: any) => a.email === "equipo@onepulso.online") || (senders || [])[0];
       if (!acct?.smtp_host) throw new Error("no se encontró un buzón remitente conectado (equipo@ / support@)");
+      // An explicit from_account_id must be an AGENCY mailbox or one the caller owns — it was
+      // resolved with the service role and no scoping, so any tenant's SMTP could be used.
+      if (body.from_account_id) {
+        const agencyBox = ["equipo@onepulso.online", "support@onepulso.online", "hello@onepulso.blog"].includes(String(acct.email || "").toLowerCase());
+        if (!agencyBox && acct.user_id !== caller.id) throw new Error("Forbidden: remitente no permitido");
+      }
 
       const baseSubject = camps.length === 1 ? ("Copy de tu campaña: " + camps[0].name) : "Copy de tus campañas";
       const subject = (test ? "[PRUEBA] " : "") + baseSubject;

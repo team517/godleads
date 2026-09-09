@@ -212,7 +212,7 @@ function encodeMimeHeader(value: string): string {
 function formatMailbox(name: string | undefined, email: string): string {
   if (!name?.trim()) return email;
   const normalized = name.replace(/\r?\n/g, " ").trim();
-  return `${/[^0-\x7E]/.test(normalized) ? encodeMimeHeader(normalized) : `"${normalized.replace(/(["\\])/g, "\\$1")}"`} <${email}>`;
+  return `${/[^\x20-\x7E]/.test(normalized) ? encodeMimeHeader(normalized) : `"${normalized.replace(/(["\\])/g, "\\$1")}"`} <${email}>`;
 }
 
 function generateMessageId(domain: string): string {

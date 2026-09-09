@@ -42,6 +42,9 @@ serve(async (req) => {
       .eq("user_id", user.id)
       .single();
     if (!campaign) throw new Error("Campaign not found");
+    // The step must belong to THAT campaign — step_id alone was fetched unscoped, so an owned
+    // campaign_id + a foreign step_id read/overwrote another tenant's campaign_steps row.
+    if (step.campaign_id !== campaign.id) throw new Error("Step not found");
 
     // Get performance stats per variant
     const { data: sentEmails } = await adminClient

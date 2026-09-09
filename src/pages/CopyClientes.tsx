@@ -97,15 +97,26 @@ export default function CopyClientes() {
   const sendCopy = async (test = false) => {
     if (!selected || checked.size === 0) { toast.info("Selecciona al menos una campaña"); return; }
     (test ? setTesting : setSending)(true);
-    const r = await callAdmin({
-      action: "send_copy", user_id: selected.id, campaign_ids: [...checked],
-      ...(test ? { test: true } : { to_email: toEmail.trim() }),
-    });
-    (test ? setTesting : setSending)(false);
+    let r: any = null;
+    try {
+      r = await callAdmin({
+        action: "send_copy", user_id: selected.id, campaign_ids: [...checked],
+        // Prueba AND envío real van ambos a la dirección del selector (toEmail). La prueba solo
+        // añade el flag test → asunto [PRUEBA]. Así "Prueba" llega a donde el usuario elige
+        // (p.ej. su gmail para revisar), no al correo del que ha iniciado sesión.
+        to_email: toEmail.trim(),
+        ...(test ? { test: true } : {}),
+      });
+    } catch (e: any) {
+      r = { error: e?.message || String(e) };
+    } finally {
+      // Always release the button — a thrown callAdmin used to leave "Enviando…" spinning forever.
+      (test ? setTesting : setSending)(false);
+    }
     if (r?.ok) {
       if (!test) setSentOk(true);
       toast.success(test
-        ? `Prueba enviada a TU correo (${r.sent_to}) — PDF de ${r.pdf_kb} KB`
+        ? `Prueba enviada a ${r.sent_to} desde ${r.sent_from || senderEmail || "el buzón de agencia"} — PDF de ${r.pdf_kb} KB (asunto [PRUEBA])`
         : `Copy enviado a ${r.sent_to} desde ${r.sent_from || senderEmail || "el buzón de agencia"} (${r.campaigns} campaña${r.campaigns === 1 ? "" : "s"}, PDF ${r.pdf_kb} KB)`);
     } else {
       toast.error(`No se pudo enviar: ${r?.error || "error desconocido"}`);
@@ -216,7 +227,7 @@ export default function CopyClientes() {
               </div>
               <div className="flex items-center gap-2">
                 <Input value={toEmail} onChange={(e) => { setToEmail(e.target.value); setSentOk(false); }} placeholder="¿A qué correo lo enviamos?" className="h-10 flex-1 text-sm" />
-                <Button variant="outline" onClick={() => sendCopy(true)} disabled={testing || sending || checked.size === 0} className="h-10 gap-2" title="Envía el PDF a TU correo para revisarlo antes">
+                <Button variant="outline" onClick={() => sendCopy(true)} disabled={testing || sending || checked.size === 0} className="h-10 gap-2" title="Envía el PDF a la dirección de arriba con el asunto [PRUEBA] para revisarlo antes">
                   {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                   Prueba
                 </Button>
@@ -225,7 +236,7 @@ export default function CopyClientes() {
                   {sending ? "Enviando…" : sentOk ? "Enviado" : `Enviar copy (${checked.size})`}
                 </Button>
               </div>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">El copy se envía como <span className="font-semibold text-foreground/80">PDF adjunto</span> con el diseño de OnePulso. «Prueba» lo manda a tu propio correo.</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">El copy se envía como <span className="font-semibold text-foreground/80">PDF adjunto</span> con el diseño de OnePulso desde <span className="font-semibold text-foreground/80">{senderEmail || "el buzón de agencia"}</span>. «Prueba» lo manda a la dirección de arriba con el asunto <span className="font-semibold text-foreground/80">[PRUEBA]</span>.</p>
             </div>
           </div>
         )}

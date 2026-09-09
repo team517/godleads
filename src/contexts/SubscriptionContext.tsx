@@ -121,7 +121,10 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         if (error) console.error("Sub check error:", error);
         stripeEnd = data?.subscription_end || null;
         stripeProductId = data?.product_id || null;
-        decision = decideAccess({ ...baseInput, stripeSubscribed: !!data?.subscribed });
+        // FAIL OPEN on a transient check failure (edge cold start, timeout, the 402 egress
+        // outage): `data` is undefined then, and treating that as "not subscribed" showed the
+        // paywall to PAYING customers. A billing-check error must never lock a customer out.
+        decision = decideAccess({ ...baseInput, stripeSubscribed: error ? true : !!data?.subscribed });
       }
 
       switch (decision.kind) {
