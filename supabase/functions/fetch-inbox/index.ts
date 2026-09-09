@@ -800,7 +800,13 @@ async function fetchImapMessages(
       }
 
       const newCount = canIncremental ? (uidNext - 1 - prev.u) : Infinity;
-      const useUid = canIncremental && newCount <= limit; // bigger backlog → sequence "last N"
+      // Incremental sync ALWAYS walks UID ranges from the last watermark UPWARD (oldest-first),
+      // capped at `limit` messages per tick. A backlog bigger than the limit is then DRAINED
+      // across ticks instead of skipped: the old code fell back to a sequence "last N" fetch and
+      // still advanced the watermark to UIDNEXT-1, so the oldest (newCount-limit) messages were
+      // lost forever (e.g. after an auth_failed pause or a cron outage). Only a first sync (no
+      // prior state) uses the sequence "last N" path.
+      const useUid = canIncremental;
       const start = Math.max(1, totalMessages - limit + 1);
       // BODY.PEEK keeps messages unread on the server. PARTIAL fetch `<0.262144>` caps each message
       // body at the first 256KB (a huge quoted thread could be MEGABYTES and blew the worker memory).
@@ -808,8 +814,13 @@ async function fetchImapMessages(
       // ALWAYS read to completion — this is what guarantees the newest mail is never truncated.
       const CHUNK = 10;
       const ranges: string[] = [];
+      // Cap this tick's window to the OLDEST `limit` new UIDs so a huge backlog is drained a
+      // slice per tick (never truncated-and-skipped). When the backlog fits, this equals
+      // (uidNext-1) → identical to the previous behaviour.
+      const uidHi = Math.min(uidNext - 1, (prev?.u || 0) + limit);
+      const drainedFull = useUid && uidHi >= uidNext - 1; // reached the end of the new range this tick
       if (useUid) {
-        for (let lo = prev!.u + 1; lo <= uidNext - 1; lo += CHUNK) ranges.push(`UID FETCH ${lo}:${Math.min(lo + CHUNK - 1, uidNext - 1)}`);
+        for (let lo = prev!.u + 1; lo <= uidHi; lo += CHUNK) ranges.push(`UID FETCH ${lo}:${Math.min(lo + CHUNK - 1, uidHi)}`);
       } else {
         for (let lo = start; lo <= totalMessages; lo += CHUNK) ranges.push(`FETCH ${lo}:${Math.min(lo + CHUNK - 1, totalMessages)}`);
       }
@@ -934,11 +945,20 @@ async function fetchImapMessages(
         }
       }
       } // end batch loop (10 messages per FETCH)
-      // Persist the folder's high-water mark. If the time budget cut this folder short, only
-      // advance to the highest UID we ACTUALLY parsed (never to UIDNEXT-1) so the unread tail is
-      // picked up next tick instead of being skipped forever.
+      // Persist the folder's high-water mark. Advance ONLY to the highest UID we ACTUALLY parsed
+      // whenever we did not cleanly drain the whole new range this tick — a budget cut (`cut`), a
+      // capped backlog, or a truncated FETCH — so the unread tail resumes next tick instead of
+      // being skipped forever. Jump straight to UIDNEXT-1 only on a fully-drained incremental tick
+      // (covers trailing UIDs with no stored message, e.g. our own sent copies) or a first sync.
       if (uidValidity && uidNext) {
-        const advanceTo = cut ? Math.max(prev?.u || 0, maxUidSeen) : (uidNext - 1);
+        let advanceTo: number;
+        if (!canIncremental) {
+          advanceTo = cut ? Math.max(prev?.u || 0, maxUidSeen) : (uidNext - 1);
+        } else if (!cut && drainedFull) {
+          advanceTo = uidNext - 1;
+        } else {
+          advanceTo = Math.max(prev?.u || 0, maxUidSeen);
+        }
         if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo };
       }
     }

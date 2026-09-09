@@ -72,8 +72,11 @@ export function hasWarmupCodes(subject: string | null, body: string | null): boo
 // Club Meeting", "Sprint Retrospective"), base64 bodies, and mail exchanged between OUR OWN
 // mailboxes. ~84% of daily inbound is this traffic; it must never be labelled or counted.
 const HYPHEN_WHITELIST = /\b(e-?mail|follow-?up|cold-?email|in-?house|third-?party|up-to-date|long-?term|short-?term|on-?site|real-?time|co-?founder|opt-?in|opt-?out|sign-?up|log-?in|check-?in|one-on-one|face-to-face|end-to-end|know-?how|start-?up|pop-?up|add-?on|plug-?in|built-?in|hands-?on|drop-?down|e-?commerce|re-?engagement|self-?service|well-?known|state-of-the-art|b2b|b2c|non-?profit|part-?time|full-?time|high-?level|low-?cost|out-of-office|pre-?sales|post-?sales|cross-?sell|up-?sell|go-to-market|multi-?channel|omni-?channel|open-?source|white-?label|pay-?as-you-go|well-?being|decision-?makers?|high-?speed|high-?end|top-?notch|first-?class|world-?class|user-?friendly|cost-?effective|data-?driven|time-?consuming|long-?standing|cutting-?edge|problem-?solving)\b/i;
-// exactly two hyphen-joined lowercase words, NOT part of a longer chain ("state-of-the-art").
-const WARMUP_PAIR_RE = /(?<![a-z-])[a-z]{3,9}-[a-z]{3,9}(?![a-z-])/g;
+// exactly two hyphen-joined lowercase ASCII words, NOT part of a longer chain
+// ("state-of-the-art"). The boundaries also reject ACCENTED neighbours (À-ɏ) so a real
+// Spanish compound like "técnico-comercial" or "socio-económico" is NOT mis-split into a fake
+// ASCII pair ("cnico-comercial") and wrongly counted as warm-up — that hid real replies.
+const WARMUP_PAIR_RE = /(?<![a-zÀ-ɏ-])[a-z]{3,9}-[a-z]{3,9}(?![a-zÀ-ɏ-])/g;
 const WARMUP_SUBJECT_RE = /^(re|fw|fwd|rv)?\s*:?\s*(book (club|recommendation)|(upcoming |virtual |quarterly |weekly |monthly |team )?(project|team|marketing|sales|client|budget|planning|strategy|status|kickoff|sync|review) (meeting|update|review|recap|reminder)|sprint retrospective|retrospective meeting|(annual|upcoming) (conference|industry conference|networking event|training( event)?)|webinar invite|volunteer program|wellness workshop|customer service workshop|leadership training|feature request|task priorities|financial report|sales performance|quarterly performance review|year-end review|new (software|internal compliance) (training|policy)|corporate social responsibility|travel plans|operations improvement)\b/i;
 const BASE64_BODY_RE = /^\s*(?:BODY\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*)?[A-Za-z0-9+\/=]{40,}(?:\s+[A-Za-z0-9+\/=]{16,})*\s*$/;
 

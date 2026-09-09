@@ -17,9 +17,9 @@ function b64urlDecode(s: string): string {
   return atob(s);
 }
 
-// Decode the (userId:email) payload. The signature is no longer required to match —
-// unsubscribing is reversible and low-risk, and the userId is an unguessable UUID, so
-// accepting the payload directly makes EVERY link work (even ones signed with an old key).
+// Decode the (userId:email) payload. The signature IS required (verified separately by the
+// handler via verifyTokenSig) — the userId is a UUID that leaks in every email link, so an
+// unsigned payload could be forged for any address to mass-suppress a tenant's leads.
 function decodeToken(token: string): { userId: string; email: string } | null {
   const payload = (token || "").split(".")[0];
   if (!payload) return null;
@@ -85,15 +85,18 @@ Deno.serve(async (req) => {
     const parsed = decodeToken(token);
     if (!parsed) return json({ ok: false, error: "invalid_token" }, 400);
 
+    // ANTI-SABOTAGE + COMPLIANCE: require a valid HMAC signature for BOTH unsubscribe and
+    // resubscribe. The userId (a UUID) leaks in every cold email's link, so an unsigned
+    // unsubscribe let anyone forge tokens for arbitrary addresses under that userId and
+    // mass-suppress a tenant's leads. Every real link is freshly signed (both current secrets
+    // are accepted), so a genuine recipient's one-click unsubscribe still works.
+    if (!(await verifyTokenSig(token))) return json({ ok: false, error: "invalid_signature" }, 403);
+
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { userId, email } = parsed;
 
-    // ── UNDO: re-subscribe. COMPLIANCE-CRITICAL: re-activating an opted-out address
-    // must be authenticated, so require a valid HMAC signature (a forged token can no
-    // longer resubscribe people who legitimately unsubscribed). The legit "undo" button
-    // always carries a freshly-signed token, so this never blocks a real user. ──
+    // ── UNDO: re-subscribe (re-activating an opted-out address; signature already verified). ──
     if (action === "resubscribe") {
-      if (!(await verifyTokenSig(token))) return json({ ok: false, error: "invalid_signature" }, 403);
       await admin.from("blocklist")
         .delete().eq("user_id", userId).eq("entry_type", "email").eq("value", email);
       const { data: leadRows } = await admin

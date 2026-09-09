@@ -114,10 +114,14 @@ const OUT_OF_OFFICE = [
   /automatische antwort/i, /r[ée]ponse automatique/i, /risposta automatica/i, /respuesta autom[áa]tica/i,
   /fuera de (la )?oficina/i, /estar[ée]?\s+(fuera|ausente|de vacaciones|out)/i, /estoy (fuera|ausente|de vacaciones)/i,
   /de vacaciones/i, /\bvacation(s)?\b/i, /vacacion/i, /on (annual |sick |parental )?(leave|holiday|vacation|pto)/i,
-  /away (from|until|on)/i, /currently (out|away|unavailable|on)/i,
+  /away (from|until|on)/i, /currently (out|away|unavailable)\b/i,
+  /currently on (leave|holiday|vacation|annual|maternity|paternity|sick|parental|pto|a business trip)/i,
   /(i'?m|am|is|are|will be|currently|remain)\s+unavailable/i, /unavailable (until|from|till|on|during|this)/i,
-  /will be (out|away|back|unavailable)/i, /(back|return(ing)?) (on|from|the)/i,
-  /de retour le/i, /en cong[ée]/i, /absent[e]? du bureau/i, /\babsence\b/i,
+  /will be (out|away|back|unavailable)/i,
+  // "back/returning on Monday / from the 5th" — a DATE must follow, else "return on investment"
+  // and "get back the report" flagged real replies as out-of-office.
+  /\b(back|returning|will return|be back)\s+(on|from)\s+(mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d|next\b|the\s+\d)/i,
+  /de retour le/i, /en cong[ée]/i, /absent[e]? du bureau/i, /\babsence\b(?!\s+of\b)/i,
   /fuori sede/i, /in ferie/i, /\bassent[ei]\b/i, /assenza/i,
   /abwesen(d|heit)/i, /nicht im b[üu]ro/i,
   /vuelvo el/i, /regreso el/i, /volver[ée] el/i, /back in the office/i,
@@ -309,12 +313,20 @@ const REFERRAL = [
   /\bdebes\s+(hablar|contactar|dirigirte|escribir)\s+(es\s+)?(con|a)\b/i,
   /\bcon\s+qui[ée]n\s+(hablar|contactar|tratarlo|verlo)\b/i,
   /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
-  /reach out to\s+/i,
+  // "reach out to Marta / to our sales team" = referral, but "feel free to reach out to me/us/you"
+  // is an INVITATION to contact the sender, not a hand-off → exclude me/us/you.
+  /\breach out to\s+(?!me\b|us\b|you\b|our team\b)\S/i,
   /\b(please\s+)?(connect|coordinate|liaise|follow\s+up|speak|talk)\s+with\s+(?!me\b|us\b)[A-Z][a-z]+/,
-  /\b(adding|looping|cc'?ing|copying)\s+[A-Za-z][\w./]*\s+(in\s+the\s+loop|in\s+cc|here)/i, /\bin\s+the\s+loop\b/i,
+  // Someone is being ADDED/looped in. The bare "in the loop" was removed: "keep me in the loop"
+  // is the sender asking to stay informed (engagement), not a redirect to a third party.
+  /\b(adding|looping|cc'?ing|copying)\s+[A-Za-z][\w./]*\s+(in\s+the\s+loop|in\s+cc|here)/i,
   /(tratar|ver|hablar|comentar|gestionar)(lo|la)?\s+con\s+(la\s+persona|el\s+(responsable|departamento|equipo)|mi\s+(compañer|jef|responsable)|nuestr[oa]s?\s+(responsable|equipo|departamento))/i, /you (should|can|may want to)\s+(contact|reach|talk to|speak with)\s+/i,
   /(is|es)\s+the\s+(right|best)\s+person/i, /(qui[ée]n|who)\s+(lo\s+)?(lleva|gestiona|se encarga|handles)/i,
-  /(competencia|responsabilidad|cosa)\s+de\s+\w+/i, /(reenv[íi]|forward)\w*\s+(tu|este|esta|su|el|la|los|las|your|to)/i,
+  /(competencia|responsabilidad|cosa)\s+de\s+\w+/i,
+  // "he reenviado tu correo", "forwarded your email to…". Bare "forward … to" was removed: it
+  // matched "looking forward to your reply" (a positive close) → wrongly derivado. Requires the
+  // completed/gerund form + an object, not the idiom "look forward to".
+  /(reenv[íi]\w*|forwarded|forwarding)\s+(tu|este|esta|su|el|la|los|las|your|this|it|the)\b/i,
   // "He reenviado tu correo al área de compras / al departamento / al responsable" — a
   // referral to the right team, NOT a rejection (the disclaimer word "internamente" used
   // to leak these to not_interested).

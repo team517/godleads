@@ -37,11 +37,12 @@ export interface AccessInput {
 
 export function decideAccess(i: AccessInput): AccessDecision {
   const email = (i.email || "").toLowerCase();
-  const contact = (i.contactEmail || "").toLowerCase();
   // Staff / free-access → always full access, never gated. Free-access emails (SPECIAL_*) get
-  // unlimited access but NO admin panel; matched on the login email OR the contact_email.
+  // unlimited access but NO admin panel. Matched ONLY on the immutable LOGIN email — NOT
+  // contact_email, which the user edits freely in Settings: keying free access on it let any
+  // self-signup type a special-access address and bypass the paywall.
   if (i.role === "admin" || ADMIN_EMAILS.includes(email) || i.isClientManager
-      || SPECIAL_FULL_ACCESS_EMAILS.includes(email) || (!!contact && SPECIAL_FULL_ACCESS_EMAILS.includes(contact))) {
+      || SPECIAL_FULL_ACCESS_EMAILS.includes(email)) {
     return { kind: "staff" };
   }
   const hasRoutes = !!(i.allowedRoutes && i.allowedRoutes.length > 0);

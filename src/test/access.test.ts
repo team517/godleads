@@ -25,8 +25,12 @@ describe("decideAccess — billing / trial gate", () => {
   it("is_client_manager is staff", () => {
     expect(decideAccess({ ...base, isClientManager: true }).kind).toBe("staff");
   });
-  it("special full-access contact_email is staff", () => {
-    expect(decideAccess({ ...base, contactEmail: "alex@vioonyx.com" }).kind).toBe("staff");
+  it("special full-access LOGIN email is staff", () => {
+    expect(decideAccess({ ...base, email: "alex@vioonyx.com" }).kind).toBe("staff");
+  });
+  it("a spoofed contact_email does NOT grant staff (only the immutable login email counts)", () => {
+    // Security: contact_email is user-editable; it must never unlock free access.
+    expect(decideAccess({ ...base, contactEmail: "alex@vioonyx.com" }).kind).not.toBe("staff");
   });
   it("csnovacompany@gmail.com gets free access (staff) by its LOGIN email, unpaid & after cutoff", () => {
     expect(decideAccess({ ...base, email: "csnovacompany@gmail.com" }).kind).toBe("staff");

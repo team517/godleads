@@ -203,6 +203,18 @@ const CASES: Array<[string[], string]> = [
   [["interested"], "Nos gustaría agendar una reunión."],
   [["question"], "Tenemos algunas dudas."],
   [["derivado"], "Con quien tienes que hablar es con María."],
+  // ── REAL false positives fixed 2026-09-09 (REFERRAL/OOO beat the real intent) ──
+  // "looking forward to" is a positive close, NOT a forward/derivation.
+  [["interested"], "Yes, let's schedule a call next week. Looking forward to your reply!"],
+  [["interested"], "Sounds great, looking forward to it."],
+  // "reach out to me" / "keep me in the loop" = invitation/engagement, not a hand-off.
+  [["interested", "question", "neutral"], "Feel free to reach out to me if you have any questions."],
+  [["interested", "neutral", "question"], "Sounds interesting, keep me in the loop."],
+  // "return on investment" / "currently on <thing>" must not read as out-of-office.
+  [["interested", "neutral", "question"], "We're interested in the return on investment of this. Can you share numbers?"],
+  // genuine referral / OOO still classify correctly
+  [["derivado"], "He reenviado tu correo al departamento de compras."],
+  [["out_of_office"], "I'm currently on holiday and will be back on Monday."],
 ];
 
 describe("classifier hard battery", () => {

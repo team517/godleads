@@ -16,14 +16,17 @@ export type AiKeyResult = AiKey | "unauthorized" | "needs_key";
 export async function isPlatformAiEligible(admin: ReturnType<typeof createClient>, userId: string, email: string): Promise<boolean> {
   const [{ data: role }, { data: prof }] = await Promise.all([
     admin.from("user_roles").select("role").eq("user_id", userId).maybeSingle(),
-    admin.from("profiles").select("allowed_routes, contact_email, is_client_manager").eq("user_id", userId).maybeSingle(),
+    admin.from("profiles").select("allowed_routes, is_client_manager").eq("user_id", userId).maybeSingle(),
   ]);
-  const contact = String((prof as any)?.contact_email || "").toLowerCase();
+  // Match the IMMUTABLE auth email — NOT profiles.contact_email, which the user edits freely in
+  // Settings. Keying free platform-AI access on contact_email let any self-signup set it to a
+  // special-access address and bill the agency's DeepSeek credits.
+  const authEmail = (email || "").toLowerCase();
   return (role as any)?.role === "admin"
-    || ADMIN_EMAILS.includes((email || "").toLowerCase())
+    || ADMIN_EMAILS.includes(authEmail)
     || (prof as any)?.is_client_manager === true
     || (Array.isArray((prof as any)?.allowed_routes) && (prof as any).allowed_routes.length > 0)
-    || SPECIAL_FULL_ACCESS_EMAILS.includes(contact);
+    || SPECIAL_FULL_ACCESS_EMAILS.includes(authEmail);
 }
 
 /** Resolve the AI key for the caller from their Authorization header. */

@@ -269,7 +269,12 @@ async function sendSmtp(host: string, port: number, username: string, password: 
     const referencesHdr = refs ? refs.split(/\s+/).map(wrapId).filter(Boolean).join(" ") : "";
     const threadHdrs = inReplyTo ? `In-Reply-To: ${inReplyTo}\r\nReferences: ${referencesHdr || inReplyTo}\r\n` : "";
     const ourId = `<${crypto.randomUUID()}@onepulso.online>`;
-    const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
+    // Header-injection guard: `subject` is "Re: " + the prospect's inbound subject, which can carry
+    // CR/LF from a crafted encoded-word ("Re: …\r\nBcc: relay@x") and turn this reply into a relay.
+    const hClean = (s: string) => String(s || "").replace(/[\r\n]+/g, " ").trim();
+    const safeSubject = hClean(subject);
+    const safeTo = hClean(to);
+    const msg = () => `From: ${fromName ? `"${hClean(fromName)}" <${from}>` : from}\r\nTo: ${safeTo}\r\nSubject: ${safeSubject}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
     await read();
     if (port === 587) {
       const ehlo = await send("EHLO onepulso");
@@ -326,6 +331,27 @@ serve(async (req) => {
 
   // The owner (agency) whose inbox we watch. Passed in, or default to the known owner.
   const input = await req.json().catch(() => ({} as any));
+
+  // ── AUTH ──────────────────────────────────────────────────────────────────────
+  // This function READS any tenant's inbox and SENDS mail from their SMTP accounts, and it takes
+  // owner_user_id / account_id / rule_id straight from the body. It had NO auth (the cron posts
+  // no header, so it's deployed --no-verify-jwt) → anyone could read any inbox, mark messages
+  // auto-replied, and relay AI mail from a victim's mailbox. Gate on EITHER the cron shared
+  // secret OR an authenticated agency user (the owner-only Automatización UI passes its JWT).
+  {
+    const CRON_SECRET = Deno.env.get("REPORTS_CRON_SECRET") || "";
+    let authed = !!CRON_SECRET && input?.secret === CRON_SECRET;
+    if (!authed) {
+      const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+      if (jwt && jwt !== Deno.env.get("SUPABASE_ANON_KEY")) {
+        const { data: { user } } = await admin.auth.getUser(jwt);
+        const email = (user?.email || "").toLowerCase();
+        const AGENCY = new Set(["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online", "team@onepulso.online"]);
+        if (user && AGENCY.has(email)) authed = true;
+      }
+    }
+    if (!authed) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
 
   // ── FOLLOWUP: propone SOLO el cuerpo de un email de seguimiento, limpio (para Seguimiento) ──
   if (input.action === "followup") {

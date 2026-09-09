@@ -744,8 +744,16 @@ serve(async (req) => {
     // Daily limit applies ONLY to campaign sends. A manual Unibox reply/forward (no
     // campaign_id) is a human answer to a real conversation — it must ALWAYS go out,
     // never blocked by the campaign quota, and it does NOT increment sent_today.
-    if (campaign_id && account.sent_today >= account.daily_limit) {
-      return new Response(JSON.stringify({ error: "Daily sending limit reached for this account" }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // A campaign send (manual "send step") still consumes and must respect the mailbox's daily
+    // quota. Bug: `sent_today >= daily_limit` did nothing when daily_limit was null, and it never
+    // enforced the 30/day hard cap the engine uses — so a warm-up mailbox could be pushed far past
+    // its ramp by hand. Enforce the same HARD_DAILY_CAP=30 ceiling here. (Manual Unibox replies
+    // have no campaign_id → always allowed, never counted.)
+    if (campaign_id) {
+      const effCap = Math.min(account.daily_limit ?? 30, 30);
+      if ((account.sent_today ?? 0) >= effCap) {
+        return new Response(JSON.stringify({ error: "Daily sending limit reached for this account" }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
     }
 
     const fields = custom_fields || {};

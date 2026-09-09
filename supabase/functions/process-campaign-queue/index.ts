@@ -459,6 +459,27 @@ function senderStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unk
   return c === 'hard' ? 'rate' : c;
 }
 
+// A 5xx at the RECIPIENT stage (RCPT / after DATA) is a real hard bounce ONLY when it
+// names an invalid mailbox. Reputation / policy / spam / relay refusals there
+// ("550 …blocked using Spamhaus", "554 5.7.1 message rejected as spam", "550 5.7.1 not
+// authorized to relay") are SENDER-side: blocklisting the recipient then burns a
+// perfectly valid prospect during an IP-reputation incident (every attempted lead lost).
+// Positive invalid-mailbox wording keeps 'hard' (suppress); reputation → 'rate' (back the
+// account off, retry later); content/policy → 'soft' (retry the lead). Ambiguous stays as
+// classified (unchanged behaviour).
+const RECIPIENT_INVALID_RE = /user unknown|unknown user|does not exist|doesn'?t exist|no such user|no such recipient|no such mailbox|mailbox unavailable|mailbox not found|invalid recipient|recipient unknown|user not found|address (unknown|not found|does not exist)|5\.1\.[0-9]|no mailbox|account (that you tried to reach )?does not exist|recipient address rejected/i;
+const REPUTATION_RE = /spamhaus|spamcop|barracuda|proofpoint|senderscore|\brbl\b|\bdnsbl\b|black\s*list|block\s*list|blocklist|blacklist|blocked\b|listed (in|at|by|on)|poor reputation|bad reputation|reputation of|ip .*reputation/i;
+const POLICY_SPAM_RE = /spam|unsolicited|\bbulk\b|not authoriz|unauthoriz|policy|5\.7\.[0-9]|rejected due to|message rejected|content|denied/i;
+function recipientStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unknown' {
+  const base = classifySmtpError(err);
+  if (base !== 'hard') return base;
+  const e = (err || '').toLowerCase();
+  if (RECIPIENT_INVALID_RE.test(e)) return 'hard';   // genuinely invalid mailbox → suppress
+  if (REPUTATION_RE.test(e)) return 'rate';          // our IP/domain is the problem → back off
+  if (POLICY_SPAM_RE.test(e)) return 'soft';         // content/policy → retry, don't burn
+  return 'hard';                                      // ambiguous → unchanged
+}
+
 // Promise with timeout — prevents hung connections from killing the cron
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -878,7 +899,7 @@ async function sendSmtpEmail(
         if (!rcptResp.startsWith("250")) {
           try { await sendTls("QUIT"); } catch {}
           try { conn.close(); } catch {}
-          return { ok: false, error: `Recipient rejected: ${rcptResp.trim()}`, errorClass: classifySmtpError(rcptResp) };
+          return { ok: false, error: `Recipient rejected: ${rcptResp.trim()}`, errorClass: recipientStageClass(rcptResp) };
         }
 
         await sendTls("DATA");
@@ -899,7 +920,7 @@ async function sendSmtpEmail(
         try { conn.close(); } catch {}
         return sent
           ? { ok: true, messageId: msgId }
-          : { ok: false, error: `Send failed: ${dataResp.trim()}`, errorClass: classifySmtpError(dataResp) };
+          : { ok: false, error: `Send failed: ${dataResp.trim()}`, errorClass: recipientStageClass(dataResp) };
     }
 
     const ehloResp = await send(`EHLO ${ehloHost}`);
@@ -1708,25 +1729,16 @@ serve(async (req) => {
             account = origAcc;
           }
           if (!account) {
-            // Bound account is disconnected. If this lead NEVER received a
-            // successful email (it was bound on a first attempt that failed),
-            // switching sender loses nothing — REBIND to a healthy account so the
-            // sequence isn't silently frozen forever behind a dead mailbox.
-            // Mid-sequence leads (already emailed) keep their identity and wait.
-            const { data: everSent } = await adminClient
-              .from("sent_emails")
-              .select("id")
-              .eq("campaign_id", campaign.id)
-              .eq("lead_id", lead.id)
-              .eq("status", "sent")
-              .limit(1);
-            if (everSent?.length) {
-              console.warn(`Lead ${lead.id} bound to unavailable account ${boundId}; skipping to preserve identity`);
-              totalSkipped++;
-              continue;
-            }
+            // Bound account is DISCONNECTED (auth_failed / paused). Preserving the original
+            // sender "identity" forever froze this lead's follow-ups indefinitely, and — because
+            // such a lead keeps the oldest last_sent_at — it re-sorted to the FRONT of the
+            // follow-up lane every tick and starved the whole campaign's healthy leads out of the
+            // 500-row fetch window. Re-bind to a healthy account so the sequence continues: a
+            // follow-up from a sibling mailbox in the same campaign beats a lead frozen forever
+            // behind a dead mailbox.
             account = selectAccount();
             if (!account) { totalSkipped++; continue; }
+            console.warn(`Lead ${lead.id} re-bound from unavailable ${boundId} → ${account.email} (original mailbox disconnected)`);
             await adminClient.from("campaign_leads")
               .update({ assigned_account_id: account.id })
               .eq("id", cl.id);
@@ -1947,7 +1959,7 @@ serve(async (req) => {
         {
           const { data: priorRows } = await adminClient
             .from("sent_emails")
-            .select("status")
+            .select("status, error_message")
             .eq("campaign_id", campaign.id)
             .eq("campaign_step_id", step.id)
             // ilike is SQL LIKE: `_` = any single char, `%` = any run. Unescaped, j_smith@… also
@@ -1972,7 +1984,14 @@ serve(async (req) => {
           // logged 101 `failed` rows in 5h, wrecking the campaign's Sender-Bounced %.
           // After MAX_SEND_ATTEMPTS_PER_STEP transient failures we give up on this
           // address for THIS step and park the lead as undeliverable (never re-queued).
-          const failedAttempts = (priorRows || []).filter((r: any) => r.status === "failed").length;
+          const failedAttempts = (priorRows || []).filter((r: any) => {
+            if (r.status !== "failed") return false;
+            // Sender/account-side failures (throttling '451/rate', temporary 'auth') must NOT
+            // burn the RECIPIENT's retry budget — otherwise an IONOS 503 storm or a briefly
+            // throttled mailbox parks perfectly good leads as "undeliverable" forever.
+            const c = classifySmtpError(r.error_message || "");
+            return c !== "rate" && c !== "auth";
+          }).length;
           if (failedAttempts >= MAX_SEND_ATTEMPTS_PER_STEP) {
             await adminClient.from("campaign_leads")
               .update({ status: "failed", last_sent_at: now.toISOString() })
