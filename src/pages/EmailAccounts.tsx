@@ -706,9 +706,19 @@ export default function EmailAccounts() {
       }).filter(row => emailPattern.test(row.email) && row.imap_host && row.smtp_host);
 
       if (inserts.length === 0) { toast.error("No se encontraron cuentas válidas"); return; }
-      const { error } = await supabase.from("email_accounts").insert(inserts);
-      if (error) { toast.error(error.message); return; }
-      toast.success(`${inserts.length} cuentas importadas`);
+      const { toInsert, toUpdate } = await splitNewAndExisting(inserts);
+      if (toInsert.length > 0) {
+        const { error } = await supabase.from("email_accounts").insert(toInsert);
+        if (error) { toast.error(error.message); return; }
+      }
+      for (const { id, row } of toUpdate) {
+        const { email: _e, status: _s, user_id: _u, ...fields } = row as Record<string, unknown>;
+        await supabase.from("email_accounts").update(fields).eq("id", id);
+      }
+      toast.success(
+        `${toInsert.length} cuentas nuevas importadas` +
+        (toUpdate.length > 0 ? ` · ${toUpdate.length} ya existían y se han actualizado (sin duplicar)` : ""),
+      );
       loadAccounts();
     };
     reader.readAsText(file);
@@ -725,6 +735,32 @@ export default function EmailAccounts() {
         body: JSON.stringify({ account_id: accountId }),
       });
     } catch { /* background — ignore errors */ }
+  };
+
+  /** Split a bulk import into rows that are NEW and rows whose address this user ALREADY has.
+   *  Re-importing a corrected CSV must UPDATE the existing mailbox (fixing a wrong password),
+   *  never create a second row for the same address — that is how the account list grew to 399
+   *  duplicated addresses, each one then synced twice for nothing. Nothing is ever deleted. */
+  const splitNewAndExisting = async <T extends { email: string }>(rows: T[]) => {
+    if (!user) return { toInsert: rows, toUpdate: [] as { id: string; row: T }[] };
+    const existing = new Map<string, string>();
+    for (let off = 0; ; off += 1000) {
+      const { data } = await supabase.from("email_accounts").select("id, email").eq("user_id", user.id).range(off, off + 999);
+      if (!data?.length) break;
+      for (const a of data) existing.set(String(a.email).trim().toLowerCase(), a.id);
+      if (data.length < 1000) break;
+    }
+    const toInsert: T[] = [];
+    const toUpdate: { id: string; row: T }[] = [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const key = String(r.email).trim().toLowerCase();
+      if (seen.has(key)) continue;           // the CSV itself repeating a row
+      seen.add(key);
+      const id = existing.get(key);
+      if (id) toUpdate.push({ id, row: r }); else toInsert.push(r);
+    }
+    return { toInsert, toUpdate };
   };
 
   const handleVerify = async (accountId: string) => {
@@ -820,9 +856,19 @@ export default function EmailAccounts() {
         status: "pending" as const,
       };
     });
-    const { error } = await supabase.from("email_accounts").insert(inserts);
-    if (error) { toast.error(error.message); setIonosImporting(false); return; }
-    toast.success(`${validRows.length} cuentas IONOS importadas correctamente`);
+    const { toInsert, toUpdate } = await splitNewAndExisting(inserts);
+    if (toInsert.length > 0) {
+      const { error } = await supabase.from("email_accounts").insert(toInsert);
+      if (error) { toast.error(error.message); setIonosImporting(false); return; }
+    }
+    for (const { id, row } of toUpdate) {
+      const { email: _e, status: _s, user_id: _u, ...fields } = row as Record<string, unknown>;
+      await supabase.from("email_accounts").update(fields).eq("id", id);
+    }
+    toast.success(
+      `${toInsert.length} cuentas IONOS nuevas` +
+      (toUpdate.length > 0 ? ` · ${toUpdate.length} actualizadas (sin duplicar)` : ""),
+    );
     setShowBulkIonos(false);
     setIonosRows([{ email: "", first_name: "", last_name: "", password: "" }]);
     setIonosDefaultPassword("");
