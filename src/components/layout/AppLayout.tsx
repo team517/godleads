@@ -2,12 +2,14 @@ import { Outlet, Navigate, useLocation } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { Topbar } from "./Topbar";
 import { MobileBottomNav } from "./MobileBottomNav";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { KeepSessionBanner } from "@/components/KeepSessionBanner";
 import { useProfile } from "@/contexts/ProfileContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
+import { PushPrompt } from "@/components/PushPrompt";
+import { ensurePushSubscription } from "@/lib/push-notifications";
 
 // Convert a #hex brand color to the "H S% L%" triple our CSS custom properties use.
 function hexToHsl(hex: string): string | null {
@@ -36,6 +38,12 @@ export function AppLayout() {
 
   // Single owner of the realtime badge bump (see hook). Runs app-wide, once.
   useUniboxUnreadWatcher(user?.id);
+
+  // Heals a "granted but undeliverable" push subscription (missing row / old VAPID key).
+  // Never prompts: it is a no-op unless permission is already granted.
+  useEffect(() => {
+    if (user?.id) void ensurePushSubscription(user.id);
+  }, [user?.id]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "1");
 
@@ -90,6 +98,7 @@ export function AppLayout() {
       {isMobile && <MobileBottomNav />}
 
       <KeepSessionBanner />
+      <PushPrompt />
     </div>
   );
 }

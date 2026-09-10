@@ -170,8 +170,10 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
 
   const coinDisplay = profileData.infiniteCoins ? "∞" : (profileData.coins > 999 ? "999+" : profileData.coins);
 
+  // h + pt: on iOS standalone the web view runs under the translucent status bar, so the
+  // header grows by the safe-area inset (0 everywhere else) and paints it in topbar navy.
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-white/10 bg-topbar text-topbar-foreground px-4 md:px-6">
+    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-white/10 bg-topbar text-topbar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
       <div className="flex items-center gap-3">
         {isMobile && (
           <Button variant="ghost" size="icon" onClick={onMenuToggle}>

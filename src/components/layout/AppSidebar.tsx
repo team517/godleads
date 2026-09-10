@@ -187,6 +187,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
 
   return (
     <aside className={sidebarClasses}>
+      {/* iOS standalone: paint the status-bar strip navy so its white text stays readable
+          over the white sidebar. Zero height on Android/desktop. */}
+      <div className="h-[env(safe-area-inset-top)] shrink-0 bg-topbar" />
       {/* Logo + collapse toggle */}
       <div className={cn("flex h-14 items-center border-b border-sidebar-border/50", collapsed ? "justify-center px-2" : "justify-between px-5")}>
         {!collapsed && (
