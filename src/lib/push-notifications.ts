@@ -67,17 +67,50 @@ function matchesCurrentVapidKey(sub: PushSubscription): boolean {
   }
 }
 
+const DEVICE_KEY = "onepulso-device-id";
+
+/** A stable id for THIS browser/phone, so a rotated endpoint replaces its own row instead of
+ *  leaving the previous one behind. */
+function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = (crypto.randomUUID?.() || String(Date.now()) + Math.random().toString(36).slice(2));
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return "sin-almacenamiento";
+  }
+}
+
 async function saveSubscription(userId: string, subscription: PushSubscription): Promise<void> {
   const subJSON = subscription.toJSON();
+  const deviceId = getDeviceId();
+  const endpoint = subJSON.endpoint!;
+
   await supabase.from("push_subscriptions").upsert(
     {
       user_id: userId,
-      endpoint: subJSON.endpoint!,
+      endpoint,
       p256dh: subJSON.keys!.p256dh!,
       auth: subJSON.keys!.auth!,
+      device_id: deviceId,
     },
     { onConflict: "user_id,endpoint" }
   );
+
+  // Drop this device's PREVIOUS endpoint. A phone re-subscribes whenever its push token rotates,
+  // and the abandoned endpoint is a zombie: Apple still answers 201 for it and delivers nothing,
+  // so every alert looked sent while the phone stayed silent for hours.
+  await supabase.from("push_subscriptions")
+    .delete().eq("user_id", userId).eq("device_id", deviceId).neq("endpoint", endpoint);
+
+  // Legacy rows saved before device ids existed. Only the ones older than a day, so a device
+  // that registered moments ago is never pulled out from under itself.
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+  await supabase.from("push_subscriptions")
+    .delete().eq("user_id", userId).is("device_id", null).lt("created_at", yesterday);
 }
 
 export async function subscribeToPush(userId: string): Promise<boolean> {
