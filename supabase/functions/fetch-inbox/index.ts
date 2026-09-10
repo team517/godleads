@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
+import { extractPermanentBounceRecipients, isAutomatedSender } from "../_shared/bounce.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -608,43 +609,6 @@ function extractHtml(raw: string): string {
 }
 
 
-/** Check if a sender is automated/spam */
-function isAutomatedSender(email: string): boolean {
-  const patterns = [/noreply@/i, /no-reply@/i, /mailer-daemon@/i, /postmaster@/i, /bounce@/i];
-  return patterns.some(p => p.test(email));
-}
-
-/**
- * Detect an async bounce (mailer-daemon DSN / NDR) and return the PERMANENTLY
- * failed recipient addresses. Only permanent (5.x.x / 55x) failures are returned
- * so a temporary greylist (4.x.x) never suppresses a good lead.
- */
-function extractPermanentBounceRecipients(fromEmail: string, subject: string, rawBody: string): string[] {
-  const from = (fromEmail || "").toLowerCase();
-  const looksLikeDaemon = /mailer-daemon@|postmaster@|@.*mail.*daemon/i.test(from);
-  const subjBounce = /undeliverable|undelivered|delivery status|returned mail|returned to sender|mail delivery (failed|subsystem)|failure notice|delivery has failed|no se pudo entregar|correo no entregado|delivery incomplete/i.test(subject || "");
-  const bodyDsn = /Content-Type:\s*message\/delivery-status|Diagnostic-Code:|Final-Recipient:|This is the mail system at host|delivery to the following recipient|could not be delivered/i.test(rawBody || "");
-  if (!looksLikeDaemon && !subjBounce && !bodyDsn) return [];
-
-  // Only act on PERMANENT failures. Look for a 5.x.x status or a 55x SMTP code.
-  const permanent =
-    /Status:\s*5\.\d+\.\d+/i.test(rawBody) ||
-    /Diagnostic-Code:[^\n]*\b(5\d\d|5\.\d+\.\d+)\b/i.test(rawBody) ||
-    /\b55[0-9]\b[^\n]*(unknown|does not exist|no such user|not found|invalid|rejected|disabled|unavailable)/i.test(rawBody);
-  const temporary = /Status:\s*4\.\d+\.\d+/i.test(rawBody);
-  if (!permanent || temporary) return [];
-
-  const emails = new Set<string>();
-  const push = (e?: string | null) => {
-    const v = (e || "").trim().toLowerCase().replace(/^<|>$/g, "");
-    if (/^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/.test(v) && !isAutomatedSender(v)) emails.add(v);
-  };
-  // DSN standard fields (most reliable)
-  for (const m of rawBody.matchAll(/(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s<>;]+@[^\s<>;]+)>?/gi)) push(m[1]);
-  for (const m of rawBody.matchAll(/X-Failed-Recipients:\s*<?([^\s<>;,]+@[^\s<>;,]+)>?/gi)) push(m[1]);
-  return Array.from(emails);
-}
-
 // Only store Spanish/Catalan messages — drop English/other warm-up at import time
 // so the inbox doesn't fill with 10k+ foreign warm-up emails.
 const LANG_ES_CA = /\b(el|la|los|las|del|que|qué|por|para|con|como|pero|porque|cuando|donde|gracias|hola|saludos|cordial|atentamente|estimad[oa]s?|señor|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|quiero|queremos|podemos|tenemos|estamos|somos|también|según|sólo|solo|vale|claro|perfecto|encantad[oa]|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|també|molt|més|sense|fins|bon\s?dia|d'acord)\b/gi;
@@ -1212,7 +1176,21 @@ serve(async (req) => {
         // mailer-daemon DSNs caught during this fetch → suppress the failed
         // recipient GLOBALLY (blocklist + remove from every list) so we stop
         // emailing dead mailboxes and protect the client's sending reputation.
-        const bounced = result.bouncedRecipients || [];
+        let bounced = result.bouncedRecipients || [];
+        if (bounced.length > 0) {
+          // Somebody who has WRITTEN to us demonstrably exists, whatever a DSN claims. Their
+          // bounce is a delivery problem on our side (policy block, full mailbox, a bad
+          // follow-up address), never a reason to suppress and bury the conversation.
+          const { data: known } = await adminClient
+            .from("inbox_messages").select("from_email")
+            .eq("user_id", account.user_id).eq("is_warmup", false)
+            .in("from_email", bounced);
+          const answered = new Set((known || []).map((r: { from_email: string }) => (r.from_email || "").toLowerCase()));
+          if (answered.size > 0) {
+            console.log(`Not suppressing ${[...answered].join(",")}: they replied to us`);
+            bounced = bounced.filter((e) => !answered.has(e.toLowerCase()));
+          }
+        }
         if (bounced.length > 0 && await ensureSuppressFn()) {
           for (const email of bounced) {
             try {
@@ -1427,7 +1405,10 @@ serve(async (req) => {
             received_at: parsedDate,
             // Blocked sender → import (keeps threading/dedupe intact) but pre-archived so it
             // never appears in the Unibox nor counts as a reply.
-            is_archived: isBlockedSender(msg.from_email),
+            // EXCEPT a reply inside a real thread (In-Reply-To / References, or tied to a lead
+            // or campaign): blocking means "stop emailing them", never "erase the answer they
+            // already gave us". Cold spam carries no thread headers, so it is still hidden.
+            is_archived: isBlockedSender(msg.from_email) && !(msg.ref_chain || leadId || campaignId),
             // Warm-up network traffic (own mailboxes, nonsense word pairs, generic office subjects,
             // base64 blobs, uppercase codes). Flagged at sync so NO consumer — Unibox labels, AI
             // agents, digest, reports, "replied" stats — ever counts it as a prospect reply.

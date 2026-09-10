@@ -2244,6 +2244,14 @@ export default function Unibox() {
     return dom ? blockedDomainSet.has(dom) : false;
   }, [blockedEmailSet, blockedDomainSet]);
 
+  // A message that is part of a REAL thread (In-Reply-To / References, or tied to a lead or
+  // campaign) is an answer somebody gave us. Blocking the sender stops future sends; it must
+  // never erase the answer. Cold spam has no thread headers, so it stays hidden.
+  const isThreadReply = useCallback(
+    (m: any) => !!(m?.ref_chain || m?.in_reply_to || m?.lead_id || m?.campaign_id),
+    [],
+  );
+
   // Self-heal: archive any loaded message from a blocked sender that is still un-archived
   // (e.g. blocked back when the domain filter was broken, or synced before the backend fix).
   // Bounded to the loaded window, runs once per session, uses the user's own session (RLS).
@@ -2251,7 +2259,7 @@ export default function Unibox() {
   useEffect(() => {
     if (blockCleanupRan.current || !user || blockedLoading) return;
     if (blockedDomainSet.size === 0 && blockedEmailSet.size === 0) return;
-    const leaked = messages.filter((m) => isBlockedSender(m.from_email)).map((m) => m.id);
+    const leaked = messages.filter((m) => isBlockedSender(m.from_email) && !isThreadReply(m)).map((m) => m.id);
     if (leaked.length === 0) return;
     blockCleanupRan.current = true;
     (async () => {
@@ -2261,7 +2269,7 @@ export default function Unibox() {
       const leakedSet = new Set(leaked);
       setMessages((prev) => prev.filter((m) => !leakedSet.has(m.id)));
     })();
-  }, [user, blockedLoading, messages, isBlockedSender, blockedDomainSet, blockedEmailSet]);
+  }, [user, blockedLoading, messages, isBlockedSender, isThreadReply, blockedDomainSet, blockedEmailSet]);
 
   // Clean tabs show: campaign mail (lead / lead-domain / onepulso) ALWAYS, plus legit human mail —
   // and drop only the clear warm-up / random noise + bounces. "Todos" (all_mailboxes) and the
@@ -2296,7 +2304,7 @@ export default function Unibox() {
     // conversation" actually work.
     if (search.trim().length >= 2 && searchResults !== null) {
       return searchResults
-        .filter(m => !isBlockedSender(m.from_email))
+        .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
         .filter(m => !folderFilter || m.folder_id === folderFilter);
     }
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2305,7 +2313,9 @@ export default function Unibox() {
     // English/warmup filter hides is ever unrecoverable from the UI.
     const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
     const list = messages
-      .filter(m => !isBlockedSender(m.from_email)) // blocked senders never show
+      // Blocked senders never show — unless it is their reply inside a real thread. Blocking
+      // (or a bounce suppression) must not delete an answer the lead already gave us.
+      .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
       .filter(m => bypassFilters || !hiddenFromClean(m))
       .filter(m => {
         if (viewTab === "reminders") return !!reminders[m.id];
@@ -2336,7 +2346,7 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, sentItems, importantItems, searchResults, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender]);
+  }, [messages, sentItems, importantItems, searchResults, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender, isThreadReply]);
 
   const categoryCounts = useMemo(() => {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);

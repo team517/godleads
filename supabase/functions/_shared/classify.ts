@@ -104,7 +104,11 @@ const LEFT_COMPANY = [
   /no longer (available|with|employ|work|here|at|part of|the correct)/i,
   /(email|e-mail|mail)?\s*(address|adress|adresse)?\s*is no longer/i,
   /has left (the )?(company|organi|business)/i,
-  /(ya )?no (trabaja|est[áa]|pertenece|forma parte|se encuentra)\b(?!mos)/i,
+  // The object MUST be the company/team — "no forma parte de nuestra ESTRATEGIA" and "no está
+  // en nuestros planes" are rejections, and reading them as "this person left" filed real
+  // rejections under Fuera / Auto (seen live: thisislibre.com).
+  /(ya\s+)?no\s+(trabaja|est[áa]|se\s+encuentra|contin[úu]a|sigue)\b(?!mos)\s+(aqu[íi]|con\s+nosotros|entre\s+nosotros|en\s+(la\s+|esta\s+|nuestra\s+)?(empresa|compa[ñn][íi]a|organizaci[óo]n|oficina|plantilla|equipo|firma))/i,
+  /(ya\s+)?no\s+(pertenece|forma\s+parte)\s+(a|al|de|del)\s+(la\s+|el\s+|los\s+|las\s+|nuestr[oa]\s+|est[ae]\s+)?(empresa|compa[ñn][íi]a|equipo|organizaci[óo]n|plantilla|firma|grupo|departamento|staff|casa|personal)\b/i,
   /n['e ]est plus (disponible|dans|en poste|chez|l[ae])/i,
   /non (è|e) pi[uù] (disponibile|in azienda|presente)/i,
   /nicht mehr (verf[üu]gbar|bei|besch[äa]ftigt)/i,
@@ -197,6 +201,8 @@ const NOT_INTERESTED = [
   // NOTE: bare "internamente" was REMOVED here — corporate legal disclaimers ("este correo
   // solo puede distribuirse internamente…") made real referrals/replies read as not_interested.
   // "lo hacemos internamente" is still caught by the contextual pattern just above.
+  /\bno\s+(forma\s+parte|entra)\s+(de|dentro\s+de|en)\s+(nuestr[oa]s?|l[ao]s?|mis?)\s+(estrategia|planes|prioridades|foco|[áa]mbito|l[íi]nea)/i,
+  /\bno\s+est[áa]\s+(en|dentro\s+de)\s+(nuestr[oa]s?|l[ao]s?|mis?)\s+(planes|prioridades|estrategia|foco)/i,
   /(no hay|sin)\s+(presupuesto|budget)/i, /(no es el|not the right)\s+momento/i, /(ahora|now)\s+no\s+(es el momento|toca)/i, /not?\s+(right\s+)?now/i,
   // "no tenemos presupuesto (disponible) para esta inversión" (real, Surinver) — the old
   // (no hay|sin) form missed the tener/disponer conjugations.
@@ -499,6 +505,9 @@ const COMMERCIAL_EXPLORATION: RegExp[] = [
   /\b(how\s+much|pricing|quote)\b/i,
   /(^|[.!?¿;:]\s*|\s¿\s*)(qu[ée]\s+(incluye|ofrec[ée]is))/i,
   /\b(what'?s\s+included|what\s+does\s+it\s+include)\b/i,
+  // Proof-before-advancing: "antes de avanzar con la demo, ¿me pasas algún caso concreto?".
+  /\bantes\s+de\s+(avanzar|seguir|continuar|agendar|concretar|la\s+(demo|reuni[óo]n|llamada))/i,
+  /\b(casos?\s+(concretos?|de\s+[ée]xito|pr[áa]cticos?|reales?|similares)|casos?\s+de\s+uso|case\s+stud(y|ies)|referencias?\s+de\s+(clientes?|empresas?)|ejemplos?\s+de\s+(clientes?|trabajos?|proyectos?|campa[ñn]as?))\b/i,
   // The verb must be an IMPERATIVE or a first-person desire — the \b after the group is what
   // keeps "He pasado vuestra propuesta al responsable" (a REFERRAL, case 38) from reading as a
   // request: "pasa" there is followed by "do", so the boundary fails.
@@ -540,6 +549,12 @@ const STRONG_AUTO = [
   /^\s*auto\s*:/i, /\bout\s+of\s+office\s+(auto)?repl/i,
   /\b(hemos|he)\s+recibido\s+(su|tu)\s+(mensaje|correo|solicitud)/i, /we\s+have\s+received\s+your\s+(message|email|request)/i,
   /acuse\s+de\s+recibo/i, /this\s+is\s+an\s+automated/i, /no\s+responda\s+a\s+este\s+(correo|mensaje)/i,
+  // Passive-voice acknowledgements — the same robot, worded impersonally, so the first-person
+  // patterns above miss them ("el presente email ha sido recibido y se le dará respuesta en 48h"
+  // was landing in Preguntas).
+  /\b(su|tu|el\s+presente|este)\s+(mensaje|correo|email|e-?mail)\s+(ha\s+sido|fue|queda)\s+recibid[oa]/i,
+  /\bse\s+le\s+dar[áa]\s+respuesta\b/i, /\b(le|te)\s+responderemos\s+(en|lo\s+antes|a\s+la\s+mayor)/i,
+  /\byour\s+(message|email|request)\s+(has\s+been|was)\s+received\b/i,
 ];
 
 /** "Ya tenemos proveedor" ALONE is ambiguous — it can precede an opening, so per §7 it is a
