@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2 } from "lucide-react";
+import { filterAccounts } from "@/lib/account-filter";
+import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -103,6 +104,7 @@ export default function EmailAccounts() {
   const [form, setForm] = useState({ ...emptyForm });
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
   const [bulkTagInput, setBulkTagInput] = useState("");
   const [savedTags, setSavedTags] = useState<{ id: string; name: string }[]>([]);
   const [editingTag, setEditingTag] = useState<string | null>(null);
@@ -358,13 +360,10 @@ export default function EmailAccounts() {
     return Array.from(tagSet).sort();
   }, [accounts, savedTags]);
 
-  const filteredAccounts = useMemo(() => {
-    if (!filterTag) return accounts;
-    // Show all accounts, but sort: accounts WITH the tag first, then the rest
-    const withTag = accounts.filter(a => (a.tags || []).includes(filterTag));
-    const withoutTag = accounts.filter(a => !(a.tags || []).includes(filterTag));
-    return [...withTag, ...withoutTag];
-  }, [accounts, filterTag]);
+  const filteredAccounts = useMemo(
+    () => filterAccounts(accounts, search, filterTag),
+    [accounts, filterTag, search],
+  );
 
   const allSelected = filteredAccounts.length > 0 && filteredAccounts.every(a => selectedIds.has(a.id));
 
@@ -822,8 +821,8 @@ export default function EmailAccounts() {
   const signatureTargetIds = useMemo(() => {
     if (sigScope === "selected") return [...selectedIds];
     if (sigScope === "tag") return accounts.filter(a => (a.tags || []).includes(sigTag)).map(a => a.id);
-    return accounts.map(a => a.id); // "all"
-  }, [sigScope, sigTag, accounts, selectedIds]);
+    return filteredAccounts.map(a => a.id); // "all" = everything currently visible
+  }, [sigScope, sigTag, accounts, filteredAccounts, selectedIds]);
 
   const applySignature = async () => {
     const ids = signatureTargetIds;
@@ -891,7 +890,9 @@ export default function EmailAccounts() {
 
   const handleApplySlowRamp = async () => {
     if (!user) return;
-    const ids = selectedIds.size > 0 ? [...selectedIds] : accounts.map((a) => a.id);
+    // "todas" = everything the current search/tag actually shows — applying a slow ramp to all
+    // 292 mailboxes while the list is filtered to "eric" would be a nasty surprise.
+    const ids = selectedIds.size > 0 ? [...selectedIds] : filteredAccounts.map((a) => a.id);
     if (ids.length === 0) { toast.error("No hay cuentas"); return; }
     const increment = Math.max(1, parseInt(slowRampForm.increment) || 2);
     const start = Math.max(0, parseInt(slowRampForm.start) || 0); // 0 = start from increment (legacy)
@@ -914,7 +915,9 @@ export default function EmailAccounts() {
 
   const handleDisableSlowRamp = async () => {
     if (!user) return;
-    const ids = selectedIds.size > 0 ? [...selectedIds] : accounts.map((a) => a.id);
+    // "todas" = everything the current search/tag actually shows — applying a slow ramp to all
+    // 292 mailboxes while the list is filtered to "eric" would be a nasty surprise.
+    const ids = selectedIds.size > 0 ? [...selectedIds] : filteredAccounts.map((a) => a.id);
     if (ids.length === 0) return;
     for (const id of ids) {
       await supabase.from("email_accounts").update({ warmup_enabled: false } as any).eq("id", id);
@@ -1353,12 +1356,38 @@ export default function EmailAccounts() {
 
       {accounts.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-lg border bg-muted/30 px-3 sm:px-4 py-2.5">
+          {/* Search — filters the list; "seleccionar todas" and every bulk action then act on
+              exactly what is shown, so "eric" + select-all = only Eric's mailboxes. */}
+          <div className="relative w-full sm:w-64 order-first">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar cuenta, nombre, host o tag…"
+              className="h-8 pl-8 pr-8 text-sm"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
           <span className="text-sm text-muted-foreground">
             {selectedIds.size > 0 ? `${selectedIds.size} seleccionadas` : "Seleccionar cuentas"}
           </span>
+          {search.trim() && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+              {filteredAccounts.length} de {accounts.length}
+            </span>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowSlowRamp(true)}>
-            🐢 Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : "(todas)"}
+            🐢 Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : `(${filteredAccounts.length})`}
           </Button>
           {selectedIds.size > 0 && (
             <>
@@ -1451,7 +1480,7 @@ export default function EmailAccounts() {
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground">
               Sube poco a poco los envíos diarios de cada cuenta para calentar los buzones.
-              Se aplicará a <b>{selectedIds.size > 0 ? `${selectedIds.size} cuenta(s) seleccionadas` : `TODAS las cuentas (${accounts.length})`}</b>.
+              Se aplicará a <b>{selectedIds.size > 0 ? `${selectedIds.size} cuenta(s) seleccionadas` : (search.trim() ? `las ${filteredAccounts.length} cuenta(s) del filtro "${search.trim()}"` : `TODAS las cuentas (${accounts.length})`)}</b>.
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1">
