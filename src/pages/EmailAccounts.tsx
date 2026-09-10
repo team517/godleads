@@ -273,7 +273,7 @@ export default function EmailAccounts() {
   };
 
   // ── Live IMAP connection check (real login test via verify-email-connection) ──
-  type ImapCheck = { loading: boolean; ok?: boolean; error?: string; reverifying?: boolean };
+  type ImapCheck = { loading: boolean; ok?: boolean; error?: string; reverifying?: boolean; unverified?: boolean };
   const [imapChecks, setImapChecks] = useState<Record<string, ImapCheck>>(() => cacheGet<Record<string, ImapCheck>>("accounts:imapChecks") || {});
   const [verifyingAll, setVerifyingAll] = useState<{ running: boolean; done: number; total: number }>({ running: false, done: 0, total: 0 });
 
@@ -296,17 +296,47 @@ export default function EmailAccounts() {
     setImapChecks(prev => (prev[accountId] && !prev[accountId].loading
       ? { ...prev, [accountId]: { ...prev[accountId], reverifying: true } }
       : { ...prev, [accountId]: { ...(prev[accountId] || {}), loading: true } }));
-    try {
-      const { data, error } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
-      const r = data as any;
-      if (error || !r || r.error) {
-        setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: false, error: (r?.error || "no verificado") } }));
+    // A TRANSPORT failure (edge cold start, timeout, 5xx, a network blip) says NOTHING about the
+    // mailbox — it only means we could not ASK. Flipping the badge to red on it is why healthy
+    // accounts intermittently showed "IMAP sin conexión". Retry once, and if we still cannot ask,
+    // keep whatever we already knew instead of inventing a failure.
+    let transportErr: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((res) => setTimeout(res, 1200));
+      try {
+        const { data, error } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
+        const r = data as any;
+        if (error || !r) { transportErr = error?.message || "sin respuesta del servidor"; continue; }
+        if (r.error) { // the check RAN and reported a real problem → that is a genuine red
+          setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: false, error: r.error } }));
+          return;
+        }
+        // The server now tells us whether the failure was TRANSIENT (it timed out asking) —
+        // that is "no lo pude comprobar", never "el buzón está caído".
+        if (r.imap && r.imap.ok === false && r.imap.transient) {
+          setImapChecks(prev => {
+            const known = prev[accountId];
+            return { ...prev, [accountId]: known && known.ok === true
+              ? { ...known, loading: false, reverifying: false }
+              : { loading: false, unverified: true, error: r.imap?.error } };
+          });
+          return;
+        }
+        setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: !!r.imap?.ok, error: r.imap?.error } }));
         return;
+      } catch (e: any) {
+        transportErr = e?.message || String(e);
       }
-      setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: !!r.imap?.ok, error: r.imap?.error } }));
-    } catch (e: any) {
-      setImapChecks(prev => ({ ...prev, [accountId]: { loading: false, ok: false, error: e?.message } }));
     }
+    setImapChecks(prev => {
+      const known = prev[accountId];
+      return {
+        ...prev,
+        [accountId]: known && known.ok !== undefined
+          ? { ...known, loading: false, reverifying: false }               // keep the known status
+          : { loading: false, unverified: true, error: transportErr },     // never verified → neutral
+      };
+    });
   }, []);
 
   // Trust accounts verified in the last 30 min (show green from stored result);
@@ -726,17 +756,39 @@ export default function EmailAccounts() {
     setVerifyingAll({ running: true, done: 0, total: pending.length });
     const ids = pending.map(a => a.id);
     let done = 0;
-    const verifyOne = async (id: string) => {
-      try { await supabase.functions.invoke("verify-email-connection", { body: { account_id: id } }); } catch { /* status stays */ }
+    let connected = 0;
+    // IONOS throttles a burst of logins, so a check can TIME OUT on a perfectly good mailbox.
+    // Those are collected and retried once, more gently — otherwise a bulk import leaves dozens
+    // of healthy accounts sitting in "error" until someone clicks again.
+    const retry: string[] = [];
+    const verifyOne = async (id: string, collect: boolean) => {
+      try {
+        const { data } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: id } });
+        const r = data as { status?: string; transient?: boolean } | null;
+        if (r?.status === "connected") connected += 1;
+        else if (r?.transient && collect) retry.push(id);
+      } catch { if (collect) retry.push(id); }
       done += 1; setVerifyingAll(v => ({ ...v, done }));
     };
     const CONC = 4;
     for (let i = 0; i < ids.length; i += CONC) {
-      await Promise.all(ids.slice(i, i + CONC).map(verifyOne));
+      await Promise.all(ids.slice(i, i + CONC).map((id) => verifyOne(id, true)));
     }
-    setVerifyingAll({ running: false, done: pending.length, total: pending.length });
+    if (retry.length > 0) {
+      setVerifyingAll({ running: true, done: 0, total: retry.length });
+      done = 0;
+      for (const id of retry) {                       // one at a time, with a breather
+        await verifyOne(id, false);
+        await new Promise((res) => setTimeout(res, 400));
+      }
+    }
+    setVerifyingAll({ running: false, done: 0, total: 0 });
     await loadAccounts();
-    toast.success(`Verificación completada: ${pending.length} cuentas revisadas.`);
+    const failed = pending.length - connected;
+    toast.success(
+      `Verificación completada: ${connected} conectadas${failed > 0 ? `, ${failed} sin conectar` : ""}` +
+      (retry.length > 0 ? ` (${retry.length} reintentadas por timeout)` : ""),
+    );
   };
 
 
@@ -1715,6 +1767,16 @@ export default function EmailAccounts() {
                           <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
                             <CheckCircle className="h-3 w-3" /> IMAP conectado
                             {ic.reverifying && <span title="Verificando la conexión en vivo…" className="inline-flex"><Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" /></span>}
+                          </span>
+                        );
+                      }
+                      if (ic.unverified) {
+                        // We could not reach the checker — say exactly that instead of accusing
+                        // the mailbox of being down.
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground" title={ic.error || "No se pudo comprobar ahora mismo"}>
+                            <ShieldQuestion className="h-3 w-3" /> IMAP sin comprobar
+                            <button onClick={() => recheckImap(account.id)} className="ml-1 underline decoration-dotted">reintentar</button>
                           </span>
                         );
                       }

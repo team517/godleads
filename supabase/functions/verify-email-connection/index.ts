@@ -239,19 +239,40 @@ Deno.serve(async (req) => {
 
     const [smtpResult, imapResult] = await overallTimeout;
 
-    const newStatus = smtpResult.ok && imapResult.ok ? "connected" : "error";
+    // A TIMEOUT (or a network blip) is NOT a verdict on the mailbox — it only means we could not
+    // finish asking. Writing status="error" on it silently knocked healthy mailboxes out of the
+    // sending pool (the engine only uses status='connected'), which is why accounts drifted to
+    // "IMAP sin conexión" and stopped sending until something re-verified them.
+    const TRANSIENT_RE = /timeout|timed?\s*out|econnreset|connection reset|network|temporar|try again|\b(421|451|503)\b|abort/i;
+    const isTransient = (r: { ok: boolean; error?: string }) => !r.ok && TRANSIENT_RE.test(r.error || "");
+    const bothOk = smtpResult.ok && imapResult.ok;
+    const transient = !bothOk && (isTransient(smtpResult) || isTransient(imapResult));
 
-    console.log(`Results - SMTP: ${JSON.stringify(smtpResult)}, IMAP: ${JSON.stringify(imapResult)}, Status: ${newStatus}`);
+    console.log(`Results - SMTP: ${JSON.stringify(smtpResult)}, IMAP: ${JSON.stringify(imapResult)}, transient: ${transient}`);
 
-    await adminClient.from("email_accounts").update({
-      status: newStatus,
-      last_health_check: new Date().toISOString(),
-    }).eq("id", account_id);
+    let newStatus: string;
+    if (bothOk) {
+      newStatus = "connected";
+      await adminClient.from("email_accounts").update({
+        status: "connected", last_health_check: new Date().toISOString(),
+      }).eq("id", account_id);
+    } else if (transient) {
+      // Keep whatever the account already is. Do NOT touch last_health_check either, so the
+      // health monitor retries it soon instead of trusting a check that never completed.
+      newStatus = account.status;
+    } else {
+      // A definitive refusal (bad credentials, unknown host, connection refused) → record it.
+      newStatus = "error";
+      await adminClient.from("email_accounts").update({
+        status: "error", last_health_check: new Date().toISOString(),
+      }).eq("id", account_id);
+    }
 
     return new Response(JSON.stringify({
       status: newStatus,
-      smtp: smtpResult,
-      imap: imapResult,
+      transient,
+      smtp: { ...smtpResult, transient: isTransient(smtpResult) },
+      imap: { ...imapResult, transient: isTransient(imapResult) },
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (e) {
