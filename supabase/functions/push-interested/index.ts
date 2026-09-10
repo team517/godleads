@@ -5,8 +5,9 @@
 // in a pocket. This runs on a cron with the SAME classifier the UI uses (kept byte-identical
 // by src/test/shared-copies.test.ts) and notifies as soon as the message is synced.
 //
-// Dedupe without an extra table: the message is only notified when WE are the ones adding the
-// "Interesado" label. Once labelled, the next run skips it.
+// Dedupe lives in its own table (push_notified). It used to be the label itself — we only
+// notified when WE added "Interesado" — but the Unibox labels a message the moment somebody
+// opens it, so whoever looked first silently stole the alert and the phone never rang.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { classifyMessage } from "../_shared/classify.ts";
 
@@ -59,17 +60,31 @@ Deno.serve(async (req) => {
     let scanned = 0, notified = 0, alreadyLabelled = 0;
     const sample: { from: string; subject: string }[] = [];
 
+    // Already pushed? One indexed lookup for the whole batch.
+    const ids = (msgs || []).map((m) => m.id);
+    const yaEnviados = new Set<string>();
+    if (ids.length > 0) {
+      const { data: done } = await admin.from("push_notified").select("message_id").in("message_id", ids);
+      for (const r of done || []) yaEnviados.add(r.message_id as string);
+    }
+
     for (const m of msgs || []) {
       scanned++;
       if (!isRealReply(m)) continue;   // PostgREST cannot tell NULL from '' — check it here
+      if (yaEnviados.has(m.id)) { alreadyLabelled++; continue; }
       const labels: string[] = (m.labels as string[] | null) || [];
-      // Someone (a previous run, or the UI) already judged it → never notify twice.
-      if (labels.some((l) => CATEGORY_LABELS.includes(l))) { alreadyLabelled++; continue; }
-      if (classifyMessage(m.subject, m.body_text) !== "interested") continue;
+      // Trust a human/UI verdict when there is one: "Interesado" from the Unibox still rings the
+      // phone, and any OTHER category means somebody already judged it as not interesting.
+      const marked = labels.find((l) => CATEGORY_LABELS.includes(l));
+      if (marked && marked !== "Interesado") { alreadyLabelled++; continue; }
+      if (marked !== "Interesado" && classifyMessage(m.subject, m.body_text) !== "interested") continue;
 
       if (!dryRun) {
-        // Label first: if the push fails we still must not re-notify on the next tick.
-        await admin.from("inbox_messages").update({ labels: [...labels, "Interesado"] }).eq("id", m.id);
+        // Record the push FIRST: if anything below throws, the worst case is a missed alert,
+        // never the same lead buzzing the phone every two minutes.
+        const { error: dupErr } = await admin.from("push_notified").insert({ message_id: m.id, user_id: m.user_id });
+        if (dupErr) { alreadyLabelled++; continue; }   // another tick got there first
+        if (!marked) await admin.from("inbox_messages").update({ labels: [...labels, "Interesado"] }).eq("id", m.id);
         const who = (m.from_name || "").trim() || (m.from_email || "").split("@")[0];
         const preview = String(m.body_text || "").replace(/\s+/g, " ").trim().slice(0, 110);
         await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
@@ -81,7 +96,7 @@ Deno.serve(async (req) => {
             body: preview || m.subject || "Nueva respuesta interesada",
             url: "/unibox",
           }),
-        }).catch(() => { /* push is best-effort; the label is what prevents repeats */ });
+        }).catch(() => { /* push is best-effort; push_notified is what prevents repeats */ });
       }
       notified++;
       if (sample.length < 5) sample.push({ from: m.from_email, subject: String(m.subject || "").slice(0, 60) });

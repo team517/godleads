@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { user_id, title, body: msgBody, url } = await req.json();
+    const { user_id, title, body: msgBody, url, debug } = await req.json();
     if (!user_id) throw new Error("user_id required");
 
     const pubKey = Deno.env.get("VAPID_PUBLIC_KEY") || "";
@@ -52,6 +52,9 @@ Deno.serve(async (req) => {
     let sent = 0;
     const stale: string[] = [];
     const errors: string[] = [];
+    // A push service answering 201 is NOT proof the phone showed anything, so `debug` reports
+    // exactly what it said — status plus the id it assigned — instead of just a count.
+    const trace: { endpoint: string; status?: number; id?: string | null; body?: string; error?: string }[] = [];
     for (const sub of subs as { endpoint: string; p256dh: string; auth: string }[]) {
       try {
         const origin = new URL(sub.endpoint).origin;
@@ -68,11 +71,22 @@ Deno.serve(async (req) => {
           },
           body,
         });
-        if (res.status >= 200 && res.status < 300) sent++;
-        else if (res.status === 404 || res.status === 410) stale.push(sub.endpoint); // device gone
-        else errors.push(res.status + " " + (await res.text()).slice(0, 120));
+        const short = sub.endpoint.slice(0, 45);
+        if (res.status >= 200 && res.status < 300) {
+          sent++;
+          if (debug) trace.push({ endpoint: short, status: res.status, id: res.headers.get("apns-id") || res.headers.get("location") });
+        } else if (res.status === 404 || res.status === 410) {
+          stale.push(sub.endpoint); // device gone
+          if (debug) trace.push({ endpoint: short, status: res.status, body: "caducada" });
+        } else {
+          const txt = (await res.text()).slice(0, 200);
+          errors.push(res.status + " " + txt);
+          if (debug) trace.push({ endpoint: short, status: res.status, body: txt });
+        }
       } catch (e) {
-        errors.push(String((e as Error)?.message || e).slice(0, 120));
+        const msg = String((e as Error)?.message || e).slice(0, 200);
+        errors.push(msg);
+        if (debug) trace.push({ endpoint: sub.endpoint.slice(0, 45), error: msg });
       }
     }
     // 404/410 means that device unsubscribed for good — drop it so it is not retried forever.
@@ -81,7 +95,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ sent, total: subs.length, caducadas: stale.length, errores: errors.slice(0, 3) }),
+      JSON.stringify({ sent, total: subs.length, caducadas: stale.length, errores: errors.slice(0, 3), ...(debug ? { detalle: trace } : {}) }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
