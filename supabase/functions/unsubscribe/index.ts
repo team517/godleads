@@ -78,7 +78,18 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json().catch(() => ({}));
+    // RFC 8058 one-click: the mail client POSTs `List-Unsubscribe=One-Click` as form data, not
+    // JSON. It already worked (the token rides in the query string), but parse the form body
+    // explicitly so the intent is recognised instead of being swallowed by a JSON parse failure.
+    const raw = await req.text().catch(() => "");
+    let body: any = {};
+    if ((req.headers.get("Content-Type") || "").includes("application/x-www-form-urlencoded")) {
+      const form = new URLSearchParams(raw);
+      if (form.get("List-Unsubscribe") === "One-Click") action = "unsubscribe";
+      body = { token: form.get("token") || "" };
+    } else {
+      try { body = JSON.parse(raw); } catch { body = {}; }
+    }
     token = (body as any)?.token || token;
     action = (body as any)?.action || action;
 

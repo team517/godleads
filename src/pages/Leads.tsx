@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { parseCSVToObjects } from "@/lib/csv-parser";
@@ -41,6 +42,7 @@ const isLeadPendingVerification = (verificationStatus: string | null | undefined
 
 export default function Leads() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const { profile, refreshProfile } = useProfile();
   const { verifying, progress: verifyProgress, startVerification } = useVerification();
   // Instant re-entry: seed from session cache (default view), refresh in background.
@@ -210,9 +212,20 @@ export default function Leads() {
   };
 
   const handleDeleteList = async (listId: string) => {
-    // Unassign leads first
-    await supabase.from("leads").update({ list_id: null }).eq("list_id", listId);
-    await supabase.from("lead_lists").delete().eq("id", listId);
+    const list = lists.find((l) => l.id === listId);
+    const ok = await confirm({
+      title: "Eliminar carpeta",
+      description: `¿Eliminar la carpeta "${list?.name || listId}"? Sus leads no se borran: quedan en "Todos", sin carpeta.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
+    // Unassign leads first. Both writes are checked: a failed unassign used to
+    // leave the leads pointing at a deleted list while toasting success.
+    const { error: unassignErr } = await supabase.from("leads").update({ list_id: null }).eq("list_id", listId);
+    if (unassignErr) { toast.error(`No se pudo vaciar la carpeta: ${unassignErr.message}`); return; }
+    const { error } = await supabase.from("lead_lists").delete().eq("id", listId);
+    if (error) { toast.error(`No se pudo eliminar la carpeta: ${error.message}`); load(); return; }
     if (activeList === listId) setActiveList(null);
     toast.success("Carpeta eliminada");
     load();
@@ -351,7 +364,14 @@ export default function Leads() {
     setImportProgress({ current: 0, total: 0, active: false });
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, email?: string) => {
+    const ok = await confirm({
+      title: "Eliminar lead",
+      description: `¿Eliminar el lead ${email || id}? Se borrará de todas sus campañas. No se puede deshacer.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.rpc("bulk_delete_leads", { lead_ids: [id] });
     if (error) { toast.error(`Error: ${error.message}`); return; }
     toast.success("Lead eliminado");
@@ -372,14 +392,25 @@ export default function Leads() {
   const handleBulkDelete = async () => {
     if (selectedLeads.size === 0) return;
     const count = selectedLeads.size;
+    const ok = await confirm({
+      title: "Eliminar leads seleccionados",
+      description: `¿Eliminar ${count} lead(s)? Se borrarán de todas sus campañas. No se puede deshacer.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     const ids = Array.from(selectedLeads);
 
+    // The spinner is owned here (it used to be switched on by the button BEFORE the
+    // confirmation, so the button spun for as long as the dialog stayed open).
+    setDeleting(true);
     // Batch in chunks of 100 for reliability
     for (let i = 0; i < ids.length; i += 100) {
       const chunk = ids.slice(i, i + 100);
       const { error } = await supabase.rpc("bulk_delete_leads", { lead_ids: chunk });
-      if (error) { toast.error(`Error eliminando: ${error.message}`); return; }
+      if (error) { toast.error(`Error eliminando: ${error.message}`); setDeleting(false); return; }
     }
+    setDeleting(false);
 
     toast.success(`${count} leads eliminados`);
     setSelectedLeads(new Set());
@@ -388,7 +419,13 @@ export default function Leads() {
 
   const handleDeleteAll = async () => {
     if (totalCount === 0) return;
-    if (!confirm(`¿Eliminar TODOS los ${totalCount} leads${activeList ? " de esta carpeta" : ""}? No se puede deshacer.`)) return;
+    const ok = await confirm({
+      title: "Eliminar todos los leads",
+      description: `¿Eliminar TODOS los ${totalCount} leads${activeList ? " de esta carpeta" : ""}? No se puede deshacer.`,
+      confirmText: "Eliminar todos",
+      destructive: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       // Fetch ALL lead IDs in batches (no 1000 limit)
@@ -474,12 +511,12 @@ export default function Leads() {
             <DialogContent>
               <DialogHeader><DialogTitle>Añadir lead</DialogTitle></DialogHeader>
               <div className="space-y-4">
-                <div className="space-y-1"><Label>Email *</Label><Input value={form.email} onChange={e => setForm({...form, email: e.target.value})} placeholder="lead@company.com" /></div>
+                <div className="space-y-1"><Label>Email *</Label><Input value={form.email} onChange={e => setForm({...form, email: e.target.value})} placeholder="lead@empresa.com" /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1"><Label>Nombre</Label><Input value={form.first_name} onChange={e => setForm({...form, first_name: e.target.value})} placeholder="Juan" /></div>
                   <div className="space-y-1"><Label>Apellido</Label><Input value={form.last_name} onChange={e => setForm({...form, last_name: e.target.value})} placeholder="García" /></div>
                 </div>
-                <div className="space-y-1"><Label>Empresa</Label><Input value={form.company} onChange={e => setForm({...form, company: e.target.value})} placeholder="Acme Corp" /></div>
+                <div className="space-y-1"><Label>Empresa</Label><Input value={form.company} onChange={e => setForm({...form, company: e.target.value})} placeholder="Empresa S.L." /></div>
                 {lists.length > 0 && (
                   <div className="space-y-1">
                     <Label>Carpeta</Label>
@@ -616,8 +653,8 @@ export default function Leads() {
                 {isActive ? <FolderOpen className="h-3.5 w-3.5" /> : <Folder className="h-3.5 w-3.5" />}
                 {list.name} ({count})
               </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteList(list.id)}>
-                <Trash2 className="h-3 w-3 text-destructive" />
+              <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Eliminar la carpeta ${list.name}`} title="Eliminar carpeta" onClick={() => handleDeleteList(list.id)}>
+                <Trash2 className="h-3.5 w-3.5 text-destructive" />
               </Button>
             </div>
           );
@@ -636,7 +673,7 @@ export default function Leads() {
             <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs" onClick={() => { setMoveTargetList(""); setShowMoveDialog(true); }}>
               <ArrowRight className="h-3.5 w-3.5" /> Mover
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs text-destructive" onClick={async () => { setDeleting(true); await handleBulkDelete(); setDeleting(false); }} disabled={deleting}>
+            <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs text-destructive" onClick={handleBulkDelete} disabled={deleting}>
               {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               {deleting ? "..." : "Eliminar"}
             </Button>
@@ -906,7 +943,7 @@ export default function Leads() {
                           </td>
                           <td className="px-4 py-3 text-sm">{lead.lead_lists?.name || "—"}</td>
                           <td className="px-4 py-3 text-right">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(lead.id)}>
+                            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Eliminar el lead ${lead.email}`} title="Eliminar lead" onClick={() => handleDelete(lead.id, lead.email)}>
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
                           </td>

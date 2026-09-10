@@ -11,6 +11,9 @@ serve(async (req) => {
 
   try {
     const { context, variables, numSteps } = await req.json();
+    // Both reach the prompt verbatim, so bound what a caller can make us pay for.
+    const stepCount = Math.min(6, Math.max(1, Math.floor(Number(numSteps) || 3)));
+    const ctx = String(context ?? "").slice(0, 8000);
     // BYOK: platform key for agency/agency-clients, the user's own key otherwise.
     const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
     if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -47,7 +50,7 @@ El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
         model: ai.model,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Genera una secuencia de ${numSteps || 3} emails de cold outreach con este contexto:\n\n${context}\n\nVariables disponibles para personalizar: ${variableList || "ninguna"}` },
+          { role: "user", content: `Genera una secuencia de ${stepCount} emails de cold outreach con este contexto:\n\n${ctx}\n\nVariables disponibles para personalizar: ${variableList || "ninguna"}` },
         ],
       }),
     });

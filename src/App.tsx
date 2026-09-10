@@ -10,6 +10,7 @@ import { VerificationProvider } from "@/contexts/VerificationContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ConfirmProvider } from "@/hooks/useConfirm";
 import { Suspense } from "react";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 // Lazy: the chatbot pulls in recharts + react-markdown + framer-motion. Loading
@@ -60,6 +61,8 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      {/* App-wide confirm() replacement — see @/hooks/useConfirm. */}
+      <ConfirmProvider>
       <BrowserRouter>
         <AuthProvider>
         <SubscriptionProvider>
@@ -107,6 +110,7 @@ const App = () => (
         </SubscriptionProvider>
         </AuthProvider>
       </BrowserRouter>
+      </ConfirmProvider>
     </TooltipProvider>
   </QueryClientProvider>
   </ErrorBoundary>

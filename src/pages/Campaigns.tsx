@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import CampaignDetail from "@/components/campaigns/CampaignDetail";
 import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
 import CampaignSendsChart from "@/components/campaigns/CampaignSendsChart";
@@ -18,10 +19,10 @@ import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline"
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
-  active: { label: "Active", variant: "default" },
-  paused: { label: "Paused", variant: "secondary" },
-  draft: { label: "Draft", variant: "outline" },
-  completed: { label: "Completed", variant: "secondary" },
+  active: { label: "Activa", variant: "default" },
+  paused: { label: "Pausada", variant: "secondary" },
+  draft: { label: "Borrador", variant: "outline" },
+  completed: { label: "Completada", variant: "secondary" },
 };
 
 function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: () => void }) {
@@ -31,7 +32,10 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
   const save = async () => {
     if (!name.trim()) return;
-    await supabase.from("campaigns").update({ name: name.trim() }).eq("id", campaign.id);
+    // supabase-js never throws - it returns { error }. Without this check a failed
+    // rename (RLS, network) still showed "Nombre actualizado" and closed the input.
+    const { error } = await supabase.from("campaigns").update({ name: name.trim() }).eq("id", campaign.id);
+    if (error) { toast.error(error.message); return; }
     toast.success("Nombre actualizado");
     setEditing(false);
     onSaved();
@@ -65,6 +69,7 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
 export default function Campaigns() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   // Instant re-entry: paint the cached list immediately, refresh in background.
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("campaigns:list") || []);
   const [managers, setManagers] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -145,7 +150,7 @@ export default function Campaigns() {
       user_id: user.id, name: form.name, status: "draft",
     });
     if (error) { toast.error(error.message); return; }
-    toast.success("Campaign created");
+    toast.success("Campaña creada");
     setShowCreate(false);
     setForm({ name: "" });
     load();
@@ -154,7 +159,7 @@ export default function Campaigns() {
   const handleDuplicate = async (campaign: any) => {
     if (!user) return;
     const { data: newCamp, error } = await supabase.from("campaigns").insert({
-      user_id: user.id, name: `${campaign.name} (copy)`, status: "draft",
+      user_id: user.id, name: `${campaign.name} (copia)`, status: "draft",
       daily_limit: campaign.daily_limit, send_start_hour: campaign.send_start_hour,
       send_end_hour: campaign.send_end_hour, timezone: campaign.timezone,
       send_days: campaign.send_days, stop_on_reply: campaign.stop_on_reply,
@@ -165,24 +170,28 @@ export default function Campaigns() {
     // Copy steps with variants
     const { data: stps } = await supabase.from("campaign_steps").select("*").eq("campaign_id", campaign.id);
     if (stps?.length) {
-      await supabase.from("campaign_steps").insert(
+      // Abort loudly: a half-copied campaign (no steps / no accounts) used to be
+      // reported as "duplicated" and then failed to launch for no visible reason.
+      const { error: stepsErr } = await supabase.from("campaign_steps").insert(
         stps.map((s: any) => ({
           campaign_id: newCamp.id, step_order: s.step_order,
           subject: s.subject, body: s.body, delay_days: s.delay_days,
           variants: s.variants,
         }))
       );
+      if (stepsErr) { toast.error(`No se pudieron copiar los pasos: ${stepsErr.message}`); load(); return; }
     }
 
     // Copy account assignments
     const { data: accs } = await supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaign.id);
     if (accs?.length) {
-      await supabase.from("campaign_accounts").insert(
+      const { error: accErr } = await supabase.from("campaign_accounts").insert(
         accs.map((a: any) => ({ campaign_id: newCamp.id, account_id: a.account_id }))
       );
+      if (accErr) { toast.error(`No se pudieron copiar las cuentas: ${accErr.message}`); load(); return; }
     }
 
-    toast.success("Campaign duplicated");
+    toast.success("Campaña duplicada");
     load();
   };
 
@@ -218,8 +227,11 @@ export default function Campaigns() {
       if (!cl?.length) { toast.error("Asigna al menos un lead"); return; }
       if (!st?.length) { toast.error("Añade al menos un paso de email"); return; }
     }
-    await supabase.from("campaigns").update({ status: newStatus }).eq("id", campaign.id);
-    toast.success(`Campaign ${newStatus === "active" ? "activated" : "paused"}`);
+    // Check the write: a rejected status change used to toast "activada" while the
+    // campaign stayed paused (and the card flipped back on the next load()).
+    const { error } = await supabase.from("campaigns").update({ status: newStatus }).eq("id", campaign.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(newStatus === "active" ? "Campaña activada" : "Campaña pausada");
     load();
   };
 
@@ -227,7 +239,13 @@ export default function Campaigns() {
     // Confirm (the trash icon is a small target) + check every step's error (a failed final
     // delete used to leave the campaign stripped of steps/leads yet showing a success toast).
     const camp = campaigns.find((c) => c.id === id);
-    if (!confirm(`¿Eliminar la campaña "${camp?.name || id}"?\n\nSe borrarán sus pasos, cuentas asignadas y leads de campaña. Esta acción no se puede deshacer.`)) return;
+    const ok = await confirm({
+      title: "Eliminar campaña",
+      description: `¿Eliminar la campaña "${camp?.name || id}"?\n\nSe borrarán sus pasos, cuentas asignadas y leads de campaña. Esta acción no se puede deshacer.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     const r1 = await supabase.from("campaign_steps").delete().eq("campaign_id", id);
     const r2 = await supabase.from("campaign_accounts").delete().eq("campaign_id", id);
     const r3 = await supabase.from("campaign_leads").delete().eq("campaign_id", id);
@@ -386,7 +404,7 @@ export default function Campaigns() {
             className="gap-1.5 self-end sm:self-auto"
             onClick={() => handleStatusToggle(selectedCampaign)}
           >
-            {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pause</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Launch" : "Resume"}</>}
+            {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pausar</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Lanzar" : "Reanudar"}</>}
           </Button>
         </div>
         <CampaignReportBar campaign={selectedCampaign} metrics={metricsFor(selectedCampaign.id)} />
@@ -409,10 +427,10 @@ export default function Campaigns() {
             <Button size="sm" className="gap-2 self-end sm:self-auto"><Plus className="h-4 w-4" /> Nueva Campaña</Button>
           </DialogTrigger>
           <DialogContent className="max-w-sm">
-            <DialogHeader><DialogTitle className="font-display">Create campaign</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle className="font-display">Crear campaña</DialogTitle></DialogHeader>
             <div className="space-y-4">
-              <div className="space-y-1"><Label>Campaign name</Label><Input value={form.name} onChange={e => setForm({ name: e.target.value })} placeholder="Q1 Outreach" /></div>
-              <Button onClick={handleCreate} className="w-full" disabled={!form.name}>Create</Button>
+              <div className="space-y-1"><Label>Nombre de la campaña</Label><Input value={form.name} onChange={e => setForm({ name: e.target.value })} placeholder="Prospección Q1" /></div>
+              <Button onClick={handleCreate} className="w-full" disabled={!form.name}>Crear</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -422,8 +440,8 @@ export default function Campaigns() {
         <Card>
           <CardContent className="p-12 text-center">
             <Send className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-display font-semibold mb-2">No campaigns yet</h3>
-            <p className="text-sm text-muted-foreground">Create your first cold email campaign.</p>
+            <h3 className="font-display font-semibold mb-2">Aún no hay campañas</h3>
+            <p className="text-sm text-muted-foreground">Crea tu primera campaña de cold email.</p>
           </CardContent>
         </Card>
       ) : (
@@ -453,24 +471,26 @@ export default function Campaigns() {
                         })()}
                       </div>
                       <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
-                        {new Date(campaign.created_at).toLocaleDateString()}
+                        {new Date(campaign.created_at).toLocaleDateString("es")}
                       </p>
                     </div>
                     {/* Progress ring — how far the campaign has gone (leads emailed / total) */}
                     {(progressMap[campaign.id]?.total ?? 0) > 0 && (
                       <CampaignProgressRing sent={progressMap[campaign.id].sent} total={progressMap[campaign.id].total} />
                     )}
-                    <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleStatusToggle(campaign)}>
+                    {/* h-9/w-9 = 36px tap target on touch, plus a spoken name for each
+                        icon-only button (they were unlabelled squares to a screen reader). */}
+                    <div className="flex items-center shrink-0" onClick={e => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={campaign.status === "active" ? `Pausar la campaña ${campaign.name}` : `Activar la campaña ${campaign.name}`} title={campaign.status === "active" ? "Pausar" : "Activar"} onClick={() => handleStatusToggle(campaign)}>
                         {campaign.status === "active" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8 hidden sm:flex" onClick={() => handleDuplicate(campaign)}>
+                      <Button variant="ghost" size="icon" className="h-9 w-9 hidden sm:flex" aria-label={`Duplicar la campaña ${campaign.name}`} title="Duplicar" onClick={() => handleDuplicate(campaign)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" title="Remix — fusionar otra campaña aquí" onClick={() => setRemixDest(campaign)}>
+                      <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Remix — fusionar otra campaña en ${campaign.name}`} title="Remix — fusionar otra campaña aquí" onClick={() => setRemixDest(campaign)}>
                         <Shuffle className="h-3.5 w-3.5 text-primary" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={() => handleDelete(campaign.id)}>
+                      <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Eliminar la campaña ${campaign.name}`} title="Eliminar" onClick={() => handleDelete(campaign.id)}>
                         <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
                     </div>

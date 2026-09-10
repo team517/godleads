@@ -193,20 +193,47 @@ export async function ensurePushSubscription(userId: string): Promise<boolean> {
   }
 }
 
-export async function unsubscribeFromPush(userId: string): Promise<void> {
+/**
+ * What the UI should actually show.
+ *
+ * `Notification.permission === "granted"` is NOT the state of the toggle: permission survives an
+ * unsubscribe, and the subscription can be bound to an old VAPID key (or gone entirely) while the
+ * browser still reports "granted". Only a live subscription signed with the current key delivers.
+ */
+export async function getPushState(): Promise<"unsupported" | "denied" | "off" | "on"> {
+  if (!isPushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
   try {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
-    if (subscription) {
-      const endpoint = subscription.endpoint;
-      await subscription.unsubscribe();
-      await supabase
-        .from("push_subscriptions")
-        .delete()
-        .eq("user_id", userId)
-        .eq("endpoint", endpoint);
+    return subscription && matchesCurrentVapidKey(subscription) ? "on" : "off";
+  } catch {
+    return "off";
+  }
+}
+
+/** Returns true only when the browser unsubscribe AND the row deletion both succeeded, so the
+ *  caller doesn't claim "desactivadas" while the server can still reach the device. */
+export async function unsubscribeFromPush(userId: string): Promise<boolean> {
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return true; // nothing to undo
+    const endpoint = subscription.endpoint;
+    const gone = await subscription.unsubscribe();
+    if (!gone) return false;
+    const { error } = await supabase
+      .from("push_subscriptions")
+      .delete()
+      .eq("user_id", userId)
+      .eq("endpoint", endpoint);
+    if (error) {
+      console.error("Push unsubscribe delete error:", error);
+      return false;
     }
+    return true;
   } catch (e) {
     console.error("Push unsubscribe error:", e);
+    return false;
   }
 }

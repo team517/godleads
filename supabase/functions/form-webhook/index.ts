@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_BODY_BYTES = 64 * 1024;
 
 serve(async (req) => {
   const url = new URL(req.url);
@@ -26,8 +27,16 @@ serve(async (req) => {
   const { data: wh } = await admin.from("form_webhooks").select("owner_id").eq("key", key).maybeSingle();
   if (!wh?.owner_id) return new Response(JSON.stringify({ error: "invalid key" }), { status: 403, headers: { "Content-Type": "application/json" } });
 
+  // The whole payload is stored verbatim in form_responses.raw, so bound it: a form submission
+  // is a few KB and anyone holding a key could otherwise stuff the table.
+  const declaredLen = Number(req.headers.get("Content-Length") || 0);
+  if (declaredLen > MAX_BODY_BYTES) return new Response(JSON.stringify({ error: "payload too large" }), { status: 413, headers: { "Content-Type": "application/json" } });
+
+  const rawBody = await req.text();
+  if (rawBody.length > MAX_BODY_BYTES) return new Response(JSON.stringify({ error: "payload too large" }), { status: 413, headers: { "Content-Type": "application/json" } });
+
   let body: any = {};
-  try { body = await req.json(); } catch { /* tolerate */ }
+  try { body = JSON.parse(rawBody); } catch { /* tolerate */ }
 
   const { error } = await admin.from("form_responses").insert({
     owner_id: wh.owner_id,

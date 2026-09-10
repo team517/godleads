@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText } from "lucide-react";
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -310,7 +310,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           title={collapsed ? "Salir" : undefined}
           className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
         >
-          <LogOut className="h-[18px] w-[18px] shrink-0" />
+          {/* Home, not LogOut: "Salir" solo vuelve al inicio sin cerrar sesión, y con la barra
+              plegada los dos botones quedaban idénticos. */}
+          <Home className="h-[18px] w-[18px] shrink-0" />
           {!collapsed && "Salir"}
         </button>
         <button

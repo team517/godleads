@@ -28,6 +28,10 @@ const SCOPES = [
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// page() takes trusted HTML for its message (some callers pass markup), so anything that comes
+// from the query string or from Google's id_token has to be escaped before it goes in.
+const esc = (s: any) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c]);
+
 function page(title: string, msg: string, ok: boolean) {
   return new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -48,7 +52,7 @@ serve(async (req) => {
   const state = url.searchParams.get("state") || "";
   const oauthError = url.searchParams.get("error");
 
-  if (oauthError) return page("No se pudo conectar", `Google devolvió: ${oauthError}`, false);
+  if (oauthError) return page("No se pudo conectar", `Google devolvió: ${esc(oauthError)}`, false);
   if (!CLIENT_ID || !CLIENT_SECRET) {
     return page("Falta configuración", "Aún no están los secretos GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET en Supabase.", false);
   }
@@ -107,7 +111,7 @@ serve(async (req) => {
     if (!tok.refresh_token) {
       return page("Conectado (revisa permisos)", "Google no devolvió refresh_token. Quita el acceso de la app en tu cuenta de Google y vuelve a conectar para forzar el consentimiento.", true);
     }
-    return page("Conectado con Google", email ? `Cuenta: <b>${email}</b>. La IA ya podrá leer las respuestas del Form.` : "Conexión guardada.", true);
+    return page("Conectado con Google", email ? `Cuenta: <b>${esc(email)}</b>. La IA ya podrá leer las respuestas del Form.` : "Conexión guardada.", true);
   } catch (e) {
     return page("Error", String(e), false);
   }

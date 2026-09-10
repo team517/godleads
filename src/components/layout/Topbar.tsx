@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useCallback, useEffect } from "react";
-import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushPermission } from "@/lib/push-notifications";
+import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushState } from "@/lib/push-notifications";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/hooks/use-theme";
@@ -76,34 +76,38 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
 
-  // Check push status on mount
+  // Check push status on mount. The permission alone lies: it stays "granted" after unsubscribing
+  // and after the row was pruned, so we ask for the real subscription state.
+  const refreshPushState = useCallback(async () => {
+    setPushEnabled((await getPushState()) === "on");
+  }, []);
+
   useEffect(() => {
     if (!isPushSupported() || !user) return;
-    getPushPermission().then(perm => setPushEnabled(perm === "granted"));
-  }, [user]);
+    void refreshPushState();
+  }, [user, refreshPushState]);
 
   const handlePushToggle = useCallback(async () => {
     if (!user) return;
     setPushLoading(true);
     try {
       if (pushEnabled) {
-        await unsubscribeFromPush(user.id);
-        setPushEnabled(false);
-        toast.success("Notificaciones push desactivadas");
+        const ok = await unsubscribeFromPush(user.id);
+        if (ok) toast.success("Notificaciones push desactivadas");
+        else toast.error("No se pudieron desactivar las notificaciones. Inténtalo de nuevo.");
       } else {
         const success = await subscribeToPush(user.id);
-        if (success) {
-          setPushEnabled(true);
-          toast.success("¡Notificaciones push activadas!");
-        } else {
-          toast.error("No se pudieron activar las notificaciones. Revisa los permisos del navegador.");
-        }
+        if (success) toast.success("¡Notificaciones push activadas!");
+        else toast.error("No se pudieron activar las notificaciones. Revisa los permisos del navegador.");
       }
+      // Re-read instead of assuming: the button must reflect what the browser really has.
+      await refreshPushState();
     } catch {
       toast.error("Error al cambiar notificaciones push");
+      await refreshPushState();
     }
     setPushLoading(false);
-  }, [user, pushEnabled]);
+  }, [user, pushEnabled, refreshPushState]);
 
   const handleToggle = useCallback(() => {
     const newVal = !notifyEnabled;
@@ -176,7 +180,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
     <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-white/10 bg-topbar text-topbar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
       <div className="flex items-center gap-3">
         {isMobile && (
-          <Button variant="ghost" size="icon" onClick={onMenuToggle}>
+          <Button variant="ghost" size="icon" onClick={onMenuToggle} aria-label="Abrir menú">
             <Menu className="h-5 w-5" />
           </Button>
         )}
@@ -285,7 +289,8 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
                           <span className="text-sm font-semibold">{config.label}</span>
                         </div>
                         <span className="text-sm font-bold text-foreground">
-                          ${config.monthly.price}/mes
+                          {/* € como en Ajustes: es el mismo PLAN_CONFIG y los precios se cobran en euros. */}
+                          €{config.monthly.price}/mes
                         </span>
                       </div>
                       <ul className="text-[11px] text-muted-foreground space-y-0.5 mb-2.5">
@@ -325,7 +330,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
         {/* Notifications */}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative">
+            <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
               {notifyEnabled ? (
                 <Bell className="h-5 w-5 text-violet-300" />
               ) : (

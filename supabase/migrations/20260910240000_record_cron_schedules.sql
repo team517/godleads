@@ -1,0 +1,44 @@
+-- Record of the pg_cron jobs that were scheduled through the Management API and therefore never
+-- landed in a migration. Same convention as 20260719210000_daily_digest_cron.sql: the shared
+-- secret and the anon key stay OUT of the repo, so this file is ENTIRELY COMMENTED — applying it
+-- is a no-op. It exists so the live schedule is discoverable from the codebase and can be
+-- rebuilt by hand (substituting the real values) if the database is ever recreated.
+--
+-- Jobs already recorded elsewhere: health-monitor-every-5-min, reports-48h, reports-weekly,
+-- daily-digest.
+--
+-- ── push-interested-2min ── pushes new Interesado replies to the mobile app (via send-push).
+-- do $$ begin perform cron.unschedule('push-interested-2min'); exception when others then null; end $$;
+-- select cron.schedule('push-interested-2min', '*/2 * * * *', $CRON$
+--   select net.http_post(
+--     url := 'https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/push-interested',
+--     headers := '{"Content-Type": "application/json"}'::jsonb,
+--     body := '{"secret": "<REPORTS_CRON_SECRET>","minutes":30}'::jsonb
+--   );
+-- $CRON$);
+--
+-- ── engine-watchdog ── working hours only (06:00-17:59 UTC, Mon-Fri): alerts if the sending
+-- engine stalls. Deliberately NOT 24/7 — nothing sends outside those hours.
+-- do $$ begin perform cron.unschedule('engine-watchdog'); exception when others then null; end $$;
+-- select cron.schedule('engine-watchdog', '*/15 6-17 * * 1-5', $CRON$
+--   select net.http_post(
+--     url := 'https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/engine-watchdog',
+--     headers := '{"Content-Type":"application/json"}'::jsonb,
+--     body := '{"secret": "<REPORTS_CRON_SECRET>"}'::jsonb
+--   );
+-- $CRON$);
+--
+-- ── client-service-agent-1min ── the AI support agent on support@ (account_id below is that
+-- mailbox in email_accounts).
+-- do $$ begin perform cron.unschedule('client-service-agent-1min'); exception when others then null; end $$;
+-- select cron.schedule('client-service-agent-1min', '*/1 * * * *', $CRON$
+--   select net.http_post(
+--     url := 'https://iqhhybmhlkmulwhizpzi.supabase.co/functions/v1/client-service-agent',
+--     headers := '{"Content-Type": "application/json"}'::jsonb,
+--     body := '{"account_id":"7b97ced3-007b-44b4-846b-49dfb78d8454","limit":10,"secret": "<REPORTS_CRON_SECRET>"}'::jsonb
+--   );
+-- $CRON$);
+--
+-- For reference, health-monitor-every-5-min posts with an Authorization header instead of a
+-- secret in the body:
+--   headers:='{"Content-Type": "application/json", "Authorization": "Bearer <ANON_KEY>"}'::jsonb

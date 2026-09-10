@@ -118,7 +118,10 @@ serve(async (req) => {
       const { data: acc } = await userClient.from("email_accounts").select("*").eq("id", account_id).maybeSingle();
       if (!acc || !acc.smtp_host) return json({ error: "Cuenta de envío no válida." }, 400);
       const token = "IPT-" + rand(10);
-      const subj = `${(subject || "Prueba de entregabilidad").trim()} ${token}`;
+      // The subject goes straight into a Subject: header — a newline would let the caller inject
+      // extra headers (Bcc, Content-Type) into the SMTP message.
+      const cleanSubject = String(subject || "Prueba de entregabilidad").replace(/[\r\n]+/g, " ").trim();
+      const subj = `${cleanSubject || "Prueba de entregabilidad"} ${token}`;
       const bodyHtml = html || `<p>Hola,</p><p>Este es un correo de prueba para ver dónde aterriza. Puedes ignorarlo.</p><p>Un saludo.</p>`;
       let sentOk = 0;
       const errors: string[] = [];

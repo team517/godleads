@@ -7,11 +7,40 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const CHAT_ROLES = new Set(["user", "assistant", "system"]);
+const MAX_MESSAGES = 40;   // the tail is all the model needs; the rest is just tokens we pay for
+const MAX_CONTENT = 12000; // per message
+
+// `messages` went straight from the request body into the AI call. It is either a plain string
+// content or, when the user attaches an image, OpenAI-style multimodal parts — anything else is
+// not our client and gets rejected instead of forwarded.
+function validateMessages(raw: unknown): any[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const messages = raw.slice(-MAX_MESSAGES);
+  for (const m of messages) {
+    if (!m || typeof m !== "object") return null;
+    if (!CHAT_ROLES.has((m as any).role)) return null;
+    const c = (m as any).content;
+    if (typeof c === "string") {
+      if (c.length > MAX_CONTENT) return null;
+      continue;
+    }
+    const partsOk = Array.isArray(c) && c.every((p: any) =>
+      p && typeof p === "object" && (typeof p.text !== "string" || p.text.length <= MAX_CONTENT));
+    if (!partsOk) return null;
+  }
+  return messages;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { messages } = await req.json();
+    const { messages: rawMessages } = await req.json();
+    const messages = validateMessages(rawMessages);
+    if (!messages) {
+      return new Response(JSON.stringify({ error: "Mensajes no válidos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
     const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
     if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para usar el asistente.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });

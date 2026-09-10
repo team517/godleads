@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import {
   Rocket, Loader2, Building2, Copy, Check, ExternalLink, UserPlus, Upload,
   ChevronDown, ChevronsUpDown, Link2, Users, Mail, Send, Pencil, KeyRound, Trash2,
@@ -425,6 +426,7 @@ function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[];
 
 export default function Onboarding() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [access, setAccess] = useState<"loading" | "yes" | "no">("loading");
   const [isFullAdmin, setIsFullAdmin] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
@@ -461,7 +463,13 @@ export default function Onboarding() {
 
   // Delete a client (full admin only — the admin-users fn also enforces it).
   const removeClient = async (c: Client) => {
-    if (!confirm(`¿Eliminar el cliente ${c.email}? Esto borra su cuenta y su onboarding.`)) return;
+    const ok = await confirm({
+      title: "Eliminar cliente",
+      description: `¿Eliminar el cliente ${c.email}? Esto borra su cuenta y su onboarding.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await callAdmin({ action: "delete", user_id: c.id });
     if (res.error) toast.error(res.error);
     else { toast.success("Cliente eliminado"); loadClients(); }

@@ -1,13 +1,11 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+// The `server.url` block that used to live here pointed the native shell at the
+// Lovable preview host; the app now ships the built `dist/` assets.
 const config: CapacitorConfig = {
-  appId: 'app.lovable.4ad760de1a4648ce90acf48bf504b49a',
-  appName: 'gentle-mail-hug',
-  webDir: 'dist',
-  server: {
-    url: 'https://4ad760de-1a46-48ce-90ac-f48bf504b49a.lovableproject.com?forceHideBadge=true',
-    cleartext: true
-  }
+  appId: 'online.onepulso.app',
+  appName: 'OnePulso',
+  webDir: 'dist'
 };
 
 export default config;

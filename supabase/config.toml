@@ -39,9 +39,6 @@ verify_jwt = false
 [functions.cold-email-chat]
 verify_jwt = false
 
-[functions.notify-interested]
-verify_jwt = false
-
 [functions.admin-users]
 verify_jwt = false
 

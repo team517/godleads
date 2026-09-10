@@ -236,18 +236,23 @@ serve(async (req) => {
     const user = userData.user;
     if (!user) throw new Error("Not authenticated");
 
-    const { lead_ids, skip_coin_check } = await req.json();
+    const { lead_ids } = await req.json();
     if (!lead_ids?.length) throw new Error("No lead_ids provided");
 
-    // Check coins
-    if (!skip_coin_check) {
+    // Verification is FREE today (the app relies on it: src/contexts/VerificationContext.tsx). The
+    // old code let the CLIENT decide that by sending skip_coin_check — any caller could waive its
+    // own charge on any billed endpoint that copied the pattern. The price is a server decision:
+    // flip this constant to start charging, and the client cannot override it either way.
+    const VERIFICATION_IS_FREE = true;
+    if (!VERIFICATION_IS_FREE) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("coins, contact_email")
+        .select("coins")
         .eq("user_id", user.id)
         .single();
 
-      const isInfinite = ["hello@onepulso.blog", "eric@dekano-core.es"].includes(profile?.contact_email ?? "");
+      // Immutable auth email, not profiles.contact_email — the user edits that freely in Settings.
+      const isInfinite = ["hello@onepulso.blog", "eric@dekano-core.es"].includes((user.email ?? "").toLowerCase());
       const cost = Math.ceil(lead_ids.length * 0.1);
 
       if (!isInfinite && (profile?.coins ?? 0) < cost) {

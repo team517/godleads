@@ -1,73 +1,31 @@
-# Welcome to your Lovable project
+# OnePulso
 
-## Project info
+Plataforma de cold email para equipos de ventas B2B: cuentas de envío, campañas
+con secuencias multi-paso, leads, Unibox unificado, estadísticas y automatizaciones.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+Frontend: React + TypeScript + Vite + Tailwind + shadcn/ui.
+Backend: Supabase (Postgres + Edge Functions).
 
-## How can I edit this code?
-
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Desarrollo
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+npm install      # instalar dependencias
+npm run dev      # servidor de desarrollo (http://localhost:8080)
+npm run build    # build de producción en dist/
+npm test         # tests con Vitest
+npm run lint     # ESLint
 ```
 
-**Edit a file directly in GitHub**
+## Edge Functions (Supabase)
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Se despliegan directamente, sin pasar por git:
 
-**Use GitHub Codespaces**
+```sh
+npx supabase functions deploy <fn> --project-ref iqhhybmhlkmulwhizpzi --no-verify-jwt
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Despliegue del frontend
 
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+El frontend lo construye **EasyPanel desde la rama `main` de GitHub**. Los cambios
+de frontend NO salen en producción hasta hacer commit + push a `origin/main` y
+pulsar **"Implementar"** en EasyPanel.

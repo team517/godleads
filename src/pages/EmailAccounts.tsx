@@ -770,10 +770,14 @@ export default function EmailAccounts() {
         body: { account_id: accountId },
       });
       if (fnError) throw fnError;
-      if (result.status === "connected") {
+      // La función puede devolver null (respuesta vacía sin error): leer result.status
+      // reventaba con un TypeError y el usuario solo veía "Error verificando: undefined".
+      if (result?.status === "connected") {
         toast.success("✅ Conexión verificada — sincronizando bandeja…");
         // As soon as the mailbox connects, pull its inbox into the Unibox.
         syncAccountInbox(accountId);
+      } else if (!result) {
+        toast.error("La verificación no devolvió respuesta. Inténtalo de nuevo.");
       } else {
         toast.error(`Error de conexión: ${result.smtp?.error || result.imap?.error || "Error desconocido"}`);
       }
@@ -890,9 +894,10 @@ export default function EmailAccounts() {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
     if (!window.confirm(`¿Estás seguro de que quieres eliminar ${count} cuenta(s)? Esta acción no se puede deshacer.`)) return;
-    for (const id of selectedIds) {
-      await supabase.from("email_accounts").delete().eq("id", id);
-    }
+    // Un solo DELETE en lugar de N peticiones cuyos errores se ignoraban: así un fallo se ve
+    // y no se anuncia "eliminadas" con las cuentas todavía ahí.
+    const { error } = await supabase.from("email_accounts").delete().in("id", Array.from(selectedIds));
+    if (error) { toast.error(error.message); return; }
     toast.success(`${count} cuenta(s) eliminada(s)`);
     setSelectedIds(new Set());
     loadAccounts();

@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-supabase-api-version",
@@ -167,10 +169,19 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // This ran unauthenticated: an open DNS-lookup proxy anyone could point at any domain.
+    const authHeader = req.headers.get("Authorization") || "";
+    const anon = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: ud } = await anon.auth.getUser();
+    if (!ud?.user) return jsonResponse({ error: "No autorizado" }, 401);
+
     const body = await req.json();
     const domain = normalizeDomain(String(body?.domain ?? ""));
+    // Each selector is one more outbound DNS lookup — cap it so a single call can't fan out.
     const selectors = Array.isArray(body?.selectors)
-      ? body.selectors.map((value: unknown) => String(value).trim().toLowerCase()).filter(Boolean)
+      ? body.selectors.slice(0, 10).map((value: unknown) => String(value).trim().toLowerCase()).filter(Boolean)
       : [];
 
     if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {

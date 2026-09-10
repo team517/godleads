@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 
@@ -22,6 +23,7 @@ interface Props { campaignId: string; }
 const TABLE_PAGE_SIZE = 100;
 
 export default function CampaignLeads({ campaignId }: Props) {
+  const confirm = useConfirm();
   const { user } = useAuth();
   // Server-side paginated leads — only current page in memory
   const [pageLeads, setPageLeads] = useState<any[]>([]);
@@ -255,7 +257,13 @@ export default function CampaignLeads({ campaignId }: Props) {
   const deleteSelectedColumns = async () => {
     if (selectedColumns.size === 0) return;
     const colNames = Array.from(selectedColumns).join(", ");
-    if (!confirm(`¿Eliminar ${selectedColumns.size} columna(s): ${colNames}? No se puede deshacer.`)) return;
+    const ok = await confirm({
+      title: "Eliminar columnas",
+      description: `¿Eliminar ${selectedColumns.size} columna(s): ${colNames}? No se puede deshacer.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     setDeletingColumns(true);
     try {
       // Get all lead IDs for this campaign in batches
@@ -1197,7 +1205,13 @@ export default function CampaignLeads({ campaignId }: Props) {
                   className="gap-1.5 text-destructive"
                   disabled={deletingBulk}
                   onClick={async () => {
-                    if (!confirm(`¿Eliminar ${selectedCampaignLeads.size} leads de la campaña y del sistema?`)) return;
+                    const ok = await confirm({
+                      title: "Eliminar leads seleccionados",
+                      description: `¿Eliminar ${selectedCampaignLeads.size} leads de la campaña y del sistema?`,
+                      confirmText: "Eliminar",
+                      destructive: true,
+                    });
+                    if (!ok) return;
                     setDeletingBulk(true);
                     const toDelete = pageLeads.filter(cl => selectedCampaignLeads.has(cl.id));
                     const leadIds = toDelete.map(cl => cl.lead_id);
@@ -1224,7 +1238,13 @@ export default function CampaignLeads({ campaignId }: Props) {
               className="gap-1.5 ml-auto"
               disabled={deletingBulk || totalLeadCount === 0}
               onClick={async () => {
-                if (!confirm(`¿Eliminar TODOS los ${totalLeadCount.toLocaleString()} leads de esta campaña?`)) return;
+                const ok = await confirm({
+                  title: "Eliminar todos los leads",
+                  description: `¿Eliminar TODOS los ${totalLeadCount.toLocaleString()} leads de esta campaña?`,
+                  confirmText: "Eliminar todos",
+                  destructive: true,
+                });
+                if (!ok) return;
                 setDeletingBulk(true);
                 // 1) Collect THIS campaign's lead ids first (ordered + paged: no 1000-row cap).
                 //    The old code selected every is_campaign_only lead of the USER (no campaign

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sparkles, ArrowRight, Workflow, Plus, Pencil, Trash2, ChevronRight, UserPlus, Users, GripVertical, Brain, Mail, FileText, MessageSquare, ShieldCheck, CheckCircle2, XCircle, Link2, RefreshCw, Loader2, ImagePlus, Paperclip, AlertTriangle, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { supabase } from "@/integrations/supabase/client";
 import { extractLogoColor } from "@/lib/logoColor";
 
@@ -299,6 +300,7 @@ function introEmailHtml(opts: { name: string; company: string; formUrl: string; 
 
 export default function AutomationFlow() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [clients, setClients] = useState<FlowClient[]>([]);
   const [ai, setAi] = useState<AIConfig>(DEFAULT_AI);
@@ -549,12 +551,17 @@ export default function AutomationFlow() {
     if (!clientId) return;
     callAdmin({ action: "update_client", user_id: clientId, onboarding_status: onboardingStatusForFlow(step) }).catch(() => {});
   };
-  const advance = (c: FlowClient) => {
+  const advance = async (c: FlowClient) => {
     const ns = Math.min(c.step + 1, nodes.length - 1);
     const node = nodes[ns];
     const isActiveStep = !!node && /campa\w*\s+activ|activa/i.test(node.label);
     if (isActiveStep && c.clientId) {
-      if (!confirm("¿La campaña ya tiene los leads cargados y está activa? Se le enviará al cliente un correo avisando de que su campaña ya está activa.")) return;
+      const ok = await confirm({
+        title: "Avisar al cliente de que su campaña está activa",
+        description: "¿La campaña ya tiene los leads cargados y está activa? Se le enviará al cliente un correo avisando de que su campaña ya está activa.",
+        confirmText: "Sí, avisar",
+      });
+      if (!ok) return;
     }
     persistClients(clients.map((x) => x.id === c.id ? { ...x, step: ns } : x));
     syncOnboarding(c.clientId, ns);
@@ -726,7 +733,7 @@ export default function AutomationFlow() {
       toast.success(`Copys enviados a ${fc.email} para su visto bueno`);
     } catch (e: any) { toast.error(`No se pudieron enviar los copys: ${e?.message || e}`); }
   };
-  const approveClient = (fc: FlowClient) => { advance(fc); sendCopysToClient(fc); };
+  const approveClient = async (fc: FlowClient) => { await advance(fc); sendCopysToClient(fc); };
 
   // When the campaign is live WITH leads, tell the client it's active (with the live-tracking link).
   const sendCampaignActiveEmail = async (fc: FlowClient) => {

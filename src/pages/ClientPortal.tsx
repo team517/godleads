@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound, FileText } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 import MyReportsCard from "@/components/reports/MyReportsCard";
@@ -324,6 +325,7 @@ function CopysDialog({ client, open, onClose }: { client: Client | null; open: b
 }
 
 export default function ClientPortal() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const [access, setAccess] = useState<"loading" | "yes" | "no">("loading");
   const [isFullAdmin, setIsFullAdmin] = useState(false);
@@ -395,7 +397,13 @@ export default function ClientPortal() {
   };
 
   const removeClient = async (c: Client) => {
-    if (!confirm(`¿Eliminar el cliente ${c.email}? Esto borra su cuenta.`)) return;
+    const ok = await confirm({
+      title: "Eliminar cliente",
+      description: `¿Eliminar el cliente ${c.email}? Esto borra su cuenta.`,
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
     const res = await callAdmin({ action: "delete", user_id: c.id });
     if (res.error) toast.error(res.error);
     else { toast.success("Cliente eliminado"); loadClients(); }
@@ -525,6 +533,7 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
   const [testEmail, setTestEmail] = useState(user?.email || "");
   const [testing, setTesting] = useState(false);
   const [creds, setCreds] = useState<null | { subject: string; body: string }>(null);
+  const confirm = useConfirm();
   const toggle = (path: string) => setRoutes((r) => r.includes(path) ? r.filter((p) => p !== path) : [...r, path]);
 
   // Open the compose box PRE-FILLED with the client's access credentials.
@@ -572,7 +581,12 @@ function EditClientDialog({ client, saving, onClose, onSave }: {
     if (!fromAccount) { toast.error("Elige primero la cuenta de envío"); return; }
     const recipient = toEmail.trim();
     if (!recipient) { toast.error("Escribe el email del cliente en 'Enviar a'"); return; }
-    if (!confirm(`¿Enviar ahora el informe ${kind === "weekly" ? "semanal" : "de 48h"} a ${recipient}? Se enviará un email real al cliente.`)) return;
+    const ok = await confirm({
+      title: "Enviar informe al cliente",
+      description: `¿Enviar ahora el informe ${kind === "weekly" ? "semanal" : "de 48h"} a ${recipient}? Se enviará un email real al cliente.`,
+      confirmText: "Enviar",
+    });
+    if (!ok) return;
     setSendingKind(kind);
     try {
       const { data: { session } } = await supabase.auth.getSession();

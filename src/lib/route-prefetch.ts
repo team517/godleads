@@ -19,7 +19,9 @@ const routeMap: Record<string, ImportThunk> = {
   "/settings":       () => import("@/pages/SettingsPage"),
   "/onboarding":     () => import("@/pages/Onboarding"),
   "/client-campaigns": () => import("@/pages/ClientCampaigns"),
-  "/godtube":        () => import("@/pages/GodTube"),
+  // /godtube is NOT listed on purpose: it is an owner-only page whose chunk is
+  // heavy, and prefetching it downloaded it for every user on every session.
+  // The route still works — React.lazy loads the chunk when it is opened.
 };
 
 /** Tracks which paths have already been fetched so we never import twice. */

@@ -13,6 +13,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const MAX_CAMPAIGNS = 50;
+
 const SYSTEM =
   "Eres un analista senior de cold email B2B que escribe informes para clientes de una agencia, en español de España. " +
   "Tu tono es SIEMPRE POSITIVO, cercano y motivador: destacas lo bueno, enmarcas los retos como oportunidades, y transmites que la campaña va por buen camino y que estamos encima optimizándola. NUNCA suenas negativo, alarmista ni derrotista. " +
@@ -153,19 +155,33 @@ serve(async (req) => {
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     if (!token) return json({ error: "Unauthorized" }, 401);
 
-    // Accept either a logged-in user (browser preview) OR the service role (internal cron call).
+    // Accept either the service role (internal cron call) OR — for the "Hacer una prueba" preview —
+    // agency staff. Any logged-in user used to pass, which let a self-signup burn the platform AI
+    // keys on an arbitrarily long body.campaigns.
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     let authorized = token === serviceKey;
     if (!authorized) {
-      const userClient = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const { data, error } = await userClient.auth.getUser();
-      authorized = !error && !!data?.user;
+      const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey, { auth: { persistSession: false } });
+      const { data, error } = await admin.auth.getUser(token);
+      const caller = error ? null : data?.user;
+      if (caller) {
+        const [{ data: roleData }, { data: prof }] = await Promise.all([
+          admin.from("user_roles").select("role").eq("user_id", caller.id).maybeSingle(),
+          admin.from("profiles").select("is_client_manager").eq("user_id", caller.id).maybeSingle(),
+        ]);
+        const AGENCY_EMAILS = new Set(["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online"]);
+        authorized = (roleData as any)?.role === "admin"
+          || (prof as any)?.is_client_manager === true
+          || AGENCY_EMAILS.has((caller.email || "").toLowerCase());
+      }
     }
     if (!authorized) return json({ error: "Unauthorized" }, 401);
 
     const body = await req.json();
+    // A report covers one client's campaigns; a huge list is abuse, not a report.
+    if (Array.isArray(body?.campaigns) && body.campaigns.length > MAX_CAMPAIGNS) {
+      return json({ error: "Demasiadas campañas en la petición" }, 400);
+    }
 
     const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
     const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");

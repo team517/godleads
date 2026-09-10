@@ -643,7 +643,8 @@ serve(async (req) => {
       || String(to_email || "").match(/[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+/)?.[0]
       || "";
     if (!cleanTo && lead_id) {
-      const { data: leadRow } = await adminClient.from("leads").select("email").eq("id", lead_id).maybeSingle();
+      // Scoped to the caller: adminClient bypasses RLS, and lead_id comes from the request body.
+      const { data: leadRow } = await adminClient.from("leads").select("email").eq("id", lead_id).eq("user_id", userId).maybeSingle();
       if (leadRow?.email) cleanTo = leadRow.email;
     }
     cleanTo = cleanTo.trim().toLowerCase();

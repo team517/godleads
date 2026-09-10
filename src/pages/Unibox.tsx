@@ -1359,7 +1359,11 @@ export default function Unibox() {
     } catch (e: any) { toast.error(`No se pudo guardar: ${e?.message || e}`); }
   };
   const deleteTemplate = async (id: string) => {
-    try { await (supabase as any).from("reply_templates").delete().eq("id", id); setTemplates((prev) => prev.filter((t) => t.id !== id)); } catch { /* */ }
+    // supabase-js no lanza: el error vuelve en { error }. Sin comprobarlo la plantilla
+    // desaparecía de la lista y reaparecía al recargar.
+    const { error } = await (supabase as any).from("reply_templates").delete().eq("id", id);
+    if (error) { toast.error(`No se pudo borrar: ${error.message}`); return; }
+    setTemplates((prev) => prev.filter((t) => t.id !== id));
   };
   const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
@@ -2378,7 +2382,9 @@ export default function Unibox() {
   };
 
   const handleMarkRead = async (id: string) => {
-    await supabase.from("inbox_messages").update({ is_read: true }).eq("id", id);
+    const { error } = await supabase.from("inbox_messages").update({ is_read: true }).eq("id", id);
+    // Si falla, el contador de no leídos volverá a subir al recargar: avisar en vez de callar.
+    if (error) toast.error(`No se pudo marcar como leído: ${error.message}`);
   };
 
   // Remove a message from the visible list + the instant cache so it doesn't
@@ -2485,8 +2491,9 @@ export default function Unibox() {
     if (!user) return;
     const msg = messages.find((m) => m.id === messageId);
     // Upsert: remove existing reminder for this message first
-    await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
-    await supabase.from("message_reminders").insert({
+    const { error: delError } = await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
+    if (delError) { toast.error(delError.message); return; }
+    const { error: insError } = await supabase.from("message_reminders").insert({
       user_id: user.id,
       message_id: messageId,
       remind_at: remindAt.toISOString(),
@@ -2498,6 +2505,9 @@ export default function Unibox() {
       original_references: msg?.ref_chain || msg?.message_id || null,
       reminder_body: reminderBody.trim() || null,
     } as any);
+    // Sin esto se anunciaba el recordatorio aunque el insert hubiera fallado (y el
+    // anterior ya estaba borrado, así que el mensaje se quedaba sin ningún recordatorio).
+    if (insError) { toast.error(insError.message); loadReminders(); return; }
     toast.success(`Recordatorio: ${format(remindAt, "d MMM yyyy", { locale: es })}`);
     setReminderBody("");
     loadReminders();
@@ -2505,7 +2515,8 @@ export default function Unibox() {
 
   const handleClearReminder = async (messageId: string) => {
     if (!user) return;
-    await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
+    const { error } = await supabase.from("message_reminders").delete().eq("message_id", messageId).eq("user_id", user.id);
+    if (error) { toast.error(error.message); return; }
     toast.success("Recordatorio eliminado");
     loadReminders();
   };
@@ -2539,7 +2550,10 @@ export default function Unibox() {
     const ids = messages.filter(predicate).map((m) => m.id);
     if (ids.length > 0) {
       for (let i = 0; i < ids.length; i += 100) {
-        await supabase.from("inbox_messages").update({ is_archived: true }).in("id", ids.slice(i, i + 100));
+        const { error } = await supabase.from("inbox_messages").update({ is_archived: true }).in("id", ids.slice(i, i + 100));
+        // Propagar: quien llama está dentro de un try/catch que avisa y no da el bloqueo por
+        // bueno. Antes se vaciaban de la lista local mensajes que seguían visibles en la BD.
+        if (error) throw new Error(error.message);
       }
     }
     const remaining = messages.filter((m) => !predicate(m));
@@ -2554,12 +2568,19 @@ export default function Unibox() {
     const value = email.toLowerCase();
     setBlocking(true);
     try {
-      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "email", value }, { onConflict: "user_id,entry_type,value" });
+      // Si el bloqueo no llega a guardarse no hay que seguir: se anunciaba "bloqueado" y el
+      // remitente volvía en la siguiente carga.
+      const { error: blockError } = await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "email", value }, { onConflict: "user_id,entry_type,value" });
+      if (blockError) throw new Error(blockError.message);
       // Filter it out of the Unibox now (optimistic), then hide its messages.
       setBlockedEntries((prev) => (prev.some((e) => e.entry_type === "email" && e.value === value) ? prev : [{ id: `tmp-${value}`, entry_type: "email", value, created_at: new Date().toISOString() }, ...prev]));
       await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase() === value);
-      const { data: leads } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("email", value);
-      for (const l of leads || []) await supabase.from("campaign_leads").delete().eq("lead_id", l.id);
+      const { data: leads, error: leadsError } = await supabase.from("leads").select("id").eq("user_id", user.id).eq("email", value);
+      if (leadsError) throw new Error(leadsError.message);
+      for (const l of leads || []) {
+        const { error: clError } = await supabase.from("campaign_leads").delete().eq("lead_id", l.id);
+        if (clError) throw new Error(clError.message);
+      }
       loadBlockedEntries();
       toast.success(`${email} bloqueado — sus mensajes ocultados y fuera de campañas`);
     } catch (e: any) { toast.error(e.message); }
@@ -2573,20 +2594,26 @@ export default function Unibox() {
     const value = domain.toLowerCase();
     setBlocking(true);
     try {
-      await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "domain", value }, { onConflict: "user_id,entry_type,value" });
+      const { error: blockError } = await supabase.from("blocklist").upsert({ user_id: user.id, entry_type: "domain", value }, { onConflict: "user_id,entry_type,value" });
+      if (blockError) throw new Error(blockError.message);
       setBlockedEntries((prev) => (prev.some((e) => e.entry_type === "domain" && e.value === value) ? prev : [{ id: `tmp-${value}`, entry_type: "domain", value, created_at: new Date().toISOString() }, ...prev]));
       // Archive EVERY message from this domain in the DB — not just the ones currently loaded
       // in the window — so none linger unarchived (that was leaving hundreds still visible).
-      await supabase.from("inbox_messages").update({ is_archived: true }).eq("user_id", user.id).eq("is_archived", false).ilike("from_email", `%@${value}`);
+      const { error: archiveError } = await supabase.from("inbox_messages").update({ is_archived: true }).eq("user_id", user.id).eq("is_archived", false).ilike("from_email", `%@${value}`);
+      if (archiveError) throw new Error(archiveError.message);
       const n = await hideMessagesFromSender((m) => (m.from_email || "").toLowerCase().endsWith(`@${value}`));
       // Remove the domain's leads from every campaign. Filter by domain SERVER-side and page:
       // the old code fetched the first 1000 of ALL the user's leads and filtered in memory, so a
       // user with >1000 leads could have the blocked domain fall entirely outside that window and
       // its leads kept getting emailed.
       for (let off = 0; ; off += 1000) {
-        const { data: leads } = await supabase.from("leads").select("id").eq("user_id", user.id).ilike("email", `%@${value}`).range(off, off + 999);
+        const { data: leads, error: leadsError } = await supabase.from("leads").select("id").eq("user_id", user.id).ilike("email", `%@${value}`).range(off, off + 999);
+        if (leadsError) throw new Error(leadsError.message);
         if (!leads?.length) break;
-        await supabase.from("campaign_leads").delete().in("lead_id", leads.map((l) => l.id));
+        // Un fallo aquí deja leads del dominio bloqueado dentro de campañas: no se puede
+        // anunciar el bloqueo como completo.
+        const { error: clError } = await supabase.from("campaign_leads").delete().in("lead_id", leads.map((l) => l.id));
+        if (clError) throw new Error(clError.message);
         if (leads.length < 1000) break;
       }
       loadBlockedEntries();
@@ -2874,8 +2901,11 @@ export default function Unibox() {
       const email = (selected.from_email || "").toLowerCase();
 
       // 1. Find every lead that matches this sender (across all lists & campaigns)
-      const { data: leads } = await supabase
+      const { data: leads, error: leadsError } = await supabase
         .from("leads").select("id").eq("user_id", user.id).eq("email", email);
+      // Sin comprobarlo, un fallo de lectura parecía "0 leads" y se daba por borrado un lead
+      // que seguía en sus campañas.
+      if (leadsError) { toast.error(leadsError.message); setDeletingLead(false); return; }
       const leadIds = (leads || []).map((l: any) => l.id);
 
       // 2. Cascade-delete the lead from the whole database
@@ -2885,14 +2915,17 @@ export default function Unibox() {
       }
 
       // 3. Remove any leftover inbox messages from this sender (not lead-linked)
-      await supabase.from("inbox_messages").delete()
+      const { error: inboxError } = await supabase.from("inbox_messages").delete()
         .eq("user_id", user.id).eq("from_email", email);
+      if (inboxError) { toast.error(inboxError.message); setDeletingLead(false); return; }
 
       // 4. Block the address so it can't re-enter any list
-      await supabase.from("blocklist").upsert(
+      const { error: blockError } = await supabase.from("blocklist").upsert(
         { user_id: user.id, entry_type: "email", value: email },
         { onConflict: "user_id,entry_type,value" }
       );
+      // El bloqueo es lo que impide que el lead vuelva a entrar: si falla, no se anuncia éxito.
+      if (blockError) { toast.error(blockError.message); setDeletingLead(false); return; }
 
       // 5. Update local state — drop every message from this sender
       setMessages((prev) => prev.filter((m) => (m.from_email || "").toLowerCase() !== email));

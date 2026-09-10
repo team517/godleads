@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -95,6 +96,7 @@ function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; o
 const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600">Pro</Badge>;
 
 export default function CampaignOptions({ campaignId }: Props) {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
@@ -191,7 +193,13 @@ export default function CampaignOptions({ campaignId }: Props) {
         return;
       }
 
-      if (!confirm(`Se encontraron ${duplicates.length} lead(s) que están en otras campañas. ¿Eliminarlos de ESTA campaña?`)) {
+      const ok = await confirm({
+        title: "Eliminar leads duplicados",
+        description: `Se encontraron ${duplicates.length} lead(s) que están en otras campañas. ¿Eliminarlos de ESTA campaña?`,
+        confirmText: "Eliminar",
+        destructive: true,
+      });
+      if (!ok) {
         setDeduping(false);
         return;
       }

@@ -35,6 +35,9 @@ serve(async (req) => {
       });
     }
     const userId = claimsData.claims.sub;
+    // The email that comes out of the signed JWT — never profiles.contact_email, which the user
+    // edits freely in Settings (see _shared/ai-key.ts).
+    const authEmail = String((claimsData.claims as any).email || "").toLowerCase();
 
     const { job_id } = await req.json();
     if (!job_id) {
@@ -73,9 +76,8 @@ serve(async (req) => {
     const currentCoins = profile?.coins ?? 0;
 
     // Check for infinite coins (special accounts handled client-side, but also check here)
-    const { data: profileFull } = await db.from("profiles").select("contact_email").eq("user_id", userId).single();
     const INFINITE_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "rk@coldabry.com", "hello@onepulso.blog", "oliver@osakaadigital.com", "eric@dekano-core.es"];
-    const hasInfinite = INFINITE_EMAILS.includes(profileFull?.contact_email || "");
+    const hasInfinite = INFINITE_EMAILS.includes(authEmail);
 
     if (!hasInfinite && currentCoins < cost) {
       await db.from("personalization_jobs").update({ status: "failed" }).eq("id", job_id);
@@ -121,7 +123,9 @@ serve(async (req) => {
     const fetchBatchSize = 100;
     for (let i = 0; i < leadIds.length; i += fetchBatchSize) {
       const batch = leadIds.slice(i, i + fetchBatchSize);
-      const { data } = await db.from("leads").select("id, email, custom_fields").in("id", batch);
+      // Service role bypasses RLS, so scope by owner: job.lead_ids comes from the client and could
+      // otherwise name another tenant's leads.
+      const { data } = await db.from("leads").select("id, email, custom_fields").in("id", batch).eq("user_id", userId);
       if (data) allLeads.push(...data);
     }
 
@@ -158,7 +162,7 @@ serve(async (req) => {
 
           if (generatedText) {
             const updatedFields = { ...fields, [colName]: generatedText };
-            await db.from("leads").update({ custom_fields: updatedFields }).eq("id", lead.id);
+            await db.from("leads").update({ custom_fields: updatedFields }).eq("id", lead.id).eq("user_id", userId);
           } else {
             errors++;
           }
