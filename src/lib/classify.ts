@@ -34,8 +34,11 @@ export type MessageCategory =
 const QUOTE_MARKERS: RegExp[] = [
   /(^|\n)\s*>/,
   /(^|\n)[^\n]{0,80}\b(escribi[óo]|wrote|a écrit|schrieb|ha scritto|escreveu)\s*:/i,
-  /-{2,}\s*(original message|mensaje original|message d'origine|ursprüngliche nachricht)\s*-{2,}/i,
-  /(^|\n)\s*(de|from|von)\s*:\s*[^\n]{1,120}\n\s*(enviado|sent|gesendet|date|fecha|envoyé)\s*:/i,
+  /-{0,}\s*\b(original message|mensaje original|message d'origine|ursprüngliche nachricht)/i,
+  // The header block may arrive on ONE line ("De: Alfons Pons Enviado el: martes, 8 …") when the
+  // client folds it — requiring a newline let OUR OWN pitch below it be classified as the lead's
+  // words (real: Surinver, Suma Capital, Carrocerias JAZ read as Interesado).
+  /\b(de|from|von)\s*:\s*[^\n]{1,160}?\s*(enviado el|enviado|sent|gesendet|date|fecha|envoyé)\s*:/i,
 ];
 const FOOTER_MARKERS: RegExp[] = [
   /\b(aviso legal|legal notice|disclaimer|cláusula de confidencialidad)\b/i,
@@ -112,7 +115,7 @@ const LEFT_COMPANY = [
 const OUT_OF_OFFICE = [
   /out of (the )?office/i, /\booo\b/i, /auto(matic|mated)?[- ]?(reply|response|responder)/i,
   /automatische antwort/i, /r[ée]ponse automatique/i, /risposta automatica/i, /respuesta autom[áa]tica/i,
-  /fuera de (la )?oficina/i, /estar[ée]?\s+(fuera|ausente|de vacaciones|out)/i, /estoy (fuera|ausente|de vacaciones)/i,
+  /fuera de (la )?oficina/i, /estar[ée]?\s+(fuera|ausente|de vacaciones|out)/i, /estoy (fuera|ausente|de vacaciones)/i, /\bno\s+est(oy|amos|ar[ée]|ar[íi]a)\s+disponibl\w*/i,
   /de vacaciones/i, /\bvacation(s)?\b/i, /vacacion/i, /on (annual |sick |parental )?(leave|holiday|vacation|pto)/i,
   /away (from|until|on)/i, /currently (out|away|unavailable)\b/i,
   /currently on (leave|holiday|vacation|annual|maternity|paternity|sick|parental|pto|a business trip)/i,
@@ -176,10 +179,10 @@ const NOT_INTERESTED = [
   // "no interés", "sin interés" — the plain "No interesado" reply that used to leak as
   // Interested because the bare word "interesado" matched. NOTE: unsubscribe / "don't
   // contact me" phrasing lives in DO_NOT_CONTACT below (checked first — la baja manda).
-  /\bno\s+(me\s+|nos\s+|le\s+|les\s+|estamos?\s+|est[áa]n?\s+)?interesad[oa]s?\b/i,
+  /\bno\s+(me\s+|nos\s+|le\s+|les\s+|estamos?\s+|est[áa]n?\s+)?(\w+mente\s+)?interesad[oa]s?\b/i,
   // "no estoy/estás/está/estáis interesado" — the most common Spanish rejection; the line above
   // only had estamos/están, so "no estoy interesado" leaked to Interesado via the bare word.
-  /\bno\s+est(oy|[áa]s|[áa]|[áa]is)\s+interesad[oa]s?\b/i,
+  /\bno\s+est(oy|[áa]s|[áa]|[áa]is|ar[íi]a(mos)?|ar[ée](mos)?)\s+interesad[oa]s?\b/i,
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?interesa[n]?\b/i,
   /\bno\s+(hay\s+)?inter[ée]s\b/i, /sin\s+inter[ée]s/i,
   /\bnot\s+interested\b/i, /\bno\s+interest\b/i, /pas\s+int[ée]ress[ée]/i, /kein\s+interesse/i, /non\s+(mi|ci)\s+interessa/i,
@@ -234,7 +237,7 @@ const NOT_INTERESTED = [
   // "solo presta servicios a … por lo que no tenemos la necesidad de captación de clientes").
   // None of the above matched, and the "clientes que tienen otras empresas" clause even leaked
   // into QUESTION. Polite but unambiguous NOs.
-  /\bno\s+(tenemos|tengo|hay|existe|vemos|veo)\s+(la\s+|ninguna\s+|esa\s+|tal\s+)?necesidad\b/i,
+  /\bno\s+(tenemos|tengo|hay|existe|vemos|veo)\s+(la\s+|una\s+|ninguna\s+|esa\s+|esta\s+|dicha\s+|tal\s+|estas\s+|esas\s+)?necesidad(es)?\b/i,
   /\bsin\s+(la\s+)?necesidad\s+de\b/i,
   /\bno\s+(lo\s+|la\s+|los\s+|las\s+)?(necesitamos|necesito|precisamos|requerimos)\b/i,
   /\bno\s+(me\s+|nos\s+|le\s+|les\s+)?(hace|har[íi]a)\s+falta\b/i,
@@ -325,6 +328,7 @@ const REFERRAL = [
   /\bdebes\s+(hablar|contactar|dirigirte|escribir)\s+(es\s+)?(con|a)\b/i,
   /\bcon\s+qui[ée]n\s+(hablar|contactar|tratarlo|verlo)\b/i,
   /(habla|contacta|escribe|dir[íi]gete)\s+(con|a)\s+(?!nosotros|nuestr|m[íi]\b|conmigo|el equipo\b)/i,
+  /\b(se\s+)?(comuni(que|quen|carse)|p[óo]nga(se|nse)\s+en\s+contacto|ponerse\s+en\s+contacto|dir[íi]ja(se|nse)|dirigirse)\s+(con|a)\b/i,
   // "reach out to Marta / to our sales team" = referral, but "feel free to reach out to me/us/you"
   // is an INVITATION to contact the sender, not a hand-off → exclude me/us/you.
   /\breach out to\s+(?!me\b|us\b|you\b|our team\b)\S/i,
@@ -377,7 +381,7 @@ const INTERESTED = [
   // "producto no disponible", "horario disponible"… (a THING being available, not the
   // person) → false "Interesado" (real case: a Colegio de Aparejadores newsletter).
   // "¿cuándo estás disponible?" is still caught by the when/cuándo meeting pattern below.
-  /est(oy|amos)\s+disponibl\w*/i, /(i'?m|we'?re)\s+available\b/i, /(mi|nuestra)\s+disponibilidad\b/i,
+  /(?<!\bno\s)est(oy|amos)\s+disponibl\w*/i, /(i'?m|we'?re)\s+available\b/i, /(mi|nuestra)\s+disponibilidad\b/i,
   // "¿Tenéis hueco el jueves?" — asking for a slot/time to meet = a warm meeting ask.
   /\bhueco\b/i, /(ten[ée]is|tienes|ten[ée]s|hay|te va bien|os va bien|te viene|os viene|te encaja)\b[^.?!]{0,25}(hueco|disponib|un (rato|momento|hueco)|libre|para (hablar|vernos|una (llamada|reuni)))/i,
   // A proposed time ONLY counts as interest when it sits next to a meeting word. A bare
@@ -461,9 +465,12 @@ const MEETING_OPENING: RegExp[] = [
   // The tail is a LOOKAHEAD, not \b: an accented ending ("reunió") is not a \w character, so a
   // trailing \b never matched it and the whole Catalan opening was missed (case 56).
   new RegExp(String.raw`\b${MEET_VERB}\b[^.;!?]{0,35}\b${MEET_NOUN}(?![\wáéíóúàèòïüçñ])`, "i"),
-  /\b(agendamos|agendemos|agendam[oa]s?|agendar|quedamos|reservemos)\b/i,
+  // "quedamos"/"agendar" alone were REMOVED: "Quedamos a su disposición" is standard courtesy in
+  // every Spanish business signature and read as "let's meet". The verb+noun rule still catches
+  // "quedamos para una reunión"; these bare forms are unambiguous.
+  /\b(agendamos|agendemos|agendam[oa]s|reservemos)\b/i,
   /\b(os|te|le|les)\s+escucho\b/i, /\bpuedo\s+escuchar\w*/i,
-  /\b(ll[áa]ma(me|nos)|ll[áa]meme|ll[áa]menme|truca'?m)\b/i,
+
   /\bp[áa]sa(me|nos)\b[^.;!?]{0,25}\b(calendly|calendario|agenda|enlace|link|disponibilidad)\b/i,
   /\b(env[íi]a|manda|pasa)\w*\s*(me|nos)?\b[^.;!?]{0,20}\b(invitaci[óo]n|invite|enlace\s+(de|para)\s+la\s+(reuni[óo]n|llamada))\b/i,
   /\btengo\s+(un\s+)?hueco\b/i, /\btengo\s+disponibilidad\b/i,
@@ -471,22 +478,39 @@ const MEETING_OPENING: RegExp[] = [
   /\blet'?s\s+(meet|talk|chat|connect|discuss|schedule|set\s+up)\b/i,
   /\b(book|schedule|set\s+up|arrange)\s+(a|the)\s+(call|meeting|demo|time)\b/i,
   /\bsend\s+(me\s+|us\s+)?(your\s+)?(calendar|booking\s+link|availability)\b/i,
-  /\b(me\s+va\s+bien|me\s+encaja|em\s+va\s+b[ée]|works\s+for\s+me|sounds\s+good)\b/i,
+
   // A concrete slot offered as a SHORT reply to an invitation ("El martes a las 12.")
   /^\W*(el\s+)?(lunes|martes|mi[ée]rcoles|jueves|viernes|dilluns|dimarts|dimecres|dijous|divendres)\b[^.]{0,25}\b\d{1,2}([:.]\d{2})?\s*(h|hrs|am|pm)?\b/i,
 ];
 
+/** WEAK openings: real interest on their own, but ALSO what an out-of-office note says
+ *  ("si es urgente llámame al 600…"). They only count when the message is NOT announcing an
+ *  absence — 36 real absence notes were being turned into "Interesado" by exactly this. */
+const MEETING_OPENING_WEAK: RegExp[] = [
+  /\b(ll[áa]ma(me|nos)|ll[áa]meme|ll[áa]menme|truca'?m)\b/i,
+  /\b(me\s+va\s+bien|me\s+encaja|em\s+va\s+b[ée]|works\s+for\s+me|sounds\s+good)\b/i,
+];
+
 const COMMERCIAL_EXPLORATION: RegExp[] = [
-  /\b(cu[áa]nto\s+(cuesta|vale|ser[íi]a|cobr\w*)|qu[ée]\s+precio|how\s+much|\bpricing\b|\bquote\b)\b/i,
-  /\b(qu[ée]\s+incluye|qu[ée]\s+ofrec[ée]is|what'?s\s+included|what\s+does\s+it\s+include)\b/i,
+  // Spanish interrogatives are ANCHORED to a clause start / "¿" — otherwise the RELATIVE pronoun
+  // "que" matches: "los servicios QUE OFRECÉIS" was read as "¿qué ofrecéis?" and turned a plain
+  // rejection ("no nos interesan los servicios que ofrecéis") into Interesado.
+  /(^|[.!?¿;:]\s*|\s¿\s*)(cu[áa]nto\s+(cuesta|vale|ser[íi]a|cobr\w*)|qu[ée]\s+precio)/i,
+  /\b(how\s+much|pricing|quote)\b/i,
+  /(^|[.!?¿;:]\s*|\s¿\s*)(qu[ée]\s+(incluye|ofrec[ée]is))/i,
+  /\b(what'?s\s+included|what\s+does\s+it\s+include)\b/i,
   // The verb must be an IMPERATIVE or a first-person desire — the \b after the group is what
   // keeps "He pasado vuestra propuesta al responsable" (a REFERRAL, case 38) from reading as a
   // request: "pasa" there is followed by "do", so the boundary fails.
-  /\b(?:(?:env[íi]a|m[áa]nda|p[áa]sa)(?:d?(?:me|nos))?|(?:enviar|mandar|pasar|facilitar|remitir)(?:me|nos)|d[ií](?:me|nos)|dame|dadme|necesito|necesitamos|quiero|queremos|quisiera|me\s+gustar[íi]a|nos\s+gustar[íi]a|solicito|send|share)\b\s*(?:me|us|nos)?\b[^.;!?]{0,28}\b(precios?|presupuesto|tarifas?|cotizaci[óo]n|propuesta|proposal|dossier|informaci[óo]n|info\b|detalles?|material|more\s+information|details)\b/i,
+  /\b(?:(?:env[íi]a|m[áa]nda|p[áa]sa)(?:d?(?:me|nos))?|(?:enviar|mandar|pasar|facilitar|remitir)(?:me|nos)|d[ií](?:me|nos)|dame|dadme|necesito|necesitamos|quiero|queremos|quisiera|me\s+gustar[íi]a|nos\s+gustar[íi]a|solicito|send|share)\b\s*(?:me|us|nos)?\b[^.;!?]{0,28}\b(precios?|presupuesto|tarifas?|cotizaci[óo]n|propuesta|proposal|dossier|informaci[óo]n|info\b(?!@)|detalles?|material|more\s+information|details)\b/i,
   // Concrete future follow-up ("escríbeme en octubre para revisarlo") = SEGUIMIENTO_FUTURO,
   // which §6 classifies as Interesado. A vague "ya veremos" never matches (needs a real date).
-  /\b(escr[íi]be(me|nos)|escrib[íi]dme|contacta(me|nos|dme)?|ll[áa]ma(me|nos)|ret[óo]ma\w*|habla\w*)\b[^.;!?]{0,25}\b(en|el|despu[ée]s\s+de|tras|a\s+partir\s+de)\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|verano|vacaciones|navidad|semana|mes|trimestre|\d{1,2})/i,
-  /\b(c[óo]mo\s+(funciona|empezamos|empiezo|comenzamos|lo\s+hacemos|ser[íi]a\s+el\s+proceso)|how\s+(does\s+it\s+work|do\s+we\s+start))\b/i,
+  // The verb MUST carry the enclitic "me/nos": the author asking US to come back to THEM. The
+  // loose form matched an out-of-office footer ("para urgencias contacte con Maria en el 600…")
+  // and turned 38 real absence notes into "Interesado".
+  /\b(escr[íi]be(?:me|nos)|escrib[íi]d(?:me|nos)|cont[áa]cta(?:me|nos)|contactad(?:me|nos)|ll[áa]ma(?:me|nos)|ret[óo]ma(?:lo|melo)|dame\s+un\s+toque|dadme\s+un\s+toque)\b[^.;!?]{0,30}\b(en|el|dentro\s+de|despu[ée]s\s+de|tras|a\s+partir\s+de)\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|verano|vacaciones|navidad|unas?\s+semanas?|un\s+mes|unos\s+meses|el\s+pr[óo]ximo|\d{1,2})/i,
+  /(^|[.!?¿;:]\s*|\s¿\s*)(c[óo]mo\s+(funciona|empezamos|empiezo|comenzamos|lo\s+hacemos|ser[íi]a\s+el\s+proceso))/i,
+  /\b(how\s+(does\s+it\s+work|do\s+we\s+start))\b/i,
   /\b(cu[ée]nta|expl[íi]ca|d[íi])(me|nos)\b[^.;!?]{0,20}\b(m[áa]s|sobre|acerca)\b/i, /\btell\s+me\s+more\b/i,
   /\b(ejemplos?|casos?\s+(de\s+)?([ée]xito|clientes|pr[áa]cticos)|referencias|case\s+stud|testimonios)\b/i,
   /\b(m[ée]s\s+informaci[óo]|envia'?m\s+informaci[óo])\b/i,
@@ -523,6 +547,20 @@ const STRONG_AUTO = [
 const BARE_PROVIDER = /\b(ya\s+)?(teng[oa]|tienes?|tienen|tenemos|contamos\s+con|cuento\s+con|trabajamos?\s+con|trabajo\s+con|disponemos\s+de|ja\s+tenim)\s+(un[oa]?\s+|otro\s+|otra\s+|nuestro\s+|nuestra\s+)?(proveedor\w*|agencia\w*|partner\w*|prove[ïi]dor\w*)\b/i;
 /** "No soy la persona adecuada" with NO named target → review, never an invented referral (case 40). */
 const NOT_RIGHT_PERSON = /\bno\s+soy\s+(yo\s+)?(la\s+|el\s+)?(persona\s+)?(indicad[oa]|adecuad[oa]|correct[oa]|encargad[oa]|responsable|qui[ée]n)/i;
+/** A cessation written in the FIRST PERSON — unmistakably the author's own words, not the
+ *  unsubscribe boilerplate every corporate footer carries. Only these override an absence note. */
+const AUTHOR_DNC: RegExp[] = [
+  /\b(d[aá]dme|dame|dadnos|danos)\s+de\s+baja\b/i, /\bme\s+doy\s+de\s+baja\b/i,
+  /\bb[óo]rr(ame|adme|enme|anos|adnos)\b/i, /\belim[íi]n(ame|adme|enme|anos|adnos)\b/i,
+  /\bqu[íi]t(ame|adme|enme|anos|adnos)\b/i, /\bs[áa]c(ame|adme|enme|anos)\b/i,
+  /\bno\s+(me|nos)\s+(escrib|contact|mand|env[íi]|llam)/i,
+  /\bno\s+(me|nos)\s+volv(?:[áa]is|as|amos)?\s+a\s+(escribir|contactar|enviar|mandar|llamar)/i,
+  /\bdeja(?:d|r)?\s+de\s+(enviarme|escribirme|contactarme|mandarme|molestarme)/i,
+  /\bdej[ée]is\s+de\s+(enviarme|escribirme|contactarme|mandarme)/i,
+  /\bremove\s+me\b/i, /\bunsubscribe\s+me\b/i, /\btake\s+me\s+off\b/i, /\bstop\s+emailing\s+me\b/i,
+  /\bno\s+m['’]escriviu\b/i, /\bno\s+em\s+(contacteu|escriviu)\b/i, /\bdoneu-?me\s+de\s+baixa\b/i,
+];
+
 const HAS_EMAIL = /\b[\w.+-]+@[\w.-]+\.\w{2,}\b/;
 
 export function classifyMessage(subject: string | null, body: string | null): MessageCategory {
@@ -534,29 +572,50 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   // ── §5.1 Delivery events: a bounce is a delivery fact, never a human intent (case 68).
   if (any(SYSTEM_BOUNCE, text)) return "out_of_office";
 
-  // ── §5.1 An explicit cessation request outranks EVERYTHING, including an accompanying
-  // interest ("me interesa, pero eliminadme de la lista") or a call asked for only to demand
-  // that we stop writing (cases 15, 18, 27, 53, 55). "La baja manda".
-  if (any(DO_NOT_CONTACT, text)) return "no_contactar";
-
-  // ── §5.2 A PURELY automatic message stops the commercial analysis (cases 41, 42, 45).
+  // ── §5.2 A PURELY automatic message carries no human intent at all — stop here (41, 42, 45).
   if (any(STRONG_AUTO, text)) return "out_of_office";
+
+  // Computed once: it decides BOTH whether an absence note is really a human reply (case 43)
+  // and the Interesado verdict below.
+  const strongOpening = hasAffirmedOpening(text, MEETING_OPENING) || hasAffirmedOpening(text, COMMERCIAL_EXPLORATION);
+  const announcesAbsence = any(LEFT_COMPANY, text) || any(OUT_OF_OFFICE, text);
+  // Inside an absence note, an opening phrased as an INSTRUCTION to us ("para agendar llamadas
+  // podéis reservar en este enlace", "please contact +33…", "para cualquier urgencia") is the
+  // auto-reply's standard boilerplate, not the person answering our offer. A first-person
+  // commitment ("podemos agendar una reunión", "envíame una convocatoria") is unaffected.
+  const IMPERSONAL_INSTRUCTION = /\b(pod[ée]is|pueden|puede\s+(contactar|escribir|dirigirse)|please\b|for\s+(any\s+)?\w{2,12}\s+request|para\s+(cualquier|asuntos?|urgencias?|agendar|toda)|en\s+caso\s+de|si\s+(es|fuera)\s+urgente|veuillez\s+contacter|pod(eu|reu)|si\s+hi\s+ha(gu[ée]s)?|per\s+(a\s+)?(qualsevol|urg)|en\s+cas\s+de|por\s+si\s+quieres|te\s+dejo\s+mi\s+(calendario|agenda)|a\s+la\s+vuelta|a\s+mi\s+(vuelta|regreso)|cuando\s+(vuelva|regrese))\b/i;
+  // A WEAK opening ("llámame", "me va bien") only counts outside an absence note.
+  const opening = (announcesAbsence && IMPERSONAL_INSTRUCTION.test(text))
+    ? false
+    : strongOpening || (!announcesAbsence && hasAffirmedOpening(text, MEETING_OPENING_WEAK));
+
+  // ── §5.2 Absence / left-the-company, checked BEFORE the cessation rule ON PURPOSE: an
+  // out-of-office auto-reply very often carries an "unsubscribe / darse de baja" link in its
+  // FOOTER, and reading that as the person's own request wrongly suppressed real leads (53 real
+  // messages found in the history). Guarded three ways: it never applies when the person opened
+  // the door ("estoy fuera, pero podemos hablar el lunes", case 43), when they say they are BACK,
+  // or when the cessation is written in the FIRST PERSON — those words are the author's, not a
+  // footer's, so a genuine "estoy de vacaciones… y no me escribáis más" still unsubscribes.
+  const RETURNED = /\b(acabo|acabamos|reci[ée]n)\s+(de\s+)?(regres|volv|vuelt)\w*|\b(ya\s+)?(he|hemos)\s+(vuelto|regresado)\b|\b(regres[ée]|regresamos|volv[íi]|volvimos)\s+de\s+(las?\s+|mis\s+)?vacaciones|\bde\s+vuelta\s+(de|en|al?)\b|\bestoy\s+de\s+vuelta\b|\bback\s+from\s+(my\s+|the\s+)?(holiday|vacation|leave|trip)\b|\b(just|now)\s+(got\s+)?back\b/i;
+  const returned = RETURNED.test(text);
+  if (!opening && !returned && !any(AUTHOR_DNC, text)) {
+    // A PERMANENT exit with an explicit hand-off is a referral, not an absence (§7).
+    // A permanent exit that names a replacement (a referral phrase OR simply an alternative
+    // address) is a hand-off, not an absence (§7).
+    if (any(LEFT_COMPANY, text)) return (any(REFERRAL, text) || HAS_EMAIL.test(text)) ? "derivado" : "out_of_office";
+    if (any(OUT_OF_OFFICE, text)) return "out_of_office";
+  }
+
+  // ── §5.1 An explicit cessation request outranks everything else a human wrote, including an
+  // accompanying interest ("me interesa, pero eliminadme de la lista", case 18) or a call asked
+  // for only to demand that we stop writing (case 53). "La baja manda".
+  if (any(DO_NOT_CONTACT, text)) return "no_contactar";
 
   // ── §5.3 / §5.4 THE INVARIANT: a real, AFFIRMED commercial opening (meeting/call/demo, or a
   // price/proposal/info request) is INTERESADO even alongside objections — "ya tenemos proveedor
   // pero podemos conoceros", "no tengo presupuesto ahora, pero hagamos una reunión". Runs before
   // referral and rejection so an objection can never bury a genuine opening.
-  if (hasAffirmedOpening(text, MEETING_OPENING)) return "interested";
-  if (hasAffirmedOpening(text, COMMERCIAL_EXPLORATION)) return "interested";
-
-  // Absence / left-the-company — evaluated only now, so a HUMAN "estoy fuera, pero podemos hablar
-  // el lunes" already returned Interesado above (case 43). "Acabo de volver de vacaciones" is a
-  // RETURN, not an absence (real case, Circutor).
-  const RETURNED = /(acabo|acabamos|reci[ée]n|ya)\s+(de\s+)?(regres|volv|vuelt)\w*|\b(he|hemos)\s+(vuelto|regresado)\b|\b(regres|volv|vuelv)\w*\s+de\s+(las?\s+|mis\s+)?vacaciones|\bde\s+vuelta\s+(de|en|al?)\b|\bestoy\s+de\s+vuelta\b|\bback\s+from\s+(my\s+|the\s+)?(holiday|vacation|leave|trip)\b|\b(just|now)\s+(got\s+)?back\b/i;
-  const returned = RETURNED.test(text);
-  // A PERMANENT exit with an explicit hand-off is a referral, not an absence (§7).
-  if (!returned && any(LEFT_COMPANY, text)) return any(REFERRAL, text) ? "derivado" : "out_of_office";
-  if (!returned && any(OUT_OF_OFFICE, text)) return "out_of_office";
+  if (opening) return "interested";
 
   // ── §7 "No soy la persona adecuada" with NO named target or address → REVIEW. Never invent a
   // referral contact (case 40).

@@ -128,4 +128,102 @@ describe("spec §13 — acceptance cases", () => {
       "No me interesa la reunión que proponéis.",
     ]) expect(classifyMessage(null, m), m).not.toBe("interested");
   });
+
+  it("REAL: an out-of-office footer must never suppress the lead", () => {
+    // Found in the live history (53 messages): an absence auto-reply whose FOOTER carries an
+    // unsubscribe/RGPD line was being read as the person's own cessation request → "No contactar",
+    // which suppresses a perfectly good lead. The absence must win.
+    const ooo = [
+      "Hola, me encuentro fuera de la oficina hasta el 9 de septiembre. Para cualquier consulta contacte con recepcion. Si no desea recibir mas correos puede darse de baja aqui. Aviso RGPD.",
+      "Estare ausente hasta el lunes. Puede darse de baja de nuestra lista de distribucion en cualquier momento.",
+    ];
+    for (const m of ooo) expect(classifyMessage(null, m), m).toBe("out_of_office");
+
+    // …but a cessation the person writes THEMSELVES still unsubscribes, even inside an absence note.
+    expect(classifyMessage(null, "Estoy de vacaciones hasta el 20. Y por cierto, no me escribais mas.")).toBe("no_contactar");
+    expect(classifyMessage(null, "Estare fuera esta semana. Borrame de la lista, gracias.")).toBe("no_contactar");
+  });
+
+  it("REAL: a clear rejection is never Interesado (reported case)", () => {
+    for (const m of [
+      "Buenos d\u00edas, te agradezco tu email pero no estamos interesados, saludos.",
+      "Te agradezco el inter\u00e9s, pero de momento no estamos interesados. Gracias.",
+      "La verdad es que no estamos interesados. Muchas gracias!",
+    ]) expect(classifyMessage("RE: Juanjo - Grup Tramuntana", m), m).toBe("not_interested");
+  });
+
+  it("REAL: our OWN quoted pitch must never count as the lead's interest", () => {
+    // The reply header often arrives folded onto ONE line ("De: X Enviado el: …"). When the cut
+    // failed, OUR outreach below it was classified and turned a rejection into "Interesado"
+    // (real: Surinver, Suma Capital, Carrocerias JAZ).
+    const surinver = "Buenos dias, en este momento no tenemos presupuesto disponible para esta inversion. Gracias De: Alfons Pons Enviado el: martes, 8 de septiembre de 2026 9:27 Para: AD Francisco Asunto: idea para Surinver Hola Francisco, En Surinver seguro que conoceis el reto de encontrar personal. He preparado una demo de 10 minutos donde te enseno como lo hariamos. Te abririas a verla esta semana?";
+    expect(classifyMessage(null, surinver)).toBe("not_interested");
+    const suma = "Gracias Enric. No interesa. De: Enric Lopez Enviado el: lunes, 7 de septiembre de 2026 11:56 Para: Andres Asunto: que la IA recomiende a Suma Capital Hola Andres, queria retomarlo. Podemos agendar una reunion esta semana?";
+    expect(classifyMessage(null, suma)).toBe("not_interested");
+  });
+
+  it("REAL: an absence note is not an opening, and courtesy is not a meeting", () => {
+    // "llámame si es urgente" inside an out-of-office is not commercial interest (36 real cases).
+    expect(classifyMessage("FUERA DEL ESCRITORIO - OOO",
+      "Hola! Estare fuera de mi escritorio hasta el martes 15 y respondere lo antes posible. Si hay algo urgente por favor escribeme o llamame via WhatsApp al +34 648 253 394. Un abrazo.")).toBe("out_of_office");
+    // "Quedamos a su disposición" is standard courtesy, not "let's meet"; the hand-off wins.
+    expect(classifyMessage("Actualizacion de contacto",
+      "Le informamos que Roberto Garcia ya no forma parte de nuestra empresa. Para cualquier consulta le solicitamos que se comunique con Cesar Herrero a traves del correo cesar.herrero@toybe.es. Quedamos a su disposicion para cualquier informacion adicional.")).toBe("derivado");
+    // …but a genuine human opening inside an absence still wins (spec case 43).
+    expect(classifyMessage(null, "Estoy fuera esta semana, pero podemos hacer una reunion el lunes.")).toBe("interested");
+  });
+
+  it("REAL: hot leads buried under an absence line are recovered", () => {
+    // All three were sitting in "Fuera / Auto" because the mail also mentions being away.
+    expect(classifyMessage("RE: Alfons - AIJU", "Buenos dias Alfons, vemos muy interesante poder mantener una reunion para profundizar. La semana que viene estare fuera por lo que, si te parece bien, podemos agendar una reunion via Teams a partir del 15 de septiembre.")).toBe("interested");
+    expect(classifyMessage("Re: Javier - Cartronic", "Buenos dias Javier, ya estamos operativos tras el periodo vacacional, tendrias un hueco para contarnos sobre vuestra herramienta la semana que viene? El lunes o martes a las 16:00 estamos disponibles. Pasanos convocatoria.")).toBe("interested");
+    expect(classifyMessage("RE: CIRCUTOR", "Hola Javier, acabo de regresar de las vacaciones y estaria interesado en escucharte. Si te va bien, enviame una convocatoria de Teams para cualquier tarde de esta semana.")).toBe("interested");
+  });
+
+  it("REAL: auto-reply boilerplate is not an opening, and plural rejections are rejections", () => {
+    // An address like info@cemg.fr must not match the "info" token (it did, via `\binfo\b`).
+    expect(classifyMessage("Out of office", "Dear Senders, Thank you for your email, I have no access to my email until 1/09/2026. For AOG request please contact +33 6 67 83 65 36 or send your mail to info@cemg.fr. Regards")).toBe("out_of_office");
+    // A booking link offered inside a holiday auto-reply is boilerplate, not a meeting accepted.
+    expect(classifyMessage("Vacaciones", "Hola, estare de vacaciones del 17 al 30 de agosto. Para cualquier asunto urgente podeis contactar con alexandra@ageworld.com. Para agendar llamadas a partir de septiembre, podeis reservar directamente a traves de este enlace.")).toBe("out_of_office");
+    // "no tenemos necesidades" (plural) and "no tenemos esta necesidad" are rejections.
+    expect(classifyMessage(null, "Muchas gracias por el mensaje y el ofrecimiento. En este momento no tenemos necesidades al respecto. Si mas adelante las tuviesemos os tendremos en cuenta.")).toBe("not_interested");
+    expect(classifyMessage(null, "Muchas gracias por el ofrecimiento, pero en estos momentos no tenemos esta necesidad. Saludos.")).toBe("not_interested");
+    // "Mensaje originalDe:" (marker folded into the header) must still cut OUR quoted pitch.
+    expect(classifyMessage(null, "Hola, de momento no tenemos necesidad, si surge algo os tendremos en cuenta. Gracias. Mensaje originalDe: John Lopez Enviado el: viernes, 14 de agosto Para: gerencia Asunto: john - JAZ Hola Joel, podemos agendar una reunion esta semana para ensenarte una demo?")).toBe("not_interested");
+  });
+
+  it("REAL: the RELATIVE 'que' is not the interrogative '¿qué?'", () => {
+    // "los servicios QUE OFRECÉIS" was matching the "¿qué ofrecéis?" rule and flipping a plain
+    // rejection into Interesado (real: ONILSA, Simplicity Agency).
+    expect(classifyMessage(null, "No nos interesan los servicios que ofreceis.")).toBe("not_interested");
+    expect(classifyMessage(null, "Muchas gracias por tu ofrecimiento pero no estamos interesados en contratar los servicios que ofreceis. Un saludo")).toBe("not_interested");
+    // …the real interrogative still counts as commercial exploration.
+    expect(classifyMessage(null, "¿Que ofreceis exactamente?")).toBe("interested");
+    expect(classifyMessage(null, "Hola. Que incluye el servicio?")).toBe("interested");
+  });
+
+  it("REAL: conditional rejection, negated availability, Catalan auto-reply", () => {
+    // "no estaria interesado" fell through to the bare word "interesado" → Interesado.
+    expect(classifyMessage(null, "Gracias no estaria interesado. Mensaje originalDe: Javier Lopez Enviado el: lunes 10 de agosto Asunto: una idea Hola, podemos agendar una reunion?")).toBe("not_interested");
+    // "Hoy NO estoy disponible" is an absence, not the availability that signals interest.
+    expect(classifyMessage(null, "Gracias por tu mensaje. Hoy no estoy disponible. Respondere a tu correo a mi vuelta. Un saludo.")).toBe("out_of_office");
+    // …the affirmative form still signals interest.
+    expect(classifyMessage(null, "Estoy disponible el jueves por la manana para la llamada.")).toBe("interested");
+    // Catalan out-of-office boilerplate is not an opening.
+    expect(classifyMessage("Out of office - OOO", "Bon dia! Gracies per escriure'm. Estare OOO fins al dia 24 d'agost. Si hi hagues alguna urgencia podeu contactar amb el meu equip.")).toBe("out_of_office");
+  });
+
+  it("REAL: a FUTURE return is still an absence; an auto-reply calendar is not an acceptance", () => {
+    // "ya volveré a estar operativo" is future — the person is STILL away. Treating it as "I'm
+    // back" disabled the absence branch and a signature "Virtual Meeting" made it Interesado.
+    expect(classifyMessage("Out of office - OOO",
+      "Bon dia! Gracies per escriure'm. Estare OOO fins al dia 24 d'agost, que ja tornare a estar operatiu. Buenos dias! Estare OOO hasta el dia 24 de agosto, que ya volvere a estar operativo. Si hubiera alguna urgencia podeis contactar con borja@adsmurai.com. Xavi Marin New Business Lead Virtual Meeting")).toBe("out_of_office");
+    // A holiday auto-reply that leaves its calendar "para la vuelta" is boilerplate.
+    expect(classifyMessage("Fuera de la oficina",
+      "Hola! Estare fuera de la oficina hasta el 23 de Agosto. Tendre acceso limitado al correo. Te respondere a mi vuelta. Te dejo mi calendario por si quieres agendar una reunion a la vuelta. Feliz verano")).toBe("out_of_office");
+    // …a PAST return that opens the door is still Interesado (spec, Circutor).
+    expect(classifyMessage(null, "Acabo de regresar de las vacaciones y estaria interesado en escucharte. Enviame una convocatoria de Teams.")).toBe("interested");
+    // an adverb between "no estamos" and "interesados" must not break the rejection
+    expect(classifyMessage(null, "Os agradecemos la propuesta pero no estamos actualmente interesados. Gracias y saludos.")).toBe("not_interested");
+  });
 });

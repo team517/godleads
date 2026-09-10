@@ -138,7 +138,9 @@ const CASES: Array<[string[], string]> = [
   [["derivado"], "Adding Sanvi/Sukhdev in the loop. Hi Maria, please connect with Sanvi and she will take it from here."],
   [["derivado"], "Hola, este tema deberías tratarlo con la persona de comunicación. Rita"],
   [["no_contactar"], "Go away"],
-  [["out_of_office"], "Estimados colaboradores: La cuenta de correo angel.jimenez@tourdiez.com dejará de estar operativa en breve. Rogamos envíen sus comunicados a contratacion@tourdiez.com"],
+  // SPEC §7: a PERMANENT mailbox closure that names a replacement address is an explicit
+  // hand-off → Derivado (not a temporary absence).
+  [["derivado"], "Estimados colaboradores: La cuenta de correo angel.jimenez@tourdiez.com dejará de estar operativa en breve. Rogamos envíen sus comunicados a contratacion@tourdiez.com"],
   [["question", "interested"], "Maria, Before I consider a meeting do you have some idea on costs?"],
   // "in-house" in a signature tagline must NOT be a rejection; real in-house statements still are
   [["not_interested"], "Thanks, but we handle lead generation in-house."],
