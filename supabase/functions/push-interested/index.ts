@@ -1,4 +1,4 @@
-// Detects NEW interested replies server-side and pushes a phone notification.
+// Detects NEW interested replies AND questions server-side, and pushes a phone notification.
 //
 // Why this exists: classification used to run only in the browser, so a lead's "me interesa"
 // was labelled solely when somebody opened the Unibox — useless for alerting a phone that is
@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
       !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
 
     let scanned = 0, notified = 0, alreadyLabelled = 0;
-    const sample: { from: string; subject: string }[] = [];
+    const sample: { tipo: string; from: string; subject: string }[] = [];
 
     // Already pushed? One indexed lookup for the whole batch.
     const ids = (msgs || []).map((m) => m.id);
@@ -73,18 +73,22 @@ Deno.serve(async (req) => {
       if (!isRealReply(m)) continue;   // PostgREST cannot tell NULL from '' — check it here
       if (yaEnviados.has(m.id)) { alreadyLabelled++; continue; }
       const labels: string[] = (m.labels as string[] | null) || [];
-      // Trust a human/UI verdict when there is one: "Interesado" from the Unibox still rings the
-      // phone, and any OTHER category means somebody already judged it as not interesting.
+      // The SERVER classifier decides, on its own. A label already in the row is not a vote: the
+      // browser writes those with whatever build is deployed, and today that one files binary
+      // image bodies and automatic acknowledgements under "Pregunta" — alerting on those would
+      // buzz the phone for nothing.
+      const verdict = classifyMessage(m.subject, m.body_text);
+      if (verdict !== "interested" && verdict !== "question") continue;
+      const esPregunta = verdict === "question";
+      const etiqueta = esPregunta ? "Pregunta" : "Interesado";
       const marked = labels.find((l) => CATEGORY_LABELS.includes(l));
-      if (marked && marked !== "Interesado") { alreadyLabelled++; continue; }
-      if (marked !== "Interesado" && classifyMessage(m.subject, m.body_text) !== "interested") continue;
 
       if (!dryRun) {
         // Record the push FIRST: if anything below throws, the worst case is a missed alert,
         // never the same lead buzzing the phone every two minutes.
         const { error: dupErr } = await admin.from("push_notified").insert({ message_id: m.id, user_id: m.user_id });
         if (dupErr) { alreadyLabelled++; continue; }   // another tick got there first
-        if (!marked) await admin.from("inbox_messages").update({ labels: [...labels, "Interesado"] }).eq("id", m.id);
+        if (!marked) await admin.from("inbox_messages").update({ labels: [...labels, etiqueta] }).eq("id", m.id);
         const who = (m.from_name || "").trim() || (m.from_email || "").split("@")[0];
         const preview = String(m.body_text || "").replace(/\s+/g, " ").trim().slice(0, 110);
         await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
@@ -92,14 +96,14 @@ Deno.serve(async (req) => {
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
           body: JSON.stringify({
             user_id: m.user_id,
-            title: `🔥 Interesado — ${who}`,
-            body: preview || m.subject || "Nueva respuesta interesada",
+            title: `${esPregunta ? "❓ Pregunta" : "🔥 Interesado"} — ${who}`,
+            body: preview || m.subject || (esPregunta ? "Te han preguntado algo" : "Nueva respuesta interesada"),
             url: "/unibox",
           }),
         }).catch(() => { /* push is best-effort; push_notified is what prevents repeats */ });
       }
       notified++;
-      if (sample.length < 5) sample.push({ from: m.from_email, subject: String(m.subject || "").slice(0, 60) });
+      if (sample.length < 6) sample.push({ tipo: etiqueta, from: m.from_email, subject: String(m.subject || "").slice(0, 55) });
     }
 
     return new Response(JSON.stringify({ dry_run: dryRun, revisados: scanned, ya_etiquetados: alreadyLabelled, notificados: notified, muestra: sample }),

@@ -50,4 +50,35 @@ describe("clasificaciones en vivo 2026-09-10", () => {
   it("una aceptación breve sigue siendo Interesado", () => {
     expect(classifyMessage("Re: una idea", "Sí nos viene bien verlo mañana. Qué te parece?")).toBe("interested");
   });
+
+  it("'más adelante' no es '¡adelante!'", () => {
+    // El cortés "me lo guardo por si acaso" salía Interesado y habría hecho sonar el móvil.
+    expect(classifyMessage("Re: XAVI", "Me guardo el contacto en caso de necesitarlo más adelante.")).toBe("neutral");
+    expect(classifyMessage("Re: XAVI", "Lo hablamos más adelante, ahora no es el momento.")).not.toBe("interested");
+    // …pero el "adelante" de verdad sigue siendo un sí.
+    expect(classifyMessage("Re: propuesta", "Sí, adelante. ¿Cuándo lo vemos?")).toBe("interested");
+    expect(classifyMessage("Re: propuesta", "Adelante, cuéntame más.")).toBe("interested");
+  });
+
+  it("corta la cita cuando la cabecera va en varias líneas", () => {
+    // Una cabecera "De: / Fecha: / Para: / Asunto:" repartida en varias líneas dejaba NUESTRO
+    // propio correo dentro del texto atribuido al lead.
+    const cuerpo = [
+      "Hola Xavi, te agradezco la información.",
+      "En estos momentos trabajamos con una empresa similar a la tuya y tenemos los servicios cubiertos.",
+      "",
+      "De: xavi Lopez",
+      "Fecha: jueves, 10 de septiembre de 2026, 18:08",
+      "Para: Josep Vicent Ferre",
+      "Asunto: XAVI - Ferre&Ferre",
+      "",
+      "te he preparado una demo personalizada, ¿te va bien verlo 10 minutos esta semana?",
+    ].join("\n");
+    expect(classifyMessage("Re: XAVI - Ferre&Ferre", cuerpo)).toBe("neutral");
+  });
+
+  it("un adjunto sin descodificar no es una pregunta", () => {
+    expect(classifyMessage("RE: XAVI - Beroni", "JFIFC   C k\" }!1AQa\"q2#BR$3br %&'()*456789:?????")).toBe("neutral");
+    expect(classifyMessage("RE: STV", "ExifII*Ducky &Adobed Wa 0\"41!\"A2BR3Cs0!10aAQ^hgxjl[=x???dU^2f")).toBe("neutral");
+  });
 });

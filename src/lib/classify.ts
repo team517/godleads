@@ -39,6 +39,11 @@ const QUOTE_MARKERS: RegExp[] = [
   // client folds it — requiring a newline let OUR OWN pitch below it be classified as the lead's
   // words (real: Surinver, Suma Capital, Carrocerias JAZ read as Interesado).
   /\b(de|from|von)\s*:\s*[^\n]{1,160}?\s*(enviado el|enviado|sent|gesendet|date|fecha|envoyé)\s*:/i,
+  // …and the same block split across LINES ("De: xavi Lopez\nFecha: jueves…\nPara:…\nAsunto:…").
+  // The single-line pattern above cannot span newlines, so our own pitch quoted underneath was
+  // read as the lead's words: a polite decline ("tenemos los servicios cubiertos") came out as
+  // Interesado because our "¿te va bien verlo 10 minutos?" sat right below it.
+  /(^|\n)\s*(de|from|von)\s*:[^\n]{0,140}\n(?:[^\n]{0,140}\n){0,2}?\s*(enviado(\s+el)?|sent|gesendet|fecha|date|envoy[ée]|para|to|an|asunto|subject|betreff|objet)\s*:/i,
 ];
 const FOOTER_MARKERS: RegExp[] = [
   /\b(aviso legal|legal notice|disclaimer|cláusula de confidencialidad)\b/i,
@@ -398,7 +403,11 @@ const INTERESTED = [
   SEND_INFO,
   /(quiero|queremos|me gustar[íi]a)\s+(una demo|probar|ver[l]?o|conocer)/i,
   /(s[íi]|yes)[,! ]+(claro|por supuesto|encantad|adelante|please|sure|absolutely|of course|me interesa|hablamos)/i,
-  /(adelante|dale|perfecto,?\s*hablamos|vamos adelante|go ahead|let'?s do it)/i,
+  /\b(dale|perfecto,?\s*hablamos|vamos adelante|go ahead|let'?s do it)\b/i,
+  // "adelante" ONLY as the go-ahead itself — at the start of a clause or right after "sí".
+  // Bare, it also matched "más adelante" / "sacar el proyecto adelante", so the classic polite
+  // brush-off ("me guardo el contacto por si lo necesito más adelante") came out as Interesado.
+  /(^|[.!?¿;:]\s*|\bs[íi],?\s+)adelante\b/i,
   // Acceptance + awaiting-your-reply (real case, ASG: "De acuerdo. Vamos a ver ese análisis
   // que comentas… Quedo pendiente de tus noticias" — a skeptical but ENGAGED yes, was sitting
   // under a stale "No contactar"). Kept in INTERESTED (not ENGAGEMENT) so an explicit
@@ -578,9 +587,23 @@ const AUTHOR_DNC: RegExp[] = [
 
 const HAS_EMAIL = /\b[\w.+-]+@[\w.-]+\.\w{2,}\b/;
 
+/** An attachment that never got decoded (JFIF/Exif/PNG bytes dumped into body_text). It is not
+ *  language, and its stray "?" bytes read as a question — real mail from stvcom.com and
+ *  beroni.com was filed as "Pregunta" and would have buzzed the phone for an image. */
+export function looksBinary(raw: string | null): boolean {
+  const t = (raw || "").slice(0, 1500);
+  if (t.length < 20) return false;
+  // No trailing \b: the bytes run straight into the next character ("JFIFC…").
+  if (/\b(JFIF|Exif|IHDR|IDAT|GIF8[79]a|%PDF-|Adobed|sRGB)/.test(t)) return true;
+  // Share of characters that are not letters, digits, punctuation or spaces.
+  const rare = (t.match(/[^\p{L}\p{N}\p{P}\p{Zs}\n\r\t]/gu) || []).length;
+  return rare / t.length > 0.12;
+}
+
 export function classifyMessage(subject: string | null, body: string | null): MessageCategory {
   const subjectText = prep(subject);
-  const bodyText = prep(body);
+  // A binary body is dropped, not read: the subject alone can still carry a real reply.
+  const bodyText = looksBinary(body) ? "" : prep(body);
   const text = `${subjectText} ${bodyText}`.trim();
   if (text.replace(/\s+/g, "").length < 2) return "neutral"; // nothing meaningful to read
 
