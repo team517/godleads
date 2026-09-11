@@ -105,7 +105,7 @@ export default function Stats() {
             <CardContent className="p-4">
               <p className="text-xs font-medium text-muted-foreground">{stat.label}</p>
               <p className={`font-display text-2xl font-bold mt-1 ${stat.highlight ? "text-primary" : ""}`}>{stat.value}</p>
-              <p className="text-[11px] text-muted-foreground/70 mt-0.5">{stat.sub}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{stat.sub}</p>
             </CardContent>
           </Card>
         ))}
@@ -175,7 +175,7 @@ export default function Stats() {
                           <p className="text-muted-foreground">· {p.followups.toLocaleString("es")} follow-ups</p>
                           {p.respuestas > 0 && <p style={{ color: "hsl(var(--success))" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
                           <p className="mt-1 border-t border-border pt-1 font-semibold" style={{ color: "hsl(var(--success))" }}>
-                            Reply rate: {replyRate === null ? "—" : `${replyRate.toFixed(1).replace(".", ",")}%`}
+                            Tasa de respuesta: {replyRate === null ? "—" : `${replyRate.toFixed(1).replace(".", ",")}%`}
                           </p>
                         </div>
                       );

@@ -474,7 +474,7 @@ export default function CampaignSequences({ campaignId }: Props) {
       delay_days: order === 1 ? 0 : 2,
       variants: [] as any,
     }).select("id").single();
-    toast.success(`Step ${order} añadido`);
+    toast.success(`Paso ${order} añadido`);
     load().then(() => { if (data) setSelectedStepId(data.id); });
   };
 
@@ -816,7 +816,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                 className={`w-full text-left p-3 transition-colors border-b ${isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/50"}`}
               >
                 <div className="flex items-start gap-2.5">
-                  <GripVertical className="mt-1 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/40 active:cursor-grabbing" />
+                  <GripVertical className="mt-1 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing" />
                   <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${isSelected ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
                     {String(i + 1).padStart(2, "0")}
                   </span>
@@ -908,7 +908,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                 disabled={!canUndo}
                 title="Deshacer — recupera lo que borraste o cambiaste sin querer"
                 aria-label="Deshacer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:pointer-events-none"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:bg-muted disabled:opacity-70 disabled:pointer-events-none"
               >
                 <Undo2 className="h-3.5 w-3.5" />
               </button>
@@ -918,7 +918,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                 disabled={!canRedo}
                 title="Rehacer"
                 aria-label="Rehacer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:pointer-events-none"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:bg-muted disabled:opacity-70 disabled:pointer-events-none"
               >
                 <Redo2 className="h-3.5 w-3.5" />
               </button>
@@ -988,7 +988,7 @@ export default function CampaignSequences({ campaignId }: Props) {
               </Select>
               {variants[activeVariantIndex - 1]?.tag_filter
                 ? <span className="text-[11px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
-                : <span className="text-[11px] text-muted-foreground/70">→ la envían todas las cuentas (rotación normal)</span>}
+                : <span className="text-[11px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
             </div>
           )}
 
@@ -1091,7 +1091,7 @@ export default function CampaignSequences({ campaignId }: Props) {
           {/* Attached files for this step — shown ONLY when there are any. The "Adjuntar archivo"
               button lives in the bottom toolbar. Each file rides with EVERY email of the step. */}
           {stepAttachments.length > 0 && (
-            <div className="border-t px-4 py-2 bg-muted/10">
+            <div className="border-t border-border px-4 py-2 bg-muted/40">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos de este paso:</span>
                 {stepAttachments.map((a, i) => (
@@ -1259,11 +1259,11 @@ export default function CampaignSequences({ campaignId }: Props) {
       ) : (
         <div className="flex-1 border border-l-0 rounded-r-lg bg-card flex items-center justify-center">
           <div className="text-center text-muted-foreground">
-            <GitBranch className="h-10 w-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm font-medium">Selecciona un step o crea uno nuevo</p>
+            <GitBranch className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-70" />
+            <p className="text-sm font-medium">Selecciona un paso o crea uno nuevo</p>
             <p className="text-xs mt-1">Crea tu secuencia de follow-ups</p>
             <Button size="sm" className="mt-4 gap-1.5" onClick={addStep}>
-              <Plus className="h-3.5 w-3.5" /> Crear primer step
+              <Plus className="h-3.5 w-3.5" /> Crear primer paso
             </Button>
           </div>
         </div>
@@ -1365,7 +1365,7 @@ export default function CampaignSequences({ campaignId }: Props) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setShowTestEmail(false)}>Cancelar</Button>
-          <Button onClick={sendTestEmail} disabled={!testTo || !testAccountId || testSending} className="gap-1.5">
+          <Button onClick={sendTestEmail} disabled={!testTo || !testAccountId || testSending} variant={!testTo || !testAccountId ? "secondary" : "default"} className="gap-1.5">
             {testSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizonal className="h-3.5 w-3.5" />}
             Enviar prueba
           </Button>
@@ -1389,7 +1389,7 @@ export default function CampaignSequences({ campaignId }: Props) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setShowSaveTemplate(false)}>Cancelar</Button>
-          <Button onClick={saveTemplate} disabled={!templateName || savingTemplate} className="gap-1.5">
+          <Button onClick={saveTemplate} disabled={!templateName || savingTemplate} variant={!templateName ? "secondary" : "default"} className="gap-1.5">
             <Save className="h-3.5 w-3.5" /> Guardar
           </Button>
         </DialogFooter>
@@ -1484,7 +1484,7 @@ export default function CampaignSequences({ campaignId }: Props) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setShowAiGenerate(false)}>Cancelar</Button>
-          <Button onClick={generateWithAI} disabled={aiGenerating || !aiContext.trim()} className="gap-1.5">
+          <Button onClick={generateWithAI} disabled={aiGenerating || !aiContext.trim()} variant={!aiContext.trim() ? "secondary" : "default"} className="gap-1.5">
             {aiGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
             {aiGenerating ? "Generando..." : "Generar secuencia"}
           </Button>

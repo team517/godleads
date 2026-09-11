@@ -49,13 +49,13 @@ export default function CampaignDetail({ campaignId }: Props) {
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
       <TabsList className="w-full justify-start flex-wrap h-auto gap-1 p-1">
-        <TabsTrigger value="analytics" className="gap-1 text-xs"><BarChart3 className="h-3.5 w-3.5" /> Analytics</TabsTrigger>
+        <TabsTrigger value="analytics" className="gap-1 text-xs"><BarChart3 className="h-3.5 w-3.5" /> Analítica</TabsTrigger>
         <TabsTrigger value="leads" className="gap-1 text-xs"><Users className="h-3.5 w-3.5" /> Leads</TabsTrigger>
-        <TabsTrigger value="sequences" className="gap-1 text-xs"><ListChecks className="h-3.5 w-3.5" /> Sequences</TabsTrigger>
+        <TabsTrigger value="sequences" className="gap-1 text-xs"><ListChecks className="h-3.5 w-3.5" /> Secuencias</TabsTrigger>
         <TabsTrigger value="sent" className="gap-1 text-xs"><Mail className="h-3.5 w-3.5" /> Enviados</TabsTrigger>
         <TabsTrigger value="accounts" className="gap-1 text-xs"><AtSign className="h-3.5 w-3.5" /> Cuentas</TabsTrigger>
-        <TabsTrigger value="schedule" className="gap-1 text-xs"><Clock className="h-3.5 w-3.5" /> Schedule</TabsTrigger>
-        <TabsTrigger value="options" className="gap-1 text-xs"><Settings className="h-3.5 w-3.5" /> Options</TabsTrigger>
+        <TabsTrigger value="schedule" className="gap-1 text-xs"><Clock className="h-3.5 w-3.5" /> Horario</TabsTrigger>
+        <TabsTrigger value="options" className="gap-1 text-xs"><Settings className="h-3.5 w-3.5" /> Opciones</TabsTrigger>
         <TabsTrigger value="unsubscribes" className="gap-1 text-xs"><Ban className="h-3.5 w-3.5" /> Bajas</TabsTrigger>
         {crmEnabled && (
           <TabsTrigger value="crm" className="gap-1 text-xs"><Heart className="h-3.5 w-3.5" /> CRM</TabsTrigger>

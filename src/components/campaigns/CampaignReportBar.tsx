@@ -10,10 +10,10 @@ type Metrics = { sent: number; contacted: number; opened: number; replied: numbe
 interface Props { campaign: any; metrics?: Metrics | null; }
 
 const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play }> = {
-  active:    { label: "Active",    cls: "text-emerald-600 dark:text-emerald-400", icon: Play },
-  paused:    { label: "Paused",    cls: "text-amber-600 dark:text-amber-400",     icon: Pause },
-  draft:     { label: "Draft",     cls: "text-muted-foreground", icon: FileEdit },
-  completed: { label: "Completed", cls: "text-blue-600 dark:text-blue-400",       icon: FileEdit },
+  active:    { label: "Activa",    cls: "text-emerald-600 dark:text-emerald-400", icon: Play },
+  paused:    { label: "Pausada",   cls: "text-amber-600 dark:text-amber-400",     icon: Pause },
+  draft:     { label: "Borrador",  cls: "text-muted-foreground", icon: FileEdit },
+  completed: { label: "Completada", cls: "text-blue-600 dark:text-blue-400",       icon: FileEdit },
 };
 
 /** Instantly-style report bar: campaign details on the left, key metrics on the right. */
@@ -90,12 +90,12 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
   const StatusIcon = meta.icon;
 
   const metrics = [
-    { key: "sent",     label: "Sent",          value: m.sent,          sub: null,            icon: Send,               color: "text-primary" },
-    { key: "contacted",label: "Contacted",     value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
-    { key: "opened",   label: "Opened",        value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
-    { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
-    { key: "positive", label: "Positive Reply", value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
-    { key: "bounced",  label: "Bounced",       value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
+    { key: "sent",     label: "Enviados",      value: m.sent,          sub: null,            icon: Send,               color: "text-primary" },
+    { key: "contacted",label: "Contactados",   value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
+    { key: "opened",   label: "Abiertos",      value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
+    { key: "replied",  label: "Respondidos",   value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
+    { key: "positive", label: "Positivos",     value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
+    { key: "bounced",  label: "Rebotados",     value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
     // "Sender Bounced" removed — it counted transient SMTP failures (e.g. an IONOS
     // "503" storm that just retries) as if they were bounces, inflating a scary red
     // number. "Bounced" above is the real hard-bounce count.
@@ -110,7 +110,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
             <StatusIcon className={`h-4 w-4 ${meta.cls}`} />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Campaign Details</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Datos de la campaña</p>
             <p className="truncate font-display text-sm font-bold">{campaign.name}</p>
             <p className="truncate text-[11px] text-muted-foreground">
               <span className={meta.cls}>{meta.label}</span>
@@ -126,7 +126,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
 
         {/* Right — Report */}
         <div className="min-w-0 flex-1">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Report</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Informe</p>
           <div className="grid grid-cols-3 gap-x-1 gap-y-3 sm:grid-cols-4 lg:grid-cols-7">
             {metrics.map((mt) => (
               <div key={mt.key} className="min-w-[60px] px-1 text-center sm:min-w-[80px]">

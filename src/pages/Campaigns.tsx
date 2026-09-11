@@ -431,7 +431,7 @@ export default function Campaigns() {
             <DialogHeader><DialogTitle className="font-display">Crear campaña</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1"><Label>Nombre de la campaña</Label><Input value={form.name} onChange={e => setForm({ name: e.target.value })} placeholder="Prospección Q1" /></div>
-              <Button onClick={handleCreate} className="w-full" disabled={!form.name}>Crear</Button>
+              <Button onClick={handleCreate} className="w-full" disabled={!form.name} variant={form.name ? "default" : "secondary"}>Crear</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -512,7 +512,7 @@ export default function Campaigns() {
                     </div>
                   </div>
                   {/* Inline metrics */}
-                  <div className="mt-3 border-t border-border/40 pt-3">
+                  <div className="mt-3 border-t border-border pt-3">
                     <CampaignMetricsInline campaignId={campaign.id} metrics={metricsFor(campaign.id)} />
                   </div>
                 </CardContent>

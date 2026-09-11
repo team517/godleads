@@ -560,8 +560,8 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   const handleSendNow = async (cl: any) => {
     if (!user) return;
-    if (steps.length === 0) { toast.error("No hay steps en la secuencia. Crea uno primero."); return; }
-    if (accounts.length === 0) { toast.error("No hay cuentas de email asignadas a esta campaña. Asigna una en Options."); return; }
+    if (steps.length === 0) { toast.error("No hay pasos en la secuencia. Crea uno primero."); return; }
+    if (accounts.length === 0) { toast.error("No hay cuentas de email asignadas a esta campaña. Asigna una en Opciones."); return; }
 
     const lead = cl.leads as any;
     if (!lead?.email) { toast.error("Lead sin email"); return; }
@@ -820,6 +820,12 @@ export default function CampaignLeads({ campaignId }: Props) {
   const statusColors: Record<string, string> = {
     pending: "secondary", in_progress: "default", completed: "outline", replied: "default",
   };
+  // Etiqueta visible del estado (el valor guardado en la BD no cambia).
+  const statusLabels: Record<string, string> = {
+    pending: "Pendiente", in_progress: "En curso", completed: "Completado",
+    replied: "Respondido", paused: "Pausado", failed: "Fallido",
+    bounced: "Rebotado", unsubscribed: "Baja", stopped: "Detenido",
+  };
 
   return (
     <div className="space-y-4">
@@ -924,7 +930,7 @@ export default function CampaignLeads({ campaignId }: Props) {
               <Checkbox id="check-dups" checked={checkDuplicates} onCheckedChange={(v) => setCheckDuplicates(!!v)} />
               <label htmlFor="check-dups" className="text-sm text-muted-foreground cursor-pointer">Revisar duplicados antes de importar</label>
             </div>
-            <div className="rounded-lg border border-dashed border-muted-foreground/30 p-6 text-center">
+            <div className="rounded-lg border border-dashed border-border bg-muted/40 p-6 text-center">
               <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
               <p className="text-sm text-muted-foreground mb-3">Selecciona un archivo CSV</p>
               <Input ref={fileRef} type="file" accept=".csv" onChange={handleCsvParse} disabled={importing} className="max-w-xs mx-auto" />
@@ -1056,7 +1062,7 @@ export default function CampaignLeads({ campaignId }: Props) {
           )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => { setShowCsvReview(false); setCsvRows([]); parsedRowsRef.current = []; }}>Cancelar</Button>
-            <Button onClick={() => confirmCsvImport()} disabled={parsedRowsRef.current.length - csvDeselected.size === 0 || importing} className="gap-2">
+            <Button onClick={() => confirmCsvImport()} disabled={parsedRowsRef.current.length - csvDeselected.size === 0 || importing} variant={parsedRowsRef.current.length - csvDeselected.size === 0 ? "secondary" : "default"} className="gap-2">
               {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               Importar {(parsedRowsRef.current.length - csvDeselected.size).toLocaleString()} leads
             </Button>
@@ -1118,6 +1124,7 @@ export default function CampaignLeads({ campaignId }: Props) {
             <Button
               onClick={handlePersonalize}
               disabled={personalizeProgress.running || !personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1))}
+              variant={!personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1)) ? "secondary" : "default"}
               className="w-full gap-2"
             >
               {personalizeProgress.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
@@ -1143,6 +1150,7 @@ export default function CampaignLeads({ campaignId }: Props) {
             <Button
               className="w-full gap-2"
               disabled={!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1)}
+              variant={!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1) ? "secondary" : "default"}
               onClick={handleVerifyLeads}
             >
               <ShieldCheck className="h-4 w-4" /> Verificar {totalLeadCount.toLocaleString()} leads
@@ -1309,8 +1317,8 @@ export default function CampaignLeads({ campaignId }: Props) {
                         </div>
                       </th>
                     ))}
-                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Step</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Paso</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Estado</th>
                     <th className="px-3 py-2 w-24 text-center text-xs font-medium text-muted-foreground uppercase">Acciones</th>
                   </tr>
                 </thead>
@@ -1339,7 +1347,7 @@ export default function CampaignLeads({ campaignId }: Props) {
                           <td key={col} className="px-3 py-2 text-muted-foreground truncate max-w-[180px]">{fields[col] || "—"}</td>
                         ))}
                         <td className="px-3 py-2 text-muted-foreground">{cl.current_step + 1} / {steps.length || "?"}</td>
-                        <td className="px-3 py-2"><Badge variant={(statusColors[cl.status] || "secondary") as any}>{cl.status}</Badge></td>
+                        <td className="px-3 py-2"><Badge variant={(statusColors[cl.status] || "secondary") as any}>{statusLabels[cl.status] || cl.status}</Badge></td>
                         <td className="px-3 py-2">
                           <div className="flex items-center justify-center gap-1">
                             <Button

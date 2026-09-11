@@ -73,9 +73,9 @@ const normalizeEmailAccount = <T extends Record<string, any>>(account: T): T => 
 type AuthStatusValue = "pass" | "warn" | "fail" | undefined;
 function AuthChip({ label, status }: { label: string; status: AuthStatusValue }) {
   const meta =
-    status === "pass" ? { cls: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30", Icon: ShieldCheck, text: "OK" }
-    : status === "warn" ? { cls: "bg-amber-500/10 text-amber-600 border-amber-500/30", Icon: ShieldQuestion, text: "Revisar" }
-    : status === "fail" ? { cls: "bg-red-500/10 text-red-600 border-red-500/30", Icon: ShieldAlert, text: "Falta" }
+    status === "pass" ? { cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", Icon: ShieldCheck, text: "OK" }
+    : status === "warn" ? { cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30", Icon: ShieldQuestion, text: "Revisar" }
+    : status === "fail" ? { cls: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30", Icon: ShieldAlert, text: "Falta" }
     : { cls: "bg-muted text-muted-foreground border-border", Icon: ShieldQuestion, text: "—" };
   const { Icon } = meta;
   return (
@@ -1167,13 +1167,13 @@ export default function EmailAccounts() {
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulkIonos(true)}>
-            🌐 <span className="hidden sm:inline">Bulk IONOS</span><span className="sm:hidden">IONOS</span>
+            🌐 <span className="hidden sm:inline">IONOS en bloque</span><span className="sm:hidden">IONOS</span>
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={handleDownloadCSV}>
             <Download className="h-4 w-4" /> <span className="hidden sm:inline">Descargar CSV</span><span className="sm:hidden">CSV↓</span>
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulk(!showBulk)}>
-            <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Bulk CSV</span><span className="sm:hidden">CSV</span>
+            <Upload className="h-4 w-4" /> <span className="hidden sm:inline">CSV en bloque</span><span className="sm:hidden">CSV</span>
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={openSignatureManager}>
             <Pencil className="h-4 w-4" /> <span className="hidden sm:inline">Firma</span><span className="sm:hidden">Firma</span>
@@ -1251,7 +1251,7 @@ export default function EmailAccounts() {
               onChange={e => setNewTagInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") handleCreateTag(); }}
             />
-            <Button size="sm" onClick={handleCreateTag} disabled={!newTagInput.trim()} className="gap-1">
+            <Button size="sm" onClick={handleCreateTag} disabled={!newTagInput.trim()} variant={newTagInput.trim() ? "default" : "secondary"} className="gap-1">
               <Plus className="h-3.5 w-3.5" /> Crear
             </Button>
           </div>
@@ -1410,7 +1410,7 @@ export default function EmailAccounts() {
                 />
                 <Input
                   type="password"
-                  placeholder={ionosDefaultPassword ? "•••• (default)" : "Contraseña"}
+                  placeholder={ionosDefaultPassword ? "•••• (por defecto)" : "Contraseña"}
                   value={row.password}
                   onChange={e => {
                     const next = [...ionosRows];
@@ -1448,6 +1448,7 @@ export default function EmailAccounts() {
           <Button
             onClick={handleBulkIonosImport}
             disabled={ionosImporting || ionosRows.filter(r => r.email.trim() && (r.password.trim() || ionosDefaultPassword.trim())).length === 0}
+            variant={ionosRows.filter(r => r.email.trim() && (r.password.trim() || ionosDefaultPassword.trim())).length === 0 ? "secondary" : "default"}
             className="w-full gap-2"
           >
             {ionosImporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -1681,7 +1682,7 @@ export default function EmailAccounts() {
               </div>
             ))}
           </div>
-          <Button onClick={handleBulkEdit} className="w-full" disabled={bulkEditFields.size === 0}>
+          <Button onClick={handleBulkEdit} className="w-full" disabled={bulkEditFields.size === 0} variant={bulkEditFields.size === 0 ? "secondary" : "default"}>
             Aplicar cambios a {selectedIds.size} cuentas
           </Button>
         </DialogContent>
@@ -1711,7 +1712,7 @@ export default function EmailAccounts() {
                     onClick={() => setSigScope(opt.key)}
                     className={`rounded-md border px-2 py-2 text-xs font-medium transition-colors ${
                       sigScope === opt.key ? "border-primary bg-primary/10 text-primary" : "border-border/60 hover:bg-muted"
-                    } ${opt.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+                    } ${opt.disabled ? "bg-muted text-muted-foreground opacity-70 cursor-not-allowed" : ""}`}
                   >
                     {opt.label}
                   </button>
@@ -1761,7 +1762,7 @@ export default function EmailAccounts() {
 
             <SavedSignatures currentHtml={sigHtml} onLoad={setSigHtml} />
           </div>
-          <Button onClick={applySignature} className="w-full" disabled={sigSaving || signatureTargetIds.length === 0}>
+          <Button onClick={applySignature} className="w-full" disabled={sigSaving || signatureTargetIds.length === 0} variant={signatureTargetIds.length === 0 ? "secondary" : "default"}>
             {sigSaving ? "Aplicando…" : (sigHtml.trim() ? `Aplicar firma a ${signatureTargetIds.length} cuenta(s)` : `Quitar firma de ${signatureTargetIds.length} cuenta(s)`)}
           </Button>
         </DialogContent>
@@ -1815,7 +1816,7 @@ export default function EmailAccounts() {
                       }
                       if (ic.ok) {
                         return (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                             <CheckCircle className="h-3 w-3" /> IMAP conectado
                             {ic.reverifying && <span title="Verificando la conexión en vivo…" className="inline-flex"><Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" /></span>}
                           </span>
@@ -1832,7 +1833,7 @@ export default function EmailAccounts() {
                         );
                       }
                       return (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600" title={ic.error || "Fallo de conexión IMAP"}>
+                        <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600 dark:text-red-400" title={ic.error || "Fallo de conexión IMAP"}>
                           <XCircle className="h-3 w-3" /> IMAP sin conexión
                           <button onClick={() => recheckImap(account.id)} className="ml-1 underline decoration-dotted">reintentar</button>
                         </span>
@@ -1885,7 +1886,7 @@ export default function EmailAccounts() {
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                           Autenticación del dominio
                           {auth?.reverifying && !auth?.loading && (
-                            <span className="inline-flex items-center gap-1 text-[9px] font-normal text-emerald-600/70" title="Comprobando los registros DNS en vivo…">
+                            <span className="inline-flex items-center gap-1 text-[9px] font-normal text-emerald-600/70 dark:text-emerald-400" title="Comprobando los registros DNS en vivo…">
                               <Loader2 className="h-2.5 w-2.5 animate-spin" /> en vivo
                             </span>
                           )}
@@ -1926,7 +1927,7 @@ export default function EmailAccounts() {
                         )}
                       </div>
                       {dkimMissing && (
-                        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-red-600">
+                        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400">
                           <ShieldAlert className="h-3 w-3" /> Falta el DKIM en @{dom} — añádelo en tu proveedor para mejorar la entregabilidad.
                         </p>
                       )}

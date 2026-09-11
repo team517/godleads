@@ -174,7 +174,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   }, [campaignId, user]);
 
   const captureAnalytics = async (): Promise<string> => {
-    if (!analyticsRef.current) throw new Error("No analytics to capture");
+    if (!analyticsRef.current) throw new Error("No hay analítica que capturar");
     const canvas = await html2canvas(analyticsRef.current, {
       // Match the surface the cards are actually painted on. Hardcoding white made
       // the capture unreadable in dark mode (light text on a white canvas).
@@ -219,7 +219,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       // Title in brand color + company / date
       pdf.setFontSize(18);
       pdf.setTextColor(br, bg, bb);
-      pdf.text(`Analytics — ${campaignName}`, 14, headerY);
+      pdf.text(`Analítica — ${campaignName}`, 14, headerY);
       pdf.setFontSize(10);
       pdf.setTextColor(120);
       const meta = `${branding.company ? branding.company + " · " : ""}Generado el ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`;
@@ -265,7 +265,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1a1a1a;">📊 Analytics — ${campaignName}</h2>
+          <h2 style="color: #1a1a1a;">📊 Analítica — ${campaignName}</h2>
           <p style="color: #666; font-size: 14px;">Informe generado el ${new Date().toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
           
           <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
@@ -286,17 +286,17 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           </table>
 
           ${stepStats.length > 0 ? `
-            <h3 style="color: #1a1a1a; font-size: 14px;">Step Analytics</h3>
+            <h3 style="color: #1a1a1a; font-size: 14px;">Analítica por paso</h3>
             <table style="width: 100%; border-collapse: collapse;">
               <tr style="background: #f5f5f5;">
-                <th style="padding: 8px; text-align: left; font-size: 12px;">Step</th>
-                <th style="padding: 8px; text-align: left; font-size: 12px;">Subject</th>
-                <th style="padding: 8px; text-align: center; font-size: 12px;">Sent</th>
-                <th style="padding: 8px; text-align: center; font-size: 12px;">Replies</th>
+                <th style="padding: 8px; text-align: left; font-size: 12px;">Paso</th>
+                <th style="padding: 8px; text-align: left; font-size: 12px;">Asunto</th>
+                <th style="padding: 8px; text-align: center; font-size: 12px;">Enviados</th>
+                <th style="padding: 8px; text-align: center; font-size: 12px;">Respuestas</th>
               </tr>
               ${stepStats.map(s => `
                 <tr>
-                  <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee;">${s._other ? "Other" : `Step ${s.step_order}`}</td>
+                  <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee;">${s._other ? "Otros" : `Paso ${s.step_order}`}</td>
                   <td style="padding: 8px; font-size: 13px; border-bottom: 1px solid #eee; color: #666;">${s.subject}</td>
                   <td style="padding: 8px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; color: #22c55e;">${s.sent}</td>
                   <td style="padding: 8px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; color: #3b82f6;">${s.replied}</td>
@@ -315,14 +315,14 @@ export default function CampaignAnalytics({ campaignId }: Props) {
         body: JSON.stringify({
           account_id: accounts[0].id,
           to_email: shareEmail.trim(),
-          subject: `📊 Analytics — ${campaignName}`,
+          subject: `📊 Analítica — ${campaignName}`,
           body: htmlBody,
         }),
       });
       const result = await resp.json();
       if (result.error) toast.error(result.error);
       else {
-        toast.success(`Analytics enviadas a ${shareEmail}`);
+        toast.success(`Analítica enviada a ${shareEmail}`);
         setShareEmail("");
         setShareOpen(false);
       }
@@ -417,7 +417,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-80 p-3" align="end">
-              <p className="text-xs font-medium mb-2">Enviar analytics por email</p>
+              <p className="text-xs font-medium mb-2">Enviar analítica por email</p>
               <div className="flex gap-2">
                 <Input
                   placeholder="email@ejemplo.com"
@@ -431,6 +431,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
                   className="h-8 gap-1.5"
                   onClick={handleShareEmail}
                   disabled={sharing || !shareEmail.trim()}
+                  variant={!shareEmail.trim() ? "secondary" : "default"}
                 >
                   {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 </Button>
@@ -507,16 +508,16 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
         {stepStats.length > 0 && (
           <div className="mt-6">
-            <h4 className="text-sm font-semibold mb-3">Step Analytics</h4>
+            <h4 className="text-sm font-semibold mb-3">Analítica por paso</h4>
             <div className="space-y-2">
               {stepStats.map((s: any) => (
                 <div key={s.id} className={`flex items-center gap-4 rounded-lg border p-3 text-sm ${s._other ? "bg-muted/40" : ""}`}>
                   <span className="font-medium text-primary whitespace-nowrap">
-                    {s._other ? "Other" : `Step ${s.step_order}`}
+                    {s._other ? "Otros" : `Paso ${s.step_order}`}
                   </span>
                   <span className="flex-1 truncate text-muted-foreground">{s.subject}</span>
-                  <span className="text-success whitespace-nowrap">{s.sent} sent</span>
-                  <span className="text-info whitespace-nowrap">{s.replied} replies</span>
+                  <span className="text-success whitespace-nowrap">{s.sent} enviados</span>
+                  <span className="text-info whitespace-nowrap">{s.replied} respuestas</span>
                 </div>
               ))}
             </div>

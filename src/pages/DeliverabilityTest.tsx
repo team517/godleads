@@ -113,9 +113,9 @@ export default function DeliverabilityTest() {
 
   const secsSince = sentAt ? Math.floor((Date.now() - sentAt) / 1000) : 0;
   const folderChip = (f: Result["folder"]) => {
-    if (f === "inbox") return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300">📥 Bandeja</Badge>;
-    if (f === "spam") return <Badge className="bg-red-100 text-red-700 border-red-300">🚫 Spam</Badge>;
-    if (f === "missing") return <Badge className="bg-amber-100 text-amber-700 border-amber-300">❓ No llegó</Badge>;
+    if (f === "inbox") return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/40">📥 Bandeja</Badge>;
+    if (f === "spam") return <Badge className="bg-red-100 text-red-700 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/40">🚫 Spam</Badge>;
+    if (f === "missing") return <Badge className="bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/40">❓ No llegó</Badge>;
     return <Badge variant="outline">⚠ Error IMAP</Badge>;
   };
 
@@ -184,7 +184,7 @@ export default function DeliverabilityTest() {
             {sending ? "Enviando prueba…" : "Enviar prueba a los buzones semilla"}
           </Button>
           {seeds.length === 0 && (
-            <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> Añade al menos un buzón semilla arriba.</p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> Añade al menos un buzón semilla arriba.</p>
           )}
         </CardContent>
       </Card>

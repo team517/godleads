@@ -99,10 +99,12 @@
     --primary-foreground: 252 22% 9%; /* #14121c */
     --primary-glow: 252 100% 82%;     /* hover — brighter, not darker, on dark */
 
-    --secondary: 246 14% 14%;         /* #1f1e28 */
+    /* Superficies "apagadas": campos, cuadros de icono, hover. A 14% (#1f1e28)
+       quedaban casi a ras del fondo y parecian un hueco negro; subidas a 18%. */
+    --secondary: 246 14% 18%;         /* #272630 */
     --secondary-foreground: 255 44% 96%;
 
-    --muted: 246 14% 14%;             /* #1f1e28 */
+    --muted: 246 14% 18%;             /* #272630 */
     --muted-foreground: 256 14% 68%;  /* #a9a3ba — ≥ 4.5:1 on card */
 
     --accent: 251 30% 21%;            /* #2b2545 */
@@ -111,17 +113,22 @@
     --destructive: 0 70% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 249 15% 18%;            /* #2a2836 — clearly visible on card */
-    --input: 249 15% 18%;
+    /* El borde tiene que verse TAMBIEN sobre una superficie apagada, no solo sobre
+       la tarjeta: a 18% quedaba a la misma luminosidad que --muted. */
+    --border: 249 15% 24%;            /* #37354a */
+    --input: 249 15% 24%;
     --ring: 252 100% 76%;             /* = primary */
 
     --sidebar-background: 250 18% 7%; /* = background */
     --sidebar-foreground: 258 19% 83%;/* #cfcadb */
     --sidebar-primary: 252 100% 76%;
     --sidebar-primary-foreground: 252 22% 9%;
-    --sidebar-accent: 245 27% 18%;    /* #23213a */
+    /* Superficie del item activo / hover del menu. A 18% quedaba a un pelo del fondo
+       (#23213a sobre #0f0e14): el recuadro apenas se distinguia. Subido para que se
+       vea que hay una seleccion sin llegar a un bloque chillon. */
+    --sidebar-accent: 246 26% 26%;    /* #34314f */
     --sidebar-accent-foreground: 254 100% 86%; /* #c9b8ff */
-    --sidebar-border: 249 15% 18%;    /* = border */
+    --sidebar-border: 249 15% 24%;    /* = border */
     --sidebar-ring: 252 100% 76%;
 
     --topbar: 250 17% 10%;            /* = card */

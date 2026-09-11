@@ -502,7 +502,7 @@ export default function Leads() {
               <DialogHeader><DialogTitle>Crear carpeta</DialogTitle></DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-1"><Label>Nombre</Label><Input value={listName} onChange={e => setListName(e.target.value)} placeholder="SaaS Founders" /></div>
-                <Button onClick={handleCreateList} className="w-full" disabled={!listName.trim()}>Crear</Button>
+                <Button onClick={handleCreateList} className="w-full" disabled={!listName.trim()} variant={listName.trim() ? "default" : "secondary"}>Crear</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -528,7 +528,7 @@ export default function Leads() {
                     </Select>
                   </div>
                 )}
-                <Button onClick={handleAddLead} className="w-full" disabled={!form.email.trim()}>Añadir</Button>
+                <Button onClick={handleAddLead} className="w-full" disabled={!form.email.trim()} variant={form.email.trim() ? "default" : "secondary"}>Añadir</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -705,7 +705,7 @@ export default function Leads() {
                 {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button onClick={handleBulkMove} className="w-full" disabled={!moveTargetList}>Mover</Button>
+            <Button onClick={handleBulkMove} className="w-full" disabled={!moveTargetList} variant={moveTargetList ? "default" : "secondary"}>Mover</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -781,7 +781,7 @@ export default function Leads() {
               <Button variant="outline" onClick={() => { setShowCsvReview(false); setCsvRows([]); setCsvHeaders([]); parsedRowsRef.current = []; }}>
                 Cancelar
               </Button>
-              <Button onClick={confirmCsvImport} disabled={(parsedRowsRef.current.length - csvDeselected.size) === 0 || csvImporting} className="gap-2">
+              <Button onClick={confirmCsvImport} disabled={(parsedRowsRef.current.length - csvDeselected.size) === 0 || csvImporting} variant={(parsedRowsRef.current.length - csvDeselected.size) === 0 ? "secondary" : "default"} className="gap-2">
                 {csvImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                 Importar {(parsedRowsRef.current.length - csvDeselected.size).toLocaleString()} leads
               </Button>
@@ -817,7 +817,7 @@ export default function Leads() {
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">Coste</span>
-                      <span className="font-semibold text-emerald-600">Gratis</span>
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Gratis</span>
                     </div>
                   </div>
 
@@ -827,6 +827,7 @@ export default function Leads() {
                   <Button
                     className="w-full gap-2"
                     disabled={unverifiedTotalCount === 0}
+                    variant={unverifiedTotalCount === 0 ? "secondary" : "default"}
                     onClick={handleVerifyAllLeads}
                   >
                     <ShieldCheck className="h-4 w-4" /> Verificar los {unverifiedTotalCount} leads pendientes

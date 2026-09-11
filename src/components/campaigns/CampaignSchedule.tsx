@@ -11,13 +11,13 @@ import { Clock } from "lucide-react";
 interface Props { campaignId: string; }
 
 const DAYS = [
-  { value: "mon", label: "Mon" },
-  { value: "tue", label: "Tue" },
-  { value: "wed", label: "Wed" },
-  { value: "thu", label: "Thu" },
-  { value: "fri", label: "Fri" },
-  { value: "sat", label: "Sat" },
-  { value: "sun", label: "Sun" },
+  { value: "mon", label: "Lun" },
+  { value: "tue", label: "Mar" },
+  { value: "wed", label: "Mié" },
+  { value: "thu", label: "Jue" },
+  { value: "fri", label: "Vie" },
+  { value: "sat", label: "Sáb" },
+  { value: "sun", label: "Dom" },
 ];
 
 const TIMEZONES = [
@@ -67,22 +67,22 @@ export default function CampaignSchedule({ campaignId }: Props) {
   return (
     <div className="space-y-6 max-w-md">
       <div className="space-y-3">
-        <Label className="flex items-center gap-2"><Clock className="h-4 w-4" /> Sending window</Label>
+        <Label className="flex items-center gap-2"><Clock className="h-4 w-4" /> Ventana de envío</Label>
         <div className="flex items-center gap-3">
           <div className="space-y-1">
-            <Label className="text-xs">From</Label>
+            <Label className="text-xs">Desde</Label>
             <Input type="number" min={0} max={23} value={startHour} onChange={e => { const v = parseInt(e.target.value); setStartHour(Number.isNaN(v) ? 0 : Math.max(0, Math.min(23, v))); setSaved(false); }} className="w-20" />
           </div>
           <span className="text-muted-foreground mt-5">—</span>
           <div className="space-y-1">
-            <Label className="text-xs">To</Label>
+            <Label className="text-xs">Hasta</Label>
             <Input type="number" min={0} max={23} value={endHour} onChange={e => { const v = parseInt(e.target.value); setEndHour(Number.isNaN(v) ? 23 : Math.max(0, Math.min(23, v))); setSaved(false); }} className="w-20" />
           </div>
         </div>
       </div>
 
       <div className="space-y-3">
-        <Label>Timezone</Label>
+        <Label>Zona horaria</Label>
         <Select value={timezone} onValueChange={v => { setTimezone(v); setSaved(false); }}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -92,7 +92,7 @@ export default function CampaignSchedule({ campaignId }: Props) {
       </div>
 
       <div className="space-y-3">
-        <Label>Send days</Label>
+        <Label>Días de envío</Label>
         <div className="flex flex-wrap gap-3">
           {DAYS.map(d => (
             <label key={d.value} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -103,8 +103,8 @@ export default function CampaignSchedule({ campaignId }: Props) {
         </div>
       </div>
 
-      <Button onClick={save} disabled={saved} className="w-full">
-        {saved ? "✓ Saved" : "Save schedule"}
+      <Button onClick={save} disabled={saved} variant={saved ? "secondary" : "default"} className="w-full">
+        {saved ? "✓ Guardado" : "Guardar horario"}
       </Button>
     </div>
   );

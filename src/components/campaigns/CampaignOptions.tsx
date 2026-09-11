@@ -768,7 +768,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           )}
         </Row>
 
-        <Row icon={<Split className="h-4 w-4" />} tint="violet" title="Provider Matching"
+        <Row icon={<Split className="h-4 w-4" />} tint="violet" title="Emparejar proveedor"
           desc="Empareja el proveedor del lead con tu buzón (Outlook → Outlook, Google → Google)."
           control={<Switch checked={providerMatching} onCheckedChange={(v) => { setProviderMatching(!!v); markDirty(); }} />}
         />
@@ -784,7 +784,7 @@ export default function CampaignOptions({ campaignId }: Props) {
               })}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              {abSteps.length <= 1 ? "Añade al menos un follow-up en Sequences para poder romper el hilo." : breakThreadAfter === 0 ? "Todos los follow-ups seguirán en el mismo hilo." : `El follow-up ${breakThreadAfter} y los siguientes saldrán como mensaje nuevo.`}
+              {abSteps.length <= 1 ? "Añade al menos un follow-up en Secuencias para poder romper el hilo." : breakThreadAfter === 0 ? "Todos los follow-ups seguirán en el mismo hilo." : `El follow-up ${breakThreadAfter} y los siguientes saldrán como mensaje nuevo.`}
             </p>
           </div>
         </Row>
@@ -812,7 +812,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           <div className="space-y-4 pt-2">
             {abSteps.length > 0 && (
               <div className="space-y-2">
-                <Label className="text-xs">Selecciona un step para optimizar</Label>
+                <Label className="text-xs">Selecciona un paso para optimizar</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {abSteps.map((s: any) => (
                     <button
@@ -987,7 +987,7 @@ export default function CampaignOptions({ campaignId }: Props) {
 
       {/* Sticky save bar */}
       <div className="sticky bottom-0 -mx-1 border-t border-border/60 bg-background/85 px-1 pb-1 pt-3 backdrop-blur">
-        <Button onClick={save} disabled={saved} className="w-full gap-2">
+        <Button onClick={save} disabled={saved} variant={saved ? "secondary" : "default"} className="w-full gap-2">
           {saved ? <><Check className="h-4 w-4" /> Guardado</> : "Guardar opciones"}
         </Button>
       </div>
