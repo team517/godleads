@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { hasHtmlMarkup } from "../_shared/mime-headers.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -18,7 +19,7 @@ function escapeHtmlText(text: string): string {
 }
 
 function textToHtml(text: string): string {
-  if (/<(p|div|br|table|tr|td|span|a|img|ul|ol|li)\b/i.test(text)) return text;
+  if (hasHtmlMarkup(text)) return text;
   // PLAIN-TEXT branch: the copy is literal prose, so a stray `<` or `&` (e.g. "<20 leads",
   // "R&D") would corrupt the HTML part. Escape before inserting our own <br>/<p> markup.
   return text
@@ -38,7 +39,7 @@ function wrapHtmlDocument(html: string): string {
 }
 
 function hasExplicitHtml(text: string): boolean {
-  return /<(p|div|br|table|tr|td|span|a|img|ul|ol|li)\b/i.test(text);
+  return hasHtmlMarkup(text);
 }
 
 function isValidEmail(email: string): boolean {

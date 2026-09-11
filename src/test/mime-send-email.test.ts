@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace } from "@/lib/mime-headers";
+import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace, hasHtmlMarkup } from "@/lib/mime-headers";
 
 // Decode an "=?UTF-8?B?..?=" chain back to the original string, the way a mail client
 // does: unfold (CRLF + WSP), then base64-decode every word and concatenate.
@@ -129,5 +129,29 @@ describe("foldHeader", () => {
     const header = foldHeader("To", "ana@example.com\r\nBcc: evil@x.com");
     expect(linesOf(header).length).toBe(1);
     expect(header).toBe("To: ana@example.com Bcc: evil@x.com");
+  });
+});
+
+describe("hasHtmlMarkup — which bodies are already HTML", () => {
+  it("recognises inline formatting used by real campaign steps", () => {
+    // Four live steps are written exactly like this, with no <p> anywhere.
+    expect(hasHtmlMarkup("Buenas <b>{{first_name}}</b>, Soy Oliver.")).toBe(true);
+    expect(hasHtmlMarkup("un <strong>37% más</strong> de reuniones")).toBe(true);
+    expect(hasHtmlMarkup("<em>texto</em>")).toBe(true);
+    expect(hasHtmlMarkup("<h2>Título</h2>")).toBe(true);
+  });
+
+  it("still recognises block markup", () => {
+    expect(hasHtmlMarkup("<p>Hola</p>")).toBe(true);
+    expect(hasHtmlMarkup("linea<br>otra")).toBe(true);
+    expect(hasHtmlMarkup('<a href="https://x">x</a>')).toBe(true);
+  });
+
+  it("treats real plain text as plain text, so < and & get escaped", () => {
+    expect(hasHtmlMarkup("Respondemos en <2 horas")).toBe(false);
+    expect(hasHtmlMarkup("Coste < 100 € & sin permanencia")).toBe(false);
+    expect(hasHtmlMarkup("Hola Javier,\n\nUn saludo")).toBe(false);
+    expect(hasHtmlMarkup("")).toBe(false);
+    expect(hasHtmlMarkup(null)).toBe(false);
   });
 });

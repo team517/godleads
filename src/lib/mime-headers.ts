@@ -153,3 +153,20 @@ export function foldHeader(name: string, value: string): string {
   if (single.length <= FOLD_AT) return single;
   return `${name}: ${foldOnWhitespace(normalized, FOLD_AT, name.length + 2, "\r\n\t")}`;
 }
+
+/**
+ * Does this body already carry real HTML markup?
+ *
+ * It decides whether textToHtml wraps the text in paragraphs (escaping &, < and >
+ * so a literal "<2 semanas" cannot be swallowed as a bogus tag) or passes it
+ * through untouched. The list MUST include the inline formatting tags: four live
+ * campaign steps are written as "Buenas <b>{{first_name}}</b>, …" with no <p> at
+ * all, and leaving <b> out of the list sent them with the tags visible as text.
+ *
+ * One definition for both senders so the engine and send-email can never drift.
+ */
+const HTML_MARKUP_RE = /<(?:p|div|br|table|thead|tbody|tr|td|th|span|a|img|ul|ol|li|b|strong|em|i|u|h[1-6]|blockquote|pre|code|hr|font)(?:\s|>|\/)/i;
+
+export function hasHtmlMarkup(text: string | null | undefined): boolean {
+  return HTML_MARKUP_RE.test(text || "");
+}

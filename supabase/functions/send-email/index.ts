@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
-import { encodeMimeHeaderFolded, foldHeader } from "../_shared/mime-headers.ts";
+import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -17,7 +17,7 @@ function escapeHtml(text: string): string {
 
 function textToHtml(text: string): string {
   // Already HTML (a rich Unibox reply) → untouched.
-  if (/<(p|div|br)\b/i.test(text)) return text;
+  if (hasHtmlMarkup(text)) return text;
   // PLAIN text → it is NOT markup: escape it, otherwise a literal "<" or "&" the
   // user typed ("3 < 5", "R&D") corrupts the HTML part (or swallows the rest of
   // the paragraph inside a fake tag).
