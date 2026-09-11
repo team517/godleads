@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { CAMPAIGN_COPY_RULES } from "@/lib/campaign-copy";
 import { Navigate } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -247,7 +248,12 @@ const detectCampaignLanguage = (text: string): string => {
 };
 
 // Steer passed to generate-campaign (short on purpose — the full memory broke its JSON).
-const CAMPAIGN_SKILLS = "ESTRUCTURA del email inicial (síguela SIEMPRE, es la que funciona): 1) 'Hola {{firstName}},'. 2) Presentación personal: 'Soy [nombre] de [empresa que envía]'. 3) Gancho de DESCUBRIMIENTO (empieza SIEMPRE así): 'Investigando {{companyName}} y cómo trabajáis dentro de {{industry}}, me llamó la atención algo que creo que os puede encajar' (varía el verbo entre variantes: investigando/mirando/analizando, y la reacción: me llamó la atención/me topé con/me sorprendió). Curiosidad genuina, sin inventar detalles internos suyos. 4) Qué hacéis, claro y breve. 5) Cómo funciona / qué incluye, en una frase. 6) Qué CONSIGUEN ellos (beneficios concretos y tangibles). 7) 'La idea es que {{companyName}} [beneficio] sin [dolor]'. 8) 'He preparado un ejemplo/demo pensado específicamente para vuestra marca/empresa'. 9) CTA suave: '¿Te vendría bien verlo en 10 minutos esta semana?'. 10) Firma con nombre + empresa. ENFOCA TODO EN BENEFICIOS: lo que el prospecto CONSEGUIRÁ (vender más, más conversión, conectar con su cliente ideal, que le recuerden...), no en describir el servicio. Habla de ELLOS ({{companyName}}) más que de la industria; usa mucho {{firstName}} {{companyName}} {{industry}} {{city}} para que parezca muy personalizado aunque sea general. SIN emojis, voz cercana y directa, bien estructurado. LONGITUD: inicial 150-170 palabras; follow-ups 100-135. Follow-ups a 1-2 días, misma voz, referenciando el anterior y rematando con el beneficio. Variantes con ángulos distintos (p.ej. una enfocada en ventas/cliente ideal y otra más creativa).";
+// The server prompt (generate-campaign) already carries the full mould — the three emails that
+// get replies plus their rules (see src/lib/campaign-copy.ts). This steer only makes sure the
+// briefing never talks the model out of it.
+const CAMPAIGN_SKILLS = `Sigue el MOLDE de los EJEMPLOS QUE FUNCIONAN que ya tienes en el sistema: calca cada step de su ejemplo y cambia solo lo que es del cliente. Ninguna instrucción del briefing sustituye ese molde.
+
+${CAMPAIGN_COPY_RULES}`;
 
 // Sends the intro email from one of the owner's connected accounts (is_test:true → doesn't
 // touch daily limits / the sent log). Same send-email fn the Onboarding page uses.

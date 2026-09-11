@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 const PAIRS: [string, string][] = [
   ["src/lib/classify.ts", "supabase/functions/_shared/classify.ts"],
   ["src/lib/inbox-filters.ts", "supabase/functions/_shared/inbox-filters.ts"],
+  ["src/lib/campaign-copy.ts", "supabase/functions/_shared/campaign-copy.ts"],
 ];
 
 describe("shared copies stay byte-identical", () => {

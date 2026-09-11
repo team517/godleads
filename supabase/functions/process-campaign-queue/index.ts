@@ -1990,7 +1990,16 @@ serve(async (req) => {
             // burn the RECIPIENT's retry budget — otherwise an IONOS 503 storm or a briefly
             // throttled mailbox parks perfectly good leads as "undeliverable" forever.
             const c = classifySmtpError(r.error_message || "");
-            return c !== "rate" && c !== "auth";
+            if (c !== "rate" && c !== "auth") return true;
+            // …but a 45x answered at RCPT TO for THIS recipient, while the same account keeps
+            // sending to everyone else, is the recipient's problem, not throttling. IONOS says
+            // "451 local error in processing" for an address it cannot route — forever. Left
+            // uncounted, one dead address was retried every minute for two days (seen live:
+            // 303, 255 and 191 attempts), each one eating that account's only slot per tick.
+            // Real throttling / greylisting wording stays exempt.
+            const msg = r.error_message || "";
+            return /^Recipient rejected:\s*45[0-2]/i.test(msg)
+              && !/throttl|rate limit|too many|421|greylist|try again/i.test(msg);
           }).length;
           if (failedAttempts >= MAX_SEND_ATTEMPTS_PER_STEP) {
             await adminClient.from("campaign_leads")

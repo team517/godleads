@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -30,25 +31,14 @@ PROHIBIDO INVENTAR SOBRE EL PROSPECT: NO supongas ni afirmes hechos concretos de
 QUÉ SÍ ES REAL Y ESPECÍFICO: lo del CLIENTE (lo que ofrece, según briefing/web) y los casos/números TÍPICOS del sector (verosímiles). Ahí sí concretas. En el prospect, general + variables.
 
 LONGITUD (ESTRICTA — cuenta las palabras del cuerpo):
-- Email inicial (step 1): AL MENOS 160 palabras, NUNCA menos. Objetivo 160-190. Si te quedas corto, amplía con más contexto general del sector {{industry}} o más valor — hasta llegar a 160. No rellenes con paja, pero NO entregues menos de 160 palabras.
-- Follow-ups: MÁS CORTOS que el inicial (60-110 palabras), y cada uno APORTA VALOR NUEVO (un insight del sector {{industry}}, un mini-caso con número, un recurso o una idea útil), no solo "¿lo viste?".
+- Email inicial (step 1): como el ejemplo del molde, 170-200 palabras. Nunca menos de 160.
+- Follow-ups: como los ejemplos del molde (70-110 palabras): el dato, la idea, la demo y la pregunta.
 
-ESTRUCTURA DEL EMAIL INICIAL (step 1) — la espina, cada bloque en su propio <p>:
-1. <p>Hola {{firstName}},</p>
-2. Apertura estilo DESCUBRIMIENTO (obligatorio): empieza SIEMPRE con una variación natural de "Investigando {{companyName}} y vuestra actividad en {{industry}}, me llamó la atención / me topé con / vi ..." seguida de un reto o tendencia típica del sector. Tono de curiosidad genuina, como si de verdad hubieras investigado (SIN inventar detalles internos concretos suyos). Varía el verbo entre variantes (investigando / mirando / analizando).
-3. Reto común del sector {{industry}} + propuesta de valor directa del cliente (qué ofrece).
-4. Prueba social con un NÚMERO concreto (caso TÍPICO del sector {{industry}}, verosímil — no un hecho del prospect).
-5. Gancho con un guiño natural a {{companyName}} (general, sin inventar nada sobre ellos).
-6. CTA claro (p. ej. "¿15 minutos esta semana?").
-7. Salida sin presión ("si no encaja, dímelo y lo dejamos aquí").
-8. Firma con el NOMBRE de quien envía (ver regla de FIRMA).
+MOLDE (obligatorio): los EJEMPLOS QUE FUNCIONAN y sus reglas van a continuación. Cada step se calca de su ejemplo; solo cambia lo que es del cliente (oferta, método, dato, demo, firma, enlace de reserva si lo hay). Las reglas de longitud, variables y frases-ancla del molde mandan sobre cualquier otra indicación de este prompt.
 
-FIRMA (despedida): firma SIEMPRE con el nombre de la persona que envía, en dos líneas: <p>Un saludo,<br>Nombre</p>. Si se te da un NOMBRE DEL COMERCIAL, úsalo tal cual. Si no, usa el nombre del fundador/CEO que aparezca en el briefing o la web. Nunca firmes solo con "El equipo" si puedes poner un nombre de persona.
+${CAMPAIGN_COPY_SYSTEM}
 
-FOLLOW-UPS — más cortos que el inicial y cada uno APORTANDO VALOR NUEVO sobre {{companyName}} / {{industry}} (no repitas frases ni hagas solo "¿lo viste?"):
-- FU1 (~3 días): retoma el gancho + aporta un insight o idea concreta útil para {{companyName}}.
-- FU2 (~4 días): mini-caso real del sector {{industry}} con un número + pregunta de cualificación.
-- FU3 (~5 días): breakup amable, con un último apunte de valor, invitando a retomar cuando les venga bien.
+FIRMA (despedida): firma SIEMPRE con el nombre de la persona que envía, como el ejemplo: "quedo atento" / "un saludo" / Nombre en el step 1, y "Un saludo," + Nombre en los follow-ups. Si se te da un NOMBRE DEL COMERCIAL, úsalo tal cual; si no, el fundador/CEO del briefing o la web. Nunca firmes solo con "El equipo" si puedes poner un nombre de persona.
 
 FORMATO HTML (obligatorio en cada body):
 - Cada bloque en su propio <p>...</p>. UNA idea por <p>.

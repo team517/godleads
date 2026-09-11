@@ -22,6 +22,7 @@
 // TEST before enabling any cron. Reuses the proven SMTP + DeepSeek patterns of the platform.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
 import { buildCopyDoc } from "../_shared/report/buildCopyPdf.ts";
@@ -186,9 +187,14 @@ async function sendAnalytics(admin: any, clientId: string, toEmail: string, team
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
-// OnePulso campaign copy structure (same as CAMPAIGN_SKILLS in the frontend) — used to
-// generate a NEW campaign from the client's form answers, server-side, via DeepSeek.
-const CAMPAIGN_STRUCTURE = `Eres el copywriter de OnePulso (cold email B2B). Escribes la secuencia de EMAILS que la EMPRESA CLIENTE enviará a SUS leads. ESTRUCTURA del email inicial: 1) 'Hola {{first_name}},'. 2) Presentación personal: 'Soy [nombre] de [empresa que envía]'. 3) Gancho personalizado: 'Estuve viendo {{company_name}} y cómo trabajáis dentro de {{industry}}, y quería compartirte algo que creo que os puede encajar'. 4) Qué hacéis, claro y breve. 5) Cómo funciona / qué incluye. 6) Qué CONSIGUEN ellos (beneficios concretos y tangibles). 7) 'La idea es que {{company_name}} [beneficio] sin [dolor]'. 8) 'He preparado un ejemplo pensado específicamente para vuestra empresa'. 9) CTA suave: '¿Te vendría bien verlo en 10 minutos esta semana?'. 10) Firma: nombre + empresa. ENFOCA TODO EN BENEFICIOS (lo que CONSEGUIRÁN). Habla de ELLOS ({{company_name}}) más que de la industria; usa mucho {{first_name}} {{company_name}} {{industry}} {{city}} para que parezca muy personalizado aunque sea general. SIN emojis, voz cercana y directa, bien estructurado. LONGITUD: inicial 150-170 palabras; follow-ups 100-135. Follow-ups a 1-2 días, misma voz, referenciando el anterior y rematando con el beneficio. Cada step con 1 variante de ángulo distinto (p.ej. una de ventas/cliente ideal y otra creativa).`;
+// The copy of every campaign this bot writes for a client is modelled on the emails that
+// actually get replies — see _shared/campaign-copy.ts (mould + rules, shared with the
+// "Crear campaña" generator so both write the same thing).
+const CAMPAIGN_STRUCTURE = `Eres el copywriter de OnePulso (cold email B2B). Escribes la secuencia de EMAILS que la EMPRESA CLIENTE enviará a SUS leads, calcando los EJEMPLOS QUE FUNCIONAN y adaptando solo lo que es del cliente.
+
+${CAMPAIGN_COPY_SYSTEM}
+
+CADENCIA: step 1 = email inicial; step 2 = follow-up a los 2 días; step 3 = follow-up a los 3 días. Misma voz, mismo hilo. Cada step con 1 variante que cambia solo el ángulo de la oferta.`;
 
 // Generate a 3-step campaign (each with 1 variant) from a briefing, via DeepSeek.
 async function genCampaignSteps(apiKey: string, briefing: string, company: string, language: string): Promise<any[]> {
