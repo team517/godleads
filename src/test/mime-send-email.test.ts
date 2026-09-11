@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace, hasHtmlMarkup } from "@/lib/mime-headers";
+import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace, hasHtmlMarkup, textToHtmlBody } from "@/lib/mime-headers";
 
 // Decode an "=?UTF-8?B?..?=" chain back to the original string, the way a mail client
 // does: unfold (CRLF + WSP), then base64-decode every word and concatenate.
@@ -187,5 +187,84 @@ describe("encodeMimeHeaderFolded — corte por espacios", () => {
     const out = encodeMimeHeaderFolded(long);
     expect(decodeWords(out, "")).toBe(long);
     for (const w of out.split("\r\n ")) expect(w.length).toBeLessThanOrEqual(75);
+  });
+});
+
+
+describe("textToHtmlBody — la estructura del correo que ve el lead", () => {
+  const P = '<p style="margin:0 0 14px">';
+  const count = (h: string) => (h.match(/<p style=/g) || []).length;
+
+  // Forma REAL de "CAMPAÑA ONEPULSO": cada parrafo en su propia linea, SIN lineas
+  // en blanco, y <b> para enfatizar. Antes llegaba todo pegado en un solo bloque.
+  const realSinLineasEnBlanco = [
+    "Buenas <b>Xavier</b>,",
+    "Soy Maria, investigando <b>OnePulso</b> en Linkedin, nos dimos cuenta de que teneis una buena imagen.",
+    "Te escribo porque ayudamos a empresas a <b>conseguir reuniones de manera estable</b>.",
+    "Un saludo,",
+    "Maria",
+  ].join("\n");
+
+  it("sin lineas en blanco, cada linea larga es su propio parrafo", () => {
+    // 3 parrafos de texto + la despedida corta agrupada en uno solo.
+    expect(count(textToHtmlBody(realSinLineasEnBlanco))).toBe(4);
+  });
+
+  it("las lineas cortas seguidas (la despedida) van juntas, no separadas", () => {
+    const html = textToHtmlBody(realSinLineasEnBlanco);
+    expect(html).toContain("Un saludo,<br>Maria");
+    expect(html).not.toContain("Un saludo,</p>");
+  });
+
+  it("el correo NO llega como un unico bloque pegado", () => {
+    const html = textToHtmlBody(realSinLineasEnBlanco);
+    expect(html).not.toBe(realSinLineasEnBlanco);
+    expect(html.startsWith(P)).toBe(true);
+  });
+
+  it("la negrita sigue siendo negrita y no texto literal", () => {
+    const html = textToHtmlBody(realSinLineasEnBlanco);
+    expect(html).toContain("<b>Xavier</b>");
+    expect(html).not.toContain("&lt;b&gt;");
+  });
+
+  it("la version en TEXTO hereda los parrafos (linea en blanco entre bloques)", () => {
+    // Reproduce lo que hace el motor: htmlToPlainText convierte </p> en linea en blanco.
+    const plano = textToHtmlBody(realSinLineasEnBlanco)
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    expect(plano.split(/\n\n/).length).toBe(4);
+    expect(plano).toContain("Buenas Xavier,\n\nSoy Maria");
+  });
+
+  it("con lineas en blanco, la linea en blanco separa y el salto simple es un <br>", () => {
+    const conBlancos = "Hola Ana,\n\nPrimera linea\nsegunda linea\n\nUn saludo";
+    const html = textToHtmlBody(conBlancos);
+    expect(count(html)).toBe(3);
+    expect(html).toContain("Primera linea<br>segunda linea");
+  });
+
+  it("un cuerpo ya maquetado con <p> se respeta tal cual", () => {
+    const ya = "<p>Hola Ana,</p><p>Un saludo</p>";
+    expect(textToHtmlBody(ya)).toBe(ya);
+  });
+
+  it("texto plano puro: parrafos y ademas escapado", () => {
+    expect(textToHtmlBody("Respondemos en <2 horas & sin permanencia."))
+      .toBe(P + "Respondemos en &lt;2 horas &amp; sin permanencia.</p>");
+  });
+
+  it("tolera CRLF y cadenas vacias", () => {
+    // Dos lineas CORTAS seguidas se agrupan en un parrafo con un salto entre ellas.
+    expect(textToHtmlBody("Uno\r\nDos")).toBe(P + "Uno<br>Dos</p>");
+    // Dos lineas LARGAS son parrafos independientes.
+    const larga1 = "Esta es una frase suficientemente larga como para ser su propio parrafo.";
+    const larga2 = "Y esta es otra frase igual de larga que tambien va en su propio parrafo.";
+    expect(textToHtmlBody(larga1 + "\r\n" + larga2)).toBe(P + larga1 + "</p>" + P + larga2 + "</p>");
+    expect(textToHtmlBody("")).toBe("");
+    expect(textToHtmlBody(null)).toBe("");
   });
 });

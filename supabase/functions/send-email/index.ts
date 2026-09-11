@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
-import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup } from "../_shared/mime-headers.ts";
+import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -11,22 +11,11 @@ const corsHeaders = {
 // replaceVariables lives in _shared/personalize.ts (imported above) — the SAME code the
 // campaign engine runs, so a test email renders exactly like the real one.
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
-function textToHtml(text: string): string {
-  // Already HTML (a rich Unibox reply) → untouched.
-  if (hasHtmlMarkup(text)) return text;
-  // PLAIN text → it is NOT markup: escape it, otherwise a literal "<" or "&" the
-  // user typed ("3 < 5", "R&D") corrupts the HTML part (or swallows the rest of
-  // the paragraph inside a fake tag).
-  return text
-    .split(/\n\n+/)
-    .filter(p => p.trim())
-    .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
-    .join('');
-}
+// textToHtml vive en _shared/mime-headers.ts (textToHtmlBody): decide por separado si el
+// cuerpo YA esta maquetado (etiquetas de bloque) y si lleva formato en linea (<b>), para que
+// un texto con saltos de linea y negritas conserve los parrafos en vez de llegar todo pegado.
+const textToHtml = (text: string): string => textToHtmlBody(text);
 
 // Wrap the final HTML in a real document ONCE. A bare fragment as text/html makes
 // clients guess the charset and the mobile scale; the <meta> pair fixes both.

@@ -179,8 +179,90 @@ export function foldHeader(name: string, value: string): string {
  *
  * One definition for both senders so the engine and send-email can never drift.
  */
-const HTML_MARKUP_RE = /<(?:p|div|br|table|thead|tbody|tr|td|th|span|a|img|ul|ol|li|b|strong|em|i|u|h[1-6]|blockquote|pre|code|hr|font)(?:\s|>|\/)/i;
+/**
+ * BLOCK tags lay the message out: if the author used them, the body is already
+ * structured HTML and must be passed through untouched.
+ */
+const BLOCK_MARKUP_RE = /<(?:p|div|br|table|thead|tbody|tr|td|th|ul|ol|li|h[1-6]|blockquote|pre|hr)(?:\s|>|\/)/i;
 
+/**
+ * INLINE tags only decorate words. They say NOTHING about layout, so a body that
+ * has only these still needs its blank lines turned into paragraphs.
+ */
+const INLINE_MARKUP_RE = /<(?:b|strong|em|i|u|a|span|img|code|font|sub|sup|mark|small)(?:\s|>|\/)/i;
+
+/** Did the author lay the body out with block tags? Then do not re-wrap it. */
+export function hasBlockMarkup(text: string | null | undefined): boolean {
+  return BLOCK_MARKUP_RE.test(text || "");
+}
+
+/**
+ * Does the body decorate words with inline tags? Then it must NOT be escaped —
+ * but it still needs its line breaks turned into paragraphs.
+ *
+ * This distinction is the whole point: several live campaign steps are written as
+ * plain text with blank lines AND "<b>{{first_name}}</b>" for emphasis. Treating
+ * that as "already HTML" swallowed every line break and the email arrived as one
+ * solid block of text; escaping it instead showed "<b>" as visible characters.
+ */
+export function hasInlineMarkup(text: string | null | undefined): boolean {
+  return INLINE_MARKUP_RE.test(text || "");
+}
+
+/** Any HTML at all — used to decide that a body cannot be delivered as plain text. */
 export function hasHtmlMarkup(text: string | null | undefined): boolean {
-  return HTML_MARKUP_RE.test(text || "");
+  return hasBlockMarkup(text) || hasInlineMarkup(text);
+}
+
+/**
+ * Turn an author's text into the HTML body we send.
+ *   - block tags present  → already laid out, returned untouched
+ *   - inline tags present → paragraphs built from the blank lines, tags kept
+ *   - neither             → paragraphs built AND &, < and > escaped, so a literal
+ *                           "<2 horas" cannot swallow the rest of the sentence
+ * A blank line starts a new paragraph; a single line break becomes <br>.
+ */
+export function textToHtmlBody(text: string | null | undefined): string {
+  const raw = text || "";
+  if (hasBlockMarkup(raw)) return raw;
+  const keepInline = hasInlineMarkup(raw);
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const normalized = raw.replace(/\r\n?/g, "\n");
+
+  // How did the author separate their paragraphs?
+  //   - with BLANK lines  → a blank line opens a paragraph, a single break is a <br>
+  //   - with SINGLE breaks → then that break IS the paragraph separator
+  // The second case is how the hand-written campaigns are written, and getting it
+  // wrong is what made the email arrive as one solid block. It also fixes the
+  // PLAIN-TEXT part: each </p> becomes a blank line there, so the text version
+  // reads with the same paragraphs instead of a wall of wrapped sentences.
+  const hasBlankLines = /\n[ \t]*\n/.test(normalized);
+  const pieces = normalized
+    .split(hasBlankLines ? /\n[ \t]*\n+/ : /\n/)
+    .map((p) => p.replace(/^\s+|\s+$/g, ""))
+    .filter(Boolean);
+  if (!pieces.length) return "";
+
+  // When the author used single line breaks, a run of SHORT consecutive lines is a
+  // block that belongs together — a sign-off ("Quedo atento. / Un saludo, / Maria")
+  // reads wrong with a full paragraph gap between each line. Keep those on their own
+  // lines inside ONE paragraph; everything else gets real paragraph spacing.
+  const SHORT_LINE = 35;
+  const groups: string[][] = [];
+  for (const piece of pieces) {
+    const prev = groups[groups.length - 1];
+    const joinable = !hasBlankLines && prev && piece.length <= SHORT_LINE
+      && prev[prev.length - 1].length <= SHORT_LINE;
+    if (joinable) prev.push(piece);
+    else groups.push([piece]);
+  }
+
+  // Explicit margin so the spacing is identical in every client instead of
+  // depending on each one's default <p> margin.
+  return groups
+    .map((g) => {
+      const inner = g.map((line) => (keepInline ? line : esc(line))).join("<br>");
+      return `<p style="margin:0 0 14px">${inner.replace(/\n/g, "<br>")}</p>`;
+    })
+    .join("");
 }

@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader } from "../_shared/mime-headers.ts";
+import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -14,20 +14,11 @@ const corsHeaders = {
 // blank value uses a natural Spanish fallback or is dropped, so a raw "{{city}}" can
 // never reach a lead again (455 such emails went out in the week to 2026-09-11).
 
-function escapeHtmlText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
-function textToHtml(text: string): string {
-  if (hasHtmlMarkup(text)) return text;
-  // PLAIN-TEXT branch: the copy is literal prose, so a stray `<` or `&` (e.g. "<20 leads",
-  // "R&D") would corrupt the HTML part. Escape before inserting our own <br>/<p> markup.
-  return text
-    .split(/\n\n+/)
-    .filter(p => p.trim())
-    .map(p => `<p>${escapeHtmlText(p).replace(/\n/g, '<br>')}</p>`)
-    .join('');
-}
+// textToHtml vive en _shared/mime-headers.ts (textToHtmlBody): decide por separado si el
+// cuerpo YA esta maquetado (etiquetas de bloque) y si lleva formato en linea (<b>), para que
+// un texto con saltos de linea y negritas conserve los parrafos en vez de llegar todo pegado.
+const textToHtml = (text: string): string => textToHtmlBody(text);
 
 // The text/html MIME part must be a complete document, not a bare fragment: clients
 // (and spam filters) treat a headless fragment as suspicious and may guess the charset.
