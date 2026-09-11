@@ -113,11 +113,17 @@ export default function TodayMessages() {
     };
   }, [user]);
 
+  // Smartlead-style label chip: soft hue-100 tint + hue-700 text, rectangular (6px radius),
+  // same hue map as the Unibox (categoryConfig). "IA" is an internal marker, never shown.
   const labelColor = (label: string) => {
     switch (label) {
-      case "Interesado": return "bg-success/20 text-success border-success/30";
-      case "No interesado": return "bg-destructive/20 text-destructive border-destructive/30";
-      case "Reunión": return "bg-info/20 text-info border-info/30";
+      case "Interesado": return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300";
+      case "Pregunta": return "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300";
+      case "No interesado": return "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300";
+      case "No contactar": return "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300";
+      case "Derivado": return "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300";
+      case "Fuera / Auto": return "bg-pink-100 text-pink-700 dark:bg-pink-500/20 dark:text-pink-300";
+      case "Reunión": return "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300";
       default: return "bg-muted text-muted-foreground";
     }
   };
@@ -176,8 +182,8 @@ export default function TodayMessages() {
                 </div>
                 {msg.labels && msg.labels.length > 0 && (
                   <div className="flex gap-1 mt-1.5">
-                    {msg.labels.map((l) => (
-                      <span key={l} className={`text-[10px] px-1.5 py-0.5 rounded-full border ${labelColor(l)}`}>
+                    {msg.labels.filter((l) => l !== "IA").map((l) => (
+                      <span key={l} className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${labelColor(l)}`}>
                         {l}
                       </span>
                     ))}

@@ -969,12 +969,12 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
 // with the category hue as background + text. Class strings are written out LITERALLY —
 // Tailwind purges anything built with template-literal interpolation like `bg-${hue}-50`.
 const categoryConfig: Record<MessageCategory, { label: string; bg: string; text: string; border: string; dot: string }> = {
-  interested:     { label: "Interesado",    bg: "bg-emerald-50 dark:bg-emerald-500/15", text: "text-emerald-700 dark:text-emerald-300", border: "border-emerald-600/30", dot: "bg-emerald-500" },
-  not_interested: { label: "No interesado", bg: "bg-red-50 dark:bg-red-500/15",         text: "text-red-700 dark:text-red-300",         border: "border-red-600/30",     dot: "bg-red-500" },
-  no_contactar:   { label: "No contactar",  bg: "bg-rose-50 dark:bg-rose-500/15",       text: "text-rose-700 dark:text-rose-300",       border: "border-rose-700/30",    dot: "bg-rose-600" },
-  derivado:       { label: "Derivado",      bg: "bg-amber-50 dark:bg-amber-500/15",     text: "text-amber-700 dark:text-amber-300",     border: "border-amber-600/30",   dot: "bg-amber-500" },
-  question:       { label: "Pregunta",      bg: "bg-sky-50 dark:bg-sky-500/15",         text: "text-sky-700 dark:text-sky-300",         border: "border-sky-600/30",     dot: "bg-sky-500" },
-  out_of_office:  { label: "Fuera / Auto",  bg: "bg-pink-50 dark:bg-pink-500/15",       text: "text-pink-700 dark:text-pink-300",       border: "border-pink-600/30",    dot: "bg-pink-500" },
+  interested:     { label: "Interesado",    bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-300", border: "border-transparent", dot: "bg-emerald-500" },
+  not_interested: { label: "No interesado", bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-300",         border: "border-transparent",     dot: "bg-red-500" },
+  no_contactar:   { label: "No contactar",  bg: "bg-rose-100 dark:bg-rose-500/20",       text: "text-rose-700 dark:text-rose-300",       border: "border-transparent",    dot: "bg-rose-600" },
+  derivado:       { label: "Derivado",      bg: "bg-amber-100 dark:bg-amber-500/20",     text: "text-amber-700 dark:text-amber-300",     border: "border-transparent",   dot: "bg-amber-500" },
+  question:       { label: "Pregunta",      bg: "bg-sky-100 dark:bg-sky-500/20",         text: "text-sky-700 dark:text-sky-300",         border: "border-transparent",     dot: "bg-sky-500" },
+  out_of_office:  { label: "Fuera / Auto",  bg: "bg-pink-100 dark:bg-pink-500/20",       text: "text-pink-700 dark:text-pink-300",       border: "border-transparent",    dot: "bg-pink-500" },
   neutral:        { label: "",              bg: "",                                     text: "text-muted-foreground",                  border: "border-border",         dot: "bg-muted-foreground" },
 };
 
@@ -983,15 +983,15 @@ type FilterType = "all" | "ai_replied" | MessageCategory;
 // Filter-chip palette (idle / active) per filter key. Same hues as categoryConfig plus
 // "all" (neutral) and "ai_replied" (violet). Literal strings for the same purge reason.
 const filterChipStyles: Record<FilterType, { idle: string; active: string }> = {
-  all:            { idle: "bg-muted text-foreground border-border hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground border-transparent ring-2 ring-primary/30" },
-  interested:     { idle: "bg-emerald-50 text-emerald-700 border-emerald-600/30 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white border-transparent ring-2 ring-emerald-500/30 dark:bg-emerald-500" },
-  ai_replied:     { idle: "bg-violet-50 text-violet-700 border-violet-600/30 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white border-transparent ring-2 ring-violet-500/30 dark:bg-violet-500" },
-  question:       { idle: "bg-sky-50 text-sky-700 border-sky-600/30 hover:bg-sky-100 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white border-transparent ring-2 ring-sky-500/30 dark:bg-sky-500" },
-  not_interested: { idle: "bg-red-50 text-red-700 border-red-600/30 hover:bg-red-100 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white border-transparent ring-2 ring-red-500/30 dark:bg-red-500" },
-  no_contactar:   { idle: "bg-rose-50 text-rose-700 border-rose-700/30 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white border-transparent ring-2 ring-rose-600/30 dark:bg-rose-500" },
-  derivado:       { idle: "bg-amber-50 text-amber-700 border-amber-600/30 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white border-transparent ring-2 ring-amber-500/30 dark:bg-amber-500" },
-  out_of_office:  { idle: "bg-pink-50 text-pink-700 border-pink-600/30 hover:bg-pink-100 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white border-transparent ring-2 ring-pink-500/30 dark:bg-pink-500" },
-  neutral:        { idle: "bg-muted text-foreground border-border hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground border-transparent ring-2 ring-primary/30" },
+  all:            { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
+  interested:     { idle: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white ring-2 ring-emerald-500/30 dark:bg-emerald-500" },
+  ai_replied:     { idle: "bg-violet-100 text-violet-700 hover:bg-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white ring-2 ring-violet-500/30 dark:bg-violet-500" },
+  question:       { idle: "bg-sky-100 text-sky-700 hover:bg-sky-200/70 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white ring-2 ring-sky-500/30 dark:bg-sky-500" },
+  not_interested: { idle: "bg-red-100 text-red-700 hover:bg-red-200/70 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white ring-2 ring-red-500/30 dark:bg-red-500" },
+  no_contactar:   { idle: "bg-rose-100 text-rose-700 hover:bg-rose-200/70 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white ring-2 ring-rose-600/30 dark:bg-rose-500" },
+  derivado:       { idle: "bg-amber-100 text-amber-700 hover:bg-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white ring-2 ring-amber-500/30 dark:bg-amber-500" },
+  out_of_office:  { idle: "bg-pink-100 text-pink-700 hover:bg-pink-200/70 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white ring-2 ring-pink-500/30 dark:bg-pink-500" },
+  neutral:        { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
 };
 
 const langLabels: Record<string, string> = {
@@ -3145,7 +3145,7 @@ export default function Unibox() {
       <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border/60 bg-card px-3 py-2.5 no-scrollbar">
         <button
           onClick={() => setShowTodayOnly(!showTodayOnly)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+          className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
             showTodayOnly
               ? "bg-primary text-primary-foreground shadow-sm"
               : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -3159,7 +3159,7 @@ export default function Unibox() {
           <button
             key={fb.key}
             onClick={() => setCategoryFilter(fb.key)}
-            className={`inline-flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
+            className={`inline-flex h-[26px] flex-shrink-0 items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
               categoryFilter === fb.key
                 ? filterChipStyles[fb.key].active
                 : filterChipStyles[fb.key].idle
@@ -3177,7 +3177,7 @@ export default function Unibox() {
       <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border/60 bg-card px-3 py-2 no-scrollbar">
         <button
           onClick={() => setFolderFilter(null)}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+          className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
             folderFilter === null ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted text-muted-foreground hover:bg-muted/80"
           }`}
         >
@@ -3187,7 +3187,7 @@ export default function Unibox() {
           <button
             key={f.id}
             onClick={() => setFolderFilter(folderFilter === f.id ? null : f.id)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap border"
+            className="inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap"
             style={folderFilter === f.id
               ? { backgroundColor: f.color, color: "#fff", borderColor: f.color }
               : { backgroundColor: `${f.color}22`, color: f.color, borderColor: `${f.color}55` }}
@@ -3198,7 +3198,7 @@ export default function Unibox() {
         ))}
         <Popover open={folderPopoverOpen} onOpenChange={setFolderPopoverOpen}>
           <PopoverTrigger asChild>
-            <button className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-muted/80 whitespace-nowrap">
+            <button className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-muted px-2.5 text-[13px] font-medium leading-none text-muted-foreground hover:bg-muted/80 whitespace-nowrap">
               + Carpeta
             </button>
           </PopoverTrigger>
@@ -3354,16 +3354,16 @@ export default function Unibox() {
                         {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {aiReplied(msg.from_email) ? (
-                              <span className="inline-flex items-center gap-1 rounded-md border border-violet-600/30 bg-violet-50 px-2 py-0.5 text-[12px] font-medium text-violet-700 whitespace-nowrap dark:bg-violet-500/15 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
+                              <span className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-violet-100 px-2.5 text-[13px] font-medium leading-none text-violet-700 whitespace-nowrap dark:bg-violet-500/20 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
                                 <Sparkles className="h-3 w-3" /> Respondido con IA
                               </span>
                             ) : catCfg.label && (
-                              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[12px] font-medium whitespace-nowrap ${catCfg.bg} ${catCfg.text} ${catCfg.border}`}>
+                              <span className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
                                 {catCfg.label}
                               </span>
                             )}
                             {campaignName && (
-                              <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/5 px-2 py-0.5 text-[11px] font-semibold text-primary whitespace-nowrap">
+                              <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[6px] bg-primary/10 px-2.5 text-[13px] font-medium leading-none text-primary whitespace-nowrap">
                                 <Megaphone className="h-3 w-3" /> {campaignName}
                               </span>
                             )}
@@ -3452,11 +3452,11 @@ export default function Unibox() {
                       <h2 className="text-lg md:text-xl font-medium text-foreground leading-tight flex items-center gap-2 flex-wrap">
                         {decodeSubject(selected.subject)}
                         {aiReplied(selected.from_email) ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-violet-600/30 bg-violet-50 px-2 py-0.5 text-[12px] font-medium text-violet-700 dark:bg-violet-500/15 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
+                          <span className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-violet-100 px-2.5 text-[13px] font-medium leading-none text-violet-700 whitespace-nowrap dark:bg-violet-500/20 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
                             <Sparkles className="h-3 w-3" /> Respondido con IA
                           </span>
                         ) : selectedCatConfig?.label && (
-                          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[12px] font-medium ${selectedCatConfig.bg} ${selectedCatConfig.text} ${selectedCatConfig.border}`}>
+                          <span className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
                             {selectedCatConfig.label}
                           </span>
                         )}
