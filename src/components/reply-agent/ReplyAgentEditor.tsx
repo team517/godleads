@@ -251,7 +251,7 @@ export function ReplyAgentEditor({
                 onClick={() => setEditingName(true)}
                 className="group flex items-center gap-2 text-left"
               >
-                <h2 className="font-display truncate text-xl font-bold tracking-tight">
+                <h2 className="font-display truncate text-xl font-light tracking-tight">
                   {draft.name || "Agente sin nombre"}
                 </h2>
                 <Pencil className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />

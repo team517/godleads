@@ -3419,7 +3419,7 @@ export default function Unibox() {
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div className="flex-1 min-w-0">
-                      <h2 className="text-lg md:text-xl font-semibold text-foreground leading-tight flex items-center gap-2 flex-wrap">
+                      <h2 className="text-lg md:text-xl font-medium text-foreground leading-tight flex items-center gap-2 flex-wrap">
                         {decodeSubject(selected.subject)}
                         {aiReplied(selected.from_email) ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-violet-500/10 text-violet-600" title="La IA respondió automáticamente a este contacto">

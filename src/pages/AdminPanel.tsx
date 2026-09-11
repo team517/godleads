@@ -329,7 +329,7 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { 
               {(user.full_name || user.email)[0].toUpperCase()}
             </div>
             <div>
-              <h2 className="text-xl font-bold">{user.full_name || user.email.split("@")[0]}</h2>
+              <h2 className="text-xl font-light tracking-tight">{user.full_name || user.email.split("@")[0]}</h2>
               <p className="text-sm text-muted-foreground flex items-center gap-1.5">
                 <Mail className="h-3.5 w-3.5" /> {user.email}
               </p>

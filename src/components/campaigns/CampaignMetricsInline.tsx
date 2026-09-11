@@ -51,7 +51,7 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
   const replyPct = m && denom > 0 ? `${(((m.replied ?? 0) / denom) * 100).toFixed(1)}%` : "0%";
 
   const items = [
-    { label: "Sent",      value: m?.sent ?? 0,          sub: null,                 icon: Send,               color: "text-indigo-600" },
+    { label: "Sent",      value: m?.sent ?? 0,          sub: null,                 icon: Send,               color: "text-primary" },
     { label: "Contacted", value: m?.contacted ?? 0,     sub: null,                 icon: Users,              color: "text-sky-600" },
     { label: "Opened",    value: m?.opened ?? 0,        sub: pct(m?.opened ?? 0),  icon: MailOpen,           color: "text-fuchsia-600" },
     { label: "Replied",   value: m?.replied ?? 0,       sub: replyPct,             icon: MessageSquareReply, color: "text-teal-600" },

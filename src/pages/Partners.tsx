@@ -93,7 +93,7 @@ export default function Partners() {
           <Handshake className="h-4 w-4" />
           Programa de Partners
         </div>
-        <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground">
+        <h1 className="text-3xl md:text-4xl font-display font-light tracking-tight text-foreground">
           ¿Quieres ser Partner de GodLeads?
         </h1>
         <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
@@ -119,7 +119,7 @@ export default function Partners() {
 
       {/* Tiers */}
       <div className="space-y-4">
-        <h2 className="text-xl font-display font-bold text-foreground text-center">Niveles de Partner</h2>
+        <h2 className="text-xl font-display font-light tracking-tight text-foreground text-center">Niveles de Partner</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {TIERS.map((t) => (
             <Card key={t.name} className="border text-center">
@@ -148,7 +148,7 @@ export default function Partners() {
       ) : (
         <Card>
           <CardContent className="p-6 space-y-4">
-            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+            <h2 className="text-lg font-light tracking-tight text-foreground flex items-center gap-2">
               <ArrowRight className="h-5 w-5 text-primary" />
               Solicita ser Partner
             </h2>

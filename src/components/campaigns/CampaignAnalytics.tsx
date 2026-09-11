@@ -59,9 +59,9 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   const [branding, setBranding] = useState<Branding>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(BRAND_KEY) || "null");
-      if (saved && typeof saved === "object") return { logo: saved.logo ?? null, color: saved.color || "#4F46E5", company: saved.company || "" };
+      if (saved && typeof saved === "object") return { logo: saved.logo ?? null, color: saved.color || "#7A5AF8", company: saved.company || "" };
     } catch { /* ignore */ }
-    return { logo: null, color: "#4F46E5", company: "" };
+    return { logo: null, color: "#7A5AF8", company: "" };
   });
   const [brandOpen, setBrandOpen] = useState(false);
   // Once the user edits branding by hand, stop auto-overwriting it from the profile.

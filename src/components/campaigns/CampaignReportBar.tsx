@@ -90,7 +90,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
   const StatusIcon = meta.icon;
 
   const metrics = [
-    { key: "sent",     label: "Sent",          value: m.sent,          sub: null,            icon: Send,               color: "text-indigo-600" },
+    { key: "sent",     label: "Sent",          value: m.sent,          sub: null,            icon: Send,               color: "text-primary" },
     { key: "contacted",label: "Contacted",     value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600" },
     { key: "opened",   label: "Opened",        value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600" },
     { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600" },
