@@ -320,7 +320,7 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
           {campaignTags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-600/25 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-600/25 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-300"
             >
               <Tag className="h-3 w-3" /> {t}
             </span>

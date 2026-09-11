@@ -86,9 +86,11 @@ const statusPill: Record<string, { label: string; className: string; dot: string
 
 /** Ring colour mirrors the state: green running, amber paused, blue done, grey draft. */
 const ringColor: Record<string, string> = {
-  active: "hsl(142 71% 45%)",
-  paused: "hsl(38 92% 50%)",
-  completed: "hsl(217 91% 60%)",
+  // Tokens, not literals: each one is already lifted in `.dark` so the ring and its
+  // centred % label keep their contrast on a dark row.
+  active: "hsl(var(--success))",
+  paused: "hsl(var(--warning))",
+  completed: "hsl(var(--brand-cyan))",
   draft: "hsl(var(--muted-foreground))",
 };
 
@@ -265,14 +267,13 @@ export default function CampaignsTable({
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
                             {pill.label}
                           </span>
+                          {/* Manager colour is user data → tint/border/text derived from it with
+                              color-mix, stronger + lighter under `dark:` so the chip reads on a
+                              dark row. */}
                           {mgr && (
                             <span
-                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-semibold"
-                              style={{
-                                backgroundColor: mgr.color + "14",
-                                color: mgr.color,
-                                border: "1px solid " + mgr.color + "33",
-                              }}
+                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[11px] font-semibold bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
+                              style={{ "--mgr": mgr.color } as any}
                               title={"Responsable: " + mgr.name}
                             >
                               <span

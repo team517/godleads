@@ -30,7 +30,7 @@ export default function CampaignProgressRing({ sent, total, size = 46, color }: 
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={color || (done ? "hsl(142 71% 45%)" : "hsl(var(--primary))")}
+          stroke={color || (done ? "hsl(var(--success))" : "hsl(var(--primary))")}
           strokeWidth={stroke}
           strokeDasharray={circ}
           strokeDashoffset={offset}
@@ -40,7 +40,7 @@ export default function CampaignProgressRing({ sent, total, size = 46, color }: 
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
         <span
-          className={`text-[11px] font-bold ${color ? "" : done ? "text-emerald-600" : "text-foreground"}`}
+          className={`text-[11px] font-bold ${color ? "" : done ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}
           style={color ? { color } : undefined}
         >
           {pct}%

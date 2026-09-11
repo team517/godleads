@@ -49,7 +49,7 @@ export default function CampaignSendsChart({ campaignId }: Props) {
         </p>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-primary" /> {loading ? "…" : `${total} envíos`}</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "hsl(173 58% 39%)" }} /> {loading ? "…" : `${totalReplies} respuestas`}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "hsl(var(--brand-teal))" }} /> {loading ? "…" : `${totalReplies} respuestas`}</span>
         </div>
       </div>
       <div className="h-40 w-full">
@@ -70,7 +70,7 @@ export default function CampaignSendsChart({ campaignId }: Props) {
                     <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
                       <p className="mb-1 font-medium capitalize">{p.full}</p>
                       <p className="text-primary font-semibold">{p.envios} {p.envios === 1 ? "envío" : "envíos"}</p>
-                      {p.respuestas > 0 && <p className="text-teal-600">{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
+                      {p.respuestas > 0 && <p className="text-teal-600 dark:text-teal-400">{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
                     </div>
                   );
                 }}
@@ -80,7 +80,7 @@ export default function CampaignSendsChart({ campaignId }: Props) {
                     even when the bar looks short next to a much bigger day. */}
                 <LabelList dataKey="envios" position="top" style={{ fontSize: 9, fill: "hsl(var(--muted-foreground))", fontWeight: 600 }} formatter={(v: any) => (Number(v) > 0 ? v : "")} />
               </Bar>
-              <Bar dataKey="respuestas" name="Respuestas" fill="hsl(173 58% 39%)" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={(v: number) => (v > 0 ? 8 : 0)} />
+              <Bar dataKey="respuestas" name="Respuestas" fill="hsl(var(--brand-teal))" radius={[4, 4, 0, 0]} maxBarSize={30} minPointSize={(v: number) => (v > 0 ? 8 : 0)} />
             </BarChart>
           </ResponsiveContainer>
         )}

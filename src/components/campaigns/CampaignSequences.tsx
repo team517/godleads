@@ -61,6 +61,14 @@ function correctVarsInText(text: string, valid: ValidVar[]): { text: string; cha
 // shows exactly what the lead receives (fallbacks included, never a raw {{placeholder}}).
 const renderVariables = (text: string, fields: Record<string, string>) => replaceVariables(text || "", fields);
 
+/** The copy preview renders the author's own HTML, which carries ITS OWN colours
+ *  (dark text, grey signatures, branded links) written for a white email client.
+ *  So the preview is always a sheet of white paper with dark text — in BOTH
+ *  themes — otherwise the message is invisible in dark mode. Deliberately has no
+ *  `dark:` variants; `[color-scheme:light]` also keeps form controls light. */
+const PAPER =
+  "rounded-lg border border-zinc-200 bg-white text-zinc-900 shadow-sm [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline";
+
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
   const [steps, setSteps] = useState<any[]>([]);
@@ -1065,7 +1073,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                   </button>
                 </div>
                 <div
-                  className="whitespace-pre-wrap text-sm leading-relaxed"
+                  className={PAPER + " whitespace-pre-wrap p-4 text-sm leading-relaxed"}
                   dangerouslySetInnerHTML={{ __html: previewText(getCurrentBody()) }}
                 />
               </div>
@@ -1343,9 +1351,9 @@ export default function CampaignSequences({ campaignId }: Props) {
                   <div key={i} className="flex items-center justify-between text-xs">
                     <span className="truncate">{r.email} <span className="text-muted-foreground">({r.provider})</span></span>
                     <span className={
-                      r.folder === "inbox" ? "text-emerald-600 font-medium"
-                      : r.folder === "spam" ? "text-red-600 font-medium"
-                      : "text-amber-600"
+                      r.folder === "inbox" ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                      : r.folder === "spam" ? "text-red-600 dark:text-red-400 font-medium"
+                      : "text-amber-600 dark:text-amber-400"
                     }>
                       {r.folder === "inbox" ? "📥 Bandeja" : r.folder === "spam" ? "🚫 Spam" : r.folder === "missing" ? "❓ No llegó" : "⚠ Error"}
                     </span>
@@ -1488,9 +1496,9 @@ export default function CampaignSequences({ campaignId }: Props) {
     <Dialog open={expandOpen} onOpenChange={setExpandOpen}>
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
         <DialogHeader><DialogTitle className="font-display text-base">Email completo</DialogTitle></DialogHeader>
-        <div className="rounded-lg border bg-white p-5 dark:bg-zinc-900">
-          <p className="mb-3 border-b pb-2 text-sm">
-            <span className="text-muted-foreground">Asunto: </span>
+        <div className={PAPER + " p-5"}>
+          <p className="mb-3 border-b border-zinc-200 pb-2 text-sm">
+            <span className="text-zinc-500">Asunto: </span>
             <span className="font-medium" dangerouslySetInnerHTML={{ __html: previewText(getCurrentSubject()) }} />
           </p>
           <div

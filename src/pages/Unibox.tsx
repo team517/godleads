@@ -898,13 +898,13 @@ type FilterType = "all" | "ai_replied" | MessageCategory;
 // "all" (neutral) and "ai_replied" (violet). Literal strings for the same purge reason.
 const filterChipStyles: Record<FilterType, { idle: string; active: string }> = {
   all:            { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
-  interested:     { idle: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white ring-2 ring-emerald-500/30 dark:bg-emerald-500" },
-  ai_replied:     { idle: "bg-violet-100 text-violet-700 hover:bg-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white ring-2 ring-violet-500/30 dark:bg-violet-500" },
-  question:       { idle: "bg-sky-100 text-sky-700 hover:bg-sky-200/70 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white ring-2 ring-sky-500/30 dark:bg-sky-500" },
-  not_interested: { idle: "bg-red-100 text-red-700 hover:bg-red-200/70 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white ring-2 ring-red-500/30 dark:bg-red-500" },
-  no_contactar:   { idle: "bg-rose-100 text-rose-700 hover:bg-rose-200/70 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white ring-2 ring-rose-600/30 dark:bg-rose-500" },
-  derivado:       { idle: "bg-amber-100 text-amber-700 hover:bg-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white ring-2 ring-amber-500/30 dark:bg-amber-500" },
-  out_of_office:  { idle: "bg-pink-100 text-pink-700 hover:bg-pink-200/70 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white ring-2 ring-pink-500/30 dark:bg-pink-500" },
+  interested:     { idle: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white ring-2 ring-emerald-500/30 dark:bg-emerald-400 dark:text-emerald-950 dark:ring-emerald-400/40" },
+  ai_replied:     { idle: "bg-violet-100 text-violet-700 hover:bg-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white ring-2 ring-violet-500/30 dark:bg-violet-400 dark:text-violet-950 dark:ring-violet-400/40" },
+  question:       { idle: "bg-sky-100 text-sky-700 hover:bg-sky-200/70 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white ring-2 ring-sky-500/30 dark:bg-sky-400 dark:text-sky-950 dark:ring-sky-400/40" },
+  not_interested: { idle: "bg-red-100 text-red-700 hover:bg-red-200/70 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white ring-2 ring-red-500/30 dark:bg-red-400 dark:text-red-950 dark:ring-red-400/40" },
+  no_contactar:   { idle: "bg-rose-100 text-rose-700 hover:bg-rose-200/70 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white ring-2 ring-rose-600/30 dark:bg-rose-400 dark:text-rose-950 dark:ring-rose-400/40" },
+  derivado:       { idle: "bg-amber-100 text-amber-700 hover:bg-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white ring-2 ring-amber-500/30 dark:bg-amber-400 dark:text-amber-950 dark:ring-amber-400/40" },
+  out_of_office:  { idle: "bg-pink-100 text-pink-700 hover:bg-pink-200/70 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white ring-2 ring-pink-500/30 dark:bg-pink-400 dark:text-pink-950 dark:ring-pink-400/40" },
   neutral:        { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
 };
 
@@ -967,13 +967,13 @@ function getMessageDeduplicationKey(message: any): string {
 function fileKind(name: string, mime: string): { label: string; color: string; isImage: boolean } {
   const ext = (name.split(".").pop() || "").toLowerCase();
   const m = (mime || "").toLowerCase();
-  if (m.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic"].includes(ext)) return { label: "Imagen", color: "bg-violet-100 text-violet-600", isImage: true };
-  if (m.includes("pdf") || ext === "pdf") return { label: "PDF", color: "bg-red-100 text-red-600", isImage: false };
-  if (["doc", "docx", "odt", "rtf"].includes(ext) || m.includes("word") || m.includes("opendocument.text")) return { label: "Documento", color: "bg-blue-100 text-blue-600", isImage: false };
-  if (["xls", "xlsx", "csv", "ods"].includes(ext) || m.includes("sheet") || m.includes("excel")) return { label: "Hoja de cálculo", color: "bg-emerald-100 text-emerald-600", isImage: false };
-  if (["ppt", "pptx", "odp"].includes(ext) || m.includes("presentation") || m.includes("powerpoint")) return { label: "Presentación", color: "bg-orange-100 text-orange-600", isImage: false };
-  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return { label: "Comprimido", color: "bg-amber-100 text-amber-600", isImage: false };
-  return { label: ext ? ext.toUpperCase() : "Archivo", color: "bg-slate-100 text-slate-600", isImage: false };
+  if (m.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic"].includes(ext)) return { label: "Imagen", color: "bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300", isImage: true };
+  if (m.includes("pdf") || ext === "pdf") return { label: "PDF", color: "bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-300", isImage: false };
+  if (["doc", "docx", "odt", "rtf"].includes(ext) || m.includes("word") || m.includes("opendocument.text")) return { label: "Documento", color: "bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-300", isImage: false };
+  if (["xls", "xlsx", "csv", "ods"].includes(ext) || m.includes("sheet") || m.includes("excel")) return { label: "Hoja de cálculo", color: "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-300", isImage: false };
+  if (["ppt", "pptx", "odp"].includes(ext) || m.includes("presentation") || m.includes("powerpoint")) return { label: "Presentación", color: "bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-300", isImage: false };
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return { label: "Comprimido", color: "bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300", isImage: false };
+  return { label: ext ? ext.toUpperCase() : "Archivo", color: "bg-muted text-muted-foreground", isImage: false };
 }
 
 function humanSize(base64: string): string {
@@ -1164,7 +1164,7 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
       ))}
       {nameOnly.map((name) => (
         <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <FileText className="h-4 w-4" />
           </span>
           <span className="min-w-0">
@@ -1178,6 +1178,38 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
     </div>
   );
 }
+
+/* ── Mail "paper" ─────────────────────────────────────────────
+ * Un correo recibido trae el estilo DEL REMITENTE (color:#000 en linea, tablas
+ * blancas, <font color>). Pintado sobre una tarjeta oscura eso es negro sobre
+ * negro o un bloque blanco cegador, asi que — como hace cualquier cliente de
+ * correo real — el cuerpo se pinta sobre una "hoja" clara en LOS DOS temas: los
+ * colores del remitente caen sobre la superficie para la que fueron escritos.
+ * En oscuro la hoja es un blanco roto con un borde suave, para que se lea como
+ * un papel sobre la pagina y no como un rectangulo blanco.
+ * A proposito NO usa tokens semanticos: la superficie debe seguir siendo clara
+ * cuando los tokens cambian a oscuro. */
+const MAIL_PAPER =
+  "mx-auto w-full max-w-[46rem] overflow-x-auto rounded-xl border px-4 py-4 shadow-sm sm:px-6 sm:py-5 " +
+  "[color-scheme:light] border-black/10 bg-white text-[#141319] " +
+  "dark:bg-[#f5f3ef] dark:text-[#14131a] dark:shadow-none dark:ring-1 dark:ring-white/10";
+
+/** Tipografia del cuerpo DENTRO de la hoja. Todos los colores son fijos y
+ *  pensados para fondo claro (nunca tokens), porque la hoja no cambia de tema. */
+const MAIL_PROSE =
+  "break-words text-[15px] leading-[1.75] " +
+  "[&_p]:my-3 [&_p]:leading-[1.75] " +
+  "[&_a]:text-[#5b3ad9] [&_a]:underline [&_a]:underline-offset-2 [&_a]:break-all " +
+  "[&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-[#d9d3ee] [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-[#57565f] " +
+  "[&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 " +
+  "[&_img]:my-3 [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-md " +
+  "[&_strong]:font-semibold [&_em]:italic " +
+  "[&_h1]:my-4 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:my-3 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:my-3 [&_h3]:text-lg [&_h3]:font-semibold " +
+  "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:p-2 [&_th]:p-2 [&_th]:font-semibold " +
+  "[&_hr]:my-4 [&_hr]:border-[#e3e0ea]";
+
+/** Cuerpo en texto plano: misma hoja, sin colores del remitente que respetar. */
+const MAIL_PLAIN = MAIL_PAPER + " whitespace-pre-wrap break-words text-[15px] leading-[1.75]";
 
 /* ── Component ─────────────────────────────────────────────────── */
 
@@ -2935,7 +2967,7 @@ export default function Unibox() {
             <p className="mt-0.5 text-xs md:text-sm text-muted-foreground">
             {filtered.length} mensajes · {unreadCount} sin leer
             {!isMobile && lastSyncAt && (
-              <span className="ml-2 text-xs text-muted-foreground/50">
+              <span className="ml-2 text-xs text-muted-foreground/50 dark:text-muted-foreground/70">
                 · Última sync {formatDistanceToNow(lastSyncAt, { addSuffix: true, locale: es })}
               </span>
             )}
@@ -3017,7 +3049,7 @@ export default function Unibox() {
             <TabsTrigger value="important" className="gap-1.5 text-xs">
               <Star className="h-3.5 w-3.5" /> Importantes
               {importantCount > 0 && (
-                <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-amber-950">
                   {importantCount}
                 </span>
               )}
@@ -3101,7 +3133,9 @@ export default function Unibox() {
           <button
             key={f.id}
             onClick={() => setFolderFilter(folderFilter === f.id ? null : f.id)}
-            className="inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap"
+            className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
+              folderFilter === f.id ? "" : "dark:!border-white/15 dark:!bg-white/10 dark:!text-foreground"
+            }`}
             style={folderFilter === f.id
               ? { backgroundColor: f.color, color: "#fff", borderColor: f.color }
               : { backgroundColor: `${f.color}22`, color: f.color, borderColor: `${f.color}55` }}
@@ -3142,7 +3176,7 @@ export default function Unibox() {
 
       {messages.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-card py-20">
-          <InboxIcon className="h-12 w-12 text-muted-foreground/40 mb-4" />
+          <InboxIcon className="h-12 w-12 text-muted-foreground/40 mb-4 dark:text-muted-foreground/60" />
           <h3 className="font-display font-semibold mb-2">Bandeja vacía</h3>
           <p className="text-sm text-muted-foreground mb-4">Sincroniza para traer mensajes de tus cuentas.</p>
           <Button onClick={handleSync} disabled={syncing} size="sm" className="gap-2">
@@ -3159,7 +3193,7 @@ export default function Unibox() {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Buscar por email, nombre o texto…"
-                  className="pl-9 pr-8 h-8 text-sm bg-muted/40 border-0 focus-visible:ring-1"
+                  className="pl-9 pr-8 h-8 text-sm bg-muted/40 dark:bg-muted/70 border-0 focus-visible:ring-1"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
@@ -3225,8 +3259,8 @@ export default function Unibox() {
                         if (isUnread) handleMarkRead(msg.id);
                       }
                     }}
-                    className={`group relative w-full cursor-pointer border-b border-border/30 px-4 py-3.5 text-left transition-all
-                      ${isChecked ? "bg-primary/10 border-l-2 border-l-primary" : due ? "bg-amber-100/70 dark:bg-amber-900/20 border-l-2 border-l-amber-500" : isActive ? "bg-primary/8 border-l-2 border-l-primary" : "hover:bg-muted/50 border-l-2 border-l-transparent"}
+                    className={`group relative w-full cursor-pointer border-b border-border/30 dark:border-border/70 px-4 py-3.5 text-left transition-all
+                      ${isChecked ? "bg-primary/10 border-l-2 border-l-primary" : due ? "bg-amber-100/70 dark:bg-amber-900/20 border-l-2 border-l-amber-500" : isActive ? "bg-primary/8 dark:bg-primary/15 border-l-2 border-l-primary" : "hover:bg-muted/50 border-l-2 border-l-transparent"}
                     `}
                   >
                     <div className="flex items-center gap-3">
@@ -3236,7 +3270,7 @@ export default function Unibox() {
                         onClick={(e) => { e.stopPropagation(); toggleBulk(msg.id); }}
                         title="Seleccionar"
                         className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[3px] border transition-all sm:h-4 sm:w-4 ${
-                          isChecked ? "border-primary bg-primary text-white" : "border-border bg-card hover:border-primary/60 sm:opacity-0 sm:group-hover:opacity-100"
+                          isChecked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:border-primary/60 sm:opacity-0 sm:group-hover:opacity-100"
                         }`}
                       >
                         {isChecked && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -3259,7 +3293,7 @@ export default function Unibox() {
                         <p className={`text-sm truncate mt-0.5 ${isUnread ? "text-foreground/85 font-medium" : "text-muted-foreground"}`}>
                           {decodeSubject(msg.subject)}
                         </p>
-                        <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1">
+                        <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1 dark:text-muted-foreground/90">
                           {cleanBodyText(msg.body_text, true).slice(0, 120)}
                         </p>
                         {/* Bottom row: AI-replied tag REPLACES the intent tag for messages the AI
@@ -3283,7 +3317,7 @@ export default function Unibox() {
                             )}
                             {campaignManager && (
                               <span
-                                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-semibold whitespace-nowrap"
+                                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-semibold whitespace-nowrap dark:!border-white/15 dark:!bg-white/10 dark:!text-foreground"
                                 style={{ backgroundColor: campaignManager.color + "14", color: campaignManager.color, border: "1px solid " + campaignManager.color + "33" }}
                                 title={"Responsable: " + campaignManager.name}
                               >
@@ -3294,7 +3328,7 @@ export default function Unibox() {
                               </span>
                             )}
                             {msgFolder && (
-                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium whitespace-nowrap" style={{ backgroundColor: `${msgFolder.color}18`, color: msgFolder.color }}>
+                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium whitespace-nowrap dark:!bg-white/10 dark:!text-foreground" style={{ backgroundColor: `${msgFolder.color}18`, color: msgFolder.color }}>
                                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: msgFolder.color }} />
                                 {msgFolder.name}
                               </span>
@@ -3304,7 +3338,7 @@ export default function Unibox() {
                       </div>
                       <div className="flex flex-col items-center gap-1 flex-shrink-0">
                         {hasReminder && (
-                          <Bell className={`h-3.5 w-3.5 ${due ? "text-amber-500" : "text-muted-foreground/40"}`} />
+                          <Bell className={`h-3.5 w-3.5 ${due ? "text-amber-500" : "text-muted-foreground/40 dark:text-muted-foreground/60"}`} />
                         )}
                         {isUnread && (
                           <span className="h-2 w-2 rounded-full bg-primary" />
@@ -3494,7 +3528,7 @@ export default function Unibox() {
 
                     {/* Translate button */}
                     {!translatedBody && (
-                      <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/40 px-4 py-2.5">
+                      <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/40 px-4 py-2.5 dark:border-border dark:bg-muted/70">
                         <Languages className="h-5 w-5 text-primary flex-shrink-0" />
                         <div className="flex-1">
                           {detectedLang && detectedLang !== "es" ? (
@@ -3542,7 +3576,7 @@ export default function Unibox() {
 
                         return (
                           <div key={tm.id + "-" + idx} className={`rounded-xl border shadow-sm ${isSent ? "border-primary/20 bg-primary/5" : "border-border/60 bg-card"}`}>
-                            <div className="flex items-center gap-2.5 border-b border-border/40 px-3 py-3 sm:gap-3 sm:px-5 sm:py-3.5">
+                            <div className="flex items-center gap-2.5 border-b border-border/40 dark:border-border/80 px-3 py-3 sm:gap-3 sm:px-5 sm:py-3.5">
                               <div className={`h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
                                 isSent ? "bg-primary/10 text-primary" : (selectedCatConfig?.bg || "bg-muted") + " " + (selectedCatConfig?.text || "text-muted-foreground")
                               }`}>
@@ -3569,33 +3603,21 @@ export default function Unibox() {
                             <div className="px-3 py-4 sm:px-5 sm:py-5 md:px-8 md:py-6">
                               {isSent ? (
                                 <div
-                                  className="text-[15px] text-foreground leading-[1.75] break-words [&_p]:my-3 [&_a]:text-primary [&_a]:underline"
+                                  className={`${MAIL_PAPER} ${MAIL_PROSE}`}
                                   dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(tm.body || "") }}
                                 />
                               ) : (translatedBody && tm.id === selected.id) ? (
                                 // Show the Spanish translation IN PLACE of this message's body.
-                                <div className="text-[15px] text-foreground leading-[1.75] whitespace-pre-wrap break-words">
+                                <div className={MAIL_PLAIN}>
                                   {translatedBody}
                                 </div>
                               ) : tm.body_html && tm.body_html.trim().length > 20 ? (
                                 <div
-                                  className="max-w-none text-foreground leading-[1.75] text-[15px] break-words overflow-x-auto
-                                    [&_p]:my-3 [&_p]:leading-[1.75]
-                                    [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a]:break-all
-                                    [&_blockquote]:border-l-4 [&_blockquote]:border-primary/30 [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_blockquote]:italic [&_blockquote]:my-4
-                                    [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
-                                    [&_li]:my-1
-                                    [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md [&_img]:my-3
-                                    [&_strong]:font-semibold [&_strong]:text-foreground [&_em]:italic
-                                    [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                                    [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                                    [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-3
-                                    [&_table]:w-full [&_table]:border-collapse [&_table]:my-3
-                                    [&_td]:p-2 [&_th]:p-2 [&_th]:font-semibold"
+                                  className={`${MAIL_PAPER} ${MAIL_PROSE}`}
                                   dangerouslySetInnerHTML={{ __html: cleanBodyHtml(tm.body_html, showFullEmail) }}
                                 />
                               ) : (
-                                <div className="text-[15px] text-foreground leading-[1.75] whitespace-pre-wrap break-words">
+                                <div className={MAIL_PLAIN}>
                                   {cleanBodyText(tm.body_text, true)}
                                 </div>
                               )}
@@ -3605,7 +3627,7 @@ export default function Unibox() {
                         );
                       })
                     ) : (
-                      <div className="rounded-lg border border-border/50 bg-card">
+                      <div className="rounded-lg border border-border/50 bg-card dark:border-border">
                         <div className="flex items-center gap-3 px-4 py-3">
                           <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedCatConfig?.bg || "bg-muted"} ${selectedCatConfig?.text || "text-muted-foreground"}`}>
                             {getInitials(selected.from_name, selected.from_email)}
@@ -3621,20 +3643,16 @@ export default function Unibox() {
                         <div className="px-6 pb-6 pl-[3.75rem]">
                           {translatedBody ? (
                             // Show the Spanish translation IN PLACE of the original body.
-                            <div className="text-[15px] text-foreground leading-[1.8] whitespace-pre-wrap break-words">
+                            <div className={MAIL_PLAIN}>
                               {translatedBody}
                             </div>
                           ) : selected.body_html && selected.body_html.trim().length > 20 ? (
                             <div
-                              className="max-w-none text-foreground leading-[1.8] text-[15px] break-words overflow-x-auto
-                                [&_p]:my-3 [&_a]:text-primary [&_a]:underline [&_a]:break-all
-                                [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6
-                                [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md [&_img]:my-3
-                                [&_strong]:font-semibold [&_blockquote]:border-l-4 [&_blockquote]:border-primary/30 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-muted-foreground"
+                              className={`${MAIL_PAPER} ${MAIL_PROSE}`}
                               dangerouslySetInnerHTML={{ __html: cleanBodyHtml(selected.body_html, showFullEmail) }}
                             />
                           ) : (
-                            <div className="text-[15px] text-foreground leading-[1.8] whitespace-pre-wrap break-words">
+                            <div className={MAIL_PLAIN}>
                               {cleanBodyText(selected.body_text, true)}
                             </div>
                           )}
@@ -3868,7 +3886,7 @@ export default function Unibox() {
             <div className="space-y-2 py-2">
               <Button
                 variant="outline"
-                className="w-full justify-start gap-3 h-auto py-3 hover:bg-destructive/5 hover:border-destructive/30"
+                className="w-full justify-start gap-3 h-auto py-3 hover:bg-destructive/5 dark:hover:bg-destructive/15 hover:border-destructive/30"
                 onClick={() => handleBlockEmail(blockTarget.email)}
                 disabled={blocking}
               >
@@ -3880,7 +3898,7 @@ export default function Unibox() {
               </Button>
               <Button
                 variant="outline"
-                className="w-full justify-start gap-3 h-auto py-3 hover:bg-destructive/5 hover:border-destructive/30"
+                className="w-full justify-start gap-3 h-auto py-3 hover:bg-destructive/5 dark:hover:bg-destructive/15 hover:border-destructive/30"
                 onClick={() => handleBlockDomain(blockTarget.domain)}
                 disabled={blocking}
               >
@@ -3920,7 +3938,7 @@ export default function Unibox() {
               <div className="space-y-1.5">
                 {blockedEntries.map((entry) => (
                   <div key={entry.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2">
-                    <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md ${entry.entry_type === "domain" ? "bg-amber-100 text-amber-600" : "bg-red-100 text-red-600"}`}>
+                    <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md ${entry.entry_type === "domain" ? "bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300" : "bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-300"}`}>
                       {entry.entry_type === "domain" ? <Globe className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
                     </span>
                     <div className="min-w-0 flex-1">

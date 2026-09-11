@@ -475,8 +475,8 @@ export default function Campaigns() {
                         {(() => {
                           const mgr = (campaign as any).manager_id ? managers.find((m) => m.id === (campaign as any).manager_id) : null;
                           return mgr ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[10px] sm:text-[11px] font-semibold whitespace-nowrap"
-                              style={{ backgroundColor: mgr.color + "14", color: mgr.color, border: "1px solid " + mgr.color + "33" }}
+                            <span className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] sm:text-[11px] font-semibold whitespace-nowrap bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
+                              style={{ "--mgr": mgr.color } as any}
                               title={"Responsable: " + mgr.name}>
                               <span className="flex items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ backgroundColor: mgr.color, width: 16, height: 16 }}>
                                 {mgr.name.charAt(0).toUpperCase()}

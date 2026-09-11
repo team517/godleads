@@ -62,10 +62,10 @@ export default function Stats() {
   }, [user]);
 
   const pieData = [
-    { name: "Entregados", value: stats.delivered || 1, color: "hsl(217, 91%, 60%)" },
-    { name: "Respondidos", value: stats.replied, color: "hsl(142, 76%, 36%)" },
-    { name: "Rebotados", value: stats.bounced, color: "hsl(0, 84%, 60%)" },
-    { name: "Fallidos", value: stats.failed, color: "hsl(38, 92%, 50%)" },
+    { name: "Entregados", value: stats.delivered || 1, color: "hsl(var(--brand-cyan))" },
+    { name: "Respondidos", value: stats.replied, color: "hsl(var(--success))" },
+    { name: "Rebotados", value: stats.bounced, color: "hsl(var(--destructive))" },
+    { name: "Fallidos", value: stats.failed, color: "hsl(var(--warning))" },
   ];
 
   const replyRate = stats.contacted > 0 ? (stats.replied / stats.contacted) * 100 : 0;
@@ -136,10 +136,10 @@ export default function Stats() {
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
               <CardTitle className="font-display text-base">Envíos por día · últimos 14 días</CardTitle>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(217, 91%, 60%)" }} /> {totalWindow.toLocaleString("es")} envíos</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--brand-cyan))" }} /> {totalWindow.toLocaleString("es")} envíos</span>
                 <span>· {totalNuevos.toLocaleString("es")} leads nuevos</span>
                 <span>· {totalFollowups.toLocaleString("es")} follow-ups</span>
-                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(142, 76%, 36%)" }} /> {totalReplies.toLocaleString("es")} respuestas</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--success))" }} /> {totalReplies.toLocaleString("es")} respuestas</span>
               </div>
             </CardHeader>
             <CardContent>
@@ -147,12 +147,12 @@ export default function Stats() {
                 <AreaChart data={daily} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                   <defs>
                     <linearGradient id="gSent" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.02} />
+                      <stop offset="0%" stopColor="hsl(var(--brand-cyan))" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(var(--brand-cyan))" stopOpacity={0.02} />
                     </linearGradient>
                     <linearGradient id="gReply" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.02} />
+                      <stop offset="0%" stopColor="hsl(var(--success))" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(var(--success))" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
@@ -170,19 +170,19 @@ export default function Stats() {
                       return (
                         <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
                           <p className="mb-1 font-medium capitalize">{p.full}</p>
-                          <p className="font-semibold" style={{ color: "hsl(217, 91%, 60%)" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
+                          <p className="font-semibold" style={{ color: "hsl(var(--brand-cyan))" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
                           <p className="text-muted-foreground">· {p.nuevos.toLocaleString("es")} leads nuevos</p>
                           <p className="text-muted-foreground">· {p.followups.toLocaleString("es")} follow-ups</p>
-                          {p.respuestas > 0 && <p style={{ color: "hsl(142, 76%, 36%)" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
-                          <p className="mt-1 border-t border-border pt-1 font-semibold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                          {p.respuestas > 0 && <p style={{ color: "hsl(var(--success))" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
+                          <p className="mt-1 border-t border-border pt-1 font-semibold" style={{ color: "hsl(var(--success))" }}>
                             Reply rate: {replyRate === null ? "—" : `${replyRate.toFixed(1).replace(".", ",")}%`}
                           </p>
                         </div>
                       );
                     }}
                   />
-                  <Area type="monotone" dataKey="envios" stroke="hsl(217, 91%, 60%)" strokeWidth={2} fill="url(#gSent)" />
-                  <Area type="monotone" dataKey="respuestas" stroke="hsl(142, 76%, 36%)" strokeWidth={2} fill="url(#gReply)" />
+                  <Area type="monotone" dataKey="envios" stroke="hsl(var(--brand-cyan))" strokeWidth={2} fill="url(#gSent)" />
+                  <Area type="monotone" dataKey="respuestas" stroke="hsl(var(--success))" strokeWidth={2} fill="url(#gReply)" />
                 </AreaChart>
               </ResponsiveContainer>
             </CardContent>
@@ -193,10 +193,20 @@ export default function Stats() {
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={4}>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} dataKey="value" paddingAngle={4} stroke="hsl(var(--card))">
                     {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      color: "hsl(var(--popover-foreground))",
+                    }}
+                    itemStyle={{ color: "hsl(var(--popover-foreground))" }}
+                    labelStyle={{ color: "hsl(var(--popover-foreground))" }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
               <div className="mt-2 space-y-2">

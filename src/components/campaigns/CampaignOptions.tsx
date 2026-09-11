@@ -42,11 +42,11 @@ function Row({
 }) {
   const tints: Record<string, string> = {
     primary: "bg-primary/10 text-primary",
-    emerald: "bg-emerald-500/10 text-emerald-600",
-    amber: "bg-amber-500/10 text-amber-600",
-    violet: "bg-violet-500/10 text-violet-600",
-    blue: "bg-blue-500/10 text-blue-600",
-    rose: "bg-rose-500/10 text-rose-600",
+    emerald: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+    amber: "bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400",
+    violet: "bg-violet-500/10 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400",
+    blue: "bg-blue-500/10 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400",
+    rose: "bg-rose-500/10 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
   };
   return (
     <div className={`px-4 py-3.5 ${className}`}>
@@ -93,7 +93,7 @@ function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; o
   );
 }
 
-const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600">Pro</Badge>;
+const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">Pro</Badge>;
 
 export default function CampaignOptions({ campaignId }: Props) {
   const confirm = useConfirm();
@@ -599,7 +599,7 @@ export default function CampaignOptions({ campaignId }: Props) {
               </div>
               {rampInfo && (
                 <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                  <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600" /> Día {rampInfo.days + 1} de campaña → límite efectivo hoy: <span className="font-semibold text-foreground">{rampInfo.eff} emails/cuenta</span>
+                  <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600 dark:text-violet-400" /> Día {rampInfo.days + 1} de campaña → límite efectivo hoy: <span className="font-semibold text-foreground">{rampInfo.eff} emails/cuenta</span>
                   {dailyLimit > 0 && <span> (máx. global: {dailyLimit})</span>}
                 </p>
               )}
@@ -619,7 +619,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           {/* Ritmo de envío (auto) — así reparte esta campaña, de forma independiente */}
           <div className="rounded-lg border border-violet-200/70 bg-violet-50/60 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/20">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-violet-600" />
+              <TrendingUp className="h-4 w-4 text-violet-600 dark:text-violet-400" />
               <span className="text-sm font-semibold text-foreground">Ritmo automático</span>
               <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
                 {slowRampEnabled ? "Slow Ramp activo" : "Ritmo pleno"}
@@ -660,7 +660,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                       <span className="truncate">{acc.email}</span>
                       <span className="flex flex-shrink-0 items-center gap-1.5">
                         {acc.warmup_enabled && accRampDay && (
-                          <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-600">🐢 Día {accRampDay}</span>
+                          <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">🐢 Día {accRampDay}</span>
                         )}
                         <span className="font-medium">{acc.sent_today || 0}/{limit}</span>
                       </span>
@@ -675,7 +675,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           )}
           {rampInfo && (
             <p className="text-[11px] text-muted-foreground">
-              <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600" />
+              <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600 dark:text-violet-400" />
               Slow ramp de campaña: día {rampInfo.days + 1} → {rampInfo.eff} emails/cuenta.
             </p>
           )}
@@ -704,7 +704,7 @@ export default function CampaignOptions({ campaignId }: Props) {
               </div>
             )}
             {selectedTags.some(t => accounts.filter(a => (a.tags || []).includes(t)).length === 0) && (
-              <p className="text-[11px] text-amber-600">
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
                 ⚠ Ese tag no está asignado a ninguna cuenta todavía. Asígnalo a tus cuentas en <span className="font-medium">Cuentas de email</span> (puedes hacerlo en bloque) para que se incluyan aquí.
               </p>
             )}
@@ -742,7 +742,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       {/* ── ENTREGABILIDAD ── */}
       <Section label="Entregabilidad">
         <Row icon={<Zap className="h-4 w-4" />} tint="emerald" title="Optimización de entrega"
-          badge={<Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600">Recomendado</Badge>}
+          badge={<Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">Recomendado</Badge>}
           desc="Desactiva el tracking de apertura para mejorar la entregabilidad.">
           <div className="space-y-2.5">
             <label className="flex cursor-pointer items-center gap-3">
@@ -795,7 +795,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           {expertRotation && (
             <ul className="space-y-1 text-xs text-muted-foreground">
               {["Calentamiento progresivo por dominio", "Distribución equilibrada entre dominios", "Pausas inteligentes para recuperar reputación", "Priorización de cuentas con mejor salud"].map(t => (
-                <li key={t} className="flex items-center gap-1.5"><Check className="h-3 w-3 text-emerald-600" /> {t}</li>
+                <li key={t} className="flex items-center gap-1.5"><Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" /> {t}</li>
               ))}
             </ul>
           )}
@@ -846,13 +846,13 @@ export default function CampaignOptions({ campaignId }: Props) {
                   const isBest = v.replyRate === maxRate && v.sent >= 3;
                   const isWorst = v.replyRate === Math.min(...abStats.map((s: any) => s.replyRate)) && abStats.length > 1 && v.sent >= 3;
                   return (
-                    <div key={v.index} className={`rounded-lg border p-3 space-y-2 ${isBest ? "border-green-500/50 bg-green-500/5" : isWorst ? "border-destructive/30 bg-destructive/5" : ""}`}>
+                    <div key={v.index} className={`rounded-lg border p-3 space-y-2 ${isBest ? "border-green-500/50 bg-green-500/5 dark:border-green-400/50 dark:bg-green-500/10" : isWorst ? "border-destructive/30 bg-destructive/5" : ""}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Badge variant={isBest ? "default" : "outline"} className="text-[10px] h-5 px-1.5">
                             {v.label}
                           </Badge>
-                          {isBest && <Badge className="text-[10px] h-5 px-1.5 bg-green-600">🏆 Mejor</Badge>}
+                          {isBest && <Badge className="text-[10px] h-5 px-1.5 bg-green-600 text-white dark:bg-green-500 dark:text-green-950">🏆 Mejor</Badge>}
                           {isWorst && <Badge variant="destructive" className="text-[10px] h-5 px-1.5">⚠️ Peor</Badge>}
                         </div>
                         <span className="text-xs font-bold">{v.replyRate}% reply</span>
@@ -915,8 +915,11 @@ export default function CampaignOptions({ campaignId }: Props) {
                   {showSignaturePreview ? "Ocultar vista previa" : "Ver vista previa"}
                 </Button>
                 {showSignaturePreview && (
-                  <div className="rounded-lg border bg-background p-3">
-                    <p className="mb-2 text-[10px] text-muted-foreground">Vista previa:</p>
+                  /* The signature is the user's own HTML, written for a white email
+                     client (e.g. <p style="color:#555">) — so it previews on a sheet
+                     of white paper in BOTH themes, never on the dark surface. */
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline">
+                    <p className="mb-2 text-[10px] text-zinc-500">Vista previa:</p>
                     <div className="prose prose-sm max-w-none text-sm" dangerouslySetInnerHTML={{ __html: signatureHtml }} />
                   </div>
                 )}
@@ -940,10 +943,10 @@ export default function CampaignOptions({ campaignId }: Props) {
                 {managers.map((m) => (
                   <span key={m.id} className="group relative inline-flex">
                     <button type="button" onClick={() => { setManagerId(managerId === m.id ? null : m.id); markDirty(); }}
-                      className="inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold transition"
+                      className={"inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold transition " + (managerId === m.id ? "" : "border bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]")}
                       style={managerId === m.id
                         ? { backgroundColor: m.color, color: "#fff", boxShadow: "0 0 0 2px " + m.color + "55" }
-                        : { backgroundColor: m.color + "14", color: m.color, border: "1px solid " + m.color + "33" }}>
+                        : ({ "--mgr": m.color } as any)}>
                       <span className="flex items-center justify-center rounded-full text-[10px] font-bold"
                         style={managerId === m.id ? { backgroundColor: "#ffffff33", color: "#fff", width: 18, height: 18 } : { backgroundColor: m.color, color: "#fff", width: 18, height: 18 }}>
                         {m.name.charAt(0).toUpperCase()}

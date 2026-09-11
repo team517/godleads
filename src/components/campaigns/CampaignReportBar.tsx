@@ -10,10 +10,10 @@ type Metrics = { sent: number; contacted: number; opened: number; replied: numbe
 interface Props { campaign: any; metrics?: Metrics | null; }
 
 const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play }> = {
-  active:    { label: "Active",    cls: "text-emerald-600", icon: Play },
-  paused:    { label: "Paused",    cls: "text-amber-600",   icon: Pause },
+  active:    { label: "Active",    cls: "text-emerald-600 dark:text-emerald-400", icon: Play },
+  paused:    { label: "Paused",    cls: "text-amber-600 dark:text-amber-400",     icon: Pause },
   draft:     { label: "Draft",     cls: "text-muted-foreground", icon: FileEdit },
-  completed: { label: "Completed", cls: "text-blue-600",    icon: FileEdit },
+  completed: { label: "Completed", cls: "text-blue-600 dark:text-blue-400",       icon: FileEdit },
 };
 
 /** Instantly-style report bar: campaign details on the left, key metrics on the right. */
@@ -91,11 +91,11 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
 
   const metrics = [
     { key: "sent",     label: "Sent",          value: m.sent,          sub: null,            icon: Send,               color: "text-primary" },
-    { key: "contacted",label: "Contacted",     value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600" },
-    { key: "opened",   label: "Opened",        value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600" },
-    { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600" },
-    { key: "positive", label: "Positive Reply", value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600", link: true },
-    { key: "bounced",  label: "Bounced",       value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500" },
+    { key: "contacted",label: "Contacted",     value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
+    { key: "opened",   label: "Opened",        value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
+    { key: "replied",  label: "Replied w/OOO", value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
+    { key: "positive", label: "Positive Reply", value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
+    { key: "bounced",  label: "Bounced",       value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
     // "Sender Bounced" removed — it counted transient SMTP failures (e.g. an IONOS
     // "503" storm that just retries) as if they were bounces, inflating a scary red
     // number. "Bounced" above is the real hard-bounce count.

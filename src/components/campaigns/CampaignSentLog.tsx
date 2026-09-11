@@ -163,7 +163,7 @@ export default function CampaignSentLog({ campaignId }: Props) {
 
                 {/* Transport badge (SMTP / Instantly) */}
                 {email.transport === "instantly" ? (
-                  <Badge className="text-xs shrink-0 bg-purple-100 text-purple-700 hover:bg-purple-100 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800">
+                  <Badge className="text-xs shrink-0 bg-purple-100 text-purple-700 hover:bg-purple-100 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800 dark:hover:bg-purple-950">
                     Instantly
                   </Badge>
                 ) : (email.status === "sent" || email.status === "failed" || email.status === "bounced") ? (
@@ -218,7 +218,7 @@ export default function CampaignSentLog({ campaignId }: Props) {
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-1">Mensaje</p>
                     <div
-                      className="text-sm bg-muted/50 rounded-lg p-3 prose prose-sm max-w-none"
+                      className="text-sm rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline prose prose-sm max-w-none"
                       dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(email.body) }}
                     />
                   </div>
