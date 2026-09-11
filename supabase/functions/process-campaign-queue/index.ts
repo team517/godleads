@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { replaceVariables } from "../_shared/personalize.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -8,25 +9,32 @@ const corsHeaders = {
 
 // ─── Helpers ───
 
-function replaceVariables(text: string, fields: Record<string, string>): string {
-  // Normalize key: lowercase + strip underscores so first_name == firstName == FirstName
-  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
-  const normalized: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fields)) {
-    normalized[norm(k)] = v;
-  }
-  return text.replace(/\{\{\s*([\w\-\s]+?)\s*\}\}/g, (match, key) => {
-    return fields[key] ?? normalized[norm(key)] ?? match;
-  });
+// replaceVariables now lives in _shared/personalize.ts (imported above): a missing or
+// blank value uses a natural Spanish fallback or is dropped, so a raw "{{city}}" can
+// never reach a lead again (455 such emails went out in the week to 2026-09-11).
+
+function escapeHtmlText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function textToHtml(text: string): string {
   if (/<(p|div|br|table|tr|td|span|a|img|ul|ol|li)\b/i.test(text)) return text;
+  // PLAIN-TEXT branch: the copy is literal prose, so a stray `<` or `&` (e.g. "<20 leads",
+  // "R&D") would corrupt the HTML part. Escape before inserting our own <br>/<p> markup.
   return text
     .split(/\n\n+/)
     .filter(p => p.trim())
-    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .map(p => `<p>${escapeHtmlText(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+// The text/html MIME part must be a complete document, not a bare fragment: clients
+// (and spam filters) treat a headless fragment as suspicious and may guess the charset.
+// Idempotent — never wraps content that is already a document.
+function wrapHtmlDocument(html: string): string {
+  const head = (html || "").trimStart().slice(0, 10).toLowerCase();
+  if (head.startsWith("<!doctype") || head.startsWith("<html")) return html;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${html}</body></html>`;
 }
 
 function hasExplicitHtml(text: string): boolean {
@@ -129,16 +137,6 @@ function quotedPrintableEncode(input: string): string {
   });
 }
 
-// Generate a Feedback-ID header for Gmail Postmaster Tools campaign tracking.
-// Format: <campaign-id>:<customer-id>:<mail-type>:<sender-id>
-function buildFeedbackId(campaignId: string | null, userId: string, fromDomain: string): string {
-  const c = (campaignId || "tx").replace(/[^a-z0-9-]/gi, "").slice(0, 16) || "tx";
-  const u = userId.replace(/[^a-z0-9-]/gi, "").slice(0, 12);
-  const d = fromDomain.replace(/[^a-z0-9.-]/gi, "").slice(0, 32);
-  return `${c}:${u}:onepulso:${d}`;
-}
-
-
 function formatSmtpDate(date: Date): string {
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -165,19 +163,6 @@ function generateMessageId(domain: string): string {
   const now = new Date();
   const stamp = `${now.getUTCFullYear()}${(now.getUTCMonth() + 1).toString().padStart(2, "0")}${now.getUTCDate().toString().padStart(2, "0")}.${now.getUTCHours().toString().padStart(2, "0")}${now.getUTCMinutes().toString().padStart(2, "0")}${now.getUTCSeconds().toString().padStart(2, "0")}`;
   return `<${stamp}.${randomString(10)}.${randomString(6)}@${domain}>`;
-}
-
-// Deterministic Message-ID for campaign emails — allows follow-ups to reference
-// the first email's ID without needing to store/retrieve it from DB
-function campaignMessageId(campaignId: string, leadId: string, stepIndex: number, domain: string): string {
-  // Create a short hash from campaign+lead+step to keep it deterministic
-  const raw = `${campaignId}:${leadId}:${stepIndex}`;
-  let hash = 0;
-  for (let i = 0; i < raw.length; i++) {
-    hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
-  }
-  const hex = Math.abs(hash).toString(16).padStart(8, '0');
-  return `<camp.${hex}.s${stepIndex}@${domain}>`;
 }
 
 function stripHtml(html: string): string {
@@ -286,21 +271,6 @@ function sanitizeSignatureRich(html: string): string {
     .trim();
 }
 
-function normalizeSignatureHtml(sanitized: string): string {
-  let s = (sanitized || "").trim();
-  if (!s) return "";
-  // Normalize every line-break form (plain-text newlines, block ends, <br>) to \n;
-  // strip block OPEN tags but keep inline (<a>…); one <br> per line → compact block.
-  s = s
-    .replace(/\r\n?/g, "\n")
-    .replace(/<\s*br\s*\/?>/gi, "\n")
-    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, "\n")
-    .replace(/<\s*(p|div|h[1-6]|ul|ol|li|table|tbody|tr|td)[^>]*>/gi, "")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-  return s.split("\n").map((l) => l.trim()).filter(Boolean).join("<br>");
-}
-
 // Calculates the spacing between sends for a campaign so that each account
 // reaches its daily target within the configured sending window.
 //
@@ -326,9 +296,11 @@ function calculateHumanizedDelayMs(
   return Math.round(idealDelaySec * jitter * 1000);
 }
 
-// Dot-stuff message content per RFC 5321 §4.5.2
+// Dot-stuff message content per RFC 5321 §4.5.2 — EVERY line that begins with "."
+// gets an extra ".", including the very first line of the message (offset 0), which
+// the old `/\r\n\./g`-only version missed.
 function dotStuff(content: string): string {
-  return content.replace(/\r\n\./g, "\r\n..");
+  return content.replace(/^\./, "..").replace(/\r\n\./g, "\r\n..");
 }
 
 function toBase64Utf8(value: string): string {
@@ -341,11 +313,6 @@ function toBase64Utf8(value: string): string {
   }
 
   return btoa(binary);
-}
-
-function wrapMimeBase64(value: string): string {
-  const encoded = toBase64Utf8(value);
-  return encoded.match(/.{1,76}/g)?.join("\r\n") ?? "";
 }
 
 // ─── Attachment helpers (for campaign_steps attachments → multipart/mixed) ───
@@ -396,17 +363,70 @@ function normalizeMimeText(value: string): string {
   return value.replace(/\r?\n/g, "\r\n");
 }
 
+// RFC 2047 §2: an encoded-word may never exceed 75 characters, and a long value must
+// be emitted as SEVERAL encoded-words separated by folding whitespace. We chunk on
+// CODE POINT boundaries (Array.from / for..of), so a multi-byte UTF-8 sequence — an
+// accented "ñ" or an emoji surrogate pair — is never cut in half.
+//   "=?UTF-8?B?" (10) + base64 + "?=" (2) ≤ 75.
+// We cap each word at 68 rather than the full 75 so that the emitted line — "Subject: "
+// (9 chars) + word, or "\t" + word on a continuation — also honours the RFC 5322 78-char
+// line limit. 42 raw bytes → exactly 56 base64 chars → 10 + 56 + 2 = 68.
+function encodeHeaderWords(value: string): string {
+  const enc = new TextEncoder();
+  const MAX_WORD_CHARS = 68; // ≤ 75 (RFC 2047) and ≤ 78 − "Subject: " (RFC 5322)
+  const MAX_RAW_BYTES = Math.floor((MAX_WORD_CHARS - "=?UTF-8?B?".length - "?=".length) / 4) * 3; // 42
+  const words: string[] = [];
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const ch of value) {
+    const n = enc.encode(ch).length;
+    if (chunk && chunkBytes + n > MAX_RAW_BYTES) {
+      words.push(`=?UTF-8?B?${toBase64Utf8(chunk)}?=`);
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += ch;
+    chunkBytes += n;
+  }
+  if (chunk) words.push(`=?UTF-8?B?${toBase64Utf8(chunk)}?=`);
+  // Folding whitespace between encoded-words; the decoder drops it (RFC 2047 §6.2).
+  return words.join("\r\n ");
+}
+
+// RFC 5322 §2.1.1/2.2.3: fold a long structured header (References, In-Reply-To…) so
+// no line exceeds 78 chars, breaking ONLY on whitespace, continuations indented by TAB.
+function foldStructuredHeader(name: string, value: string): string {
+  const tokens = String(value || "").replace(/[\r\n]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return `${name}:`;
+  const lines: string[] = [];
+  let cur = `${name}:`;
+  let isFirst = true;
+  for (const t of tokens) {
+    const candidate = `${cur} ${t}`;
+    if (!isFirst && candidate.length > 78) {
+      lines.push(cur);
+      cur = `\t${t}`;
+    } else {
+      cur = candidate;
+      isFirst = false;
+    }
+  }
+  lines.push(cur);
+  return lines.join("\r\n");
+}
+
 function encodeMimeHeader(value: string): string {
-  const normalized = value.replace(/\r?\n/g, " ").trim();
+  // A bare \r is a header-injection vector too — /\r?\n/ never matched it.
+  const normalized = value.replace(/[\r\n]+/g, " ").trim();
   return /[^\x20-\x7E]/.test(normalized)
-    ? `=?UTF-8?B?${toBase64Utf8(normalized)}?=`
+    ? encodeHeaderWords(normalized)
     : normalized;
 }
 
 function formatMailbox(name: string | undefined, email: string): string {
   if (!name?.trim()) return email;
 
-  const normalized = name.replace(/\r?\n/g, " ").trim();
+  const normalized = name.replace(/[\r\n]+/g, " ").trim();
   const encodedName = /[^\x20-\x7E]/.test(normalized)
     ? encodeMimeHeader(normalized)
     : `"${normalized.replace(/(["\\])/g, "\\$1")}"`;
@@ -637,6 +657,10 @@ async function sendSmtpEmail(
     userId?: string;
     campaignId?: string | null;
     unsubscribeUrl?: string;
+    // One-click unsubscribe HEADER url. Gmail/Yahoo bulk-sender rules require the header
+    // on EVERY message of a sequence, while the VISIBLE footer link (unsubscribeUrl) stays
+    // on the first email only. Defaults to unsubscribeUrl when not given.
+    unsubscribeHeaderUrl?: string;
     attachments?: { filename: string; mime: string; base64: string }[];
   } = {}
 ): Promise<{ ok: boolean; error?: string; messageId?: string; errorClass?: string }> {
@@ -660,7 +684,12 @@ async function sendSmtpEmail(
       ? wrapPlainTextNaturally(htmlToPlainText(signatureHtml))
       : "";
     const plainText = [
-      opts.textOnly ? wrapPlainTextNaturally(removeUrlsAndTracking(htmlToPlainText(normalizedBody))) : wrapPlainTextNaturally(stripHtml(fullHtml)),
+      // HTML mode: the plain alternative must carry the SAME information as the HTML part —
+      // stripHtml dropped every <a href> URL and kept only the anchor text, so the two
+      // alternatives diverged materially (a documented spam signal). htmlToPlainText renders
+      // "label (href)". The textOnly branch deliberately keeps removeUrlsAndTracking: a
+      // "solo texto" campaign is link-free on purpose.
+      opts.textOnly ? wrapPlainTextNaturally(removeUrlsAndTracking(htmlToPlainText(normalizedBody))) : wrapPlainTextNaturally(htmlToPlainText(fullHtml)),
       // No "--" signature delimiter: Gmail treats it as a sig boundary and collapses
       // everything after it into the "•••" (show trimmed content) pill.
       plainSignature || "",
@@ -680,31 +709,36 @@ async function sendSmtpEmail(
       ? `<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${opts.unsubscribeUrl}">date de baja aquí</a>.</p>`
       : "";
     const plainTextPart = normalizeMimeText(plainText + unsubText);
-    const htmlPart = normalizeMimeText(fullHtml + unsubHtml);
+    const htmlPart = normalizeMimeText(wrapHtmlDocument(fullHtml + unsubHtml));
 
     // Human-looking boundary (Outlook/Apple Mail style) — avoids bot fingerprints
     const boundary = `--==_mimepart_${randomString(16)}_${randomString(12)}`;
     const dateHeader = formatSmtpDate(new Date());
 
     // ─── Minimal mailbox-style headers (Outlook/Apple Mail/Thunderbird look) ───
-    // Only the headers a real desktop/web mailbox would send. NO List-Unsubscribe,
-    // NO Feedback-ID, NO X-* — those headers are the #1 cold-email fingerprint
-    // when the domain is not pre-warmed and signed by an ESP. The IONOS server
-    // already adds DKIM/Authentication-Results on the way out.
+    // Only the headers a real desktop/web mailbox would send, PLUS the RFC 8058
+    // one-click unsubscribe pair that Gmail/Yahoo require from bulk senders. Still
+    // NO Feedback-ID and NO X-* — those remain the #1 cold-email fingerprint when the
+    // domain is not pre-warmed and signed by an ESP. The IONOS server already adds
+    // DKIM/Authentication-Results on the way out.
     const headers: string[] = [
       `MIME-Version: 1.0`,
       `Date: ${dateHeader}`,
       `Message-ID: ${msgId}`,
-      `Subject: ${encodedSubject}`,
+      foldStructuredHeader("Subject", encodedSubject),
       `From: ${fromHeader}`,
+      `Reply-To: <${from}>`,
       `To: ${to}`,
     ];
 
     if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
-    if (opts.references) headers.push(`References: ${opts.references}`);
-    // One-click unsubscribe (RFC 8058) — only when the campaign enabled opt-out.
-    if (opts.unsubscribeUrl) {
-      headers.push(`List-Unsubscribe: <${opts.unsubscribeUrl}>`);
+    // References grows by one Message-ID per step and was emitted as one unbounded line.
+    if (opts.references) headers.push(foldStructuredHeader("References", opts.references));
+    // One-click unsubscribe (RFC 8058) — when the campaign enabled opt-out, on EVERY
+    // message of the sequence (Gmail/Yahoo bulk rules), not just the first step.
+    const unsubHeaderUrl = opts.unsubscribeHeaderUrl || opts.unsubscribeUrl;
+    if (unsubHeaderUrl) {
+      headers.push(`List-Unsubscribe: <${unsubHeaderUrl}>`);
       headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
     }
 
@@ -2012,14 +2046,17 @@ serve(async (req) => {
         }
 
         // inbox/reply ops on existing campaigns. We always send via local SMTP
-        // (with full deliverability headers: List-Unsubscribe, Reply-To, QP, Feedback-ID).
+        // (with quoted-printable bodies and the List-Unsubscribe / List-Unsubscribe-Post
+        // and Reply-To headers; Feedback-ID is deliberately NOT emitted).
         const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
-        // Opt-out link — only on the FIRST email (step 0), and only if the campaign
-        // enabled it AND this sending account is in the chosen scope. Follow-ups stay
-        // in the same thread without repeating the unsubscribe footer.
+        // Opt-out — when the campaign enabled it AND this sending account is in the
+        // chosen scope. The RFC 8058 HEADER goes on EVERY step (Gmail/Yahoo bulk-sender
+        // rules require it on every bulk message); the VISIBLE footer link stays on the
+        // FIRST email only, so follow-ups keep the same thread without repeating it.
         let unsubscribeUrl: string | undefined;
-        if ((campaign as any).include_unsubscribe && currentStepIndex === 0) {
+        let unsubscribeHeaderUrl: string | undefined;
+        if ((campaign as any).include_unsubscribe) {
           const unsubAll = (campaign as any).unsubscribe_all ?? true;
           const unsubIds: string[] = (campaign as any).unsubscribe_account_ids || [];
           const unsubTags: string[] = (campaign as any).unsubscribe_account_tags || [];
@@ -2029,7 +2066,8 @@ serve(async (req) => {
             || accTags.some((t: string) => unsubTags.includes(t));
           if (accountInScope) {
             const token = await makeUnsubToken(campaign.user_id, lead.email, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-            unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+            unsubscribeHeaderUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
+            if (currentStepIndex === 0) unsubscribeUrl = unsubscribeHeaderUrl;
           }
         }
 
@@ -2053,6 +2091,7 @@ serve(async (req) => {
             userId: campaign.user_id,
             campaignId: campaign.id,
             unsubscribeUrl,
+            unsubscribeHeaderUrl,
             attachments: stepAttachments,
           }
         );

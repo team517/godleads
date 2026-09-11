@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 import { extractPermanentBounceRecipients, isAutomatedSender } from "../_shared/bounce.ts";
+import { repairMojibakeBytes } from "../_shared/reply-text.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -913,8 +914,13 @@ async function fetchImapMessages(
           if (msgId && seenIds.has(msgId)) continue;
           if (msgId) seenIds.add(msgId);
 
-          const bodyText = sanitizeForPostgres(cleanBody(rawBody).slice(0, 5000));
-          const bodyHtml = sanitizeForPostgres(extractHtml(rawBody).slice(0, 50000));
+          // repairMojibakeBytes: some senders hand us UTF-8 already misread as Latin-1
+          // ("informaciÃ³n"). Repairing it HERE means the stored body is clean for the
+          // rule classifier, the AI, the reply agent and the Unibox alike. Only the safe
+          // byte-level half runs at write time (it is accepted only when it removes
+          // suspicious sequences); the U+FFFD guessing stays at read time.
+          const bodyText = sanitizeForPostgres(repairMojibakeBytes(cleanBody(rawBody)).slice(0, 5000));
+          const bodyHtml = sanitizeForPostgres(repairMojibakeBytes(extractHtml(rawBody)).slice(0, 50000));
 
           messages.push({
             from_email: fromEmail.toLowerCase().trim(),

@@ -32,6 +32,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { replyTextForClassification, textFromHtml } from "../_shared/reply-text.ts";
 import { buildReplyAgentSystemPrompt, buildReplyAgentUserPrompt, REPLY_LENGTH_WORDS } from "../_shared/reply-agent.ts";
+import { sendSmtpReply } from "../_shared/smtp.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,99 +88,14 @@ function textToHtml(text: string): string {
     .join('');
 }
 
-/** Message-IDs go on the wire inside angle brackets, exactly once. */
-function wrapId(id: string): string {
-  const t = (id || "").trim();
-  if (!t) return "";
-  return t.startsWith("<") ? t : `<${t}>`;
-}
-/** References is a SPACE-SEPARATED chain; wrapping the whole chain in one pair of brackets (what
- *  the old code did when it was handed more than one id) produces a header Gmail ignores. */
-function wrapRefs(refs: string): string {
-  return (refs || "").trim().split(/\s+/).filter(Boolean).map(wrapId).join(" ");
-}
-
-async function sendSmtpReply(
-  host: string, port: number, username: string, password: string,
-  from: string, to: string, subject: string, body: string,
-  inReplyTo: string | null, references: string | null,
-  fromName: string | null
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    let conn: Deno.Conn;
-    if (port === 465) {
-      conn = await Deno.connectTls({ hostname: host, port });
-    } else {
-      conn = await Deno.connect({ hostname: host, port });
-    }
-
-    const read = async () => {
-      const buf = new Uint8Array(4096);
-      const n = await conn.read(buf);
-      return new TextDecoder().decode(buf.subarray(0, n || 0));
-    };
-
-    const send = async (cmd: string) => {
-      await conn.write(new TextEncoder().encode(cmd + "\r\n"));
-      return await read();
-    };
-
-    await read(); // greeting
-
-    const buildMessage = () => {
-      const fromHeader = fromName ? `"${fromName}" <${from}>` : from;
-      let headers = `From: ${fromHeader}\r\nTo: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0`;
-      if (inReplyTo) headers += `\r\nIn-Reply-To: ${wrapId(inReplyTo)}`;
-      if (references) headers += `\r\nReferences: ${wrapRefs(references)}`;
-      return `${headers}\r\n\r\n${body}\r\n.\r\n`;
-    };
-
-    if (port === 587) {
-      let resp = await send("EHLO mailreach");
-      if (resp.includes("STARTTLS")) {
-        await conn.write(new TextEncoder().encode("STARTTLS\r\n"));
-        await read();
-        conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host });
-
-        const sendTls = async (cmd: string) => {
-          await conn.write(new TextEncoder().encode(cmd + "\r\n"));
-          const buf = new Uint8Array(4096);
-          const n = await conn.read(buf);
-          return new TextDecoder().decode(buf.subarray(0, n || 0));
-        };
-
-        await sendTls("EHLO mailreach");
-        const creds = btoa(`\0${username}\0${password}`);
-        const authResp = await sendTls(`AUTH PLAIN ${creds}`);
-        if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
-
-        await sendTls(`MAIL FROM:<${from}>`);
-        await sendTls(`RCPT TO:<${to}>`);
-        await sendTls("DATA");
-        const dataResp = await sendTls(buildMessage());
-        await sendTls("QUIT");
-        conn.close();
-        return dataResp.includes("250") ? { ok: true } : { ok: false, error: `Send failed: ${dataResp}` };
-      }
-    }
-
-    // Standard flow (465 or fallback)
-    await send("EHLO mailreach");
-    const creds = btoa(`\0${username}\0${password}`);
-    const authResp = await send(`AUTH PLAIN ${creds}`);
-    if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
-
-    await send(`MAIL FROM:<${from}>`);
-    await send(`RCPT TO:<${to}>`);
-    await send("DATA");
-    const dataResp = await send(buildMessage());
-    await send("QUIT");
-    conn.close();
-    return dataResp.includes("250") ? { ok: true } : { ok: false, error: `Send failed: ${dataResp}` };
-  } catch (e) {
-    return { ok: false, error: `SMTP error: ${(e as Error).message}` };
-  }
-}
+// The private SMTP sender that used to live here is GONE: it is now `sendSmtpReply` from
+// ../_shared/smtp.ts, imported above. Same signature, and the shared one is a strict superset —
+// it adds the RFC headers this copy never wrote (Date, Message-ID), quoted-printable +
+// multipart/alternative (this copy shipped raw UTF-8 under an implicit 7bit CTE, HTML only),
+// the subject CR/LF header-injection guard, MIME-encoded display names, dot-stuffing, per-command
+// timeouts, complete multi-line SMTP reply reads and real MAIL FROM / RCPT / DATA verdicts (this
+// copy matched "250" anywhere in the response and silently reported bounces as sent). The
+// wrapId/wrapRefs bracketing this copy had right lives there too.
 
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 

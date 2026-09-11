@@ -92,9 +92,10 @@ Deno.serve(async (req) => {
 
     // Only REAL prospect replies: a reply inside a real thread (In-Reply-To / References) or tied
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
+    const COLS = "id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain";
     const { data: msgs, error } = await admin
       .from("inbox_messages")
-      .select("id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain")
+      .select(COLS)
       .gte("created_at", since)
       .eq("is_warmup", false)
       .eq("is_archived", false)
@@ -102,6 +103,39 @@ Deno.serve(async (req) => {
       .order("received_at", { ascending: false })
       .limit(200);
     if (error) throw new Error(error.message);
+
+    // ── Catch-up sweep ──────────────────────────────────────────────────────────────────────
+    // The window above is the last `minutes`. A reply that could not be judged inside its window
+    // (AI budget spent, or more than 200 arrived at once) used to age out of it and stay
+    // UNLABELLED forever: measured live on 2026-09-11, 36 of 463 real campaign replies in a week
+    // had no category at all. So top the batch up with the OLDEST still-unlabelled replies, up to
+    // the room left in the 200-row budget. They are classified but never pushed (see staleIds) —
+    // nobody wants their phone buzzing for a three-day-old reply.
+    const staleIds = new Set<string>();
+    const room = 200 - (msgs?.length || 0);
+    if (room > 20 && !force) {
+      const { data: old } = await admin
+        .from("inbox_messages")
+        .select(COLS)
+        .lt("created_at", since)
+        .gte("created_at", new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString())
+        .eq("is_warmup", false)
+        .eq("is_archived", false)
+        .or("labels.is.null,labels.eq.{}")   // never judged: NULL or an empty array
+        .or("lead_id.not.is.null,campaign_id.not.is.null,in_reply_to.not.is.null,ref_chain.not.is.null")
+        .order("received_at", { ascending: true })
+        .limit(room);
+      // Re-check both conditions here in JS: the row must really be a thread reply and really
+      // carry no category. Correctness must not depend on how the REST layer combines two
+      // separate .or() groups.
+      for (const m of (old || []) as Row[]) {
+        const unlabelled = !m.labels || m.labels.length === 0;
+        const threadReply = !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
+        if (!unlabelled || !threadReply) continue;
+        staleIds.add(m.id);
+        (msgs as Row[]).push(m);
+      }
+    }
 
     const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
 
@@ -162,7 +196,8 @@ Deno.serve(async (req) => {
       const etiqueta = LABEL_OF[p.verdict] || "";   // neutral → no category label
       const others = labels.filter((l) => !CATEGORY_LABELS.includes(l));
       const newLabels = etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, AI_MARKER];
-      const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id);
+      // staleIds = rows pulled in by the catch-up sweep: label them, never buzz the phone for them.
+      const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
 
       if (!dryRun) {

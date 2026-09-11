@@ -11,6 +11,8 @@ const PAIRS: [string, string][] = [
   ["src/lib/campaign-copy.ts", "supabase/functions/_shared/campaign-copy.ts"],
   ["src/lib/reply-text.ts", "supabase/functions/_shared/reply-text.ts"],
   ["src/lib/reply-agent.ts", "supabase/functions/_shared/reply-agent.ts"],
+  ["src/lib/personalize.ts", "supabase/functions/_shared/personalize.ts"],
+  ["src/lib/mime-headers.ts", "supabase/functions/_shared/mime-headers.ts"],
 ];
 
 describe("shared copies stay byte-identical", () => {

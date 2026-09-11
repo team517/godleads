@@ -1,4 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { replaceVariables } from "../_shared/personalize.ts";
+import { encodeMimeHeaderFolded, foldHeader } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -6,26 +8,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function replaceVariables(text: string, fields: Record<string, string>): string {
-  // Matches process-campaign-queue: tolerate spaces ({{ first_name }}) and be
-  // case/underscore-insensitive (first_name == firstName == FirstName). The old
-  // /\{\{(\w+)\}\}/ missed spaced/differently-cased keys, so test emails showed
-  // raw {{variables}} instead of the lead's data.
-  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
-  const normalized: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fields)) normalized[norm(k)] = v;
-  return text.replace(/\{\{\s*([\w\-\s]+?)\s*\}\}/g, (match, key) =>
-    fields[key] ?? normalized[norm(key)] ?? match
-  );
+// replaceVariables lives in _shared/personalize.ts (imported above) — the SAME code the
+// campaign engine runs, so a test email renders exactly like the real one.
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function textToHtml(text: string): string {
+  // Already HTML (a rich Unibox reply) → untouched.
   if (/<(p|div|br)\b/i.test(text)) return text;
+  // PLAIN text → it is NOT markup: escape it, otherwise a literal "<" or "&" the
+  // user typed ("3 < 5", "R&D") corrupts the HTML part (or swallows the rest of
+  // the paragraph inside a fake tag).
   return text
     .split(/\n\n+/)
     .filter(p => p.trim())
-    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+// Wrap the final HTML in a real document ONCE. A bare fragment as text/html makes
+// clients guess the charset and the mobile scale; the <meta> pair fixes both.
+function wrapHtmlDocument(html: string): string {
+  const head = html.trimStart();
+  if (/^<!doctype/i.test(head) || /^<html[\s>]/i.test(head)) return html;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${html}</body></html>`;
 }
 
 function randomString(length: number): string {
@@ -93,24 +101,32 @@ function normalizeSmtpEndpoint(host: string, port: number): { host: string; port
   return { host: host.trim(), port };
 }
 
-function removeUrlsAndTracking(text: string): string {
-  return text
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/gi, "$1")
-    .replace(/https?:\/\/\S+/gi, "")
-    .replace(/www\.\S+/gi, "")
-    .replace(/\b(?:utm_[a-z_]+|fbclid|gclid)=[^\s)]+/gi, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
+// Body sanitiser. This function also carries HUMAN mail (Unibox replies), where the
+// user pastes a formatted answer with their own images and layout — stripping every
+// <img> and every inline style silently destroyed that. So: keep <img> whose src is
+// https:/cid:/data:image/ (any other scheme is dropped), keep the inline `style`
+// attribute, and keep dropping everything genuinely unsafe: script/iframe/object/
+// embed, on* handlers, javascript: URLs, plus class/id (they leak nothing useful to
+// a mail client and are a tracking surface).
 function sanitizeHtmlForDelivery(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<(script|style|iframe|object|embed|svg|video|audio|canvas)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<(img|picture|source)[^>]*>/gi, "")
-    .replace(/\s(?:class|id|style|data-[\w-]+|width|height|role|dir)=("[^"]*"|'[^']*')/gi, "")
-    .replace(/<a[^>]*href=("[^"]*"|'[^']*')[^>]*>([\s\S]*?)<\/a>/gi, "<a href=$1>$2</a>")
+    .replace(/<(script|iframe|object|embed|picture|source)[^>]*>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    .replace(/<img\b[^>]*>/gi, (tag) => {
+      const m = tag.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
+      return /^(?:https:|cid:|data:image\/)/i.test(src) ? tag : "";
+    })
+    .replace(/\s(?:class|id|data-[\w-]+|width|height|role|dir)=("[^"]*"|'[^']*')/gi, "")
+    .replace(/<a\b[^>]*>/gi, (tag) => {
+      const href = tag.match(/\bhref\s*=\s*("[^"]*"|'[^']*')/i)?.[1];
+      if (!href) return tag;
+      const style = tag.match(/\bstyle\s*=\s*("[^"]*"|'[^']*')/i)?.[1];
+      return `<a href=${href}${style ? ` style=${style}` : ""}>`;
+    })
     .replace(/<(\/?)div\b/gi, "<$1p")
     .trim();
 }
@@ -204,14 +220,17 @@ function normalizeMimeText(value: string): string {
   return value.replace(/\r?\n/g, "\r\n");
 }
 
+// NOTE: /[\r\n]+/ — NOT /\r?\n/, which does not match a BARE \r. A single \r is
+// enough to inject a header on servers that treat it as a line break, and the
+// subject here is never CR-collapsed anywhere else, so this is the only guard.
 function encodeMimeHeader(value: string): string {
-  const normalized = value.replace(/\r?\n/g, " ").trim();
+  const normalized = value.replace(/[\r\n]+/g, " ").trim();
   return /[^\x20-\x7E]/.test(normalized) ? `=?UTF-8?B?${toBase64Utf8(normalized)}?=` : normalized;
 }
 
 function formatMailbox(name: string | undefined, email: string): string {
   if (!name?.trim()) return email;
-  const normalized = name.replace(/\r?\n/g, " ").trim();
+  const normalized = name.replace(/[\r\n]+/g, " ").trim();
   return `${/[^\x20-\x7E]/.test(normalized) ? encodeMimeHeader(normalized) : `"${normalized.replace(/(["\\])/g, "\\$1")}"`} <${email}>`;
 }
 
@@ -231,9 +250,11 @@ function campaignMessageId(campaignId: string, leadId: string, stepIndex: number
   return `<camp.${hex}.s${stepIndex}@${domain}>`;
 }
 
-// Dot-stuff message content per RFC 5321 §4.5.2
+// Dot-stuff message content per RFC 5321 §4.5.2. The leading "." at position 0 counts
+// too (it is the first line of the DATA block): unstuffed, a body starting with "."
+// swallows that line — and a lone "." would end DATA early and truncate the message.
 function dotStuff(content: string): string {
-  return content.replace(/\r\n\./g, '\r\n..');
+  return content.replace(/^\./, '..').replace(/\r\n\./g, '\r\n..');
 }
 
 async function sendSmtpEmail(
@@ -245,7 +266,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
@@ -309,7 +330,11 @@ async function sendSmtpEmail(
       const normalizedHtml = sigHtml
         ? `${normalizedBody}<br><br>${sigHtml}`
         : normalizedBody;
-      const bodyPlain = removeUrlsAndTracking(htmlToPlainText(normalizedBody));
+      // The two alternatives must SAY THE SAME THING: filters compare them, and a
+      // text/plain with every link deleted (the old removeUrlsAndTracking pass) next
+      // to an HTML part full of live links reads as cloaking. htmlToPlainText already
+      // renders each link as `label (href)`.
+      const bodyPlain = htmlToPlainText(normalizedBody);
       const plainText = sigHtml
         ? `${bodyPlain}\n\n${htmlToPlainText(sigHtml)}`
         : bodyPlain;
@@ -321,12 +346,13 @@ async function sendSmtpEmail(
         `MIME-Version: 1.0`,
         `Date: ${formatSmtpDate(new Date())}`,
         `Message-ID: ${messageId}`,
-        `Subject: ${encodeMimeHeader(subject)}`,
+        `Subject: ${encodeMimeHeaderFolded(subject)}`,
         `From: ${fromHeader}`,
         // Extra people added to the conversation (Unibox "Añadir persona") go in the
         // SAME "To" so both show together as direct recipients ("los dos mails"),
         // not one in To + one in Cc. Each is also added as an SMTP RCPT below.
-        `To: ${[to, ...(opts?.cc || [])].join(", ")}`,
+        // Folded: a handful of addresses already pass the 998-char hard line limit.
+        foldHeader("To", [to, ...(opts?.cc || [])].join(", ")),
         `Reply-To: <${from}>`,
       ];
 
@@ -341,23 +367,28 @@ async function sendSmtpEmail(
               .map((id) => (id.includes("<") ? id : `<${id}>`))
               .join(" ")
           : refId;
-        headers.push(`References: ${refs}`);
+        // A 20-message thread's References chain is one long line — fold it.
+        headers.push(foldHeader("References", refs));
       }
 
-      // Unsubscribe: when the campaign enabled opt-out, use the REAL one-click URL
-      // (handled by the /unsubscribe function). Otherwise keep the mailto fallback.
+      // Unsubscribe. RFC 8058 one-click REQUIRES an https URI: declaring
+      // List-Unsubscribe-Post with only mailto: URIs is invalid, and the old fallback
+      // pointed at unsubscribe+<random>@<our domain> — an address that does not exist,
+      // so every opt-out attempt hard-bounced onto our own sending reputation.
+      // Now we always sign the same HMAC token the engine uses (verified by the
+      // /unsubscribe function) and pair it with a REAL mailto to the sender.
       const unsubUrl = opts?.unsubscribeUrl;
-      if (unsubUrl) {
-        headers.push(`List-Unsubscribe: <${unsubUrl}>`);
+      const oneClickUrl = unsubUrl || (!isReply ? opts?.listUnsubscribeUrl : undefined);
+      if (oneClickUrl) {
+        headers.push(foldHeader("List-Unsubscribe", `<${oneClickUrl}>, <mailto:${from}?subject=unsubscribe>`));
         headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
       } else if (!isReply) {
-        const unsubAddr = `unsubscribe+${randomString(20)}@${fromDomain}`;
-        headers.push(`List-Unsubscribe: <mailto:${from}?subject=unsubscribe>, <mailto:${unsubAddr}>`);
-        headers.push(`List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
+        // No signing secret available → mailto only, and NO one-click declaration.
+        headers.push(`List-Unsubscribe: <mailto:${from}?subject=unsubscribe>`);
       }
-      headers.push(`Auto-Submitted: no`);
 
-      // Visible opt-out link at the bottom (added after URL stripping so it survives).
+      // Visible opt-out link at the bottom, in BOTH alternatives (only when the caller
+      // enabled opt-out; the header one-click link above is always signed).
       const plainTextFinal = unsubUrl
         ? `${plainText}\n\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
         : plainText;
@@ -365,8 +396,10 @@ async function sendSmtpEmail(
         ? `${normalizedHtml}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`
         : normalizedHtml;
 
-      // Pull base64 data: images (logos) out of the HTML → inline CID parts.
-      const { html: htmlForSend, inlineImages } = inlineDataUriImages(htmlFinal);
+      // Pull base64 data: images (logos) out of the HTML → inline CID parts, then wrap
+      // the result in a real HTML document (once; never if it already is one).
+      const { html: htmlInlined, inlineImages } = inlineDataUriImages(htmlFinal);
+      const htmlForSend = wrapHtmlDocument(htmlInlined);
 
       const qpText = quotedPrintableEncode(normalizeMimeText(plainTextFinal));
       const qpHtml = quotedPrintableEncode(normalizeMimeText(htmlForSend));
@@ -434,9 +467,12 @@ async function sendSmtpEmail(
         ];
         for (const att of attachments) {
           const safeName = encodeMimeHeader(att.filename || "adjunto");
+          // Strip CR/LF: the mime type comes straight from the request JSON and lands
+          // in a header — unstripped it is a header-injection vector.
+          const safeMime = String(att.mime || "application/octet-stream").replace(/[\r\n]/g, "") || "application/octet-stream";
           msgLines.push(
             `--${mixed}`,
-            `Content-Type: ${att.mime || "application/octet-stream"}; name="${safeName}"`,
+            `Content-Type: ${safeMime}; name="${safeName}"`,
             "Content-Transfer-Encoding: base64",
             `Content-Disposition: attachment; filename="${safeName}"`,
             "",
@@ -621,7 +657,8 @@ serve(async (req) => {
           .filter((a: any) => a && typeof a.base64 === "string" && a.base64.length > 0)
           .map((a: any) => ({
             filename: String(a.filename || "adjunto").slice(0, 200),
-            mime: String(a.mime || "application/octet-stream").slice(0, 120),
+            // CR/LF stripped here too (this value reaches a Content-Type header).
+            mime: String(a.mime || "application/octet-stream").replace(/[\r\n]/g, "").slice(0, 120) || "application/octet-stream",
             base64: String(a.base64).replace(/\s+/g, ""),
           }))
           .slice(0, 10)
@@ -770,13 +807,21 @@ serve(async (req) => {
       resolvedMessageId = generateMessageId(fromDomain);
     }
 
+    // Signed one-click unsubscribe URL — the SAME token scheme the engine signs and the
+    // /unsubscribe function verifies (b64url("userId:email") + "." + HMAC-SHA256 hex).
+    // Built once: `unsubscribeUrl` also adds the VISIBLE opt-out line at the bottom of
+    // the message (only when the caller asked for it), while `listUnsubUrl` feeds the
+    // List-Unsubscribe header so one-click is never declared with a mailto-only value.
+    const unsubSecret = Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    let listUnsubUrl: string | undefined;
+    if (unsubSecret && supabaseUrl) {
+      const token = await makeUnsubToken(userId, cleanTo, unsubSecret);
+      listUnsubUrl = `${supabaseUrl}/functions/v1/unsubscribe?t=${token}`;
+    }
     // When the caller (campaign send / test) explicitly enables opt-out, always add it
     // (even on threaded follow-ups). Unibox replies simply don't pass the flag.
-    let unsubscribeUrl: string | undefined;
-    if (include_unsubscribe) {
-      const token = await makeUnsubToken(userId, cleanTo, Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-      unsubscribeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe?t=${token}`;
-    }
+    const unsubscribeUrl: string | undefined = include_unsubscribe ? listUnsubUrl : undefined;
 
     const result = await sendSmtpEmail(
       account.smtp_host,
@@ -793,6 +838,7 @@ serve(async (req) => {
         fromName: senderName,
         messageId: resolvedMessageId,
         unsubscribeUrl,
+        listUnsubscribeUrl: listUnsubUrl,
         // Signature (kept RICH): the Unibox reply passes it explicitly; campaign sends
         // fall back to the account's stored signature. Appended server-side, once.
         signatureHtml: (signature_html && String(signature_html).trim())

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useReducer } from "react";
+import { replaceVariables } from "@/lib/personalize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -56,19 +57,9 @@ function correctVarsInText(text: string, valid: ValidVar[]): { text: string; cha
   return { text: out, changes };
 }
 
-// Variable replacement — MUST match process-campaign-queue's replaceVariables
-// exactly so a test email renders identically to what a lead really receives:
-// tolerates spaces ({{ first_name }}) and is case/underscore-insensitive
-// (first_name == firstName == FirstName). Unknown variables are left literal,
-// same as production (so an empty field is visible, not silently blanked).
-function renderVariables(text: string, fields: Record<string, string>): string {
-  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
-  const normalized: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fields)) normalized[norm(k)] = v;
-  return (text || "").replace(/\{\{\s*([\w\-\s]+?)\s*\}\}/g, (match, key) =>
-    fields[key] ?? normalized[norm(key)] ?? match
-  );
-}
+// Variable replacement — the SAME function the engine and send-email use, so the preview
+// shows exactly what the lead receives (fallbacks included, never a raw {{placeholder}}).
+const renderVariables = (text: string, fields: Record<string, string>) => replaceVariables(text || "", fields);
 
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
