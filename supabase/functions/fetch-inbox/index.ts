@@ -591,8 +591,12 @@ function cleanBody(raw: string, defaultCharset = "utf-8"): string {
 /** Extract HTML body from raw IMAP text (charset-aware) */
 function extractHtml(raw: string): string {
   if (!raw) return "";
-  // Look for text/html content between MIME boundaries
-  const htmlMatch = raw.match(/(Content-Type:\s*text\/html[\s\S]*?)(?:\r?\n\r?\n)([\s\S]*?)(?=--[a-zA-Z0-9_=-]+|$)/i);
+  // Look for the text/html part. Its body runs until the next MIME BOUNDARY LINE (a line that is
+  // "--" + boundary token, optionally "--"-closed) — NOT until any "--" that appears inside the HTML.
+  // The old lookahead (?=--[a-zA-Z0-9_=-]+) stopped at Mailchimp's "<!---->" / "<!--[if !mso]><!-->"
+  // comments and at CSS variables ("--x"), so the stored HTML ended inside <head> and the Unibox
+  // painted an empty message (SICE Telecomunicazioni newsletters, 2026-09-11).
+  const htmlMatch = raw.match(/(Content-Type:\s*text\/html[\s\S]*?)(?:\r?\n\r?\n)([\s\S]*?)(?=\r?\n--[A-Za-z0-9'()+_,\-./:=?]{6,}(?:--)?[ \t]*(?:\r?\n|$)|$)/i);
   if (htmlMatch && htmlMatch[2]) {
     const headerBlock = htmlMatch[1] || "";
     const charset = detectCharset(headerBlock) || "utf-8";

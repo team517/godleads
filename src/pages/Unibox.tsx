@@ -592,6 +592,19 @@ function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   return final;
 }
 
+/** HTML ready to paint, or "" when the cleaned HTML has NO visible content (e.g. a body that was
+ *  cut off inside <head> at sync time) so the caller falls back to body_text instead of an empty card. */
+function renderableHtml(raw: string | null | undefined, keepQuote = false): string {
+  if (!raw || raw.trim().length <= 20) return "";
+  const html = cleanBodyHtml(raw, keepQuote);
+  const visible = html
+    .replace(/<img[^>]*>/gi, "IMG")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;|&#160;| /gi, " ")
+    .trim();
+  return visible.length > 0 ? html : "";
+}
+
 /**
  * Repair mojibake — text where UTF-8 bytes were misinterpreted as Latin-1/Windows-1252.
  * Common patterns: "Ã±" → "ñ", "Ã©" → "é", "Â¿" → "¿", "â‚¬" → "€".
