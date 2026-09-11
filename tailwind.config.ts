@@ -19,8 +19,10 @@ export default {
         "13": "3.25rem",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
-        display: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        // DM Sans is the Smartlead face; Inter stays as the first fallback so
+        // nothing shifts if DM Sans hasn't loaded yet.
+        sans: ["DM Sans", "Inter", "system-ui", "-apple-system", "sans-serif"],
+        display: ["DM Sans", "Inter", "system-ui", "-apple-system", "sans-serif"],
         serif: ["Arapey", "Georgia", "serif"],
       },
       colors: {

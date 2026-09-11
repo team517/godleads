@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, Users, MailOpen, MessageSquareReply, DollarSign, AlertTriangle } from "lucide-react";
+import { Send, Users, MailOpen, MessageSquareReply, Smile, AlertTriangle } from "lucide-react";
 
 type Stats = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number };
 
@@ -51,12 +51,14 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
   const replyPct = m && denom > 0 ? `${(((m.replied ?? 0) / denom) * 100).toFixed(1)}%` : "0%";
 
   const items = [
-    { label: "Sent",      value: m?.sent ?? 0,          sub: null,                 icon: Send,               color: "text-primary" },
-    { label: "Contacted", value: m?.contacted ?? 0,     sub: null,                 icon: Users,              color: "text-sky-600" },
-    { label: "Opened",    value: m?.opened ?? 0,        sub: pct(m?.opened ?? 0),  icon: MailOpen,           color: "text-fuchsia-600" },
-    { label: "Replied",   value: m?.replied ?? 0,       sub: replyPct,             icon: MessageSquareReply, color: "text-teal-600" },
-    { label: "Positive",  value: m?.positive ?? 0,      sub: null,                 icon: DollarSign,         color: "text-emerald-600" },
-    { label: "Bounced",   value: m?.bounced ?? 0,       sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500" },
+    // Same palette as the desktop campaigns table (CampaignsTable.tsx), with dark
+    // variants one shade lighter so the numbers stay readable on a dark background.
+    { label: "Enviados",    value: m?.sent ?? 0,      sub: null,                 icon: Send,               color: "text-indigo-600 dark:text-indigo-400" },
+    { label: "Contactados", value: m?.contacted ?? 0, sub: null,               icon: Users,              color: "text-violet-600 dark:text-violet-400" },
+    { label: "Abiertos",    value: m?.opened ?? 0,    sub: pct(m?.opened ?? 0),  icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
+    { label: "Respondidos", value: m?.replied ?? 0,   sub: replyPct,             icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
+    { label: "Positivos",   value: m?.positive ?? 0,  sub: null,                 icon: Smile,              color: "text-emerald-600 dark:text-emerald-400" },
+    { label: "Rebotados",   value: m?.bounced ?? 0,   sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
     // "Sender B." (failed-send recipients) removed: it conflated transient SMTP
     // failures (e.g. an IONOS "503" storm that simply retries) with real bounces,
     // showing an alarming inflated number. "Bounced" above = real hard bounces.
@@ -70,7 +72,7 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
             {m === null ? "—" : it.value}
             {m !== null && it.sub && <span className="ml-0.5 text-[10px] font-medium text-muted-foreground">{it.sub}</span>}
           </p>
-          <p className="mt-1 inline-flex items-center justify-center gap-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+          <p className="mt-1 inline-flex items-center justify-center gap-1 whitespace-nowrap text-[9px] uppercase tracking-wide text-muted-foreground">
             <it.icon className="h-2.5 w-2.5" /> {it.label}
           </p>
         </div>

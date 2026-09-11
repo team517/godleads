@@ -17,6 +17,7 @@ import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
 import CampaignSendsChart from "@/components/campaigns/CampaignSendsChart";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
+import CampaignsTable from "@/components/campaigns/CampaignsTable";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   active: { label: "Activa", variant: "default" },
@@ -420,11 +421,11 @@ export default function Campaigns() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Campañas</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Gestiona tus secuencias de cold email</p>
+          <p className="text-xs sm:text-sm text-muted-foreground">Gestiona y sigue todas tus campañas</p>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-2 self-end sm:self-auto"><Plus className="h-4 w-4" /> Nueva Campaña</Button>
+            <Button size="sm" className="gap-2 self-end sm:self-auto"><Plus className="h-4 w-4" /> Crear campaña</Button>
           </DialogTrigger>
           <DialogContent className="max-w-sm">
             <DialogHeader><DialogTitle className="font-display">Crear campaña</DialogTitle></DialogHeader>
@@ -445,7 +446,22 @@ export default function Campaigns() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <>
+        {/* Desktop (≥ md): Smartlead-style table. Mobile keeps the cards below. */}
+        <div className="hidden md:block">
+          <CampaignsTable
+            campaigns={campaigns}
+            managers={managers}
+            progressMap={progressMap}
+            metricsFor={metricsFor}
+            onSelect={setSelectedId}
+            onToggleStatus={handleStatusToggle}
+            onDuplicate={handleDuplicate}
+            onRemix={(c) => setRemixDest(c)}
+            onDelete={handleDelete}
+          />
+        </div>
+        <div className="space-y-3 md:hidden">
           {campaigns.map((campaign) => {
             const status = statusConfig[campaign.status] || statusConfig.draft;
             return (
@@ -504,6 +520,7 @@ export default function Campaigns() {
             );
           })}
         </div>
+        </>
       )}
 
       {/* Remix dialog */}

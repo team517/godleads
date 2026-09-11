@@ -4,9 +4,12 @@ interface Props {
   sent: number;   // leads that have received at least one email (last_sent_at set)
   total: number;  // total leads in the campaign
   size?: number;
+  /** Optional ring/label colour (any CSS colour). Used by the campaigns table to
+   *  mirror the campaign state: green running, amber paused, grey draft. */
+  color?: string;
 }
 
-export default function CampaignProgressRing({ sent, total, size = 46 }: Props) {
+export default function CampaignProgressRing({ sent, total, size = 46, color }: Props) {
   const pct = total > 0 ? Math.min(100, Math.round((sent / total) * 100)) : 0;
   const stroke = 4;
   const r = (size - stroke) / 2;
@@ -27,7 +30,7 @@ export default function CampaignProgressRing({ sent, total, size = 46 }: Props) 
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={done ? "hsl(142 71% 45%)" : "hsl(var(--primary))"}
+          stroke={color || (done ? "hsl(142 71% 45%)" : "hsl(var(--primary))")}
           strokeWidth={stroke}
           strokeDasharray={circ}
           strokeDashoffset={offset}
@@ -36,7 +39,12 @@ export default function CampaignProgressRing({ sent, total, size = 46 }: Props) 
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-        <span className={`text-[11px] font-bold ${done ? "text-emerald-600" : "text-foreground"}`}>{pct}%</span>
+        <span
+          className={`text-[11px] font-bold ${color ? "" : done ? "text-emerald-600" : "text-foreground"}`}
+          style={color ? { color } : undefined}
+        >
+          {pct}%
+        </span>
       </div>
     </div>
   );

@@ -177,7 +177,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
   // h + pt: on iOS standalone the web view runs under the translucent status bar, so the
   // header grows by the safe-area inset (0 everywhere else) and paints it white like the bar.
   return (
-    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-white text-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
+    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-topbar text-topbar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
       <div className="flex items-center gap-3">
         {isMobile && (
           <Button variant="ghost" size="icon" onClick={onMenuToggle} aria-label="Abrir menú">
@@ -193,8 +193,8 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
             variant="outline"
             className={`gap-1.5 font-medium px-2 md:px-3 py-1 text-xs md:text-sm ${
               trialDaysLeft < 1
-                ? "border-red-200 text-red-600 bg-red-50"
-                : "border-border text-[#57565f]"
+                ? "border-red-200 text-red-600 bg-red-50 dark:border-destructive/50 dark:text-destructive dark:bg-destructive/15"
+                : "border-border text-[#57565f] dark:text-muted-foreground"
             }`}
           >
             <Clock className="h-3 w-3 md:h-3.5 md:w-3.5" />

@@ -124,13 +124,15 @@ export function GlobalSearch() {
   return (
     <div ref={boxRef} className="relative w-80">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      {/* #fcfbff is the house input surface in light; in dark it falls back to the
+          secondary surface so the field stays distinguishable from the top bar. */}
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => { if (query.trim()) setOpen(true); }}
         onKeyDown={onKeyDown}
         placeholder="Buscar campañas, leads, correos..."
-        className="pl-10 pr-9 bg-[#fcfbff] text-foreground placeholder:text-muted-foreground border border-border"
+        className="pl-10 pr-9 bg-[#fcfbff] dark:bg-secondary text-foreground placeholder:text-muted-foreground border border-border"
       />
       {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
 

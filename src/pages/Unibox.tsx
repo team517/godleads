@@ -965,17 +965,34 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
   return classifyIntent(decodeSubject(subject), cleanBodyText(body));
 }
 
-const categoryConfig: Record<MessageCategory, { label: string; bg: string; text: string; dot: string }> = {
-  interested:     { label: "Interesado",     bg: "bg-emerald-500/10", text: "text-emerald-600", dot: "bg-emerald-500" },
-  not_interested: { label: "No interesado", bg: "bg-red-500/10",     text: "text-red-600",     dot: "bg-red-500" },
-  no_contactar:   { label: "No contactar",  bg: "bg-rose-600/10",    text: "text-rose-700",    dot: "bg-rose-600" },
-  derivado:       { label: "Derivado",      bg: "bg-amber-500/10",   text: "text-amber-600",   dot: "bg-amber-500" },
-  question:       { label: "Pregunta",      bg: "bg-blue-500/10",    text: "text-blue-600",    dot: "bg-blue-500" },
-  out_of_office:  { label: "Fuera / Auto",  bg: "bg-violet-500/10",  text: "text-violet-600",  dot: "bg-violet-500" },
-  neutral:        { label: "",              bg: "",                  text: "text-muted-foreground", dot: "bg-muted-foreground" },
+// Smartlead-style label chips: a soft tinted rectangle (rounded-md, no pill, no dot)
+// with the category hue as background + text. Class strings are written out LITERALLY —
+// Tailwind purges anything built with template-literal interpolation like `bg-${hue}-50`.
+const categoryConfig: Record<MessageCategory, { label: string; bg: string; text: string; border: string; dot: string }> = {
+  interested:     { label: "Interesado",    bg: "bg-emerald-50 dark:bg-emerald-500/15", text: "text-emerald-700 dark:text-emerald-300", border: "border-emerald-600/30", dot: "bg-emerald-500" },
+  not_interested: { label: "No interesado", bg: "bg-red-50 dark:bg-red-500/15",         text: "text-red-700 dark:text-red-300",         border: "border-red-600/30",     dot: "bg-red-500" },
+  no_contactar:   { label: "No contactar",  bg: "bg-rose-50 dark:bg-rose-500/15",       text: "text-rose-700 dark:text-rose-300",       border: "border-rose-700/30",    dot: "bg-rose-600" },
+  derivado:       { label: "Derivado",      bg: "bg-amber-50 dark:bg-amber-500/15",     text: "text-amber-700 dark:text-amber-300",     border: "border-amber-600/30",   dot: "bg-amber-500" },
+  question:       { label: "Pregunta",      bg: "bg-sky-50 dark:bg-sky-500/15",         text: "text-sky-700 dark:text-sky-300",         border: "border-sky-600/30",     dot: "bg-sky-500" },
+  out_of_office:  { label: "Fuera / Auto",  bg: "bg-pink-50 dark:bg-pink-500/15",       text: "text-pink-700 dark:text-pink-300",       border: "border-pink-600/30",    dot: "bg-pink-500" },
+  neutral:        { label: "",              bg: "",                                     text: "text-muted-foreground",                  border: "border-border",         dot: "bg-muted-foreground" },
 };
 
 type FilterType = "all" | "ai_replied" | MessageCategory;
+
+// Filter-chip palette (idle / active) per filter key. Same hues as categoryConfig plus
+// "all" (neutral) and "ai_replied" (violet). Literal strings for the same purge reason.
+const filterChipStyles: Record<FilterType, { idle: string; active: string }> = {
+  all:            { idle: "bg-muted text-foreground border-border hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground border-transparent ring-2 ring-primary/30" },
+  interested:     { idle: "bg-emerald-50 text-emerald-700 border-emerald-600/30 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white border-transparent ring-2 ring-emerald-500/30 dark:bg-emerald-500" },
+  ai_replied:     { idle: "bg-violet-50 text-violet-700 border-violet-600/30 hover:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white border-transparent ring-2 ring-violet-500/30 dark:bg-violet-500" },
+  question:       { idle: "bg-sky-50 text-sky-700 border-sky-600/30 hover:bg-sky-100 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white border-transparent ring-2 ring-sky-500/30 dark:bg-sky-500" },
+  not_interested: { idle: "bg-red-50 text-red-700 border-red-600/30 hover:bg-red-100 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white border-transparent ring-2 ring-red-500/30 dark:bg-red-500" },
+  no_contactar:   { idle: "bg-rose-50 text-rose-700 border-rose-700/30 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white border-transparent ring-2 ring-rose-600/30 dark:bg-rose-500" },
+  derivado:       { idle: "bg-amber-50 text-amber-700 border-amber-600/30 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white border-transparent ring-2 ring-amber-500/30 dark:bg-amber-500" },
+  out_of_office:  { idle: "bg-pink-50 text-pink-700 border-pink-600/30 hover:bg-pink-100 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white border-transparent ring-2 ring-pink-500/30 dark:bg-pink-500" },
+  neutral:        { idle: "bg-muted text-foreground border-border hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground border-transparent ring-2 ring-primary/30" },
+};
 
 const langLabels: Record<string, string> = {
   en: "inglés", fr: "francés", de: "alemán", pt: "portugués", it: "italiano",
@@ -2979,15 +2996,16 @@ export default function Unibox() {
     );
   }
 
-  const filterButtons: { key: FilterType; label: string; dot?: string }[] = [
+  // Smartlead-style chips: the colour alone carries the category, no leading dot.
+  const filterButtons: { key: FilterType; label: string }[] = [
     { key: "all", label: "Todos" },
-    { key: "interested", label: "Interesados", dot: "bg-success" },
-    { key: "ai_replied", label: "Respondido IA", dot: "bg-violet-500" },
-    { key: "question", label: "Preguntas", dot: "bg-info" },
-    { key: "not_interested", label: "No interesados", dot: "bg-destructive" },
-    { key: "no_contactar", label: "No contactar", dot: "bg-rose-600" },
-    { key: "derivado", label: "Derivados", dot: "bg-amber-500" },
-    { key: "out_of_office", label: "Fuera / Auto", dot: "bg-brand-purple" },
+    { key: "interested", label: "Interesados" },
+    { key: "ai_replied", label: "Respondido IA" },
+    { key: "question", label: "Preguntas" },
+    { key: "not_interested", label: "No interesados" },
+    { key: "no_contactar", label: "No contactar" },
+    { key: "derivado", label: "Derivados" },
+    { key: "out_of_office", label: "Fuera / Auto" },
   ];
 
   const selectedCategory = selected ? classifyMessage(selected.subject, selected.body_text) : null;
@@ -3141,13 +3159,12 @@ export default function Unibox() {
           <button
             key={fb.key}
             onClick={() => setCategoryFilter(fb.key)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+            className={`inline-flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
               categoryFilter === fb.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
+                ? filterChipStyles[fb.key].active
+                : filterChipStyles[fb.key].idle
             }`}
           >
-            {fb.dot && <span className={`inline-block h-2 w-2 rounded-full ${fb.dot}`} />}
             {fb.label}
             {categoryCounts[fb.key] !== undefined && (
               <span className="opacity-60 ml-0.5">{categoryCounts[fb.key] || 0}</span>
@@ -3337,12 +3354,12 @@ export default function Unibox() {
                         {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {aiReplied(msg.from_email) ? (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-violet-500/10 px-2 py-0.5 text-[11px] font-semibold text-violet-600 whitespace-nowrap" title="La IA respondió automáticamente a este contacto">
+                              <span className="inline-flex items-center gap-1 rounded-md border border-violet-600/30 bg-violet-50 px-2 py-0.5 text-[12px] font-medium text-violet-700 whitespace-nowrap dark:bg-violet-500/15 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
                                 <Sparkles className="h-3 w-3" /> Respondido con IA
                               </span>
                             ) : catCfg.label && (
-                              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${catCfg.dot}`} /> {catCfg.label}
+                              <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[12px] font-medium whitespace-nowrap ${catCfg.bg} ${catCfg.text} ${catCfg.border}`}>
+                                {catCfg.label}
                               </span>
                             )}
                             {campaignName && (
@@ -3435,12 +3452,11 @@ export default function Unibox() {
                       <h2 className="text-lg md:text-xl font-medium text-foreground leading-tight flex items-center gap-2 flex-wrap">
                         {decodeSubject(selected.subject)}
                         {aiReplied(selected.from_email) ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-violet-500/10 text-violet-600" title="La IA respondió automáticamente a este contacto">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-violet-600/30 bg-violet-50 px-2 py-0.5 text-[12px] font-medium text-violet-700 dark:bg-violet-500/15 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
                             <Sparkles className="h-3 w-3" /> Respondido con IA
                           </span>
                         ) : selectedCatConfig?.label && (
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${selectedCatConfig.dot}`} />
+                          <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[12px] font-medium ${selectedCatConfig.bg} ${selectedCatConfig.text} ${selectedCatConfig.border}`}>
                             {selectedCatConfig.label}
                           </span>
                         )}

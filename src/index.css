@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Arapey:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Arapey:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,7 +8,7 @@
   :root {
     /* ── OnePulso house design system — source of truth: the company's
        "Portal del equipo" page (its CSS is the spec).
-       Inter (titles at weight 300, letter-spacing -0.03em) · purple #7a5af8
+       DM Sans (titles at weight 600, letter-spacing -0.02em) · purple #7a5af8
        (hover #6a48e8) · WHITE page + WHITE top bar (no navy) · text #141319 /
        #57565f / #8b8699 · borders & chips #e7e2f5 · light purple #ece7ff ·
        hover surface #f7f6fc · inputs #fcfbff · radius 14px · 5px spacing scale ·
@@ -80,56 +80,77 @@
     --gradient-sky: linear-gradient(135deg, hsl(220 90% 64%), hsl(262 83% 58%));
   }
 
-  /* Dark mode: same purple hue family (252) as the house system, just inverted
-     surfaces. Kept coherent — the design spec itself only defines the light theme. */
+  /* ── Dark mode — same purple hue family (252) as the house system, rebuilt for
+     real contrast. Every token here is checked against the surface it sits on:
+     foreground #f4f2fa on card #17161f ≈ 15:1, muted-foreground #a9a3ba on card
+     ≈ 8:1 (well over the 4.5:1 minimum), border #2a2836 is visibly lighter than
+     both card and background so cards/inputs keep their edges. ── */
   .dark {
-    --background: 250 18% 7%;
-    --foreground: 250 20% 97%;
+    --background: 250 18% 7%;         /* #0f0e14 */
+    --foreground: 255 44% 96%;        /* #f4f2fa */
 
-    --card: 250 18% 10%;
-    --card-foreground: 250 20% 97%;
+    --card: 250 17% 10%;              /* #17161f */
+    --card-foreground: 255 44% 96%;
 
-    --popover: 250 18% 10%;
-    --popover-foreground: 250 20% 97%;
+    --popover: 250 17% 10%;           /* same as card */
+    --popover-foreground: 255 44% 96%;
 
-    --primary: 252 92% 70%;
-    --primary-foreground: 250 18% 10%;
-    --primary-glow: 253 78% 64%;
+    --primary: 252 100% 76%;          /* #9d85ff */
+    --primary-foreground: 252 22% 9%; /* #14121c */
+    --primary-glow: 252 100% 82%;     /* hover — brighter, not darker, on dark */
 
-    --secondary: 250 14% 16%;
-    --secondary-foreground: 250 20% 97%;
+    --secondary: 246 14% 14%;         /* #1f1e28 */
+    --secondary-foreground: 255 44% 96%;
 
-    --muted: 250 14% 16%;
-    --muted-foreground: 256 12% 66%;
+    --muted: 246 14% 14%;             /* #1f1e28 */
+    --muted-foreground: 256 14% 68%;  /* #a9a3ba — ≥ 4.5:1 on card */
 
-    --accent: 252 26% 22%;
-    --accent-foreground: 252 92% 80%;
+    --accent: 251 30% 21%;            /* #2b2545 */
+    --accent-foreground: 254 100% 86%;/* #c9b8ff */
 
-    --destructive: 0 63% 45%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 70% 58%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 250 14% 20%;
-    --input: 250 14% 20%;
-    --ring: 252 92% 70%;
+    --border: 249 15% 18%;            /* #2a2836 — clearly visible on card */
+    --input: 249 15% 18%;
+    --ring: 252 100% 76%;             /* = primary */
 
-    --sidebar-background: 250 18% 6%;
-    --sidebar-foreground: 250 14% 82%;
-    --sidebar-primary: 252 92% 70%;
-    --sidebar-primary-foreground: 250 18% 10%;
-    --sidebar-accent: 252 26% 18%;
-    --sidebar-accent-foreground: 252 92% 80%;
-    --sidebar-border: 250 14% 20%;
-    --sidebar-ring: 252 92% 70%;
+    --sidebar-background: 250 18% 7%; /* = background */
+    --sidebar-foreground: 258 19% 83%;/* #cfcadb */
+    --sidebar-primary: 252 100% 76%;
+    --sidebar-primary-foreground: 252 22% 9%;
+    --sidebar-accent: 245 27% 18%;    /* #23213a */
+    --sidebar-accent-foreground: 254 100% 86%; /* #c9b8ff */
+    --sidebar-border: 249 15% 18%;    /* = border */
+    --sidebar-ring: 252 100% 76%;
 
-    --topbar: 250 18% 10%;
-    --topbar-foreground: 250 20% 97%;
+    --topbar: 250 17% 10%;            /* = card */
+    --topbar-foreground: 255 44% 96%; /* = foreground */
 
-    --success: 142 70% 42%;
-    --success-foreground: 0 0% 100%;
-    --warning: 38 92% 55%;
-    --warning-foreground: 0 0% 8%;
-    --info: 252 92% 70%;
-    --info-foreground: 250 18% 10%;
+    /* Status colours: lightened so they read as text on the dark surfaces, with
+       dark foregrounds for when they are used as a filled badge background. */
+    --success: 142 60% 52%;
+    --success-foreground: 150 35% 8%;
+    --warning: 38 95% 60%;
+    --warning-foreground: 40 40% 8%;
+    --info: 252 100% 76%;
+    --info-foreground: 252 22% 9%;
+
+    /* Metric / chart accents — the light values are too dark to read here, so
+       each one is lifted in lightness while keeping its hue. */
+    --brand-blue: 262 90% 74%;
+    --brand-cyan: 220 95% 72%;
+    --brand-indigo: 262 80% 70%;
+    --brand-purple: 325 85% 68%;
+    --brand-teal: 172 60% 52%;
+    --brand-sky: 220 95% 72%;
+
+    /* Gradients get a touch more alpha so they still register on #0f0e14. */
+    --gradient-hero: linear-gradient(135deg, hsl(262 90% 74% / 0.14), hsl(325 85% 68% / 0.09) 50%, hsl(220 95% 72% / 0.11));
+    --gradient-brand: linear-gradient(90deg, hsl(262 90% 74%), hsl(325 85% 68%) 55%, hsl(172 60% 52%));
+    --gradient-warm: linear-gradient(135deg, hsl(262 90% 74%), hsl(325 85% 68%));
+    --gradient-cool: linear-gradient(135deg, hsl(262 80% 70%), hsl(262 90% 74%));
+    --gradient-sky: linear-gradient(135deg, hsl(220 95% 72%), hsl(262 90% 74%));
   }
 }
 
@@ -142,12 +163,22 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Light, airy titles are the signature of the house system: Inter at weight
-     300 with -0.03em tracking. */
+  /* Smartlead-style titles: DM Sans, semibold, tight tracking. (This replaces
+     the previous "airy" pass — Inter at weight 300 — which read too thin.) */
   h1, h2, h3 {
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.03em;
-    font-weight: 300;
+    font-family: "DM Sans", "Inter", system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+
+  /* 26 page titles across the app still carry the old `font-light tracking-tight`
+     utilities from the light-title pass (e.g. "Cuentas de Email"). Those pages
+     are not being touched, so this scoped override neutralises the leftover
+     weight utility and keeps every heading at the new semibold weight. */
+  h1.font-light,
+  h2.font-light,
+  h3.font-light {
+    font-weight: 600 !important;
   }
 }
 
@@ -155,23 +186,25 @@
    unused @layer components rules) — the Landing page's own onepulso-landing.css
    loads later and keeps overriding its scoped .eyebrow. */
 
-/* Field label / eyebrow — 13px uppercase, wide tracking, muted grey. */
+/* Field label / eyebrow — 13px uppercase, wide tracking, muted grey.
+   Token-based (not a hardcoded hex) so it re-themes in dark mode. */
 .eyebrow {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #8b8699;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
 }
 
 /* Accent variant of the eyebrow (section kickers). */
 .eyebrow-accent {
-  color: #7a5af8;
+  color: hsl(var(--primary));
 }
 
-/* Big KPI / display numbers. */
+/* Big KPI / display numbers — Arapey stays, the colour follows the theme. */
 .num-display {
   font-family: "Arapey", Georgia, serif;
-  color: #7a5af8;
+  color: hsl(var(--primary));
 }
 
 /* Hide scrollbars but keep scrolling (mobile chip rows, toolbars) */

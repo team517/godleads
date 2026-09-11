@@ -147,18 +147,20 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           collapsed ? "justify-center px-0" : "px-3.5",
           isActive
             ? cn(
-                "text-sidebar-primary font-semibold",
+                "text-sidebar-primary font-semibold dark:text-sidebar-accent-foreground",
                 // Collapsed: only the square icon marks active — no side bar, no pill.
                 !collapsed && "bg-sidebar-accent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
               )
-            : "font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
+            : "font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] dark:text-sidebar-foreground dark:hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
         )}
       >
         <span className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-none transition-colors",
           isActive
-            ? "bg-sidebar-primary text-white shadow-sm"
-            : "bg-[#f7f6fc] text-[#57565f] group-hover:bg-sidebar-accent group-hover:text-sidebar-primary"
+            // text-white on the lighter dark-mode purple is too low contrast — the
+            // dark theme uses the token foreground (#14121c) instead.
+            ? "bg-sidebar-primary text-white shadow-sm dark:text-sidebar-primary-foreground"
+            : "bg-[#f7f6fc] text-[#57565f] group-hover:bg-sidebar-accent group-hover:text-sidebar-primary dark:bg-secondary dark:text-sidebar-foreground dark:group-hover:text-sidebar-accent-foreground"
         )}>
           <item.icon strokeWidth={1.9} className="h-[17px] w-[17px]" />
         </span>
@@ -191,21 +193,21 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           Zero height on Android/desktop. */}
       <div className="h-[env(safe-area-inset-top)] shrink-0 bg-topbar" />
       {/* Logo + collapse toggle */}
-      <div className={cn("flex h-14 items-center border-b border-sidebar-border/50", collapsed ? "justify-center px-2" : "justify-between px-5")}>
+      <div className={cn("flex h-14 items-center border-b border-sidebar-border/50 dark:border-sidebar-border", collapsed ? "justify-center px-2" : "justify-between px-5")}>
         {!collapsed && (
           profileData.logo_url
             ? <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-7 max-w-[150px] object-contain" />
             : <Wordmark className="h-7" colorClassName="text-primary" />
         )}
         {isMobile ? (
-          <button onClick={onClose} className="text-sidebar-foreground/50 hover:text-sidebar-foreground p-1">
+          <button onClick={onClose} className="text-sidebar-foreground/50 dark:text-sidebar-foreground/70 hover:text-sidebar-foreground p-1">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         ) : (
           <button
             onClick={onToggleCollapse}
             title={collapsed ? "Expandir panel" : "Colapsar panel"}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-sidebar-foreground/50 dark:text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors"
           >
             <ChevronLeft className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")} />
           </button>
@@ -215,17 +217,17 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
       <nav className="flex-1 px-3 py-4 overflow-y-auto overflow-x-hidden">
         {/* Main section */}
         <div>
-          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Principal</p>}
-          <div className="divide-y divide-sidebar-border/50">
+          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30 dark:text-sidebar-foreground/55">Principal</p>}
+          <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border">
             {mainNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
           </div>
         </div>
 
         {/* Tools section */}
         {(!allowedRoutes || visibleTools.some(item => allowedRoutes.includes(item.path))) && (
-        <div className="mt-4 pt-4 border-t border-sidebar-border/70">
-          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">Herramientas</p>}
-          <div className="divide-y divide-sidebar-border/50">
+        <div className="mt-4 pt-4 border-t border-sidebar-border/70 dark:border-sidebar-border">
+          {!collapsed && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30 dark:text-sidebar-foreground/55">Herramientas</p>}
+          <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border">
             {visibleTools.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
           </div>
         </div>
@@ -233,8 +235,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
 
         {/* Admin / client manager */}
         {(isAdmin || isManager) && (
-          <div className="space-y-0.5 mt-4 pt-4 border-t border-sidebar-border/60">
-            {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30">{isAdmin ? "Admin" : "Gestión"}</p>}
+          <div className="space-y-0.5 mt-4 pt-4 border-t border-sidebar-border/60 dark:border-sidebar-border">
+            {!collapsed && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/30 dark:text-sidebar-foreground/55">{isAdmin ? "Admin" : "Gestión"}</p>}
             {isAdmin && (
             <Link
               to="/admin"
@@ -244,11 +246,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
                 "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150",
                 collapsed ? "justify-center px-0" : "px-3",
                 location.pathname === "/admin"
-                  ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
+                  ? "bg-sidebar-accent text-sidebar-primary dark:text-sidebar-accent-foreground"
+                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] dark:text-sidebar-foreground dark:hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
               )}
             >
-              <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
+              <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-primary" : "text-sidebar-foreground/40 dark:text-sidebar-foreground/65")} />
               {!collapsed && "Panel Admin"}
             </Link>
             )}
@@ -260,11 +262,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
                 "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150",
                 collapsed ? "justify-center px-0" : "px-3",
                 location.pathname.startsWith("/admin/clients")
-                  ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
+                  ? "bg-sidebar-accent text-sidebar-primary dark:text-sidebar-accent-foreground"
+                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] dark:text-sidebar-foreground dark:hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
               )}
             >
-              <Users className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin/clients") ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
+              <Users className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin/clients") ? "text-sidebar-primary" : "text-sidebar-foreground/40 dark:text-sidebar-foreground/65")} />
               {!collapsed && "Portal de Clientes"}
             </Link>
           </div>
@@ -272,7 +274,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-sidebar-border/50 p-3 space-y-2">
+      <div className="border-t border-sidebar-border/50 dark:border-sidebar-border p-3 space-y-2">
         {/* User profile */}
         <div className={cn("flex items-center gap-2.5 py-2", collapsed ? "justify-center px-0" : "px-3")} title={collapsed ? (profileData.full_name || user?.email || "") : undefined}>
           <Avatar className="h-8 w-8 shrink-0 ring-2 ring-primary/20">
@@ -284,12 +286,12 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
           {!collapsed && (
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-sidebar-foreground truncate">{profileData.full_name || "Sin nombre"}</p>
-              <p className="text-[10px] text-sidebar-foreground/40 truncate">{user?.email}</p>
+              <p className="text-[10px] text-sidebar-foreground/40 dark:text-sidebar-foreground/65 truncate">{user?.email}</p>
             </div>
           )}
         </div>
 
-        <div className="divide-y divide-sidebar-border/50 border-t border-sidebar-border/50">
+        <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border border-t border-sidebar-border/50 dark:border-sidebar-border">
         <Link
           to="/settings"
           onClick={handleNavClick}
@@ -298,17 +300,17 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
             "flex items-center gap-3 rounded-lg py-2 text-[13px] font-medium transition-all duration-150",
             collapsed ? "justify-center px-0" : "px-3",
             location.pathname.startsWith("/settings")
-              ? "bg-sidebar-accent text-sidebar-primary"
-              : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
+              ? "bg-sidebar-accent text-sidebar-primary dark:text-sidebar-accent-foreground"
+              : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] dark:text-sidebar-foreground dark:hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
           )}
         >
-          <Settings className="h-[18px] w-[18px] shrink-0 text-sidebar-foreground/40" />
+          <Settings className="h-[18px] w-[18px] shrink-0 text-sidebar-foreground/40 dark:text-sidebar-foreground/65" />
           {!collapsed && "Configuración"}
         </Link>
         <button
           onClick={handleSoftExit}
           title={collapsed ? "Salir" : undefined}
-          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
+          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] dark:text-sidebar-foreground dark:hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
         >
           {/* Home, not LogOut: "Salir" solo vuelve al inicio sin cerrar sesión, y con la barra
               plegada los dos botones quedaban idénticos. */}
@@ -318,7 +320,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         <button
           onClick={handleSignOut}
           title={collapsed ? "Cerrar sesión" : undefined}
-          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-sidebar-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
+          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-sidebar-foreground/40 dark:text-sidebar-foreground/65 hover:text-destructive hover:bg-destructive/10 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
         >
           <LogOut className="h-[18px] w-[18px] shrink-0" />
           {!collapsed && "Cerrar sesión"}
