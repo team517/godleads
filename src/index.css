@@ -14,7 +14,7 @@
        hover surface #f7f6fc · inputs #fcfbff · radius 14px · 5px spacing scale ·
        big KPI numbers in Arapey purple.
        Token VALUES only — every screen re-themes automatically, no logic touched. ── */
-    --background: 0 0% 100%;          /* #ffffff */
+    --background: 228 24% 97%;        /* #f4f5f9 fondo del panel (el de antes); tarjetas blancas encima */
     --foreground: 250 14% 9%;         /* #141319 */
 
     --card: 0 0% 100%;
