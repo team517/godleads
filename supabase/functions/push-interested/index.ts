@@ -87,6 +87,8 @@ Deno.serve(async (req) => {
     const useAi = !!deepseekKey && body?.ai !== false;
     // Backfill mode: relabel history without buzzing the phone for replies that are days old.
     const notify = body?.notify !== false;
+    // Dry-run only: re-evaluate rows already marked, to measure the model path on real data.
+    const force = dryRun && body?.force === true;
 
     // Only REAL prospect replies: a reply inside a real thread (In-Reply-To / References) or tied
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
@@ -119,7 +121,7 @@ Deno.serve(async (req) => {
       if (!isRealReply(m)) continue;
       const labels = m.labels || [];
       // Already judged by this function (or relabelled by a human on top of it): leave it alone.
-      if (labels.includes(AI_MARKER)) { skipped++; continue; }
+      if (!force && labels.includes(AI_MARKER)) { skipped++; continue; }
       const text = replyTextForClassification(m.body_text, m.body_html);
       const ruleVerdict = classifyMessage(m.subject, text);
       pending.push({ m, text, ruleVerdict, verdict: ruleVerdict, via: "reglas" });
