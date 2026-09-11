@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BarChart3, Users, ListChecks, Clock, Settings, Mail, Heart, Ban } from "lucide-react";
+import { BarChart3, Users, ListChecks, Clock, Settings, Mail, Heart, Ban, AtSign } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ const CampaignSequences = lazy(() => import("./CampaignSequences"));
 const CampaignSchedule = lazy(() => import("./CampaignSchedule"));
 const CampaignOptions = lazy(() => import("./CampaignOptions"));
 const CampaignSentLog = lazy(() => import("./CampaignSentLog"));
+const CampaignEmailAccounts = lazy(() => import("./CampaignEmailAccounts"));
 const CampaignCRM = lazy(() => import("./CampaignCRM"));
 const CampaignUnsubscribes = lazy(() => import("./CampaignUnsubscribes"));
 
@@ -52,6 +53,7 @@ export default function CampaignDetail({ campaignId }: Props) {
         <TabsTrigger value="leads" className="gap-1 text-xs"><Users className="h-3.5 w-3.5" /> Leads</TabsTrigger>
         <TabsTrigger value="sequences" className="gap-1 text-xs"><ListChecks className="h-3.5 w-3.5" /> Sequences</TabsTrigger>
         <TabsTrigger value="sent" className="gap-1 text-xs"><Mail className="h-3.5 w-3.5" /> Enviados</TabsTrigger>
+        <TabsTrigger value="accounts" className="gap-1 text-xs"><AtSign className="h-3.5 w-3.5" /> Cuentas</TabsTrigger>
         <TabsTrigger value="schedule" className="gap-1 text-xs"><Clock className="h-3.5 w-3.5" /> Schedule</TabsTrigger>
         <TabsTrigger value="options" className="gap-1 text-xs"><Settings className="h-3.5 w-3.5" /> Options</TabsTrigger>
         <TabsTrigger value="unsubscribes" className="gap-1 text-xs"><Ban className="h-3.5 w-3.5" /> Bajas</TabsTrigger>
@@ -70,6 +72,7 @@ export default function CampaignDetail({ campaignId }: Props) {
         <TabsContent value="leads" className="mt-4"><CampaignLeads campaignId={campaignId} /></TabsContent>
         <TabsContent value="sequences" className="mt-4"><CampaignSequences campaignId={campaignId} /></TabsContent>
         <TabsContent value="sent" className="mt-4"><CampaignSentLog campaignId={campaignId} /></TabsContent>
+        <TabsContent value="accounts" className="mt-4"><CampaignEmailAccounts campaignId={campaignId} /></TabsContent>
         <TabsContent value="schedule" className="mt-4"><CampaignSchedule campaignId={campaignId} /></TabsContent>
         <TabsContent value="options" className="mt-4">
           <div ref={optionsRef}>
