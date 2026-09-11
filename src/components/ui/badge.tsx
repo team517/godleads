@@ -9,10 +9,10 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-transparent bg-[#e7e2f5] text-[#57565f] hover:bg-[#ece7ff]",
-        secondary: "border-transparent bg-[#e7e2f5] text-[#57565f] hover:bg-[#ece7ff]",
+        default: "border-transparent bg-[#e7e2f5] text-secondary-foreground hover:bg-accent dark:bg-secondary dark:hover:bg-accent",
+        secondary: "border-transparent bg-[#e7e2f5] text-secondary-foreground hover:bg-accent dark:bg-secondary dark:hover:bg-accent",
         /** Selected / active chip. */
-        active: "border-transparent bg-[#ece7ff] text-primary",
+        active: "border-transparent bg-accent text-accent-foreground",
         destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
       },
