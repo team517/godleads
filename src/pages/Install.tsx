@@ -66,7 +66,7 @@ const Install = () => {
           <div className="mx-auto w-20 h-20 rounded-2xl bg-green-500/10 flex items-center justify-center">
             <CheckCircle className="w-10 h-10 text-green-500" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">¡App instalada!</h1>
+          <h1 className="text-3xl font-light tracking-tight text-foreground">¡App instalada!</h1>
           <p className="text-muted-foreground">
             GodLeads ya está en tu pantalla de inicio. Ábrela desde ahí para la mejor experiencia.
           </p>
@@ -85,7 +85,7 @@ const Install = () => {
 
         {/* Header */}
         <div className="space-y-3">
-          <h1 className="text-3xl font-bold text-foreground">Descargar GodLeads</h1>
+          <h1 className="text-3xl font-light tracking-tight text-foreground">Descargar GodLeads</h1>
           <p className="text-muted-foreground">
             Instala la app en tu dispositivo para acceder rápido a tu Unibox y campañas.
           </p>

@@ -2986,7 +2986,7 @@ export default function Unibox() {
       <div className="rounded-lg border border-border/60 bg-card px-3 py-2.5 shadow-sm md:px-4 md:py-3">
         <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h1 className="font-display text-xl font-bold tracking-tight md:text-2xl">Unibox</h1>
+            <h1 className="font-display text-xl font-light tracking-tight md:text-2xl">Unibox</h1>
             <p className="mt-0.5 text-xs md:text-sm text-muted-foreground">
             {filtered.length} mensajes · {unreadCount} sin leer
             {!isMobile && lastSyncAt && (

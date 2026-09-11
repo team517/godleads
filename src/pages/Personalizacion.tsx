@@ -433,7 +433,7 @@ export default function Personalizacion() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="font-display text-xl sm:text-2xl font-bold">Personalización con IA</h1>
+        <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Personalización con IA</h1>
         <p className="text-xs sm:text-sm text-muted-foreground">
           Sube un CSV, escribe un prompt con {"{columnas}"} y la IA genera un mensaje por lead. Corre en el servidor: puedes cerrar el PC.
         </p>

@@ -168,7 +168,7 @@ export default function AIPrompts() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
           <Brain className="h-6 w-6 text-primary" />
           Asistente IA
         </h1>

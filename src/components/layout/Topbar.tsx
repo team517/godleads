@@ -175,9 +175,9 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
   const coinDisplay = profileData.infiniteCoins ? "∞" : (profileData.coins > 999 ? "999+" : profileData.coins);
 
   // h + pt: on iOS standalone the web view runs under the translucent status bar, so the
-  // header grows by the safe-area inset (0 everywhere else) and paints it in topbar navy.
+  // header grows by the safe-area inset (0 everywhere else) and paints it white like the bar.
   return (
-    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-white/10 bg-topbar text-topbar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
+    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-white text-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
       <div className="flex items-center gap-3">
         {isMobile && (
           <Button variant="ghost" size="icon" onClick={onMenuToggle} aria-label="Abrir menú">
@@ -193,8 +193,8 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
             variant="outline"
             className={`gap-1.5 font-medium px-2 md:px-3 py-1 text-xs md:text-sm ${
               trialDaysLeft < 1
-                ? "border-red-300/50 text-red-200 bg-red-500/15"
-                : "border-white/30 text-white"
+                ? "border-red-200 text-red-600 bg-red-50"
+                : "border-border text-[#57565f]"
             }`}
           >
             <Clock className="h-3 w-3 md:h-3.5 md:w-3.5" />
@@ -212,7 +212,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
           {theme === "dark" ? (
             <Sun className="h-5 w-5 text-warning" />
           ) : (
-            <Moon className="h-5 w-5 text-white/70" />
+            <Moon className="h-5 w-5 text-muted-foreground" />
           )}
         </Button>
 
@@ -332,12 +332,12 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
               {notifyEnabled ? (
-                <Bell className="h-5 w-5 text-violet-300" />
+                <Bell className="h-5 w-5 text-primary" />
               ) : (
-                <BellOff className="h-5 w-5 text-white/70" />
+                <BellOff className="h-5 w-5 text-muted-foreground" />
               )}
               {notifyEnabled && (
-                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-violet-300 animate-pulse" />
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary animate-pulse" />
               )}
             </Button>
           </PopoverTrigger>
@@ -404,7 +404,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
         </Popover>
 
         <Link to="/settings">
-          <Avatar className="h-9 w-9 ring-2 ring-white/30 cursor-pointer hover:ring-white/60 transition-all">
+          <Avatar className="h-9 w-9 ring-2 ring-border cursor-pointer hover:ring-primary/40 transition-all">
             <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
             <AvatarFallback className="bg-primary/10 text-primary text-sm font-bold">
               {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}

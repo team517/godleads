@@ -1146,7 +1146,7 @@ export default function EmailAccounts() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-bold">Cuentas de Email</h1>
+          <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Cuentas de Email</h1>
           <p className="text-xs sm:text-sm text-muted-foreground">Gestiona tus cuentas SMTP/IMAP</p>
         </div>
         <div className="flex flex-wrap gap-2">

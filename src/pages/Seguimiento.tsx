@@ -228,7 +228,7 @@ export default function Seguimiento() {
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-4">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><CalendarClock className="h-6 w-6 text-primary" /> Seguimiento</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-light tracking-tight"><CalendarClock className="h-6 w-6 text-primary" /> Seguimiento</h1>
         <p className="text-sm text-muted-foreground">Conectado a <b className="text-foreground">team@onepulso.online</b>. Busca a una persona, elige la conversación concreta, impórtala y programa follow-ups en el calendario (arrástralos por día). La IA te propone la respuesta.</p>
       </div>
 

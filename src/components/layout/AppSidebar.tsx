@@ -151,14 +151,14 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
                 // Collapsed: only the square icon marks active — no side bar, no pill.
                 !collapsed && "bg-sidebar-accent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
               )
-            : "font-medium text-sidebar-foreground hover:text-sidebar-primary hover:bg-sidebar-accent/60"
+            : "font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
         )}
       >
         <span className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-none transition-colors",
           isActive
             ? "bg-sidebar-primary text-white shadow-sm"
-            : "bg-muted/50 text-sidebar-foreground/70 group-hover:bg-sidebar-accent group-hover:text-sidebar-primary"
+            : "bg-[#f7f6fc] text-[#57565f] group-hover:bg-sidebar-accent group-hover:text-sidebar-primary"
         )}>
           <item.icon strokeWidth={1.9} className="h-[17px] w-[17px]" />
         </span>
@@ -187,15 +187,15 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
 
   return (
     <aside className={sidebarClasses}>
-      {/* iOS standalone: paint the status-bar strip navy so its white text stays readable
-          over the white sidebar. Zero height on Android/desktop. */}
+      {/* iOS standalone: the status-bar strip continues the white bar of the house system.
+          Zero height on Android/desktop. */}
       <div className="h-[env(safe-area-inset-top)] shrink-0 bg-topbar" />
       {/* Logo + collapse toggle */}
       <div className={cn("flex h-14 items-center border-b border-sidebar-border/50", collapsed ? "justify-center px-2" : "justify-between px-5")}>
         {!collapsed && (
           profileData.logo_url
             ? <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-7 max-w-[150px] object-contain" />
-            : <Wordmark className="h-7" colorClassName="text-foreground" />
+            : <Wordmark className="h-7" colorClassName="text-primary" />
         )}
         {isMobile ? (
           <button onClick={onClose} className="text-sidebar-foreground/50 hover:text-sidebar-foreground p-1">
@@ -245,7 +245,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
                 collapsed ? "justify-center px-0" : "px-3",
                 location.pathname === "/admin"
                   ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
               )}
             >
               <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
@@ -261,7 +261,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
                 collapsed ? "justify-center px-0" : "px-3",
                 location.pathname.startsWith("/admin/clients")
                   ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                  : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
               )}
             >
               <Users className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin/clients") ? "text-sidebar-primary" : "text-sidebar-foreground/40")} />
@@ -299,7 +299,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
             collapsed ? "justify-center px-0" : "px-3",
             location.pathname.startsWith("/settings")
               ? "bg-sidebar-accent text-sidebar-primary"
-              : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+              : "text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc]"
           )}
         >
           <Settings className="h-[18px] w-[18px] shrink-0 text-sidebar-foreground/40" />
@@ -308,7 +308,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         <button
           onClick={handleSoftExit}
           title={collapsed ? "Salir" : undefined}
-          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-sidebar-foreground/40 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
+          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[13px] font-medium text-[#57565f] hover:text-sidebar-primary hover:bg-[#f7f6fc] transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
         >
           {/* Home, not LogOut: "Salir" solo vuelve al inicio sin cerrar sesión, y con la barra
               plegada los dos botones quedaban idénticos. */}

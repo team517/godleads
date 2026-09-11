@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Arapey:ital@0;1&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,52 +6,57 @@
 
 @layer base {
   :root {
-    /* ── OnePulso brand tokens (from OnePulso App design): DM Sans · violet
-       #6a4cf7 · navy topbar #191152 · light #f4f5f9 bg · white sidebar. Token
-       VALUES only — every component re-themes automatically, no logic touched. ── */
-    --background: 228 24% 97%;        /* #f4f5f9 light panel bg */
-    --foreground: 236 19% 17%;        /* #232433 */
+    /* ── OnePulso house design system — source of truth: the company's
+       "Portal del equipo" page (its CSS is the spec).
+       Inter (titles at weight 300, letter-spacing -0.03em) · purple #7a5af8
+       (hover #6a48e8) · WHITE page + WHITE top bar (no navy) · text #141319 /
+       #57565f / #8b8699 · borders & chips #e7e2f5 · light purple #ece7ff ·
+       hover surface #f7f6fc · inputs #fcfbff · radius 14px · 5px spacing scale ·
+       big KPI numbers in Arapey purple.
+       Token VALUES only — every screen re-themes automatically, no logic touched. ── */
+    --background: 0 0% 100%;          /* #ffffff */
+    --foreground: 250 14% 9%;         /* #141319 */
 
     --card: 0 0% 100%;
-    --card-foreground: 236 19% 17%;
+    --card-foreground: 250 14% 9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 236 19% 17%;
+    --popover-foreground: 250 14% 9%;
 
-    --primary: 251 91% 63%;           /* #6a4cf7 violet */
+    --primary: 252 92% 66%;           /* #7a5af8 */
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 250 100% 69%;     /* #7b62ff */
+    --primary-glow: 253 78% 60%;      /* #6a48e8 hover */
 
-    --secondary: 228 27% 96%;
-    --secondary-foreground: 236 19% 17%;
+    --secondary: 250 50% 98%;         /* #f7f6fc hover surface */
+    --secondary-foreground: 247 5% 35%; /* #57565f */
 
-    --muted: 228 27% 96%;
-    --muted-foreground: 231 9% 46%;   /* #6b6e80 */
+    --muted: 250 50% 98%;             /* #f7f6fc */
+    --muted-foreground: 256 9% 56%;   /* #8b8699 */
 
-    --accent: 255 100% 97%;           /* #f4f0ff light violet */
-    --accent-foreground: 251 91% 60%;
+    --accent: 252 100% 95%;           /* #ece7ff light purple */
+    --accent-foreground: 252 92% 66%; /* #7a5af8 */
 
     --destructive: 0 72% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 223 21% 94%;            /* #eceef3 */
-    --input: 223 21% 94%;
-    --ring: 251 91% 63%;
+    --border: 256 49% 92%;            /* #e7e2f5 */
+    --input: 256 49% 92%;             /* #e7e2f5 */
+    --ring: 252 92% 66%;              /* #7a5af8 */
 
-    --radius: 0.625rem;
+    --radius: 0.875rem;               /* 14px */
 
-    --sidebar-background: 0 0% 100%;   /* white sidebar */
-    --sidebar-foreground: 231 21% 26%; /* #3b3d52 */
-    --sidebar-primary: 251 91% 63%;    /* #6a4cf7 active */
+    --sidebar-background: 0 0% 100%;    /* white sidebar */
+    --sidebar-foreground: 247 5% 35%;   /* #57565f */
+    --sidebar-primary: 252 92% 66%;     /* #7a5af8 active */
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 255 100% 97%;    /* #f4f0ff hover */
-    --sidebar-accent-foreground: 251 91% 60%;
-    --sidebar-border: 223 21% 94%;
-    --sidebar-ring: 251 91% 63%;
+    --sidebar-accent: 252 100% 95%;     /* #ece7ff active/hover */
+    --sidebar-accent-foreground: 252 92% 66%;
+    --sidebar-border: 256 49% 92%;      /* #e7e2f5 */
+    --sidebar-ring: 252 92% 66%;
 
-    /* Navy top bar #191152 (OnePulso) */
-    --topbar: 248 66% 19%;
-    --topbar-foreground: 0 0% 100%;
+    /* White top bar (this design has NO navy bar) with a #e7e2f5 bottom border */
+    --topbar: 0 0% 100%;
+    --topbar-foreground: 250 14% 9%;  /* #141319 */
 
     --success: 142 76% 36%;           /* #16a34a */
     --success-foreground: 0 0% 100%;
@@ -75,51 +80,56 @@
     --gradient-sky: linear-gradient(135deg, hsl(220 90% 64%), hsl(262 83% 58%));
   }
 
+  /* Dark mode: same purple hue family (252) as the house system, just inverted
+     surfaces. Kept coherent — the design spec itself only defines the light theme. */
   .dark {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
+    --background: 250 18% 7%;
+    --foreground: 250 20% 97%;
 
-    --card: 222 47% 9%;
-    --card-foreground: 210 40% 98%;
+    --card: 250 18% 10%;
+    --card-foreground: 250 20% 97%;
 
-    --popover: 222 47% 9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 250 18% 10%;
+    --popover-foreground: 250 20% 97%;
 
-    --primary: 259 88% 66%;
-    --primary-foreground: 222 47% 11%;
-    --primary-glow: 259 88% 66%;
+    --primary: 252 92% 70%;
+    --primary-foreground: 250 18% 10%;
+    --primary-glow: 253 78% 64%;
 
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 250 14% 16%;
+    --secondary-foreground: 250 20% 97%;
 
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 250 14% 16%;
+    --muted-foreground: 256 12% 66%;
 
-    --accent: 217 33% 20%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 252 26% 22%;
+    --accent-foreground: 252 92% 80%;
 
     --destructive: 0 63% 45%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 259 88% 66%;
+    --border: 250 14% 20%;
+    --input: 250 14% 20%;
+    --ring: 252 92% 70%;
 
-    --sidebar-background: 222 47% 4%;
-    --sidebar-foreground: 210 40% 92%;
-    --sidebar-primary: 259 88% 66%;
-    --sidebar-primary-foreground: 222 47% 11%;
-    --sidebar-accent: 217 33% 14%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217 33% 18%;
-    --sidebar-ring: 259 88% 66%;
+    --sidebar-background: 250 18% 6%;
+    --sidebar-foreground: 250 14% 82%;
+    --sidebar-primary: 252 92% 70%;
+    --sidebar-primary-foreground: 250 18% 10%;
+    --sidebar-accent: 252 26% 18%;
+    --sidebar-accent-foreground: 252 92% 80%;
+    --sidebar-border: 250 14% 20%;
+    --sidebar-ring: 252 92% 70%;
+
+    --topbar: 250 18% 10%;
+    --topbar-foreground: 250 20% 97%;
 
     --success: 142 70% 42%;
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 55%;
     --warning-foreground: 0 0% 8%;
-    --info: 259 88% 66%;
-    --info-foreground: 222 47% 11%;
+    --info: 252 92% 70%;
+    --info-foreground: 250 18% 10%;
   }
 }
 
@@ -132,12 +142,36 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* DM Sans across the panel — OnePulso brand face for titles too. */
-  h1, h2 {
-    font-family: "DM Sans", "Inter", system-ui, sans-serif;
-    letter-spacing: -0.02em;
-    font-weight: 700;
+  /* Light, airy titles are the signature of the house system: Inter at weight
+     300 with -0.03em tracking. */
+  h1, h2, h3 {
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.03em;
+    font-weight: 300;
   }
+}
+
+/* House utilities. Kept outside @layer so they always ship (Tailwind purges
+   unused @layer components rules) — the Landing page's own onepulso-landing.css
+   loads later and keeps overriding its scoped .eyebrow. */
+
+/* Field label / eyebrow — 13px uppercase, wide tracking, muted grey. */
+.eyebrow {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #8b8699;
+}
+
+/* Accent variant of the eyebrow (section kickers). */
+.eyebrow-accent {
+  color: #7a5af8;
+}
+
+/* Big KPI / display numbers. */
+.num-display {
+  font-family: "Arapey", Georgia, serif;
+  color: #7a5af8;
 }
 
 /* Hide scrollbars but keep scrolling (mobile chip rows, toolbars) */

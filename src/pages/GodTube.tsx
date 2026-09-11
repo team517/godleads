@@ -170,7 +170,7 @@ const GodTube = () => {
             <Tv className="h-5 w-5 text-destructive" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-foreground">GodTube</h1>
+            <h1 className="text-xl font-light tracking-tight text-foreground">GodTube</h1>
             <p className="text-xs text-muted-foreground">Videos y tutoriales de la comunidad</p>
           </div>
         </div>

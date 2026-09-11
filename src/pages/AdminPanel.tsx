@@ -204,7 +204,7 @@ export default function AdminPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-1 pb-4">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
             <Shield className="h-6 w-6 text-primary" /> Admin Panel
           </h1>
           <p className="text-sm text-muted-foreground mt-1">

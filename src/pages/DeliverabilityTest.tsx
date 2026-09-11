@@ -122,7 +122,7 @@ export default function DeliverabilityTest() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="font-display text-xl sm:text-2xl font-bold flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-primary" /> Test de entregabilidad</h1>
+        <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-primary" /> Test de entregabilidad</h1>
         <p className="text-xs sm:text-sm text-muted-foreground">Comprueba si tus correos caen en <strong>Bandeja</strong> o <strong>Spam</strong>. Los buzones semilla son un sistema <strong>aparte</strong> — no entran en tu Unibox.</p>
       </div>
 

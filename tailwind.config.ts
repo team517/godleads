@@ -13,10 +13,15 @@ export default {
       },
     },
     extend: {
+      spacing: {
+        // House 5px scale + the 52px "lg" control height (h-13).
+        "1.25": "5px",
+        "13": "3.25rem",
+      },
       fontFamily: {
-        sans: ["DM Sans", "Inter", "system-ui", "sans-serif"],
-        display: ["DM Sans", "Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
-        serif: ["Instrument Serif", "Georgia", "serif"],
+        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        display: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        serif: ["Arapey", "Georgia", "serif"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -27,6 +32,8 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          /* #6a48e8 — the hover shade of the house purple */
+          hover: "hsl(var(--primary-glow))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",

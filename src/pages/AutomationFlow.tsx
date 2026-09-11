@@ -800,7 +800,7 @@ export default function AutomationFlow() {
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Workflow className="h-5 w-5" /></span>
           <div>
-            <h1 className="font-display text-2xl font-bold">Automatización</h1>
+            <h1 className="font-display text-2xl font-light tracking-tight">Automatización</h1>
             <p className="text-sm text-muted-foreground">Onboarding y atención al cliente automáticos · editable · agentes de IA.</p>
           </div>
         </div>

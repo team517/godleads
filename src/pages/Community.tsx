@@ -428,7 +428,7 @@ export default function Community() {
             </Button>
           )}
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-foreground">
+            <h1 className="text-lg sm:text-xl font-light tracking-tight text-foreground">
               {activeThread ? "Hilo" : "Comunidad"}
             </h1>
             <p className="text-xs text-muted-foreground">

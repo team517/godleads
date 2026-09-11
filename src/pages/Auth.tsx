@@ -79,7 +79,7 @@ export default function Auth() {
             <Wordmark className="h-8" colorClassName="text-primary" />
           </div>
 
-          <h1 className="font-display text-2xl font-bold">
+          <h1 className="font-display text-2xl font-light tracking-tight">
             {isSignup ? "Crear cuenta" : "Iniciar sesión"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -118,7 +118,7 @@ export default function Auth() {
       <div className="hidden lg:flex flex-1 items-center justify-center bg-gradient-to-br from-primary/5 via-brand-cyan/5 to-brand-sky/10 border-l">
         <div className="max-w-md text-center px-8">
           <Wordmark className="mx-auto h-12" colorClassName="text-primary" />
-          <h2 className="mt-6 font-display text-2xl font-bold">Escala tu outreach sin complicaciones</h2>
+          <h2 className="mt-6 font-display text-2xl font-light tracking-tight">Escala tu outreach sin complicaciones</h2>
           <p className="mt-4 text-muted-foreground">Conecta tus cuentas, importa leads y empieza a enviar campañas personalizadas en minutos.</p>
         </div>
       </div>

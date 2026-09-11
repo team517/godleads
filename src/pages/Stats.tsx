@@ -94,7 +94,7 @@ export default function Stats() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold">Estadísticas</h1>
+        <h1 className="font-display text-2xl font-light tracking-tight">Estadísticas</h1>
         <p className="text-sm text-muted-foreground">Análisis detallado de rendimiento</p>
       </div>
 

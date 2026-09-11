@@ -130,7 +130,7 @@ export function GlobalSearch() {
         onFocus={() => { if (query.trim()) setOpen(true); }}
         onKeyDown={onKeyDown}
         placeholder="Buscar campañas, leads, correos..."
-        className="pl-10 pr-9 bg-white/95 text-foreground placeholder:text-muted-foreground border-0"
+        className="pl-10 pr-9 bg-[#fcfbff] text-foreground placeholder:text-muted-foreground border border-border"
       />
       {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
 

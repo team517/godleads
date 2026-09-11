@@ -519,7 +519,7 @@ export default function Onboarding() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-2xl font-bold tracking-tight">
+        <h1 className="flex items-center gap-2 font-display text-2xl font-light tracking-tight">
           <Rocket className="h-6 w-6 text-primary" /> Onboarding
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">

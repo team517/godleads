@@ -417,7 +417,7 @@ export default function ClientPortal() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
             <Users className="h-6 w-6 text-primary" /> Portal de Clientes
           </h1>
           <p className="text-sm text-muted-foreground mt-1">Crea cuentas de cliente con su propio acceso y branding.</p>

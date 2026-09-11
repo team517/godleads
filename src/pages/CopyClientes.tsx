@@ -140,7 +140,7 @@ export default function CopyClientes() {
                 {(selected.company_name || selected.email).charAt(0).toUpperCase()}
               </span>}
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-xl font-semibold truncate">{selected.company_name || selected.full_name || selected.email}</h1>
+            <h1 className="font-display text-xl font-light tracking-tight truncate">{selected.company_name || selected.full_name || selected.email}</h1>
             <p className="text-xs text-muted-foreground truncate">{selected.email}</p>
           </div>
           {senderEmail && (
@@ -248,7 +248,7 @@ export default function CopyClientes() {
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div>
-        <h1 className="font-display text-2xl font-semibold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" /> Copy</h1>
+        <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2"><FileText className="h-6 w-6 text-primary" /> Copy</h1>
         <p className="text-sm text-muted-foreground mt-1">Elige un cliente para ver el copy de sus campañas y enviárselo por correo.</p>
       </div>
       {loading ? (

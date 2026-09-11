@@ -59,7 +59,7 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <h1 className="font-display text-lg sm:text-2xl font-bold truncate">{campaign.name}</h1>
+      <h1 className="font-display text-lg sm:text-2xl font-light tracking-tight truncate">{campaign.name}</h1>
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5 text-muted-foreground" /></Button>
       <Badge variant={status.variant}>{status.label}</Badge>
     </div>
@@ -419,7 +419,7 @@ export default function Campaigns() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-bold">Campañas</h1>
+          <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Campañas</h1>
           <p className="text-xs sm:text-sm text-muted-foreground">Gestiona tus secuencias de cold email</p>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
