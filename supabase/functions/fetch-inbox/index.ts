@@ -470,7 +470,24 @@ function decodeMultipartPlain(raw: string, defaultCharset: string): string | nul
   const cands = parts.map((p) => { const i = p.search(/\r?\n\r?\n/); return i < 0 ? null : { hdr: p.slice(0, i), body: p.slice(i).replace(/^\r?\n\r?\n/, "") }; })
     .filter((x): x is { hdr: string; body: string } => !!x && /content-type\s*:/i.test(x.hdr) && x.body.trim().length > 0);
   if (!cands.length) return null;
-  const pick = cands.find((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr)) || cands.find((c) => !/content-type\s*:\s*multipart\//i.test(c.hdr)) || cands[0];
+  const isMulti = (c: { hdr: string }) => /content-type\s*:\s*multipart\//i.test(c.hdr);
+  const isBinaryPart = (c: { hdr: string }) => /content-type\s*:\s*(image|application|audio|video)\//i.test(c.hdr) || /content-disposition\s*:\s*attachment/i.test(c.hdr);
+  // Outlook nests the text inside multipart/alternative, INSIDE a multipart/related that also
+  // carries the inline signature images. At this level there is no text/plain candidate, so the
+  // old fallback ("first non-multipart part") picked the JPEG: the reply's body_text became image
+  // bytes and "no estamos interesados" was classified from them. Descend into nested parts first.
+  const hasPlain = cands.some((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr));
+  if (!hasPlain) {
+    for (const c of cands) {
+      if (!isMulti(c)) continue;
+      const inner = decodeMultipartPlain(c.body, defaultCharset);
+      if (inner && inner.trim().length > 0) return inner;
+    }
+  }
+  const pick = cands.find((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr))
+    || cands.find((c) => !isMulti(c) && !isBinaryPart(c))
+    || cands.find((c) => !isMulti(c))
+    || cands[0];
   const cte = (pick.hdr.match(/Content-Transfer-Encoding\s*:\s*([^\r\n;]+)/i)?.[1] || "7bit").trim().toLowerCase();
   const cs = (pick.hdr.match(/charset="?([^"\s;]+)"?/i)?.[1] || defaultCharset).toLowerCase();
   let body = pick.body;

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { classifyMessage as classifyIntent } from "@/lib/classify";
 import { isCampaignRelevant } from "@/lib/inbox-visibility";
+import { looksBinaryText } from "@/lib/reply-text";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import DOMPurify from "dompurify";
@@ -1490,9 +1491,15 @@ export default function Unibox() {
       const linked = !!(m.lead_id || m.campaign_id);
       if ((m as { is_warmup?: boolean }).is_warmup && !linked) continue;
       if (isBounceOrFailure(m.from_email) || isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked })) continue;
+      const current: string[] = m.labels || [];
+      // The server classifier (cron, AI-backed) is the authority: it marks what it labelled with
+      // "IA". A rule-based guess from whatever build this browser has must never overwrite it.
+      if (current.includes("IA")) continue;
+      // An inline-image body is JPEG bytes, not words — the server reads the HTML instead; a
+      // browser guess from the bytes ("?" everywhere → Pregunta) is worse than no label.
+      if (looksBinaryText(m.body_text)) continue;
       const newLabel = labelFor(classifyMessage(m.subject, m.body_text));
       if (!newLabel) continue;
-      const current: string[] = m.labels || [];
       const currentCats = current.filter((l) => CATEGORY_LABELS.includes(l));
       if (currentCats.includes(newLabel)) continue; // already right
       const others = current.filter((l) => !CATEGORY_LABELS.includes(l));
@@ -2006,7 +2013,8 @@ export default function Unibox() {
     let body = cleanBodyText(m.body_text || "");
     // HTML-only emails have little/no plain text — fall back to the HTML body
     // (cleanBodyText strips tags) so English HTML mails are still classified.
-    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
+    // Short OR image bytes (an Outlook inline signature stored as body_text): read the HTML.
+    if ((body.replace(/\s+/g, " ").trim().length < 15 || looksBinaryText(m.body_text)) && m.body_html) {
       body = cleanBodyText(m.body_html);
     }
     const text = `${decodeSubjectKeepCodes(m.subject)} ${body.slice(0, 800)}`;
@@ -2059,7 +2067,8 @@ export default function Unibox() {
 
     // Unknown sender only (NOT a lead, NOT a lead domain):
     let body = cleanBodyText(m.body_text || "");
-    if (body.replace(/\s+/g, " ").trim().length < 15 && m.body_html) {
+    // Short OR image bytes (an Outlook inline signature stored as body_text): read the HTML.
+    if ((body.replace(/\s+/g, " ").trim().length < 15 || looksBinaryText(m.body_text)) && m.body_html) {
       body = cleanBodyText(m.body_html);
     }
     // ≥2 random letter+digit code tokens = warm-up noise → hide.
@@ -2109,7 +2118,7 @@ export default function Unibox() {
       // Use the SAME text the user is reading: fall back to the HTML body for
       // HTML-only emails (empty/thin body_text) so we never translate an empty string.
       let body = cleanBodyText(selected.body_text || "");
-      if (body.replace(/\s+/g, " ").trim().length < 15 && selected.body_html) {
+      if ((body.replace(/\s+/g, " ").trim().length < 15 || looksBinaryText(selected.body_text)) && selected.body_html) {
         body = cleanBodyText(selected.body_html);
       }
       if (!body.trim()) { toast.error("No hay texto que traducir"); setTranslating(false); return; }
@@ -2678,7 +2687,7 @@ export default function Unibox() {
       if (heur === "es" || heur === "en" || heur === "fr" || heur === "it") target = heur;
       if (!target) {
         let body = cleanBodyText(selected.body_text || "", true);
-        if (body.replace(/\s+/g, " ").trim().length < 15 && selected.body_html) body = cleanBodyText(selected.body_html, true);
+        if ((body.replace(/\s+/g, " ").trim().length < 15 || looksBinaryText(selected.body_text)) && selected.body_html) body = cleanBodyText(selected.body_html, true);
         try {
           const dResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
             method: "POST",
