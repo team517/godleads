@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { formatDistanceToNow, addDays, addWeeks, startOfTomorrow, format, nextMonday } from "date-fns";
 import { es } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ReplyDraftPanel } from "@/components/reply-agent/ReplyDraftPanel";
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
@@ -2741,11 +2742,20 @@ export default function Unibox() {
     }
   };
 
-  const handleReply = async () => {
-    if (!selected || (!reply.trim() && replyFiles.length === 0) || !user) return;
-    if (containsProfanity(reply)) {
+  /**
+   * Envía la respuesta del hilo. `bodyOverride` permite enviar un texto que no
+   * está en el cuadro de respuesta (el borrador del agente) POR EL MISMO CAMINO:
+   * mismo send-email, mismo In-Reply-To/References, mismos límites. Se comprueba
+   * con typeof porque también se usa como onClick (allí llega un MouseEvent).
+   * Devuelve true solo si el correo ha salido de verdad.
+   */
+  const handleReply = async (bodyOverride?: string): Promise<boolean> => {
+    const usingOverride = typeof bodyOverride === "string";
+    const bodyToSend = usingOverride ? bodyOverride : reply;
+    if (!selected || (!bodyToSend.trim() && (usingOverride || replyFiles.length === 0)) || !user) return false;
+    if (containsProfanity(bodyToSend)) {
       toast.error("Tu respuesta contiene lenguaje inapropiado. Por favor, modifícala antes de enviar.");
-      return;
+      return false;
     }
     setSending(true);
     // Never hang forever waiting for a slow/overloaded server.
@@ -2755,11 +2765,11 @@ export default function Unibox() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
         toast.error("Sesión no válida. Vuelve a iniciar sesión y reintenta.");
-        return;
+        return false;
       }
       // WYSIWYG: send EXACTLY what's in the box. If the user wants it in the lead's
       // language, they click "Su idioma" first (translateReplyToLeadLang) and review it.
-      const finalBody = reply;
+      const finalBody = bodyToSend;
       // The sending account's RICH signature (logo/colours/badges) is sent as a SEPARATE
       // field so send-email keeps it intact (the strict body sanitizer would flatten it).
       const acctSignature = (sigAccounts.find((a) => a.id === selected.account_id)?.signature_html || "").trim();
@@ -2822,7 +2832,7 @@ export default function Unibox() {
       // means the mail did NOT go out — say so and keep the draft for a retry.
       if (!resp.ok || !result || result.error) {
         toast.error(result?.error || `No se pudo enviar la respuesta (HTTP ${resp.status}). El correo NO ha salido — revisa la cuenta e inténtalo de nuevo.`);
-        return;
+        return false;
       }
 
       toast.success(ccList.length ? `Respuesta enviada a ${ccList.length + 1} personas (mismo hilo)` : "Respuesta enviada");
@@ -2840,11 +2850,13 @@ export default function Unibox() {
       // Refresh thread to show the sent message
       const msg = messages.find(m => m.id === selectedId);
       if (msg) setTimeout(() => loadThread(msg), 500);
+      return true;
     } catch (e: any) {
       const aborted = e?.name === "AbortError";
       toast.error(aborted
         ? "El envío tardó demasiado (servidor sobrecargado). El correo NO se confirmó — inténtalo de nuevo en unos segundos."
         : `No se pudo enviar: ${e?.message || e}. El correo NO ha salido.`);
+      return false;
     } finally {
       clearTimeout(timeoutId);
       setSending(false);
@@ -3726,6 +3738,17 @@ export default function Unibox() {
                     )}
                   </div>
 
+                  {/* Borrador dejado por el agente de respuestas (si lo hay) */}
+                  <ReplyDraftPanel
+                    messageId={selected.id}
+                    onSendDraft={(body) => handleReply(body)}
+                    onEditDraft={(body) => {
+                      setReply(body);
+                      setReplyLang(null);
+                      setTimeout(() => replyRef.current?.focus(), 0);
+                    }}
+                  />
+
                   {/* AI suggestion area */}
                   {aiSuggestion && (
                     <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
@@ -3874,7 +3897,7 @@ export default function Unibox() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    <Button size="sm" className="gap-2" onClick={handleReply} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
+                    <Button size="sm" className="gap-2" onClick={() => { void handleReply(); }} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
                       <Send className="h-3.5 w-3.5" /> {sending ? "Enviando…" : "Responder"}
                     </Button>
                   </div>

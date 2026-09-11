@@ -51,9 +51,12 @@ export type Database = {
         Row: {
           ai_response: string
           created_at: string
+          draft_subject: string | null
           error_message: string | null
           id: string
           inbox_message_id: string | null
+          mode: string | null
+          reviewed_at: string | null
           rule_id: string | null
           sent_at: string | null
           status: string
@@ -64,9 +67,12 @@ export type Database = {
         Insert: {
           ai_response?: string
           created_at?: string
+          draft_subject?: string | null
           error_message?: string | null
           id?: string
           inbox_message_id?: string | null
+          mode?: string | null
+          reviewed_at?: string | null
           rule_id?: string | null
           sent_at?: string | null
           status?: string
@@ -77,9 +83,12 @@ export type Database = {
         Update: {
           ai_response?: string
           created_at?: string
+          draft_subject?: string | null
           error_message?: string | null
           id?: string
           inbox_message_id?: string | null
+          mode?: string | null
+          reviewed_at?: string | null
           rule_id?: string | null
           sent_at?: string | null
           status?: string
@@ -108,39 +117,84 @@ export type Database = {
         Row: {
           account_ids: string[]
           account_tags: string[]
+          business_context: string | null
+          campaign_ids: string[] | null
+          categories: string[] | null
+          category_mode: string | null
           company_info: string
           created_at: string
+          custom_goal: string | null
           delay_minutes: number
           id: string
           is_active: boolean
+          length: string | null
+          max_replies_per_day: number | null
           name: string
+          objection_handling: string | null
+          primary_goal: string | null
           prompt: string
+          reply_mode: string | null
+          resources: Json | null
+          scope_type: string | null
+          signature_name: string | null
+          style_prompt: string | null
+          tone: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           account_ids?: string[]
           account_tags?: string[]
+          business_context?: string | null
+          campaign_ids?: string[] | null
+          categories?: string[] | null
+          category_mode?: string | null
           company_info?: string
           created_at?: string
+          custom_goal?: string | null
           delay_minutes?: number
           id?: string
           is_active?: boolean
+          length?: string | null
+          max_replies_per_day?: number | null
           name: string
+          objection_handling?: string | null
+          primary_goal?: string | null
           prompt?: string
+          reply_mode?: string | null
+          resources?: Json | null
+          scope_type?: string | null
+          signature_name?: string | null
+          style_prompt?: string | null
+          tone?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           account_ids?: string[]
           account_tags?: string[]
+          business_context?: string | null
+          campaign_ids?: string[] | null
+          categories?: string[] | null
+          category_mode?: string | null
           company_info?: string
           created_at?: string
+          custom_goal?: string | null
           delay_minutes?: number
           id?: string
           is_active?: boolean
+          length?: string | null
+          max_replies_per_day?: number | null
           name?: string
+          objection_handling?: string | null
+          primary_goal?: string | null
           prompt?: string
+          reply_mode?: string | null
+          resources?: Json | null
+          scope_type?: string | null
+          signature_name?: string | null
+          style_prompt?: string | null
+          tone?: string | null
           updated_at?: string
           user_id?: string
         }

@@ -10,6 +10,7 @@ const PAIRS: [string, string][] = [
   ["src/lib/inbox-filters.ts", "supabase/functions/_shared/inbox-filters.ts"],
   ["src/lib/campaign-copy.ts", "supabase/functions/_shared/campaign-copy.ts"],
   ["src/lib/reply-text.ts", "supabase/functions/_shared/reply-text.ts"],
+  ["src/lib/reply-agent.ts", "supabase/functions/_shared/reply-agent.ts"],
 ];
 
 describe("shared copies stay byte-identical", () => {

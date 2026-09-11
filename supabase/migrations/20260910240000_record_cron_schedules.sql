@@ -42,3 +42,7 @@
 -- For reference, health-monitor-every-5-min posts with an Authorization header instead of a
 -- secret in the body:
 --   headers:='{"Content-Type": "application/json", "Authorization": "Bearer <ANON_KEY>"}'::jsonb
+
+-- process-auto-replies-2min  (added 2026-09-11, the Reply Agent runner; draft mode by default)
+--   schedule: */2 * * * *
+--   command : select net.http_post(url := '<SUPABASE_URL>/functions/v1/process-auto-replies', headers := '{"Content-Type": "application/json"}'::jsonb, body := '{"secret": "<REPORTS_CRON_SECRET>"}'::jsonb);
