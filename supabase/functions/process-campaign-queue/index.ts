@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { hasHtmlMarkup } from "../_shared/mime-headers.ts";
+import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader } from "../_shared/mime-headers.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -364,63 +364,13 @@ function normalizeMimeText(value: string): string {
   return value.replace(/\r?\n/g, "\r\n");
 }
 
-// RFC 2047 §2: an encoded-word may never exceed 75 characters, and a long value must
-// be emitted as SEVERAL encoded-words separated by folding whitespace. We chunk on
-// CODE POINT boundaries (Array.from / for..of), so a multi-byte UTF-8 sequence — an
-// accented "ñ" or an emoji surrogate pair — is never cut in half.
-//   "=?UTF-8?B?" (10) + base64 + "?=" (2) ≤ 75.
-// We cap each word at 68 rather than the full 75 so that the emitted line — "Subject: "
-// (9 chars) + word, or "\t" + word on a continuation — also honours the RFC 5322 78-char
-// line limit. 42 raw bytes → exactly 56 base64 chars → 10 + 56 + 2 = 68.
-function encodeHeaderWords(value: string): string {
-  const enc = new TextEncoder();
-  const MAX_WORD_CHARS = 68; // ≤ 75 (RFC 2047) and ≤ 78 − "Subject: " (RFC 5322)
-  const MAX_RAW_BYTES = Math.floor((MAX_WORD_CHARS - "=?UTF-8?B?".length - "?=".length) / 4) * 3; // 42
-  const words: string[] = [];
-  let chunk = "";
-  let chunkBytes = 0;
-  for (const ch of value) {
-    const n = enc.encode(ch).length;
-    if (chunk && chunkBytes + n > MAX_RAW_BYTES) {
-      words.push(`=?UTF-8?B?${toBase64Utf8(chunk)}?=`);
-      chunk = "";
-      chunkBytes = 0;
-    }
-    chunk += ch;
-    chunkBytes += n;
-  }
-  if (chunk) words.push(`=?UTF-8?B?${toBase64Utf8(chunk)}?=`);
-  // Folding whitespace between encoded-words; the decoder drops it (RFC 2047 §6.2).
-  return words.join("\r\n ");
-}
 
-// RFC 5322 §2.1.1/2.2.3: fold a long structured header (References, In-Reply-To…) so
-// no line exceeds 78 chars, breaking ONLY on whitespace, continuations indented by TAB.
-function foldStructuredHeader(name: string, value: string): string {
-  const tokens = String(value || "").replace(/[\r\n]+/g, " ").trim().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return `${name}:`;
-  const lines: string[] = [];
-  let cur = `${name}:`;
-  let isFirst = true;
-  for (const t of tokens) {
-    const candidate = `${cur} ${t}`;
-    if (!isFirst && candidate.length > 78) {
-      lines.push(cur);
-      cur = `\t${t}`;
-    } else {
-      cur = candidate;
-      isFirst = false;
-    }
-  }
-  lines.push(cur);
-  return lines.join("\r\n");
-}
 
 function encodeMimeHeader(value: string): string {
   // A bare \r is a header-injection vector too — /\r?\n/ never matched it.
   const normalized = value.replace(/[\r\n]+/g, " ").trim();
   return /[^\x20-\x7E]/.test(normalized)
-    ? encodeHeaderWords(normalized)
+    ? encodeMimeHeaderFolded(normalized)
     : normalized;
 }
 
@@ -726,7 +676,7 @@ async function sendSmtpEmail(
       `MIME-Version: 1.0`,
       `Date: ${dateHeader}`,
       `Message-ID: ${msgId}`,
-      foldStructuredHeader("Subject", encodedSubject),
+      foldHeader("Subject", encodedSubject),
       `From: ${fromHeader}`,
       `Reply-To: <${from}>`,
       `To: ${to}`,
@@ -734,7 +684,7 @@ async function sendSmtpEmail(
 
     if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
     // References grows by one Message-ID per step and was emitted as one unbounded line.
-    if (opts.references) headers.push(foldStructuredHeader("References", opts.references));
+    if (opts.references) headers.push(foldHeader("References", opts.references));
     // One-click unsubscribe (RFC 8058) — when the campaign enabled opt-out, on EVERY
     // message of the sequence (Gmail/Yahoo bulk rules), not just the first step.
     const unsubHeaderUrl = opts.unsubscribeHeaderUrl || opts.unsubscribeUrl;

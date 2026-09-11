@@ -131,9 +131,23 @@ export function encodeMimeHeaderFolded(value: string): string {
   for (const ch of Array.from(normalized)) {
     const size = encoder.encode(ch).length;
     if (current && currentBytes + size > maxBytes) {
-      words.push(prefix + base64Utf8(current) + suffix);
-      current = "";
-      currentBytes = 0;
+      // Prefer to break just AFTER a space, keeping that space inside the word.
+      // RFC 2047 §6.2 says a decoder must ignore the whitespace between adjacent
+      // encoded-words, so a mid-word cut is legal — but a sloppy client then shows
+      // "Prueb a" instead of "Prueba". Breaking on a space makes the worst case a
+      // harmless double space instead of a broken word. The backoff is bounded so
+      // the tail can never overflow the next word.
+      const cut = current.lastIndexOf(" ");
+      const tail = cut > 0 ? current.slice(cut + 1) : "";
+      if (cut > 0 && tail.length <= 12) {
+        words.push(prefix + base64Utf8(current.slice(0, cut + 1)) + suffix);
+        current = tail;
+        currentBytes = encoder.encode(tail).length;
+      } else {
+        words.push(prefix + base64Utf8(current) + suffix);
+        current = "";
+        currentBytes = 0;
+      }
     }
     current += ch;
     currentBytes += size;

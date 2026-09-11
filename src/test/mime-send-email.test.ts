@@ -155,3 +155,37 @@ describe("hasHtmlMarkup — which bodies are already HTML", () => {
     expect(hasHtmlMarkup(null)).toBe(false);
   });
 });
+
+describe("encodeMimeHeaderFolded — corte por espacios", () => {
+  const decodeWords = (h: string, joinSep: string) =>
+    h.split("\r\n ").map((w) => {
+      const m = w.match(/^=\?UTF-8\?B\?(.+)\?=$/);
+      return m ? Buffer.from(m[1], "base64").toString("utf8") : w;
+    }).join(joinSep);
+
+  const subject = "¿Más reuniones para OnePulso? 🚀 Prueba de estructura del envío";
+
+  it("un decodificador correcto reconstruye el asunto exacto", () => {
+    expect(decodeWords(encodeMimeHeaderFolded(subject), "")).toBe(subject);
+  });
+
+  it("un decodificador chapucero no parte ninguna palabra", () => {
+    // Junta las palabras SIN aplicar la regla de ignorar el espacio separador.
+    const naive = decodeWords(encodeMimeHeaderFolded(subject), " ").replace(/\s{2,}/g, " ");
+    expect(naive).toBe(subject);
+    expect(naive).not.toContain("Prueb a");
+  });
+
+  it("cada encoded-word sigue dentro del limite", () => {
+    for (const w of encodeMimeHeaderFolded(subject).split("\r\n ")) {
+      expect(w.length).toBeLessThanOrEqual(75);
+    }
+  });
+
+  it("una palabra larguisima sin espacios se parte igualmente", () => {
+    const long = "áéíóú".repeat(40);
+    const out = encodeMimeHeaderFolded(long);
+    expect(decodeWords(out, "")).toBe(long);
+    for (const w of out.split("\r\n ")) expect(w.length).toBeLessThanOrEqual(75);
+  });
+});
