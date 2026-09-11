@@ -8,6 +8,9 @@
 // classification rules as the system prompt, and falls back to the rules if the model fails.
 //
 // Cost: ~600 input tokens per reply on deepseek-chat → well under 1 € / month at ~100 replies/day.
+// Load: this is an outbound HTTP call from the edge function — it touches neither the database
+// nor the sending engine. The only resource it spends is the function's wall time, which the
+// caller bounds (parallel batches + a per-run time budget).
 
 export type AiCategory = "interested" | "question" | "not_interested" | "no_contactar" | "derivado" | "out_of_office" | "neutral";
 
@@ -34,12 +37,14 @@ REGLAS:
 Responde SOLO con JSON: {"category":"<una de las siete>","confidence":0.0-1.0,"reason":"<máx 12 palabras>"}`;
 
 export interface AiVerdict { category: AiCategory; confidence: number; reason: string }
+export interface AiResult { verdict: AiVerdict | null; transient: boolean }
 
-/** Ask DeepSeek. Returns null on any failure (timeout, bad JSON, unknown category) so the caller
- *  can fall back to the rules; never throws. */
-export async function aiClassifyReply(apiKey: string, subject: string | null, authorText: string, timeoutMs = 15_000): Promise<AiVerdict | null> {
+/** Ask DeepSeek. Never throws. `transient` tells the caller whether the failure was the kind that
+ *  a retry — or a circuit breaker — should care about (429 / 5xx / timeout / network), as opposed
+ *  to a malformed answer, which at temperature 0 would come back the same. */
+export async function aiClassifyOnce(apiKey: string, subject: string | null, authorText: string, timeoutMs = 12_000): Promise<AiResult> {
   const text = (authorText || "").slice(0, 2500);
-  if (!apiKey || text.replace(/\s+/g, "").length < 2) return null;
+  if (!apiKey || text.replace(/\s+/g, "").length < 2) return { verdict: null, transient: false };
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -58,17 +63,25 @@ export async function aiClassifyReply(apiKey: string, subject: string | null, au
       }),
       signal: ctrl.signal,
     });
-    if (!r.ok) return null;
+    if (!r.ok) return { verdict: null, transient: r.status === 429 || r.status >= 500 };
     const j = await r.json();
     const raw = String(j?.choices?.[0]?.message?.content || "").trim();
     const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ""));
     const category = String(parsed?.category || "").trim() as AiCategory;
-    if (!CATEGORIES.includes(category)) return null;
+    if (!CATEGORIES.includes(category)) return { verdict: null, transient: false };
     const confidence = Math.max(0, Math.min(1, Number(parsed?.confidence) || 0));
-    return { category, confidence, reason: String(parsed?.reason || "").slice(0, 120) };
-  } catch {
-    return null;
+    return { verdict: { category, confidence, reason: String(parsed?.reason || "").slice(0, 120) }, transient: false };
+  } catch (e) {
+    return { verdict: null, transient: !(e instanceof SyntaxError) };
   } finally {
     clearTimeout(t);
   }
+}
+
+/** One call plus a single retry on a transient failure. Returns the verdict or null. */
+export async function aiClassifyReply(apiKey: string, subject: string | null, authorText: string, timeoutMs = 12_000): Promise<AiVerdict | null> {
+  const first = await aiClassifyOnce(apiKey, subject, authorText, timeoutMs);
+  if (first.verdict || !first.transient) return first.verdict;
+  await new Promise((r) => setTimeout(r, 800));
+  return (await aiClassifyOnce(apiKey, subject, authorText, timeoutMs)).verdict;
 }

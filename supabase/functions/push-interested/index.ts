@@ -18,13 +18,20 @@
 //      own rule-based guess, and a human's manual relabel is never touched (the marker is only
 //      added by this function, and only on messages it labelled itself).
 //
+// Load, deliberately bounded. The database sees ONE indexed select (≤200 rows, 30-minute window)
+// plus one small update per new reply — a few milliseconds per tick. The AI is outbound HTTP and
+// costs only this function's wall time, so: calls run in small parallel batches, there is a
+// per-run time budget well under the platform limit, and a circuit breaker stops calling the
+// model for the rest of a run once it fails repeatedly (rules take over, nothing is lost).
+// Anything not reached within the budget is left UNMARKED for the next tick two minutes later.
+//
 // Dedupe of the push lives in push_notified (one row per message pushed). It used to be the
 // label itself, but the Unibox labels a message the moment somebody opens it, so whoever
 // looked first silently stole the alert.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { classifyMessage } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { aiClassifyReply } from "../_shared/ai-classify.ts";
+import { aiClassifyOnce } from "../_shared/ai-classify.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,9 +49,23 @@ const LABEL_OF: Record<string, string> = {
 const RULES_ARE_FINAL = new Set(["out_of_office", "no_contactar"]);
 /** Cost guard per run — the cron fires every 2 minutes, so this is ~2 000 replies/day of headroom. */
 const MAX_AI_CALLS_PER_RUN = 60;
+/** How many model calls are in flight at once. Four keeps a 60-call backlog under ~30 s. */
+const AI_CONCURRENCY = 4;
+/** Stop STARTING model calls after this — the edge runtime kills the whole run well past it. */
+const RUN_TIME_BUDGET_MS = 50_000;
+/** Consecutive transient failures before the model is considered down for this run. */
+const AI_BREAKER_FAILURES = 3;
+
+type Row = {
+  id: string; user_id: string; from_email: string | null; from_name: string | null; subject: string | null;
+  body_text: string | null; body_html: string | null; labels: string[] | null; lead_id: unknown; campaign_id: unknown;
+  in_reply_to: string | null; ref_chain: string | null;
+};
+type Pending = { m: Row; text: string; ruleVerdict: string; verdict: string; via: "reglas" | "ia" };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const startedAt = Date.now();
   try {
     const body = await req.json().catch(() => ({}));
     // Cron shared secret, or the service role for manual runs.
@@ -63,7 +84,7 @@ Deno.serve(async (req) => {
     const since = new Date(Date.now() - minutes * 60_000).toISOString();
     const dryRun = body?.dry_run === true;
     const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY") || "";
-    const useAi = deepseekKey && body?.ai !== false;
+    const useAi = !!deepseekKey && body?.ai !== false;
     // Backfill mode: relabel history without buzzing the phone for replies that are days old.
     const notify = body?.notify !== false;
 
@@ -71,7 +92,7 @@ Deno.serve(async (req) => {
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
     const { data: msgs, error } = await admin
       .from("inbox_messages")
-      .select("id, user_id, from_email, from_name, subject, body_text, body_html, labels, received_at, lead_id, campaign_id, in_reply_to, ref_chain")
+      .select("id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain")
       .gte("created_at", since)
       .eq("is_warmup", false)
       .eq("is_archived", false)
@@ -80,8 +101,7 @@ Deno.serve(async (req) => {
       .limit(200);
     if (error) throw new Error(error.message);
 
-    const isRealReply = (m: { lead_id?: unknown; campaign_id?: unknown; in_reply_to?: string | null; ref_chain?: string | null }) =>
-      !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
+    const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
 
     // Already pushed? One indexed lookup for the whole batch.
     const ids = (msgs || []).map((m) => m.id);
@@ -91,70 +111,94 @@ Deno.serve(async (req) => {
       for (const r of done || []) yaEnviados.add(r.message_id as string);
     }
 
-    let scanned = 0, classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0, skipped = 0, aiCalls = 0, deferred = 0;
-    const sample: { tipo: string; via: string; from: string; subject: string; reglas?: string }[] = [];
-
-    for (const m of msgs || []) {
+    // ── Phase 1: rules (pure CPU, microseconds each) ─────────────────────────────────────────
+    let scanned = 0, skipped = 0;
+    const pending: Pending[] = [];
+    for (const m of (msgs || []) as Row[]) {
       scanned++;
       if (!isRealReply(m)) continue;
-      const labels: string[] = (m.labels as string[] | null) || [];
+      const labels = m.labels || [];
       // Already judged by this function (or relabelled by a human on top of it): leave it alone.
       if (labels.includes(AI_MARKER)) { skipped++; continue; }
-
       const text = replyTextForClassification(m.body_text, m.body_html);
       const ruleVerdict = classifyMessage(m.subject, text);
-      let verdict = ruleVerdict;
-      let via = "reglas";
-      if (useAi && !RULES_ARE_FINAL.has(ruleVerdict)) {
-        // Over the per-run budget: leave the message UNMARKED so the next tick (2 min) takes it,
-        // instead of stamping a rule-only guess as final. Only a backfill ever gets here.
-        if (aiCalls >= MAX_AI_CALLS_PER_RUN) { deferred++; continue; }
+      pending.push({ m, text, ruleVerdict, verdict: ruleVerdict, via: "reglas" });
+    }
+
+    // ── Phase 2: the model, for what rules cannot settle — bounded in calls, time and failures ─
+    const needAi = useAi ? pending.filter((p) => !RULES_ARE_FINAL.has(p.ruleVerdict)) : [];
+    const aiQueue = needAi.slice(0, MAX_AI_CALLS_PER_RUN);
+    const deferred = new Set<string>(needAi.slice(MAX_AI_CALLS_PER_RUN).map((p) => p.m.id));
+    let aiCalls = 0, aiFailures = 0, consecutiveTransient = 0, breakerTripped = false, outOfTime = false;
+    for (let i = 0; i < aiQueue.length; i += AI_CONCURRENCY) {
+      if (breakerTripped) { for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
+      if (Date.now() - startedAt > RUN_TIME_BUDGET_MS) { outOfTime = true; for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
+      const batch = aiQueue.slice(i, i + AI_CONCURRENCY);
+      const results = await Promise.all(batch.map((p) => aiClassifyOnce(deepseekKey, p.m.subject, p.text)));
+      for (let k = 0; k < batch.length; k++) {
         aiCalls++;
-        // The rules already cut the quote and the legal footer; give the model the same text.
-        const ai = await aiClassifyReply(deepseekKey, m.subject, text);
-        if (ai) { verdict = ai.category; via = "ia"; if (ai.category !== ruleVerdict) aiDisagreed++; }
+        const r = results[k];
+        if (r.verdict) {
+          consecutiveTransient = 0;
+          batch[k].verdict = r.verdict.category; batch[k].via = "ia";
+        } else {
+          aiFailures++;
+          // A transient failure leaves the row UNMARKED (next tick retries); a malformed answer
+          // keeps the rule verdict — asking again at temperature 0 would not change it.
+          if (r.transient) { deferred.add(batch[k].m.id); consecutiveTransient++; }
+          if (consecutiveTransient >= AI_BREAKER_FAILURES) breakerTripped = true;
+        }
       }
-      const etiqueta = LABEL_OF[verdict] || "";   // neutral → no category label
+    }
+
+    // ── Phase 3: write labels, notify ────────────────────────────────────────────────────────
+    let classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0;
+    const sample: { tipo: string; via: string; from: string | null; subject: string; reglas?: string }[] = [];
+    for (const p of pending) {
+      if (deferred.has(p.m.id)) continue;
+      const labels = p.m.labels || [];
+      const etiqueta = LABEL_OF[p.verdict] || "";   // neutral → no category label
       const others = labels.filter((l) => !CATEGORY_LABELS.includes(l));
       const newLabels = etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, AI_MARKER];
-      const shouldNotify = notify && (verdict === "interested" || verdict === "question") && !yaEnviados.has(m.id);
+      const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id);
+      if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
 
       if (!dryRun) {
-        const { error: upErr } = await admin.from("inbox_messages").update({ labels: newLabels }).eq("id", m.id);
+        const { error: upErr } = await admin.from("inbox_messages").update({ labels: newLabels }).eq("id", p.m.id);
         if (upErr) continue;
-        classified++; if (via === "ia") byAi++; else byRules++;
+      }
+      classified++; if (p.via === "ia") byAi++; else byRules++;
 
-        if (shouldNotify) {
+      if (shouldNotify) {
+        if (!dryRun) {
           // Record the push FIRST: if anything below throws, the worst case is a missed alert,
           // never the same lead buzzing the phone every two minutes.
-          const { error: dupErr } = await admin.from("push_notified").insert({ message_id: m.id, user_id: m.user_id });
-          if (!dupErr) {
-            const who = (m.from_name || "").trim() || (m.from_email || "").split("@")[0];
-            const preview = text.replace(/\s+/g, " ").trim().slice(0, 110);
-            const esPregunta = verdict === "question";
-            await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
-              body: JSON.stringify({
-                user_id: m.user_id,
-                title: `${esPregunta ? "❓ Pregunta" : "🔥 Interesado"} — ${who}`,
-                body: preview || m.subject || (esPregunta ? "Te han preguntado algo" : "Nueva respuesta interesada"),
-                url: "/unibox",
-              }),
-            }).catch(() => { /* push is best-effort; push_notified is what prevents repeats */ });
-            notified++;
-          }
+          const { error: dupErr } = await admin.from("push_notified").insert({ message_id: p.m.id, user_id: p.m.user_id });
+          if (dupErr) continue;   // another tick got there first
+          const who = (p.m.from_name || "").trim() || (p.m.from_email || "").split("@")[0];
+          const preview = p.text.replace(/\s+/g, " ").trim().slice(0, 110);
+          const esPregunta = p.verdict === "question";
+          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
+            body: JSON.stringify({
+              user_id: p.m.user_id,
+              title: `${esPregunta ? "❓ Pregunta" : "🔥 Interesado"} — ${who}`,
+              body: preview || p.m.subject || (esPregunta ? "Te han preguntado algo" : "Nueva respuesta interesada"),
+              url: "/unibox",
+            }),
+          }).catch(() => { /* push is best-effort; push_notified is what prevents repeats */ });
         }
-      } else {
-        classified++; if (via === "ia") byAi++; else byRules++;
-        if (shouldNotify) notified++;
+        notified++;
       }
-      if (sample.length < 12) sample.push({ tipo: etiqueta || "(sin etiqueta)", via, from: m.from_email, subject: String(m.subject || "").slice(0, 50), ...(via === "ia" && verdict !== ruleVerdict ? { reglas: LABEL_OF[ruleVerdict] || "(sin etiqueta)" } : {}) });
+      if (sample.length < 12) sample.push({ tipo: etiqueta || "(sin etiqueta)", via: p.via, from: p.m.from_email, subject: String(p.m.subject || "").slice(0, 50), ...(p.via === "ia" && p.verdict !== p.ruleVerdict ? { reglas: LABEL_OF[p.ruleVerdict] || "(sin etiqueta)" } : {}) });
     }
 
     return new Response(JSON.stringify({
       dry_run: dryRun, revisados: scanned, ya_clasificados: skipped, clasificados: classified,
-      por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, aplazados_por_presupuesto: deferred, notificados: notified, muestra: sample,
+      por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, fallos_ia: aiFailures,
+      aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, ms: Date.now() - startedAt,
+      notificados: notified, muestra: sample,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message }), {
