@@ -39,12 +39,12 @@ const STATUS_ORDER = ["draft", "sent", "discarded", "failed", "skipped"] as cons
 function StatusBadge({ status }: { status: string }) {
   const label = LOG_STATUS_LABELS[status] || status;
   if (status === "sent")
-    return <Badge variant="default" className="gap-1 text-[10px]"><CheckCircle2 className="h-3 w-3" />{label}</Badge>;
+    return <Badge variant="default" className="gap-1 text-[10.5px] font-semibold"><CheckCircle2 className="h-3 w-3" />{label}</Badge>;
   if (status === "failed")
-    return <Badge variant="destructive" className="gap-1 text-[10px]"><XCircle className="h-3 w-3" />{label}</Badge>;
+    return <Badge variant="destructive" className="gap-1 text-[10.5px] font-semibold"><XCircle className="h-3 w-3" />{label}</Badge>;
   if (status === "draft")
-    return <Badge variant="outline" className="gap-1 border-primary/40 text-[10px] text-primary"><FileText className="h-3 w-3" />{label}</Badge>;
-  return <Badge variant="secondary" className="text-[10px]">{label}</Badge>;
+    return <Badge variant="outline" className="gap-1 border-primary/40 text-[10.5px] font-semibold text-primary"><FileText className="h-3 w-3" />{label}</Badge>;
+  return <Badge variant="secondary" className="text-[10.5px] font-semibold">{label}</Badge>;
 }
 
 export function ReplyAgentLog() {
@@ -113,7 +113,7 @@ export function ReplyAgentLog() {
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
             <ScrollText className="h-8 w-8 text-primary" />
           </div>
-          <h3 className="font-display mb-2 text-lg font-semibold">Sin actividad del agente</h3>
+          <h3 className="font-display tracking-[-0.03em] mb-2 text-lg font-semibold">Sin actividad del agente</h3>
           <p className="max-w-sm text-center text-sm text-muted-foreground">
             Aquí verás cada respuesta que el agente redacte o envíe.
           </p>
@@ -129,8 +129,8 @@ export function ReplyAgentLog() {
           type="button"
           onClick={() => setFilter(null)}
           className={cn(
-            "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-            filter === null ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+            "rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
+            filter === null ? "border-transparent bg-primary text-primary-foreground shadow-btn" : "border-border bg-card text-muted-foreground hover:bg-muted/60",
           )}
         >
           Todas ({logs.length})
@@ -141,8 +141,8 @@ export function ReplyAgentLog() {
             type="button"
             onClick={() => setFilter(filter === s ? null : s)}
             className={cn(
-              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-              filter === s ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+              "rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
+              filter === s ? "border-transparent bg-primary text-primary-foreground shadow-btn" : "border-border bg-card text-muted-foreground hover:bg-muted/60",
             )}
           >
             {LOG_STATUS_LABELS[s]} ({counts[s]})

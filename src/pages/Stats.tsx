@@ -94,8 +94,8 @@ export default function Stats() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-light tracking-tight">Estadísticas</h1>
-        <p className="text-sm text-muted-foreground">Análisis detallado de rendimiento</p>
+        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Estadísticas</h1>
+        <p className="text-[15px] text-muted-foreground">Análisis detallado de rendimiento</p>
       </div>
 
       {/* Primary — leads vs correos claramente separados + la tasa que importa */}
@@ -103,9 +103,9 @@ export default function Stats() {
         {primaryStats.map((stat, i) => (
           <Card key={i} className={stat.highlight ? "border-primary/40 bg-primary/5" : undefined}>
             <CardContent className="p-4">
-              <p className="text-xs font-medium text-muted-foreground">{stat.label}</p>
-              <p className={`font-display text-2xl font-bold mt-1 ${stat.highlight ? "text-primary" : ""}`}>{stat.value}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">{stat.sub}</p>
+              <p className="text-[13px] font-semibold text-muted-foreground">{stat.label}</p>
+              <p className={`font-display text-2xl font-semibold tracking-[-0.03em] mt-1 ${stat.highlight ? "text-primary" : "text-foreground"}`}>{stat.value}</p>
+              <p className="text-[12px] text-muted-foreground mt-0.5">{stat.sub}</p>
             </CardContent>
           </Card>
         ))}
@@ -116,7 +116,7 @@ export default function Stats() {
         {secondaryStats.map((stat, i) => (
           <Card key={i} className="bg-muted/30">
             <CardContent className="p-3 text-center">
-              <p className="font-display text-lg font-semibold">{stat.value}</p>
+              <p className="font-display text-lg font-semibold tracking-[-0.02em] text-foreground">{stat.value}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">{stat.label}</p>
             </CardContent>
           </Card>
@@ -126,7 +126,7 @@ export default function Stats() {
       {stats.sent === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
-            <p className="text-sm text-muted-foreground">Aún no hay datos de envío. Las estadísticas aparecerán cuando empieces a enviar campañas.</p>
+            <p className="text-[15px] text-muted-foreground">Aún no hay datos de envío. Las estadísticas aparecerán cuando empieces a enviar campañas.</p>
           </CardContent>
         </Card>
       ) : (
@@ -134,7 +134,7 @@ export default function Stats() {
           {/* Time series — envíos + respuestas por día (últimos 14 días), estilo panel */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="font-display text-base">Envíos por día · últimos 14 días</CardTitle>
+              <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Envíos por día · últimos 14 días</CardTitle>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--brand-cyan))" }} /> {totalWindow.toLocaleString("es")} envíos</span>
                 <span>· {totalNuevos.toLocaleString("es")} leads nuevos</span>
@@ -168,7 +168,7 @@ export default function Stats() {
                       // calcular un % → se muestra "—".
                       const replyRate = p.envios > 0 ? (p.respuestas / p.envios) * 100 : null;
                       return (
-                        <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
+                        <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-raised">
                           <p className="mb-1 font-medium capitalize">{p.full}</p>
                           <p className="font-semibold" style={{ color: "hsl(var(--brand-cyan))" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
                           <p className="text-muted-foreground">· {p.nuevos.toLocaleString("es")} leads nuevos</p>
@@ -189,7 +189,7 @@ export default function Stats() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="font-display text-base">Distribución</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Distribución</CardTitle></CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
@@ -200,7 +200,7 @@ export default function Stats() {
                     contentStyle={{
                       background: "hsl(var(--popover))",
                       border: "1px solid hsl(var(--border))",
-                      borderRadius: 8,
+                      borderRadius: 6,
                       fontSize: 12,
                       color: "hsl(var(--popover-foreground))",
                     }}

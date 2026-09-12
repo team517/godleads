@@ -131,7 +131,7 @@ export default function TodayMessages() {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
-        <CardTitle className="font-display text-base flex items-center gap-2">
+        <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em] flex items-center gap-2">
           <Bell className="h-4 w-4 text-primary" />
           Mensajes de hoy
           {messages.length > 0 && (
@@ -155,7 +155,7 @@ export default function TodayMessages() {
         ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
             <Inbox className="h-8 w-8 mb-2 opacity-50" />
-            <p className="text-sm">No hay mensajes hoy</p>
+            <p className="text-[15px]">No hay mensajes hoy</p>
           </div>
         ) : (
           <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
@@ -169,7 +169,7 @@ export default function TodayMessages() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className={`text-sm truncate ${!msg.is_read ? "font-semibold" : "font-medium"}`}>
+                    <p className={`text-[15px] truncate ${!msg.is_read ? "font-semibold" : "font-medium"}`}>
                       {msg.from_name || msg.from_email}
                     </p>
                     <p className="text-xs text-muted-foreground truncate">
@@ -183,7 +183,7 @@ export default function TodayMessages() {
                 {msg.labels && msg.labels.length > 0 && (
                   <div className="flex gap-1 mt-1.5">
                     {msg.labels.filter((l) => l !== "IA").map((l) => (
-                      <span key={l} className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${labelColor(l)}`}>
+                      <span key={l} className={`inline-flex h-[26px] items-center rounded-lg px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${labelColor(l)}`}>
                         {l}
                       </span>
                     ))}

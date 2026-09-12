@@ -79,8 +79,8 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-light tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Resumen de tu actividad de email marketing</p>
+          <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Dashboard</h1>
+          <p className="text-[15px] text-muted-foreground">Resumen de tu actividad de email marketing</p>
         </div>
       </div>
 
@@ -91,8 +91,8 @@ export default function Dashboard() {
               <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-primary/10 ${stat.color}`}>
                 <stat.icon className="h-4 w-4 sm:h-5 sm:w-5" />
               </div>
-              <p className="mt-2 sm:mt-4 font-display text-lg sm:text-2xl font-bold">{stat.value}</p>
-              <p className="text-[10px] sm:text-xs text-muted-foreground">{stat.label}</p>
+              <p className="mt-2 sm:mt-4 font-display text-lg sm:text-2xl font-semibold tracking-[-0.03em]">{stat.value}</p>
+              <p className="text-[11.5px] sm:text-[12.5px] font-medium text-muted-foreground">{stat.label}</p>
             </CardContent>
           </Card>
         ))}
@@ -105,20 +105,20 @@ export default function Dashboard() {
         {/* Campaigns */}
         <Card>
           <CardHeader>
-            <CardTitle className="font-display text-base">Campañas recientes</CardTitle>
+            <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Campañas recientes</CardTitle>
           </CardHeader>
           <CardContent>
             {campaigns.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
+              <p className="text-[15px] text-muted-foreground text-center py-8">
                 No tienes campañas aún. ¡Crea tu primera campaña!
               </p>
             ) : (
               <div className="space-y-3">
                 {campaigns.map((c: any) => (
-                  <div key={c.id} className="flex items-center justify-between rounded-lg border p-4">
+                  <div key={c.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-4 shadow-rest">
                     <div>
-                      <p className="font-medium text-sm">{c.name}</p>
-                      <span className={`text-xs font-medium ${
+                      <p className="text-[15px] font-semibold text-foreground">{c.name}</p>
+                      <span className={`text-[13px] font-semibold ${
                         c.status === "active" ? "text-success" : c.status === "paused" ? "text-warning" : "text-muted-foreground"
                       }`}>
                         {c.status === "active" ? "Activa" : c.status === "paused" ? "Pausada" : c.status === "draft" ? "Borrador" : c.status}

@@ -58,10 +58,10 @@ function getPlanName(productId: string | null): string {
 
 function statusColor(trialStatus: string): string {
   switch (trialStatus) {
-    case "paid": return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
-    case "active": return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
-    case "warning": return "bg-amber-500/10 text-amber-700 border-amber-500/30";
-    case "expired": return "bg-red-500/10 text-red-700 border-red-500/30";
+    case "paid": return "bg-success/10 text-success border-success/30";
+    case "active": return "bg-success/10 text-success border-success/30";
+    case "warning": return "bg-warning/10 text-warning border-warning/30";
+    case "expired": return "bg-destructive/10 text-destructive border-destructive/30";
     default: return "bg-muted text-muted-foreground border-border";
   }
 }
@@ -204,10 +204,10 @@ export default function AdminPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-1 pb-4">
         <div>
-          <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
+          <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] flex items-center gap-2">
             <Shield className="h-6 w-6 text-primary" /> Admin Panel
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-[15px] text-muted-foreground mt-1">
             {stats.total} usuarios · {stats.paid} pagando · {stats.trial} en trial · {stats.expired} expirados
           </p>
         </div>
@@ -221,9 +221,9 @@ export default function AdminPanel() {
       <div className="grid grid-cols-4 gap-3 px-1 pb-4">
         {[
           { label: "Total", value: stats.total, color: "text-foreground", bg: "bg-muted" },
-          { label: "Pagando", value: stats.paid, color: "text-emerald-700", bg: "bg-emerald-500/10" },
-          { label: "En Trial", value: stats.trial, color: "text-amber-700", bg: "bg-amber-500/10" },
-          { label: "Expirados", value: stats.expired, color: "text-red-700", bg: "bg-red-500/10" },
+          { label: "Pagando", value: stats.paid, color: "text-success", bg: "bg-success/10" },
+          { label: "En Trial", value: stats.trial, color: "text-warning", bg: "bg-warning/10" },
+          { label: "Expirados", value: stats.expired, color: "text-destructive", bg: "bg-destructive/10" },
         ].map(s => (
           <div key={s.label} className={`rounded-lg border p-3 ${s.bg}`}>
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -277,7 +277,7 @@ export default function AdminPanel() {
                             {trialInfo.label}
                           </span>
                           {u.stripe.subscribed && (
-                            <span className="text-[10px] text-emerald-600 font-medium">
+                            <span className="text-[10px] font-semibold text-success">
                               {getPlanName(u.stripe.product_id)}
                             </span>
                           )}
@@ -302,7 +302,7 @@ export default function AdminPanel() {
                 <div className="h-16 w-16 rounded-full bg-muted/40 flex items-center justify-center">
                   <Users className="h-8 w-8" />
                 </div>
-                <p className="text-sm font-medium">Selecciona un usuario</p>
+                <p className="text-[15px] font-medium">Selecciona un usuario</p>
                 <p className="text-xs text-muted-foreground/60">Elige un usuario de la lista para ver sus detalles</p>
               </div>
             )}
@@ -329,12 +329,12 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { 
               {(user.full_name || user.email)[0].toUpperCase()}
             </div>
             <div>
-              <h2 className="text-xl font-light tracking-tight">{user.full_name || user.email.split("@")[0]}</h2>
-              <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <h2 className="font-display text-xl font-semibold tracking-[-0.03em]">{user.full_name || user.email.split("@")[0]}</h2>
+              <p className="text-[15px] text-muted-foreground flex items-center gap-1.5">
                 <Mail className="h-3.5 w-3.5" /> {user.email}
               </p>
               {user.company_name && (
-                <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                <p className="text-[15px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
                   <Building2 className="h-3.5 w-3.5" /> {user.company_name}
                 </p>
               )}
@@ -398,56 +398,56 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { 
         <div className="grid grid-cols-2 gap-4">
           {/* Registration */}
           <div className="rounded-lg border p-4 space-y-2">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5" /> Registro
             </h3>
-            <p className="text-sm">
+            <p className="text-[15px]">
               {new Date(user.created_at).toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })}
             </p>
           </div>
 
           {/* Trial */}
           <div className={`rounded-lg border p-4 space-y-2 ${trialInfo.status === "expired" ? "border-red-500/30 bg-red-500/5" : trialInfo.status === "warning" ? "border-amber-500/30 bg-amber-500/5" : ""}`}>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trial</h3>
+            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest">Trial</h3>
             {trialStart ? (
               <div className="space-y-1">
-                <p className="text-sm">Inicio: {trialStart.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
-                <p className="text-sm">Fin: {trialEnd?.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
-                <p className={`text-sm font-semibold ${trialInfo.status === "expired" ? "text-red-600" : trialInfo.status === "warning" ? "text-amber-600" : "text-emerald-600"}`}>
+                <p className="text-[15px]">Inicio: {trialStart.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
+                <p className="text-[15px]">Fin: {trialEnd?.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
+                <p className={`text-[15px] font-semibold ${trialInfo.status === "expired" ? "text-destructive" : trialInfo.status === "warning" ? "text-warning" : "text-success"}`}>
                   {trialInfo.label}
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Sin trial</p>
+              <p className="text-[15px] text-muted-foreground">Sin trial</p>
             )}
           </div>
 
           {/* Payment */}
           <div className={`rounded-lg border p-4 space-y-2 ${user.stripe.subscribed ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}`}>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
               <CreditCard className="h-3.5 w-3.5" /> Pago
             </h3>
             {user.stripe.subscribed ? (
               <div className="space-y-1">
-                <p className="text-sm font-semibold text-emerald-600">✓ Suscripción activa</p>
-                <p className="text-sm">Plan: {getPlanName(user.stripe.product_id)}</p>
+                <p className="text-[15px] font-semibold text-success">✓ Suscripción activa</p>
+                <p className="text-[15px]">Plan: {getPlanName(user.stripe.product_id)}</p>
                 {user.stripe.subscription_end && (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-[15px] text-muted-foreground">
                     Renueva: {new Date(user.stripe.subscription_end).toLocaleDateString("es", { day: "numeric", month: "short", year: "numeric" })}
                   </p>
                 )}
               </div>
             ) : (
-              <p className="text-sm font-semibold text-red-600">✗ Sin suscripción</p>
+              <p className="text-[15px] font-semibold text-destructive">✗ Sin suscripción</p>
             )}
           </div>
 
           {/* Usage */}
           <div className="rounded-lg border p-4 space-y-2">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Uso</h3>
+            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest">Uso</h3>
             <div className="space-y-1">
-              <p className="text-sm">{user.leads_count} leads</p>
-              <p className="text-sm">{user.accounts_count} cuentas email</p>
+              <p className="text-[15px]">{user.leads_count} leads</p>
+              <p className="text-[15px]">{user.accounts_count} cuentas email</p>
             </div>
           </div>
         </div>

@@ -82,14 +82,14 @@ export default function CampaignCRM({ campaignId }: Props) {
       </div>
       <div className="space-y-2">
         {leads.map(lead => (
-          <div key={lead.id} className="flex items-center gap-3 rounded-lg border p-3">
+          <div key={lead.id} className="flex items-center gap-3 rounded-md border p-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-sm shrink-0">
               {(lead.name || lead.email)[0]?.toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-sm truncate">{lead.name}</span>
-                {lead.company && <Badge variant="outline" className="text-[10px]">{lead.company}</Badge>}
+                {lead.company && <Badge variant="outline" className="text-[10.5px] font-semibold">{lead.company}</Badge>}
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
                 <span className="flex items-center gap-1 truncate"><Mail className="h-3 w-3" />{lead.email}</span>
@@ -97,7 +97,7 @@ export default function CampaignCRM({ campaignId }: Props) {
               </div>
               <p className="text-xs text-muted-foreground truncate mt-0.5">{lead.subject}</p>
             </div>
-            <Badge variant="default" className="shrink-0 text-[10px]">Interesado</Badge>
+            <Badge variant="default" className="shrink-0 text-[10.5px] font-semibold">Interesado</Badge>
           </div>
         ))}
       </div>

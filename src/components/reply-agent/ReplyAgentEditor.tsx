@@ -251,7 +251,7 @@ export function ReplyAgentEditor({
                 onClick={() => setEditingName(true)}
                 className="group flex items-center gap-2 text-left"
               >
-                <h2 className="font-display truncate text-xl font-light tracking-tight">
+                <h2 className="font-display truncate text-xl font-semibold tracking-[-0.03em]">
                   {draft.name || "Agente sin nombre"}
                 </h2>
                 <Pencil className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
@@ -280,7 +280,7 @@ export function ReplyAgentEditor({
                 type="button"
                 onClick={() => setSection(s.key)}
                 className={cn(
-                  "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors md:w-full",
+                  "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:w-full",
                   active
                     ? "bg-primary/10 font-medium text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -346,12 +346,12 @@ export function ReplyAgentEditor({
                   </div>
 
                   {draft.scope_type === "campaign" && (
-                    <div className="mt-4 rounded-xl border border-border/70 bg-muted/30 p-4">
+                    <div className="mt-4 rounded-md border border-border/70 bg-muted/30 p-4">
                       <label className="mb-2 block text-sm font-medium">Campañas</label>
                       {draft.campaign_ids.length > 0 && (
                         <div className="mb-2 flex flex-wrap gap-1.5">
                           {draft.campaign_ids.map((id) => (
-                            <Badge key={id} variant="secondary" className="gap-1 text-[11px]">
+                            <Badge key={id} variant="secondary" className="gap-1 text-[10.5px] font-semibold">
                               <Megaphone className="h-2.5 w-2.5" />
                               {campaignById[id]?.name || "Campaña eliminada"}
                               <button type="button" onClick={() => toggleCampaign(id)} aria-label="Quitar campaña">
@@ -367,7 +367,7 @@ export function ReplyAgentEditor({
                             <Plus className="h-3.5 w-3.5" /> Añadir campaña <ChevronDown className="h-3 w-3" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="z-50 w-80 border border-border bg-popover p-0 shadow-lg" align="start">
+                        <PopoverContent className="z-50 w-80 border border-border bg-popover p-0 shadow-float" align="start">
                           <div className="border-b border-border p-2">
                             <Input
                               placeholder="Buscar campaña…"
@@ -393,7 +393,7 @@ export function ReplyAgentEditor({
                                   )}
                                 >
                                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                                  <Badge variant="outline" className="shrink-0 text-[10px]">
+                                  <Badge variant="outline" className="shrink-0 text-[10.5px] font-semibold">
                                     {STATUS_LABELS[c.status] || c.status}
                                   </Badge>
                                   {draft.campaign_ids.includes(c.id) && <Check className="h-3.5 w-3.5 shrink-0" />}
@@ -407,7 +407,7 @@ export function ReplyAgentEditor({
                   )}
 
                   {draft.scope_type === "tags" && (
-                    <div className="mt-4 rounded-xl border border-border/70 bg-muted/30 p-4">
+                    <div className="mt-4 rounded-md border border-border/70 bg-muted/30 p-4">
                       <label className="mb-2 block text-sm font-medium">Etiquetas de buzón</label>
                       {availableTags.length === 0 ? (
                         <p className="text-xs italic text-muted-foreground">No hay etiquetas en tus cuentas de email.</p>
@@ -419,10 +419,10 @@ export function ReplyAgentEditor({
                               type="button"
                               onClick={() => toggleTag(tag)}
                               className={cn(
-                                "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition-all",
+                                "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-all",
                                 draft.account_tags.includes(tag)
-                                  ? "border-primary bg-primary text-primary-foreground"
-                                  : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+                                  ? "border-transparent bg-primary text-primary-foreground shadow-btn"
+                                  : "border-border bg-card text-muted-foreground hover:bg-muted/60",
                               )}
                             >
                               <Tag className="h-3 w-3" />
@@ -496,7 +496,7 @@ export function ReplyAgentEditor({
                         <span className="text-xs italic text-muted-foreground">Ninguna categoría seleccionada</span>
                       ) : (
                         draft.categories.map((c) => (
-                          <Badge key={c} variant="secondary" className="gap-1 text-[11px]">
+                          <Badge key={c} variant="secondary" className="gap-1 text-[10.5px] font-semibold">
                             {c}
                             <button type="button" onClick={() => toggleCategory(c)} aria-label={`Quitar ${c}`}>
                               <X className="h-3 w-3" />
@@ -511,7 +511,7 @@ export function ReplyAgentEditor({
                           <Plus className="h-3.5 w-3.5" /> Añadir categoría <ChevronDown className="h-3 w-3" />
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="z-50 w-60 border border-border bg-popover p-1 shadow-lg" align="start">
+                      <PopoverContent className="z-50 w-60 border border-border bg-popover p-1 shadow-float" align="start">
                         {REPLYABLE_CATEGORIES.map((c) => (
                           <button
                             key={c}
@@ -533,7 +533,7 @@ export function ReplyAgentEditor({
                   </div>
                 )}
 
-                <div className="flex gap-2 rounded-lg border border-info/30 bg-info/10 p-3">
+                <div className="flex gap-2 rounded-md border border-info/30 bg-info/10 p-3">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
                   <p className="text-xs leading-relaxed text-foreground/80">
                     {NEVER_REPLY_CATEGORIES.join(", ")} nunca reciben respuesta del agente, elijas lo que elijas aquí.
@@ -562,7 +562,7 @@ export function ReplyAgentEditor({
                 </div>
                 <div
                   className={cn(
-                    "flex gap-2 rounded-lg border p-3",
+                    "flex gap-2 rounded-md border p-3",
                     draft.reply_mode === "auto"
                       ? "border-warning/30 bg-warning/10"
                       : "border-info/30 bg-info/10",
@@ -698,11 +698,11 @@ export function ReplyAgentEditor({
             )}
 
             {section === "integrations" && (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-14 text-center">
+              <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-border py-14 text-center">
                 <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
                   <Plug className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="font-display text-base font-semibold">Próximamente</h3>
+                <h3 className="font-display tracking-[-0.03em] text-base font-semibold">Próximamente</h3>
                 <p className="mt-1 max-w-xs text-sm text-muted-foreground">
                   Calendario, CRM y otras integraciones para que el agente reserve y registre por ti.
                 </p>

@@ -50,13 +50,13 @@ export function AiKeyCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 font-display text-base"><Sparkles className="h-4 w-4 text-primary" /> Inteligencia Artificial (tu clave)</CardTitle>
+        <CardTitle className="flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]"><Sparkles className="h-4 w-4 text-primary" /> Inteligencia Artificial (tu clave)</CardTitle>
         <CardDescription>Para usar las funciones de IA (generar campañas, asuntos, personalizar, traducir…) conecta tu propia clave de <b>OpenAI</b> o <b>DeepSeek</b>. El consumo se cobra a <b>tus créditos</b>. La guardamos cifrada y nunca se muestra.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {status.connected && (
           <div className="flex items-center justify-between rounded-lg border border-emerald-300 bg-emerald-50/60 px-3 py-2 text-sm dark:border-emerald-500/30 dark:bg-emerald-500/5">
-            <span className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300"><Check className="h-4 w-4" /> Conectado · <b>{status.provider === "deepseek" ? "DeepSeek" : "OpenAI"}</b> <span className="text-muted-foreground">{status.hint}</span></span>
+            <span className="flex items-center gap-2 text-success"><Check className="h-4 w-4" /> Conectado · <b>{status.provider === "deepseek" ? "DeepSeek" : "OpenAI"}</b> <span className="text-muted-foreground">{status.hint}</span></span>
             <Button size="sm" variant="ghost" className="h-7 gap-1 text-destructive hover:text-destructive" disabled={saving} onClick={disconnect}><Trash2 className="h-3.5 w-3.5" /> Desconectar</Button>
           </div>
         )}

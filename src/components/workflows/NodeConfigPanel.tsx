@@ -31,7 +31,7 @@ export function NodeConfigPanel({ node, onUpdate, onDelete, onClose }: Props) {
           <div className={`flex h-6 w-6 items-center justify-center rounded-md ${def.color}`}>
             <Icon className="h-3.5 w-3.5 text-white" />
           </div>
-          <span className="text-sm font-semibold">{def.label}</span>
+          <span className="text-[15px] font-semibold text-foreground">{def.label}</span>
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
           <X className="h-4 w-4" />
@@ -39,11 +39,11 @@ export function NodeConfigPanel({ node, onUpdate, onDelete, onClose }: Props) {
       </div>
 
       <div className="p-3 space-y-4">
-        <p className="text-xs text-muted-foreground">{def.description}</p>
+        <p className="text-[13px] text-muted-foreground">{def.description}</p>
 
         {def.configFields.map((field) => (
           <div key={field.key} className="space-y-1.5">
-            <Label className="text-xs">{field.label}</Label>
+            <Label className="text-[13px] font-semibold text-muted-foreground">{field.label}</Label>
             {field.type === "text" && (
               <Input
                 value={node.config[field.key] || field.defaultValue || ""}

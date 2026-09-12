@@ -930,7 +930,7 @@ export default function CampaignLeads({ campaignId }: Props) {
               <Checkbox id="check-dups" checked={checkDuplicates} onCheckedChange={(v) => setCheckDuplicates(!!v)} />
               <label htmlFor="check-dups" className="text-sm text-muted-foreground cursor-pointer">Revisar duplicados antes de importar</label>
             </div>
-            <div className="rounded-lg border border-dashed border-border bg-muted/40 p-6 text-center">
+            <div className="rounded-md border border-dashed border-border bg-muted/40 p-6 text-center">
               <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
               <p className="text-sm text-muted-foreground mb-3">Selecciona un archivo CSV</p>
               <Input ref={fileRef} type="file" accept=".csv" onChange={handleCsvParse} disabled={importing} className="max-w-xs mx-auto" />
@@ -980,7 +980,7 @@ export default function CampaignLeads({ campaignId }: Props) {
 
           {/* Column selection — choose which CSV columns to import as variables */}
           {csvHeaders.length > 0 && (
-            <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-2">
+            <div className="rounded-md border border-border/60 bg-muted/20 p-2.5 space-y-2">
               <div className="flex items-center gap-2">
                 <Columns3 className="h-4 w-4 text-primary" />
                 <span className="text-sm font-medium">Seleccionar columnas a importar</span>
@@ -1013,7 +1013,7 @@ export default function CampaignLeads({ campaignId }: Props) {
             </div>
           )}
 
-          <ScrollArea className="max-h-[40vh] rounded-lg border">
+          <ScrollArea className="max-h-[40vh] rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 sticky top-0">
                 <tr>
@@ -1046,9 +1046,9 @@ export default function CampaignLeads({ campaignId }: Props) {
                       ))}
                       <td className="p-2">
                         {isDup ? (
-                          <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/40">Duplicado</Badge>
+                          <Badge variant="outline" className="text-[10.5px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/40">Duplicado</Badge>
                         ) : (
-                          <Badge variant="outline" className="text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/40">Nuevo</Badge>
+                          <Badge variant="outline" className="text-[10.5px] font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/40">Nuevo</Badge>
                         )}
                       </td>
                     </tr>
@@ -1113,7 +1113,7 @@ export default function CampaignLeads({ campaignId }: Props) {
                 <Progress value={(personalizeProgress.current / personalizeProgress.total) * 100} />
               </div>
             )}
-            <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+            <div className="rounded-md bg-muted/50 p-3 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Leads a personalizar:</span><span className="font-semibold">{totalLeadCount.toLocaleString()}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{Math.ceil(totalLeadCount * 0.1)} monedas</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{profile.infiniteCoins ? "∞" : profile.coins} monedas</span></div>
@@ -1139,7 +1139,7 @@ export default function CampaignLeads({ campaignId }: Props) {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-emerald-500" /> Verificar Leads</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+            <div className="rounded-md bg-muted/50 p-3 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Leads a verificar:</span><span className="font-semibold">{totalLeadCount.toLocaleString()}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{Math.ceil(totalLeadCount * 0.1)} monedas</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{profile.infiniteCoins ? "∞" : profile.coins} monedas</span></div>
@@ -1161,7 +1161,7 @@ export default function CampaignLeads({ campaignId }: Props) {
 
       {/* Verify Progress */}
       {verifying && (
-        <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+        <div className="rounded-md border bg-muted/30 p-3 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Verificando leads...</span>
             <span>{verifyProgress.current} / {verifyProgress.total}</span>
@@ -1290,7 +1290,7 @@ export default function CampaignLeads({ campaignId }: Props) {
           </div>
 
           {/* Dynamic table */}
-          <div className="rounded-lg border overflow-hidden">
+          <div className="rounded-md border overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
@@ -1398,7 +1398,7 @@ export default function CampaignLeads({ campaignId }: Props) {
 
       {/* Floating progress banners */}
       {csvParsing && parseProgress.active && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-xl shadow-lg p-4">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-md shadow-float p-4">
           <div className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-primary" /> Procesando CSV...</span>
             <span className="font-medium">{parseProgress.current.toLocaleString()} / {parseProgress.total.toLocaleString()}</span>
@@ -1407,7 +1407,7 @@ export default function CampaignLeads({ campaignId }: Props) {
         </div>
       )}
       {importProgress.active && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-xl shadow-lg p-4">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-md shadow-float p-4">
           <div className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-primary" /> Importando leads...</span>
             <span className="font-medium">{importProgress.current.toLocaleString()} / {importProgress.total.toLocaleString()}</span>

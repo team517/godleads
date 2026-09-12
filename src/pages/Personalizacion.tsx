@@ -433,8 +433,8 @@ export default function Personalizacion() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Personalización con IA</h1>
-        <p className="text-xs sm:text-sm text-muted-foreground">
+        <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Personalización con IA</h1>
+        <p className="text-xs sm:text-[15px] text-muted-foreground">
           Sube un CSV, escribe un prompt con {"{columnas}"} y la IA genera un mensaje por lead. Corre en el servidor: puedes cerrar el PC.
         </p>
       </div>
@@ -446,7 +446,7 @@ export default function Personalizacion() {
           <CardContent className="p-4 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
-                {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : jobStatus === "completed" ? <Check className="h-4 w-4 text-emerald-600" /> : <ServerCog className="h-4 w-4 text-amber-600" />}
+                {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : jobStatus === "completed" ? <Check className="h-4 w-4 text-success" /> : <ServerCog className="h-4 w-4 text-warning" />}
                 {running ? "Generando mensajes en el servidor…" : jobStatus === "completed" ? "Generación completada" : jobStatus === "cancelled" ? "Generación parada" : "Generación"}
                 {filename && <span className="font-normal text-muted-foreground">· {filename}</span>}
               </div>
@@ -478,7 +478,7 @@ export default function Personalizacion() {
               <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progressPct}%` }} />
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="text-emerald-600 font-medium">✓ {prog.ok} generados</span>
+              <span className="font-semibold text-success">✓ {prog.ok} generados</span>
               {prog.failed > 0 && <span className="text-destructive font-medium">✗ {prog.failed} fallidos</span>}
               {running && <span className="inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> puedes cerrar el PC, sigue solo</span>}
             </div>
@@ -498,7 +498,7 @@ export default function Personalizacion() {
             {filename && (
               <span className="text-xs text-muted-foreground">
                 {filename} · <b>{rows.length}</b> filas · <b className="text-foreground">{emailStats.valid}</b> emails válidos
-                {emailStats.dupes > 0 ? <span className="text-amber-600"> · {emailStats.dupes} duplicados</span> : null}
+                {emailStats.dupes > 0 ? <span className="text-warning"> · {emailStats.dupes} duplicados</span> : null}
                 {emailStats.invalid > 0 ? <span className="text-destructive"> · {emailStats.invalid} sin email</span> : null}
                 {" · "}{columns.length} columnas
               </span>
@@ -567,11 +567,11 @@ export default function Personalizacion() {
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                   <span>{prog.done}/{prog.total} ({progressPct}%)</span>
-                  <span className="text-emerald-600">✓ {prog.ok}</span>
+                  <span className="text-success">✓ {prog.ok}</span>
                   {prog.failed > 0 && <span className="text-destructive">✗ {prog.failed}</span>}
                   {running && <span className="inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> generando… (puedes cerrar el PC)</span>}
-                  {jobStatus === "completed" && <span className="text-emerald-600 font-medium">✓ terminado</span>}
-                  {jobStatus === "cancelled" && <span className="text-amber-600">parado</span>}
+                  {jobStatus === "completed" && <span className="font-semibold text-success">✓ terminado</span>}
+                  {jobStatus === "cancelled" && <span className="text-warning">parado</span>}
                 </div>
               </div>
             )}
@@ -604,13 +604,13 @@ export default function Personalizacion() {
               </div>
             </div>
             {savedPrompts.length === 0 ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">Aún no tienes prompts guardados.</p>
+              <p className="py-4 text-center text-[15px] text-muted-foreground">Aún no tienes prompts guardados.</p>
             ) : (
               <div className="space-y-2">
                 {savedPrompts.map((p) => (
                   <div key={p.id} className="rounded-md border border-border/60 p-2.5">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium truncate">{p.name}</p>
+                      <p className="text-[15px] font-medium truncate">{p.name}</p>
                       <div className="flex shrink-0 items-center gap-1">
                         <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => applyPrompt(p)}>Usar</Button>
                         <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive/70 hover:text-destructive" onClick={() => deletePrompt(p.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -630,7 +630,7 @@ export default function Personalizacion() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle className="font-display flex items-center gap-2"><Send className="h-5 w-5 text-primary" /> Enviar a una campaña</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Se crearán los leads con su <b>mensaje personalizado</b> como <code>personalized_message</code> y se añadirán a la campaña. Úsalo en el email con <code>{"{{personalized_message}}"}</code>.</p>
+            <p className="text-[15px] text-muted-foreground">Se crearán los leads con su <b>mensaje personalizado</b> como <code>personalized_message</code> y se añadirán a la campaña. Úsalo en el email con <code>{"{{personalized_message}}"}</code>.</p>
             <div className="space-y-1.5">
               <Label className="text-xs">Campaña destino</Label>
               <Select value={selectedCampaignId} onValueChange={setSelectedCampaignId}>

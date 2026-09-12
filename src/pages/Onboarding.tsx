@@ -150,7 +150,7 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved, canDele
                 ? <img src={c.logo_url} alt="" className="h-10 w-10 rounded-lg border object-contain" />
                 : <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-5 w-5" /></span>}
               <div className="min-w-0">
-                <CardTitle className="truncate text-base">{c.company_name || c.full_name || c.email}</CardTitle>
+                <CardTitle className="truncate font-display text-[17px] font-semibold tracking-[-0.02em]">{c.company_name || c.full_name || c.email}</CardTitle>
                 <p className="truncate text-xs text-muted-foreground">{c.email}</p>
               </div>
             </div>
@@ -210,7 +210,7 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved, canDele
                 <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
               </a>
               <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={copyUrl}>
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} Copiar
+                {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />} Copiar
               </Button>
               <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 text-xs text-muted-foreground" onClick={() => setEditingSlug(true)}>
                 <Pencil className="h-3.5 w-3.5" /> Editar
@@ -243,7 +243,7 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved, canDele
                   className="flex min-w-0 flex-1 items-center gap-3 text-left"
                   title="Clic para cambiar: Pendiente → En curso → Completado"
                 >
-                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${st === "done" ? "bg-emerald-500 text-white" : st === "in_progress" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${st === "done" ? "bg-success text-success-foreground" : st === "in_progress" ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"}`}>
                     {st === "done" ? <Check className="h-3.5 w-3.5" /> : i + 1}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -274,7 +274,7 @@ function OnboardingCard({ c, fromAccountId, expanded, onToggle, onSaved, canDele
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          {dirty && <span className="mr-auto text-[11px] text-amber-600">Cambios sin guardar</span>}
+          {dirty && <span className="mr-auto text-[11px] font-medium text-warning">Cambios sin guardar</span>}
           <Button size="sm" disabled={!dirty || saving} onClick={save} className="gap-1.5">
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Guardar
           </Button>
@@ -347,7 +347,7 @@ function CreateClient({ onCreated }: { onCreated: () => void }) {
     <Card>
       <CardHeader className="cursor-pointer select-none" onClick={() => setOpen((o) => !o)}>
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-base"><UserPlus className="h-4 w-4 text-primary" /> Nuevo cliente</CardTitle>
+          <CardTitle className="flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]"><UserPlus className="h-4 w-4 text-primary" /> Nuevo cliente</CardTitle>
           <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </div>
         {!open && <CardDescription>Crea la cuenta del cliente con su acceso y branding, y aparece abajo para gestionar su onboarding.</CardDescription>}
@@ -391,14 +391,14 @@ function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[];
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base"><Mail className="h-4 w-4 text-primary" /> Avisos al cliente</CardTitle>
+        <CardTitle className="flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]"><Mail className="h-4 w-4 text-primary" /> Avisos al cliente</CardTitle>
         <CardDescription>
           Cada fase tiene un botón <b>Enviar</b>: avisa al cliente por email de que esa fase está <b>en curso</b> o ya <b>completada</b> (con la siguiente tarea). Elige desde qué cuenta salen.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {accounts.length === 0 ? (
-          <p className="text-sm text-amber-600">
+          <p className="text-[15px] text-warning">
             No tienes cuentas de email conectadas en este perfil. Conecta una (Gmail, IONOS…) en <Link to="/email-accounts" className="text-primary hover:underline">Cuentas Email</Link> y aquí podrás elegirla.
           </p>
         ) : (
@@ -413,7 +413,7 @@ function SenderPicker({ accounts, value, onChange }: { accounts: EmailAccount[];
                 <option key={a.id} value={a.id}>{a.email}{a.status !== "connected" ? ` (${a.status})` : ""}</option>
               ))}
             </select>
-            {value && <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><Check className="h-3.5 w-3.5" /> Avisos activados</span>}
+            {value && <span className="inline-flex items-center gap-1 text-xs font-semibold text-success"><Check className="h-3.5 w-3.5" /> Avisos activados</span>}
           </div>
         )}
         <p className="mt-2 text-[11px] text-muted-foreground">
@@ -519,10 +519,10 @@ export default function Onboarding() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 font-display text-2xl font-light tracking-tight">
+        <h1 className="flex items-center gap-2 font-display text-2xl font-semibold tracking-[-0.03em]">
           <Rocket className="h-6 w-6 text-primary" /> Onboarding
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-[15px] text-muted-foreground">
           Sigue el alta de cada cliente por sus 6 fases. Comparte su enlace de acceso y ellos ven su progreso en tiempo real.
         </p>
       </div>
@@ -536,12 +536,12 @@ export default function Onboarding() {
       ) : clients.length === 0 ? (
         <Card><CardContent className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
           <Users className="h-8 w-8 opacity-50" />
-          <p className="text-sm">Aún no hay clientes. Crea el primero arriba.</p>
+          <p className="text-[15px]">Aún no hay clientes. Crea el primero arriba.</p>
         </CardContent></Card>
       ) : (
         <div className="space-y-4">
           <div className="flex items-center justify-between px-1">
-            <p className="text-sm font-medium text-muted-foreground">{clients.length} cliente{clients.length !== 1 ? "s" : ""}</p>
+            <p className="text-[15px] font-medium text-muted-foreground">{clients.length} cliente{clients.length !== 1 ? "s" : ""}</p>
             <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground" onClick={toggleAll}>
               <ChevronsUpDown className="h-3.5 w-3.5" /> {allExpanded ? "Contraer todo" : "Expandir todo"}
             </Button>

@@ -56,7 +56,7 @@ function CheckCard({ title, item }: { title: string; item: CheckItem }) {
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle className="font-display text-base">{title}</CardTitle>
+            <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">{title}</CardTitle>
             <CardDescription className="mt-1">{item.summary}</CardDescription>
           </div>
           <Badge variant="outline" className={meta.badgeClass}>
@@ -162,7 +162,7 @@ export function EmailDomainHealthCard({ initialDomain = "" }: { initialDomain?: 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-display text-base flex items-center gap-2">
+        <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em] flex items-center gap-2">
           <MailCheck className="h-4 w-4 text-primary" />
           Estado SPF, DKIM y DMARC
         </CardTitle>
@@ -207,7 +207,7 @@ export function EmailDomainHealthCard({ initialDomain = "" }: { initialDomain?: 
           <div className="space-y-4">
             <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm font-medium text-foreground">Diagnóstico del dominio {result.domain}</p>
+                <p className="text-[15px] font-medium text-foreground">Diagnóstico del dominio {result.domain}</p>
                 <p className="text-xs text-muted-foreground">
                   Última comprobación: {new Date(result.checkedAt).toLocaleString("es-ES")}
                 </p>

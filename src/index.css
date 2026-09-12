@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Arapey:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,158 +6,157 @@
 
 @layer base {
   :root {
-    /* ── OnePulso house design system — source of truth: the company's
-       "Portal del equipo" page (its CSS is the spec).
-       DM Sans (titles at weight 600, letter-spacing -0.02em) · purple #7a5af8
-       (hover #6a48e8) · WHITE page + WHITE top bar (no navy) · text #141319 /
-       #57565f / #8b8699 · borders & chips #e7e2f5 · light purple #ece7ff ·
-       hover surface #f7f6fc · inputs #fcfbff · radius 14px · 5px spacing scale ·
-       big KPI numbers in Arapey purple.
-       Token VALUES only — every screen re-themes automatically, no logic touched. ── */
-    --background: 228 24% 97%;        /* #f4f5f9 fondo del panel (el de antes); tarjetas blancas encima */
-    --foreground: 250 14% 9%;         /* #141319 */
+    /* ── Sistema de diseño "Primary" — fuente de verdad: DESIGN.md, extraído del
+       proyecto de Claude Design del propietario.
+       Bricolage Grotesque en titulares y cifras · Inter en el resto · peso 600 por
+       defecto · violeta #6E58F1 · fondo #FBFBFB con tarjetas blancas · bordes
+       lavanda #E8E5F1 · texto azul tinta #0F172B · radio 6px · sombras tintadas
+       de navy. Solo VALORES de token: cada pantalla se re-tematiza sola. ── */
+    --background: 0 0% 98%;           /* #FBFBFB */
+    --foreground: 223 48% 11%;        /* #0F172B */
 
     --card: 0 0% 100%;
-    --card-foreground: 250 14% 9%;
+    --card-foreground: 223 48% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 250 14% 9%;
+    --popover-foreground: 223 48% 11%;
 
-    --primary: 252 92% 66%;           /* #7a5af8 */
+    --primary: 249 84% 65%;           /* #6E58F1 */
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 253 78% 60%;      /* #6a48e8 hover */
+    --primary-glow: 249 96% 62%;      /* #5B40FB hover */
 
-    --secondary: 250 50% 98%;         /* #f7f6fc hover surface */
-    --secondary-foreground: 247 5% 35%; /* #57565f */
+    --secondary: 255 30% 96%;         /* #F3F1F8 superficie de hover */
+    --secondary-foreground: 215 22% 35%; /* #45556C */
 
-    --muted: 250 50% 98%;             /* #f7f6fc */
-    --muted-foreground: 256 9% 56%;   /* #8b8699 */
+    --muted: 214 26% 95%;             /* #EEF1F5 superficie fría */
+    --muted-foreground: 214 17% 47%;  /* #65768D */
 
-    --accent: 252 100% 95%;           /* #ece7ff light purple */
-    --accent-foreground: 252 92% 66%; /* #7a5af8 */
+    --accent: 258 42% 95%;            /* #F1EEF8 lavanda */
+    --accent-foreground: 249 84% 65%; /* #6E58F1 */
 
-    --destructive: 0 72% 50%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 256 49% 92%;            /* #e7e2f5 */
-    --input: 256 49% 92%;             /* #e7e2f5 */
-    --ring: 252 92% 66%;              /* #7a5af8 */
+    --border: 255 30% 92%;            /* #E8E5F1 */
+    --input: 255 30% 92%;
+    --ring: 249 84% 65%;
 
-    --radius: 0.875rem;               /* 14px */
+    --radius: 0.375rem;               /* 6px — el radio del diseño */
 
-    --sidebar-background: 0 0% 100%;    /* white sidebar */
-    --sidebar-foreground: 247 5% 35%;   /* #57565f */
-    --sidebar-primary: 252 92% 66%;     /* #7a5af8 active */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 218 35% 18%;  /* #1D293D */
+    --sidebar-primary: 249 84% 65%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 252 100% 95%;     /* #ece7ff active/hover */
-    --sidebar-accent-foreground: 252 92% 66%;
-    --sidebar-border: 256 49% 92%;      /* #e7e2f5 */
-    --sidebar-ring: 252 92% 66%;
+    --sidebar-accent: 258 42% 95%;      /* #F1EEF8 */
+    --sidebar-accent-foreground: 249 84% 65%;
+    --sidebar-border: 255 30% 92%;
+    --sidebar-ring: 249 84% 65%;
 
-    /* White top bar (this design has NO navy bar) with a #e7e2f5 bottom border */
+    /* Barra superior translúcida con desenfoque, como en el diseño. */
     --topbar: 0 0% 100%;
-    --topbar-foreground: 250 14% 9%;  /* #141319 */
+    --topbar-foreground: 223 48% 11%;
 
-    --success: 142 76% 36%;           /* #16a34a */
+    --success: 156 94% 32%;           /* #05A063 */
     --success-foreground: 0 0% 100%;
-    --warning: 43 98% 48%;            /* #f5b301 */
-    --warning-foreground: 0 0% 8%;
-    --info: 262 83% 58%;
+    --warning: 38 95% 48%;
+    --warning-foreground: 40 40% 8%;
+    --info: 213 80% 57%;              /* #3B89E9 */
     --info-foreground: 0 0% 100%;
 
-    /* Metric / brand accents matching the panel columns */
-    --brand-blue: 262 83% 58%;        /* violet — Sent */
-    --brand-cyan: 220 90% 64%;        /* #4f7cf6 blue */
-    --brand-indigo: 262 69% 50%;      /* #6d28d9 */
-    --brand-purple: 325 77% 50%;      /* #e11d8f pink — Opened / Create */
-    --brand-teal: 172 66% 40%;        /* #14b8a6 — Replied */
-    --brand-sky: 220 90% 64%;
+    /* Acentos de métricas y gráficas, todos del propio diseño */
+    --brand-blue: 249 84% 65%;        /* violeta — Enviados */
+    --brand-cyan: 213 80% 57%;        /* #3B89E9 azul */
+    --brand-indigo: 249 96% 62%;      /* #5B40FB */
+    --brand-purple: 276 100% 55%;     /* #8B19FF vivo */
+    --brand-teal: 156 94% 42%;        /* verde — Respondidos */
+    --brand-sky: 213 65% 72%;         /* #7FB0F0 */
 
-    --gradient-hero: linear-gradient(135deg, hsl(262 83% 58% / 0.10), hsl(325 77% 50% / 0.06) 50%, hsl(220 90% 64% / 0.08));
-    --gradient-brand: linear-gradient(90deg, hsl(262 83% 58%), hsl(325 77% 50%) 55%, hsl(172 66% 40%));
-    --gradient-warm: linear-gradient(135deg, hsl(262 83% 58%), hsl(325 77% 50%));
-    --gradient-cool: linear-gradient(135deg, hsl(262 69% 50%), hsl(262 83% 58%));
-    --gradient-sky: linear-gradient(135deg, hsl(220 90% 64%), hsl(262 83% 58%));
+    --gradient-hero: linear-gradient(135deg, hsl(249 84% 65% / 0.10), hsl(276 100% 55% / 0.05) 50%, hsl(213 80% 57% / 0.07));
+    --gradient-brand: linear-gradient(90deg, hsl(249 84% 65%), hsl(276 100% 55%) 55%, hsl(213 80% 57%));
+    --gradient-warm: linear-gradient(135deg, hsl(249 84% 65%), hsl(276 100% 55%));
+    --gradient-cool: linear-gradient(135deg, hsl(249 96% 62%), hsl(249 84% 65%));
+    --gradient-sky: linear-gradient(135deg, hsl(213 80% 57%), hsl(249 84% 65%));
+
+    /* Sombras del diseño, tintadas de navy. Usar estas variables, no sombras negras. */
+    --shadow-rest: 0 2px 4px rgba(0,0,0,.05);
+    --shadow-raised: 0 6px 18px rgba(21,17,60,.05);
+    --shadow-float: 0 12px 32px rgba(21,17,60,.07);
+    --shadow-modal: 0 18px 44px rgba(21,17,60,.10);
+    --shadow-primary: 0 2px 4px hsl(249 84% 65% / .24);
   }
 
-  /* ── Dark mode — same purple hue family (252) as the house system, rebuilt for
-     real contrast. Every token here is checked against the surface it sits on:
-     foreground #f4f2fa on card #17161f ≈ 15:1, muted-foreground #a9a3ba on card
-     ≈ 8:1 (well over the 4.5:1 minimum), border #2a2836 is visibly lighter than
-     both card and background so cards/inputs keep their edges. ── */
+  /* ── Modo oscuro. El diseño original no lo trae, así que se deriva de sus mismos
+     tonos (tinta 223, violeta 249, lavanda 255) con la regla del propietario:
+     nada negro sobre negro. Comprobado: texto sobre tarjeta ≈ 15:1, texto apagado
+     ≈ 7:1, y cada superficie se distingue de la de debajo. ── */
   .dark {
-    --background: 250 18% 7%;         /* #0f0e14 */
-    --foreground: 255 44% 96%;        /* #f4f2fa */
+    --background: 223 38% 8%;         /* #0D1220 */
+    --foreground: 255 30% 96%;        /* #F3F1F9 */
 
-    --card: 250 17% 10%;              /* #17161f */
-    --card-foreground: 255 44% 96%;
+    --card: 223 30% 12%;              /* #161B2A */
+    --card-foreground: 255 30% 96%;
 
-    --popover: 250 17% 10%;           /* same as card */
-    --popover-foreground: 255 44% 96%;
+    --popover: 223 30% 12%;
+    --popover-foreground: 255 30% 96%;
 
-    --primary: 252 100% 76%;          /* #9d85ff */
-    --primary-foreground: 252 22% 9%; /* #14121c */
-    --primary-glow: 252 100% 82%;     /* hover — brighter, not darker, on dark */
+    --primary: 249 100% 78%;          /* #A392FF */
+    --primary-foreground: 223 45% 10%;
+    --primary-glow: 249 100% 84%;
 
-    /* Superficies "apagadas": campos, cuadros de icono, hover. A 14% (#1f1e28)
-       quedaban casi a ras del fondo y parecian un hueco negro; subidas a 18%. */
-    --secondary: 246 14% 18%;         /* #272630 */
-    --secondary-foreground: 255 44% 96%;
+    --secondary: 223 24% 18%;         /* #232A3A */
+    --secondary-foreground: 255 30% 96%;
 
-    --muted: 246 14% 18%;             /* #272630 */
-    --muted-foreground: 256 14% 68%;  /* #a9a3ba — ≥ 4.5:1 on card */
+    --muted: 223 24% 18%;
+    --muted-foreground: 214 20% 68%;  /* #9FACBD */
 
-    --accent: 251 30% 21%;            /* #2b2545 */
-    --accent-foreground: 254 100% 86%;/* #c9b8ff */
+    --accent: 252 34% 26%;            /* #2E2559 */
+    --accent-foreground: 252 100% 86%;/* #C4B8FF */
 
     --destructive: 0 70% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    /* El borde tiene que verse TAMBIEN sobre una superficie apagada, no solo sobre
-       la tarjeta: a 18% quedaba a la misma luminosidad que --muted. */
-    --border: 249 15% 24%;            /* #37354a */
-    --input: 249 15% 24%;
-    --ring: 252 100% 76%;             /* = primary */
+    --border: 223 22% 25%;            /* #313A4E — visible sobre tarjeta Y sobre apagado */
+    --input: 223 22% 25%;
+    --ring: 249 100% 78%;
 
-    --sidebar-background: 250 18% 7%; /* = background */
-    --sidebar-foreground: 258 19% 83%;/* #cfcadb */
-    --sidebar-primary: 252 100% 76%;
-    --sidebar-primary-foreground: 252 22% 9%;
-    /* Superficie del item activo / hover del menu. A 18% quedaba a un pelo del fondo
-       (#23213a sobre #0f0e14): el recuadro apenas se distinguia. Subido para que se
-       vea que hay una seleccion sin llegar a un bloque chillon. */
-    --sidebar-accent: 246 26% 26%;    /* #34314f */
-    --sidebar-accent-foreground: 254 100% 86%; /* #c9b8ff */
-    --sidebar-border: 249 15% 24%;    /* = border */
-    --sidebar-ring: 252 100% 76%;
+    --sidebar-background: 223 38% 8%;
+    --sidebar-foreground: 214 25% 82%;
+    --sidebar-primary: 249 100% 78%;
+    --sidebar-primary-foreground: 223 45% 10%;
+    --sidebar-accent: 252 30% 28%;    /* selección del menú, claramente visible */
+    --sidebar-accent-foreground: 252 100% 86%;
+    --sidebar-border: 223 22% 25%;
+    --sidebar-ring: 249 100% 78%;
 
-    --topbar: 250 17% 10%;            /* = card */
-    --topbar-foreground: 255 44% 96%; /* = foreground */
+    --topbar: 223 30% 12%;
+    --topbar-foreground: 255 30% 96%;
 
-    /* Status colours: lightened so they read as text on the dark surfaces, with
-       dark foregrounds for when they are used as a filled badge background. */
-    --success: 142 60% 52%;
+    --success: 156 60% 50%;
     --success-foreground: 150 35% 8%;
-    --warning: 38 95% 60%;
+    --warning: 38 95% 62%;
     --warning-foreground: 40 40% 8%;
-    --info: 252 100% 76%;
-    --info-foreground: 252 22% 9%;
+    --info: 213 90% 72%;
+    --info-foreground: 223 45% 10%;
 
-    /* Metric / chart accents — the light values are too dark to read here, so
-       each one is lifted in lightness while keeping its hue. */
-    --brand-blue: 262 90% 74%;
-    --brand-cyan: 220 95% 72%;
-    --brand-indigo: 262 80% 70%;
-    --brand-purple: 325 85% 68%;
-    --brand-teal: 172 60% 52%;
-    --brand-sky: 220 95% 72%;
+    --brand-blue: 249 100% 78%;
+    --brand-cyan: 213 90% 72%;
+    --brand-indigo: 249 100% 82%;
+    --brand-purple: 276 100% 74%;
+    --brand-teal: 156 60% 54%;
+    --brand-sky: 213 80% 76%;
 
-    /* Gradients get a touch more alpha so they still register on #0f0e14. */
-    --gradient-hero: linear-gradient(135deg, hsl(262 90% 74% / 0.14), hsl(325 85% 68% / 0.09) 50%, hsl(220 95% 72% / 0.11));
-    --gradient-brand: linear-gradient(90deg, hsl(262 90% 74%), hsl(325 85% 68%) 55%, hsl(172 60% 52%));
-    --gradient-warm: linear-gradient(135deg, hsl(262 90% 74%), hsl(325 85% 68%));
-    --gradient-cool: linear-gradient(135deg, hsl(262 80% 70%), hsl(262 90% 74%));
-    --gradient-sky: linear-gradient(135deg, hsl(220 95% 72%), hsl(262 90% 74%));
+    --gradient-hero: linear-gradient(135deg, hsl(249 100% 78% / 0.14), hsl(276 100% 74% / 0.08) 50%, hsl(213 90% 72% / 0.10));
+    --gradient-brand: linear-gradient(90deg, hsl(249 100% 78%), hsl(276 100% 74%) 55%, hsl(213 90% 72%));
+    --gradient-warm: linear-gradient(135deg, hsl(249 100% 78%), hsl(276 100% 74%));
+    --gradient-cool: linear-gradient(135deg, hsl(249 100% 82%), hsl(249 100% 78%));
+    --gradient-sky: linear-gradient(135deg, hsl(213 90% 72%), hsl(249 100% 78%));
+
+    /* En oscuro una sombra no se ve: el relieve lo da el borde. Se dejan muy suaves. */
+    --shadow-rest: 0 1px 2px rgba(0,0,0,.35);
+    --shadow-raised: 0 4px 14px rgba(0,0,0,.40);
+    --shadow-float: 0 10px 28px rgba(0,0,0,.45);
+    --shadow-modal: 0 18px 44px rgba(0,0,0,.55);
+    --shadow-primary: 0 2px 4px hsl(249 100% 78% / .28);
   }
 }
 
@@ -170,10 +169,10 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Smartlead-style titles: DM Sans, semibold, tight tracking. (This replaces
-     the previous "airy" pass — Inter at weight 300 — which read too thin.) */
+  /* Titulares del diseño "Primary": Bricolage Grotesque en peso 600 con tracking
+     cerrado. El peso 600 es el peso por defecto de esta interfaz, no una excepción. */
   h1, h2, h3 {
-    font-family: "DM Sans", "Inter", system-ui, -apple-system, sans-serif;
+    font-family: "Bricolage Grotesque", "Inter", system-ui, -apple-system, sans-serif;
     letter-spacing: -0.02em;
     font-weight: 600;
   }
@@ -210,7 +209,9 @@
 
 /* Big KPI / display numbers — Arapey stays, the colour follows the theme. */
 .num-display {
-  font-family: "Arapey", Georgia, serif;
+  font-family: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   color: hsl(var(--primary));
 }
 

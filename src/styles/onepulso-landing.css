@@ -1,43 +1,148 @@
-/* OnePulso landing — accent palette + motion on top of the monochrome tokens. */
-.op-landing {
-  --ac: #6E58F1;        /* lila primario */
-  --ac-2: #5B40FB;      /* lila profundo */
-  --ac-3: #8B59F6;      /* lila claro */
-  --ac-soft: #F1EEF8;   /* fondo lila suave */
-  --ac-soft2: #E8E5FF;  /* fondo lila */
-  --ac-line: #DAD2F7;   /* hairline lila */
-  --ac-grad: linear-gradient(90deg, #6E58F1 0%, #3B89E9 52%, #05D17F 100%);
-  --dark: #17122E;      /* morado casi negro */
-  --dark-2: #241A4D;
+/* =============================================================================
+   OnePulso — hoja de estilo de la landing pública.
 
-  background: var(--op-bg-2);
-  color: var(--op-ink);
-  font-family: var(--op-font-sans);
+   Reconstruida sobre el sistema de diseño "Primary" (ver DESIGN.md). Aquí SOLO
+   vive lo que Tailwind no puede expresar: los keyframes del diseño original
+   (copiados de su hoja real, con sus mismos nombres), el acordeón <details> con
+   el "+" que gira, la pausa del marquee al pasar por encima y un puñado de
+   ayudas responsive. El color, la tipografía, el radio y las sombras salen de
+   los tokens (`hsl(var(--…))` / clases de Tailwind), no de hexes, para que el
+   modo oscuro siga sin tocar nada.
+   ========================================================================== */
+
+.op-landing {
+  /* Trama de puntos y velo del bloque "Cómo funciona" — derivados del token. */
+  --op-dot: hsl(var(--primary) / 0.22);
+  --op-veil: hsl(var(--card) / 0.92);
+  /* Navy #1D293D de la navegación: el único color del diseño sin token propio.
+     Se declara aquí con su pareja de modo oscuro para que nunca quede
+     invisible sobre la barra oscura. */
+  --op-nav: 218 35% 18%;
+
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   overflow-x: hidden;
   position: relative;
   width: 100%;
 }
-.op-landing *, .op-landing *::before, .op-landing *::after { box-sizing: border-box; }
+.dark .op-landing { --op-nav: 214 25% 82%; }
+
+.op-landing *,
+.op-landing *::before,
+.op-landing *::after { box-sizing: border-box; }
 .op-landing a { color: inherit; text-decoration: none; }
-.op-landing button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
 .op-landing img { display: block; max-width: 100%; }
 
-@keyframes op-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-@keyframes op-pulse { 0% { transform: scale(.8); opacity: 0; } 30% { opacity: .55; } 100% { transform: scale(1.8); opacity: 0; } }
-@keyframes op-scroll { 0% { top: -100%; } 60% { top: 100%; } 100% { top: 100%; } }
+/* ── Acordeón del FAQ: <details>/<summary> con el "+" que rota a "×" ──────── */
+.op-landing summary { list-style: none; cursor: pointer; }
+.op-landing summary::-webkit-details-marker { display: none; }
+.op-landing [data-plus] { transition: transform 0.3s ease; }
+.op-landing details[open] [data-plus] { transform: rotate(45deg); }
 
-@media (prefers-reduced-motion: reduce) {
-  .op-landing * { animation: none !important; }
+/* ── El marquee se detiene al pasar el ratón, como en el diseño ──────────── */
+.op-landing [data-marquee]:hover > div { animation-play-state: paused; }
+
+/* =============================================================================
+   Keyframes del diseño original (styles-real.css), con sus nombres intactos.
+   ========================================================================== */
+@keyframes blurFadeIn {
+  from { opacity: 0; filter: blur(10px); transform: translateY(10px); }
+  to   { opacity: 1; filter: blur(0);    transform: translateY(0); }
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes marqueeRev {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+@keyframes logoCycle {
+  0%, 42%  { opacity: 1; transform: translateY(0); }
+  50%, 92% { opacity: 0; transform: translateY(-14px); }
+  100%     { opacity: 1; transform: translateY(0); }
+}
+@keyframes logoCycleB {
+  0%, 42%  { opacity: 0; transform: translateY(14px); }
+  50%, 92% { opacity: 1; transform: translateY(0); }
+  100%     { opacity: 0; transform: translateY(14px); }
+}
+@keyframes listUp {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+@keyframes gaugeSweep {
+  0%       { stroke-dashoffset: 283; }
+  58%, 90% { stroke-dashoffset: 62; }
+  100%     { stroke-dashoffset: 283; }
+}
+@keyframes needleSweep {
+  0%       { transform: rotate(-68deg); }
+  58%, 90% { transform: rotate(46deg); }
+  100%     { transform: rotate(-68deg); }
+}
+@keyframes numStrip {
+  0%       { transform: translateY(0); }
+  58%, 90% { transform: translateY(-116px); }
+  100%     { transform: translateY(0); }
+}
+@keyframes riseIn {
+  0%       { opacity: 0; transform: translateY(10px); }
+  12%, 88% { opacity: 1; transform: translateY(0); }
+  100%     { opacity: 0; transform: translateY(10px); }
+}
+@keyframes badgePop {
+  0%       { opacity: 0; transform: scale(0.82); }
+  14%, 86% { opacity: 1; transform: scale(1); }
+  100%     { opacity: 0; transform: scale(0.82); }
+}
+@keyframes dashMove {
+  to { background-position: 20px 0; }
+}
+@keyframes replyIn {
+  0%       { opacity: 0; transform: translateX(20px); }
+  12%, 90% { opacity: 1; transform: translateX(0); }
+  100%     { opacity: 0; transform: translateX(20px); }
+}
+@keyframes checkIn {
+  0%, 6%   { opacity: 0; transform: scale(0.5); }
+  16%, 92% { opacity: 1; transform: scale(1); }
+  100%     { opacity: 0; transform: scale(0.5); }
+}
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1); }
 }
 
-/* Responsive: collapse the two-column grids on smaller screens. */
+/* ── Respeto por quien pide menos movimiento: todo se queda quieto y visible ── */
+@media (prefers-reduced-motion: reduce) {
+  .op-landing *,
+  .op-landing *::before,
+  .op-landing *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* Lo que el diseño revela con animación debe quedarse a la vista. */
+  .op-landing [data-anim] {
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+  }
+}
+
+/* ── Los conectores punteados del flujo sobran cuando no hay ancho ────────── */
+@media (max-width: 1140px) {
+  .op-landing [data-connector] { display: none !important; }
+}
+
+/* ── Responsive: las rejillas de dos columnas pasan a una ────────────────── */
 @media (max-width: 900px) {
-  .op-landing [data-grid-2] { grid-template-columns: 1fr !important; gap: 40px !important; }
-  .op-landing [data-grid-3] { grid-template-columns: 1fr !important; }
-  .op-landing [data-grid-4] { grid-template-columns: 1fr 1fr !important; }
-  .op-landing [data-hero-aside] { display: none !important; }
-  .op-landing [data-nav-links] { display: none !important; }
-  .op-landing [data-pad] { padding-left: 24px !important; padding-right: 24px !important; }
-  .op-landing [data-case] { grid-template-columns: 40px 1fr auto !important; gap: 16px !important; }
-  .op-landing [data-case-meta] { display: none !important; }
+  .op-landing [data-split] { grid-template-columns: 1fr !important; gap: 40px !important; }
+  /* En columna, el panel visual va siempre después del texto. */
+  .op-landing [data-split-media] { order: 2; }
+  .op-landing [data-split-copy] { order: 1; }
 }

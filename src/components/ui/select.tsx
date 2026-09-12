@@ -18,7 +18,7 @@ const SelectTrigger = React.forwardRef<
     ref={ref}
     className={cn(
       // Same field treatment as Input/Textarea.
-      "flex h-11 w-full items-center justify-between rounded-[13px] border border-border bg-[#fcfbff] text-foreground dark:bg-secondary px-4 py-2 text-sm font-light ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex h-10 w-full items-center justify-between rounded-md border border-border bg-[#FBFAFF] text-foreground dark:bg-secondary px-4 py-2 text-sm font-normal ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-[3px] focus:ring-primary/15 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       className,
     )}
     {...props}

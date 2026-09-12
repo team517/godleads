@@ -20,7 +20,7 @@ export function MobileBottomNav() {
   }, []);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-14 items-center justify-around border-t bg-background/95 backdrop-blur-md safe-area-bottom md:hidden">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-14 items-center justify-around border-t border-border bg-topbar/[0.88] backdrop-blur-[8px] shadow-float safe-area-bottom md:hidden">
       {navItems.map((item) => {
         const isActive = location.pathname.startsWith(item.path);
         return (

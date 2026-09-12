@@ -102,7 +102,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
   ];
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm">
+    <div className="rounded-md border border-border/60 bg-card px-4 py-3 shadow-rest">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         {/* Left — Campaign Details */}
         <div className="flex items-center gap-3 lg:w-64 lg:shrink-0">
@@ -111,7 +111,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
           </div>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Datos de la campaña</p>
-            <p className="truncate font-display text-sm font-bold">{campaign.name}</p>
+            <p className="truncate font-display tracking-[-0.03em] text-sm font-bold">{campaign.name}</p>
             <p className="truncate text-[11px] text-muted-foreground">
               <span className={meta.cls}>{meta.label}</span>
               {" · "}

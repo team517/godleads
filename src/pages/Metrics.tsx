@@ -157,10 +157,10 @@ export default function Metrics() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
+            <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] flex items-center gap-2">
               <BarChart3 className="h-6 w-6 text-primary" /> Métricas
             </h1>
-            <p className="text-sm text-muted-foreground">Análisis detallado de rendimiento</p>
+            <p className="text-[15px] text-muted-foreground">Análisis detallado de rendimiento</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -220,11 +220,11 @@ export default function Metrics() {
         {/* Area chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="font-display text-base">Actividad diaria</CardTitle>
+            <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Actividad diaria</CardTitle>
           </CardHeader>
           <CardContent>
             {totalSent === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-12">Sin datos de envío en este periodo.</p>
+              <p className="text-[15px] text-muted-foreground text-center py-12">Sin datos de envío en este periodo.</p>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={dailyData}>
@@ -244,11 +244,11 @@ export default function Metrics() {
         {/* Pie chart */}
         <Card>
           <CardHeader>
-            <CardTitle className="font-display text-base">Distribución</CardTitle>
+            <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Distribución</CardTitle>
           </CardHeader>
           <CardContent>
             {totalSent === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-12">Sin datos.</p>
+              <p className="text-[15px] text-muted-foreground text-center py-12">Sin datos.</p>
             ) : (
               <>
                 <ResponsiveContainer width="100%" height={200}>
@@ -280,7 +280,7 @@ export default function Metrics() {
       {campaignBreakdown.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="font-display text-base">Rendimiento por campaña</CardTitle>
+            <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Rendimiento por campaña</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={Math.max(200, campaignBreakdown.length * 40)}>
@@ -299,10 +299,10 @@ export default function Metrics() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 font-medium">Campaña</th>
-                    <th className="py-2 font-medium text-right">Enviados</th>
-                    <th className="py-2 font-medium text-right">Respondidos</th>
-                    <th className="py-2 font-medium text-right">Tasa</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground">Campaña</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground text-right">Enviados</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground text-right">Respondidos</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground text-right">Tasa</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -310,7 +310,7 @@ export default function Metrics() {
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-2 font-medium">{c.name}</td>
                       <td className="py-2 text-right">{c.sent}</td>
-                      <td className="py-2 text-right text-green-600">{c.replied}</td>
+                      <td className="py-2 text-right font-semibold text-success">{c.replied}</td>
                       <td className="py-2 text-right">
                         <Badge variant={parseFloat(c.rate) > 5 ? "default" : "secondary"} className="text-xs">
                           {c.rate}%
@@ -328,22 +328,22 @@ export default function Metrics() {
       {/* Who replied */}
       <Card>
         <CardHeader>
-          <CardTitle className="font-display text-base">
+          <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">
             Quién ha respondido <Badge variant="secondary" className="ml-2">{totalReplied}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           {repliedList.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">Aún no hay respuestas en este periodo.</p>
+            <p className="text-[15px] text-muted-foreground text-center py-8">Aún no hay respuestas en este periodo.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 font-medium">Email</th>
-                    <th className="py-2 font-medium">Asunto</th>
-                    <th className="py-2 font-medium">Campaña</th>
-                    <th className="py-2 font-medium text-right">Respondió</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground">Email</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground">Asunto</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground">Campaña</th>
+                    <th className="py-2 text-[13px] font-semibold text-muted-foreground text-right">Respondió</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -33,7 +33,7 @@ export default function CampaignUnsubscribes({ campaignId }: { campaignId: strin
       <CardContent className="p-4">
         <div className="mb-3 flex items-center gap-2">
           <Ban className="h-4 w-4 text-rose-500" />
-          <h3 className="font-display text-sm font-semibold">Bajas ({rows.length})</h3>
+          <h3 className="font-display tracking-[-0.03em] text-sm font-semibold">Bajas ({rows.length})</h3>
         </div>
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nadie se ha dado de baja todavía.</p>

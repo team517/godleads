@@ -74,7 +74,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 const pill =
-  "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap";
+  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[13px] font-semibold leading-none whitespace-nowrap";
 
 const PILLS = {
   ok: "bg-emerald-50 text-emerald-700 border-emerald-600/30 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30",
@@ -148,14 +148,14 @@ function LimitCell({ row, compact }: { row: Row; compact?: boolean }) {
     <div className={cn("space-y-1", compact ? "w-full" : "w-32")}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[13px] font-semibold tabular-nums text-foreground">{`${sent} / ${limit}`}</span>
-        <span className="text-[11px] font-medium tabular-nums text-muted-foreground">{`${pct}%`}</span>
+        <span className="text-[13px] font-semibold tabular-nums text-muted-foreground">{`${pct}%`}</span>
       </div>
       <Progress
         value={pct}
         className={cn("h-1.5 bg-muted", full ? "[&>div]:bg-emerald-500" : "[&>div]:bg-violet-500")}
       />
       {accRampDay !== null && (
-        <span className="inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-600 dark:text-violet-300">
+        <span className="inline-block rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">
           🐢 Día {accRampDay}
         </span>
       )}
@@ -177,11 +177,11 @@ function SortHead({
   className?: string;
 }) {
   return (
-    <th scope="col" className={cn("px-4 py-2.5 text-left font-medium whitespace-nowrap", className)}>
+    <th scope="col" className={cn("px-4 py-2.5 text-left font-semibold whitespace-nowrap", className)}>
       <button
         type="button"
         onClick={onClick}
-        className="inline-flex items-center gap-1 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex items-center gap-1 text-[13px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
       >
         {label}
         {active &&
@@ -195,7 +195,7 @@ function Head({ label, className }: { label: string; className?: string }) {
   return (
     <th
       scope="col"
-      className={cn("px-4 py-2.5 text-left text-[13px] font-medium whitespace-nowrap text-muted-foreground", className)}
+      className={cn("px-4 py-2.5 text-left text-[13px] font-semibold whitespace-nowrap text-muted-foreground", className)}
     >
       {label}
     </th>
@@ -320,7 +320,7 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
           {campaignTags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1 rounded-md border border-violet-600/25 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-300"
+              className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground"
             >
               <Tag className="h-3 w-3" /> {t}
             </span>
@@ -349,14 +349,14 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
       </div>
 
       {rows.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-md border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
           {EMPTY_TEXT}
         </div>
       ) : isMobile ? (
         /* ── Mobile: one stacked card per account ── */
         <div className="space-y-2">
           {visible.map((r) => (
-            <div key={r.account_id} className="rounded-xl border border-border bg-card p-3">
+            <div key={r.account_id} className="rounded-md border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">{nameOf(r.account)}</p>
@@ -381,7 +381,7 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
         </div>
       ) : (
         /* ── Desktop: the Smartlead-style table ── */
-        <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <div className="overflow-x-auto rounded-md border border-border bg-card">
           <table className="w-full min-w-[1050px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">

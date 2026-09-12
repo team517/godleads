@@ -42,7 +42,7 @@ export default function CampaignSendsChart({ campaignId }: Props) {
   const totalReplies = data.reduce((s, p) => s + p.respuestas, 0);
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm">
+    <div className="rounded-md border border-border/60 bg-card px-4 py-3 shadow-rest">
       <div className="mb-2 flex items-center justify-between">
         <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           <BarChart3 className="h-3.5 w-3.5" /> Envíos y respuestas por día · últimos {DAYS_SHOWN} días
@@ -67,7 +67,7 @@ export default function CampaignSendsChart({ campaignId }: Props) {
                   if (!active || !payload?.length) return null;
                   const p = payload[0].payload as DayPoint;
                   return (
-                    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
+                    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-raised">
                       <p className="mb-1 font-medium capitalize">{p.full}</p>
                       <p className="text-primary font-semibold">{p.envios} {p.envios === 1 ? "envío" : "envíos"}</p>
                       {p.respuestas > 0 && <p className="text-teal-600 dark:text-teal-400">{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}

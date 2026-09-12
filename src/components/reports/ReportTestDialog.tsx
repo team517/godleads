@@ -168,7 +168,7 @@ export default function ReportTestDialog({ client, open, onClose }: {
                   <label key={c.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted/40">
                     <Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggle(c.id)} />
                     <span className="flex-1 truncate">{c.name}</span>
-                    <span className={`text-[10px] uppercase ${c.status === "active" ? "text-emerald-600" : "text-muted-foreground"}`}>{c.status}</span>
+                    <span className={`text-[10px] uppercase ${c.status === "active" ? "text-success" : "text-muted-foreground"}`}>{c.status}</span>
                   </label>
                 ))}
               </div>
@@ -198,14 +198,15 @@ export default function ReportTestDialog({ client, open, onClose }: {
             <Button onClick={sendTest} disabled={sending || !ownerAccount || !pdfUrl} className="h-9 shrink-0 gap-2" title={!pdfUrl ? "Genera la prueba primero" : ""}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Enviar prueba
             </Button>
-            {!ownerAccount && !loadingCamps && <p className="w-full text-[10px] text-amber-600">No tienes ninguna cuenta de email conectada para enviar.</p>}
+            {!ownerAccount && !loadingCamps && <p className="w-full text-[11px] font-medium text-warning">No tienes ninguna cuenta de email conectada para enviar.</p>}
             {ownerAccount && !pdfUrl && <p className="w-full text-[10px] text-muted-foreground">Pulsa "Generar prueba" primero — se envía exactamente ese PDF.</p>}
           </div>
 
           {/* Preview */}
           {pdfUrl && (
             <div className="overflow-hidden rounded-lg border border-border/60">
-              <iframe title="preview" src={`${pdfUrl}#zoom=page-width`} className="h-[65vh] min-h-[420px] w-full bg-white" />
+              {/* El PDF es "papel": va sobre blanco en los dos temas (DESIGN.md, modo oscuro). */}
+              <iframe title="preview" src={`${pdfUrl}#zoom=page-width`} className="h-[65vh] min-h-[420px] w-full rounded-md bg-white" />
             </div>
           )}
           {!pdfUrl && !generating && (

@@ -93,7 +93,7 @@ export function ReplyDraftPanel({
   };
 
   return (
-    <div className="mb-3 rounded-lg border border-primary/25 bg-primary/5 p-3">
+    <div className="mb-3 rounded-md border border-primary/25 bg-primary/5 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-primary">
           <Bot className="h-3.5 w-3.5 shrink-0" />

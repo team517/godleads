@@ -177,7 +177,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
   // h + pt: on iOS standalone the web view runs under the translucent status bar, so the
   // header grows by the safe-area inset (0 everywhere else) and paints it white like the bar.
   return (
-    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-topbar text-topbar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-6">
+    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-topbar/[0.88] backdrop-blur-[8px] shadow-rest text-topbar-foreground text-[15px] font-medium px-4 pt-[env(safe-area-inset-top)] md:px-6">
       <div className="flex items-center gap-3">
         {isMobile && (
           <Button variant="ghost" size="icon" onClick={onMenuToggle} aria-label="Abrir menú">
@@ -191,10 +191,10 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
         {isTrialing && trialDaysLeft !== null && (
           <Badge
             variant="outline"
-            className={`gap-1.5 font-medium px-2 md:px-3 py-1 text-xs md:text-sm ${
+            className={`gap-1.5 font-semibold px-2 md:px-3 py-1 text-xs md:text-[13px] ${
               trialDaysLeft < 1
-                ? "border-red-200 text-red-600 bg-red-50 dark:border-destructive/50 dark:text-destructive dark:bg-destructive/15"
-                : "border-border text-[#57565f] dark:text-muted-foreground"
+                ? "border-destructive/30 text-destructive bg-destructive/10 dark:border-destructive/50 dark:bg-destructive/15"
+                : "border-border text-muted-foreground"
             }`}
           >
             <Clock className="h-3 w-3 md:h-3.5 md:w-3.5" />
@@ -232,7 +232,7 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
             <div className="p-4 border-b">
               <div className="flex items-center gap-2 mb-1">
                 <img src={coinIcon} alt="" className="h-5 w-5" />
-                <h3 className="text-sm font-bold">Monedas</h3>
+                <h3 className="font-display text-[15px] font-semibold">Monedas</h3>
               </div>
               <p className="text-xs text-muted-foreground">
                 Saldo: <span className="font-semibold text-foreground">{profileData.infiniteCoins ? "∞ (ilimitadas)" : `${profileData.coins} monedas`}</span>

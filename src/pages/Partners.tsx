@@ -93,7 +93,7 @@ export default function Partners() {
           <Handshake className="h-4 w-4" />
           Programa de Partners
         </div>
-        <h1 className="text-3xl md:text-4xl font-display font-light tracking-tight text-foreground">
+        <h1 className="text-3xl md:text-4xl font-display font-semibold tracking-[-0.035em] text-foreground">
           ¿Quieres ser Partner de GodLeads?
         </h1>
         <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
@@ -105,12 +105,12 @@ export default function Partners() {
       {/* Benefits grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {BENEFITS.map((b) => (
-          <Card key={b.title} className="border bg-card hover:shadow-md transition-shadow">
+          <Card key={b.title} className="border bg-card hover:shadow-raised transition-shadow">
             <CardContent className="p-5 space-y-3">
               <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
                 <b.icon className="h-5 w-5 text-primary" />
               </div>
-              <h3 className="text-sm font-semibold text-foreground">{b.title}</h3>
+              <h3 className="font-display text-[15px] font-semibold text-foreground">{b.title}</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">{b.description}</p>
             </CardContent>
           </Card>
@@ -119,13 +119,13 @@ export default function Partners() {
 
       {/* Tiers */}
       <div className="space-y-4">
-        <h2 className="text-xl font-display font-light tracking-tight text-foreground text-center">Niveles de Partner</h2>
+        <h2 className="text-xl font-display font-semibold tracking-[-0.03em] text-foreground text-center">Niveles de Partner</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {TIERS.map((t) => (
             <Card key={t.name} className="border text-center">
               <CardContent className="p-5 space-y-2">
-                <h3 className={`text-lg font-bold ${t.color}`}>{t.name}</h3>
-                <p className="text-sm text-muted-foreground">{t.referrals}</p>
+                <h3 className={`font-display text-lg font-semibold tracking-[-0.02em] ${t.color}`}>{t.name}</h3>
+                <p className="text-[15px] text-muted-foreground">{t.referrals}</p>
                 <p className="text-2xl font-bold text-foreground">{t.commission}</p>
                 <p className="text-xs text-muted-foreground">comisión recurrente</p>
               </CardContent>
@@ -139,8 +139,8 @@ export default function Partners() {
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="p-8 text-center space-y-3">
             <CheckCircle className="h-12 w-12 text-primary mx-auto" />
-            <h3 className="text-lg font-bold text-foreground">¡Solicitud enviada!</h3>
-            <p className="text-sm text-muted-foreground">
+            <h3 className="font-display text-lg font-semibold tracking-[-0.02em] text-foreground">¡Solicitud enviada!</h3>
+            <p className="text-[15px] text-muted-foreground">
               Revisaremos tu solicitud y te contactaremos en las próximas 48 horas a <span className="font-medium text-foreground">{user?.email}</span>.
             </p>
           </CardContent>
@@ -148,7 +148,7 @@ export default function Partners() {
       ) : (
         <Card>
           <CardContent className="p-6 space-y-4">
-            <h2 className="text-lg font-light tracking-tight text-foreground flex items-center gap-2">
+            <h2 className="font-display text-lg font-semibold tracking-[-0.03em] text-foreground flex items-center gap-2">
               <ArrowRight className="h-5 w-5 text-primary" />
               Solicita ser Partner
             </h2>

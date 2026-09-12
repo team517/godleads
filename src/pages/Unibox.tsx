@@ -879,9 +879,19 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
   return classifyIntent(decodeSubject(subject), cleanBodyText(body));
 }
 
-// Smartlead-style label chips: a soft tinted rectangle (rounded-md, no pill, no dot)
-// with the category hue as background + text. Class strings are written out LITERALLY —
-// Tailwind purges anything built with template-literal interpolation like `bg-${hue}-50`.
+/* ── Las DOS formas de chip del diseño "Primary" (DESIGN.md) ──────────────
+ * PASTILLA — para filtros INTERACTIVOS: radio 999px, 13px/600, fondo de
+ *   tarjeta, borde lavanda de 1px, texto del color propio y `shadow-rest`.
+ * ETIQUETA MINI — para marcadores de SOLO LECTURA: radio 999px, 10.5px/600,
+ *   fondo tintado con el texto del MISMO tono (p. ej. bg-accent/text-accent-foreground).
+ * Las cadenas van LITERALES: Tailwind purga todo lo que se construya
+ * interpolando (`bg-${hue}-100`). */
+const CHIP_PILL =
+  "inline-flex h-[26px] flex-shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold leading-none transition-all whitespace-nowrap";
+const CHIP_MINI =
+  "inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[10.5px] font-semibold leading-none whitespace-nowrap";
+
+// Category label = ETIQUETA MINI: fondo tintado del tono + texto del mismo tono.
 const categoryConfig: Record<MessageCategory, { label: string; bg: string; text: string; border: string; dot: string }> = {
   interested:     { label: "Interesado",    bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-300", border: "border-transparent", dot: "bg-emerald-500" },
   not_interested: { label: "No interesado", bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-300",         border: "border-transparent",     dot: "bg-red-500" },
@@ -894,18 +904,20 @@ const categoryConfig: Record<MessageCategory, { label: string; bg: string; text:
 
 type FilterType = "all" | "ai_replied" | MessageCategory;
 
-// Filter-chip palette (idle / active) per filter key. Same hues as categoryConfig plus
-// "all" (neutral) and "ai_replied" (violet). Literal strings for the same purge reason.
+// Filter-chip palette per filter key — forma PASTILLA (ver CHIP_PILL): en reposo,
+// fondo de tarjeta + borde lavanda + texto del tono; activa, el tono en sólido.
+// Mismos tonos que categoryConfig más "all" (neutro) y "ai_replied" (violeta).
+// Cadenas literales por el mismo motivo de purga.
 const filterChipStyles: Record<FilterType, { idle: string; active: string }> = {
-  all:            { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
-  interested:     { idle: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25", active: "bg-emerald-600 text-white ring-2 ring-emerald-500/30 dark:bg-emerald-400 dark:text-emerald-950 dark:ring-emerald-400/40" },
-  ai_replied:     { idle: "bg-violet-100 text-violet-700 hover:bg-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/25",         active: "bg-violet-600 text-white ring-2 ring-violet-500/30 dark:bg-violet-400 dark:text-violet-950 dark:ring-violet-400/40" },
-  question:       { idle: "bg-sky-100 text-sky-700 hover:bg-sky-200/70 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25",                             active: "bg-sky-600 text-white ring-2 ring-sky-500/30 dark:bg-sky-400 dark:text-sky-950 dark:ring-sky-400/40" },
-  not_interested: { idle: "bg-red-100 text-red-700 hover:bg-red-200/70 dark:bg-red-500/15 dark:text-red-300 dark:hover:bg-red-500/25",                             active: "bg-red-600 text-white ring-2 ring-red-500/30 dark:bg-red-400 dark:text-red-950 dark:ring-red-400/40" },
-  no_contactar:   { idle: "bg-rose-100 text-rose-700 hover:bg-rose-200/70 dark:bg-rose-500/15 dark:text-rose-300 dark:hover:bg-rose-500/25",                      active: "bg-rose-700 text-white ring-2 ring-rose-600/30 dark:bg-rose-400 dark:text-rose-950 dark:ring-rose-400/40" },
-  derivado:       { idle: "bg-amber-100 text-amber-700 hover:bg-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/25",               active: "bg-amber-600 text-white ring-2 ring-amber-500/30 dark:bg-amber-400 dark:text-amber-950 dark:ring-amber-400/40" },
-  out_of_office:  { idle: "bg-pink-100 text-pink-700 hover:bg-pink-200/70 dark:bg-pink-500/15 dark:text-pink-300 dark:hover:bg-pink-500/25",                      active: "bg-pink-600 text-white ring-2 ring-pink-500/30 dark:bg-pink-400 dark:text-pink-950 dark:ring-pink-400/40" },
-  neutral:        { idle: "bg-muted text-foreground hover:bg-muted/70",                                                    active: "bg-primary text-primary-foreground ring-2 ring-primary/30" },
+  all:            { idle: "border-border bg-card text-foreground shadow-rest hover:bg-muted/60",                                                    active: "border-transparent bg-primary text-primary-foreground shadow-btn" },
+  interested:     { idle: "border-border bg-card text-emerald-700 shadow-rest hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/15", active: "border-transparent bg-emerald-600 text-white shadow-rest dark:bg-emerald-400 dark:text-emerald-950" },
+  ai_replied:     { idle: "border-border bg-card text-violet-700 shadow-rest hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-500/15",     active: "border-transparent bg-violet-600 text-white shadow-rest dark:bg-violet-400 dark:text-violet-950" },
+  question:       { idle: "border-border bg-card text-sky-700 shadow-rest hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-500/15",                 active: "border-transparent bg-sky-600 text-white shadow-rest dark:bg-sky-400 dark:text-sky-950" },
+  not_interested: { idle: "border-border bg-card text-red-700 shadow-rest hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/15",                 active: "border-transparent bg-red-600 text-white shadow-rest dark:bg-red-400 dark:text-red-950" },
+  no_contactar:   { idle: "border-border bg-card text-rose-700 shadow-rest hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15",             active: "border-transparent bg-rose-700 text-white shadow-rest dark:bg-rose-400 dark:text-rose-950" },
+  derivado:       { idle: "border-border bg-card text-amber-700 shadow-rest hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-500/15",         active: "border-transparent bg-amber-600 text-white shadow-rest dark:bg-amber-400 dark:text-amber-950" },
+  out_of_office:  { idle: "border-border bg-card text-pink-700 shadow-rest hover:bg-pink-50 dark:text-pink-300 dark:hover:bg-pink-500/15",             active: "border-transparent bg-pink-600 text-white shadow-rest dark:bg-pink-400 dark:text-pink-950" },
+  neutral:        { idle: "border-border bg-card text-foreground shadow-rest hover:bg-muted/60",                                                    active: "border-transparent bg-primary text-primary-foreground shadow-btn" },
 };
 
 const langLabels: Record<string, string> = {
@@ -1019,7 +1031,7 @@ function StoredAttachmentCard({ att }: { att: StoredAttachment }) {
 
   if (kind.isImage && thumb) {
     return (
-      <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+      <div className="group relative overflow-hidden rounded-md border border-border/60 bg-muted/30">
         <button type="button" onClick={open} title={`Ver ${att.name}`} className="block">
           <img src={thumb} alt={att.name} className="max-h-56 w-auto max-w-full object-contain" />
         </button>
@@ -1035,8 +1047,8 @@ function StoredAttachmentCard({ att }: { att: StoredAttachment }) {
   }
 
   return (
-    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
-      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${kind.color}`}>
+    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-md border border-border/60 bg-card px-3 py-2.5 shadow-rest">
+      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md ${kind.color}`}>
         <FileText className="h-5 w-5" />
       </span>
       <div className="min-w-0 flex-1">
@@ -1082,7 +1094,7 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
 
   if (kind.isImage && thumbUrl) {
     return (
-      <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+      <div className="group relative overflow-hidden rounded-md border border-border/60 bg-muted/30">
         <button type="button" onClick={open} title={`Ver ${att.name}`} className="block">
           <img src={thumbUrl} alt={att.name} className="max-h-56 w-auto max-w-full object-contain" />
         </button>
@@ -1098,8 +1110,8 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
   }
 
   return (
-    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
-      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${kind.color}`}>
+    <div className="flex w-full max-w-[300px] items-center gap-3 rounded-md border border-border/60 bg-card px-3 py-2.5 shadow-rest">
+      <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md ${kind.color}`}>
         <FileText className="h-5 w-5" />
       </span>
       <div className="min-w-0 flex-1">
@@ -1150,8 +1162,8 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
       {storedAtts.map((att) => <StoredAttachmentCard key={att.path} att={att} />)}
       {atts.map((att) => <AttachmentCard key={att.name} att={att} />)}
       {oversizedAtts.map((att, i) => (
-        <div key={`${att.name}-${i}`} title={`${att.name} — demasiado grande para descargar aquí`} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+        <div key={`${att.name}-${i}`} title={`${att.name} — demasiado grande para descargar aquí`} className="inline-flex max-w-full items-center gap-2 rounded-md border border-amber-300/70 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
             <FileText className="h-4 w-4" />
           </span>
           <span className="min-w-0">
@@ -1163,8 +1175,8 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
         </div>
       ))}
       {nameOnly.map((name) => (
-        <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <div key={name} title={name} className="inline-flex max-w-full items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
             <FileText className="h-4 w-4" />
           </span>
           <span className="min-w-0">
@@ -2960,11 +2972,11 @@ export default function Unibox() {
   return (
     <div className="flex h-[calc(100dvh-132px)] min-h-0 flex-col gap-2.5 lg:h-[calc(100vh-80px)] lg:gap-3">
       {/* Header */}
-      <div className="rounded-lg border border-border/60 bg-card px-3 py-2.5 shadow-sm md:px-4 md:py-3">
+      <div className="rounded-md border border-border/60 bg-card px-3 py-2.5 shadow-rest md:px-4 md:py-3">
         <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h1 className="font-display text-xl font-light tracking-tight md:text-2xl">Unibox</h1>
-            <p className="mt-0.5 text-xs md:text-sm text-muted-foreground">
+            <h1 className="font-display text-xl font-semibold tracking-[-0.03em] md:text-2xl">Unibox</h1>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
             {filtered.length} mensajes · {unreadCount} sin leer
             {!isMobile && lastSyncAt && (
               <span className="ml-2 text-xs text-muted-foreground/50 dark:text-muted-foreground/70">
@@ -2974,10 +2986,10 @@ export default function Unibox() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
+            <Badge variant="secondary" className="h-8 rounded-full border-border bg-card px-3 text-[13px] font-semibold text-muted-foreground shadow-rest">
               <MailOpen className="mr-1.5 h-3.5 w-3.5" /> {unreadCount} pendientes
             </Badge>
-            <Badge variant="secondary" className="h-7 rounded-md px-2 text-[11px] font-medium">
+            <Badge variant="secondary" className="h-8 rounded-full border-border bg-card px-3 text-[13px] font-semibold text-muted-foreground shadow-rest">
               <InboxIcon className="mr-1.5 h-3.5 w-3.5" /> {messages.length} totales
             </Badge>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs sm:px-3 md:text-sm" onClick={openBlockManager}
@@ -3030,37 +3042,37 @@ export default function Unibox() {
       </div>
 
       {/* Tabs: Global / Campaigns */}
-      <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-card px-3 py-2.5 md:flex-row md:items-center md:justify-between md:px-4">
+      <div className="flex flex-col gap-2 rounded-md border border-border/60 bg-card px-3 py-2.5 md:flex-row md:items-center md:justify-between md:px-4">
         <Tabs value={viewTab} onValueChange={(v) => {
           const nextTab = v as "global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent";
           setViewTab(nextTab);
           setMailboxMode(nextTab === "all_mailboxes" ? "all" : "clean");
         }}>
           <TabsList className="h-9 w-full justify-start overflow-x-auto no-scrollbar [&>*]:flex-shrink-0 md:w-auto md:overflow-visible">
-            <TabsTrigger value="global" className="gap-1.5 text-xs">
+            <TabsTrigger value="global" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <InboxIcon className="h-3.5 w-3.5" /> Global
             </TabsTrigger>
-            <TabsTrigger value="all_mailboxes" className="gap-1.5 text-xs">
+            <TabsTrigger value="all_mailboxes" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Globe className="h-3.5 w-3.5" /> Todos
             </TabsTrigger>
-            <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
+            <TabsTrigger value="campaigns" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Megaphone className="h-3.5 w-3.5" /> Campaigns
             </TabsTrigger>
-            <TabsTrigger value="important" className="gap-1.5 text-xs">
+            <TabsTrigger value="important" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Star className="h-3.5 w-3.5" /> Importantes
               {importantCount > 0 && (
-                <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-amber-950">
+                <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-warning px-1 text-[10.5px] font-bold text-warning-foreground">
                   {importantCount}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="sent" className="gap-1.5 text-xs">
+            <TabsTrigger value="sent" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Send className="h-3.5 w-3.5" /> Enviados
             </TabsTrigger>
-            <TabsTrigger value="reminders" className="gap-1.5 text-xs">
+            <TabsTrigger value="reminders" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Bell className="h-3.5 w-3.5" /> Recordatorios
               {Object.keys(reminders).length > 0 && (
-                  <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-warning-foreground">
+                  <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-warning px-1 text-[10.5px] font-bold text-warning-foreground">
                   {Object.keys(reminders).length}
                 </span>
               )}
@@ -3081,20 +3093,20 @@ export default function Unibox() {
           </Select>
         )}
         {viewTab === "all_mailboxes" && (
-          <Badge variant="secondary" className="h-8 rounded-md px-3 text-[11px] font-medium">
+          <Badge variant="secondary" className="h-8 rounded-full border-border bg-card px-3 text-[13px] font-semibold text-muted-foreground shadow-rest">
             <Globe className="mr-1.5 h-3.5 w-3.5" /> Todas las bandejas completas
           </Badge>
         )}
       </div>
 
       {/* Category filter pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border/60 bg-card px-3 py-2.5 no-scrollbar">
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-md border border-border/60 bg-card px-3 py-2.5 no-scrollbar">
         <button
           onClick={() => setShowTodayOnly(!showTodayOnly)}
-          className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
+          className={`${CHIP_PILL} ${
             showTodayOnly
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "bg-muted text-muted-foreground hover:bg-muted/80"
+              ? "border-transparent bg-primary text-primary-foreground shadow-btn"
+              : "border-border bg-card text-muted-foreground shadow-rest hover:bg-muted/60"
           }`}
         >
           <Clock className="h-3 w-3" />
@@ -3105,7 +3117,7 @@ export default function Unibox() {
           <button
             key={fb.key}
             onClick={() => setCategoryFilter(fb.key)}
-            className={`inline-flex h-[26px] flex-shrink-0 items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
+            className={`${CHIP_PILL} ${
               categoryFilter === fb.key
                 ? filterChipStyles[fb.key].active
                 : filterChipStyles[fb.key].idle
@@ -3120,11 +3132,13 @@ export default function Unibox() {
       </div>
 
       {/* Folder chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border/60 bg-card px-3 py-2 no-scrollbar">
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-md border border-border/60 bg-card px-3 py-2 no-scrollbar">
         <button
           onClick={() => setFolderFilter(null)}
-          className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
-            folderFilter === null ? "bg-primary text-primary-foreground shadow-sm" : "bg-muted text-muted-foreground hover:bg-muted/80"
+          className={`${CHIP_PILL} ${
+            folderFilter === null
+              ? "border-transparent bg-primary text-primary-foreground shadow-btn"
+              : "border-border bg-card text-muted-foreground shadow-rest hover:bg-muted/60"
           }`}
         >
           Todas
@@ -3133,7 +3147,7 @@ export default function Unibox() {
           <button
             key={f.id}
             onClick={() => setFolderFilter(folderFilter === f.id ? null : f.id)}
-            className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border px-2.5 text-[13px] font-medium leading-none transition-all whitespace-nowrap ${
+            className={`${CHIP_PILL} shadow-rest ${
               folderFilter === f.id ? "" : "dark:!border-white/15 dark:!bg-white/10 dark:!text-foreground"
             }`}
             style={folderFilter === f.id
@@ -3146,7 +3160,7 @@ export default function Unibox() {
         ))}
         <Popover open={folderPopoverOpen} onOpenChange={setFolderPopoverOpen}>
           <PopoverTrigger asChild>
-            <button className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-muted px-2.5 text-[13px] font-medium leading-none text-muted-foreground hover:bg-muted/80 whitespace-nowrap">
+            <button className={`${CHIP_PILL} border-border bg-card text-muted-foreground shadow-rest hover:bg-muted/60`}>
               + Carpeta
             </button>
           </PopoverTrigger>
@@ -3175,9 +3189,9 @@ export default function Unibox() {
       </div>
 
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-card py-20">
+        <div className="flex flex-1 flex-col items-center justify-center rounded-md border border-border/60 bg-card py-20">
           <InboxIcon className="h-12 w-12 text-muted-foreground/40 mb-4 dark:text-muted-foreground/60" />
-          <h3 className="font-display font-semibold mb-2">Bandeja vacía</h3>
+          <h3 className="font-display font-semibold tracking-[-0.03em] mb-2">Bandeja vacía</h3>
           <p className="text-sm text-muted-foreground mb-4">Sincroniza para traer mensajes de tus cuentas.</p>
           <Button onClick={handleSync} disabled={syncing} size="sm" className="gap-2">
             <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Actualizando…" : "Actualizar"}
@@ -3185,7 +3199,7 @@ export default function Unibox() {
         </div>
       ) : (
         <>
-        <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
+        <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-md border border-border/60 bg-card shadow-rest">
           {/* ── Message list — fixed width on desktop, full width on mobile ── */}
           <div className="flex w-full flex-col bg-card lg:w-[380px] lg:flex-shrink-0 lg:border-r lg:border-border/60 xl:w-[420px]">
             <div className="border-b border-border/60 bg-card p-2.5">
@@ -3283,14 +3297,14 @@ export default function Unibox() {
                         <div className="flex items-center gap-2">
                           {isUnread && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title="Nueva respuesta" />}
                           {isImportant(msg) && <Star className="h-3.5 w-3.5 flex-shrink-0 fill-amber-500 text-amber-500" aria-label="Importante" />}
-                          <span className="flex-shrink-0 whitespace-nowrap rounded bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">
+                          <span className="flex-shrink-0 whitespace-nowrap rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">
                             {shortTimeAgo(msg.received_at)}
                           </span>
                           <span className={`min-w-0 truncate text-[15px] ${isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/85"}`}>
                             {msg.from_name || msg.from_email?.split("@")[0]}
                           </span>
                         </div>
-                        <p className={`text-sm truncate mt-0.5 ${isUnread ? "text-foreground/85 font-medium" : "text-muted-foreground"}`}>
+                        <p className={`text-[13px] truncate mt-0.5 ${isUnread ? "text-foreground/85 font-semibold" : "text-muted-foreground"}`}>
                           {decodeSubject(msg.subject)}
                         </p>
                         <p className="line-clamp-2 text-[13px] leading-[1.5] text-muted-foreground/75 mt-1 dark:text-muted-foreground/90">
@@ -3302,22 +3316,22 @@ export default function Unibox() {
                         {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {aiReplied(msg.from_email) ? (
-                              <span className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-violet-100 px-2.5 text-[13px] font-medium leading-none text-violet-700 whitespace-nowrap dark:bg-violet-500/20 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
+                              <span className={`${CHIP_MINI} bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300`} title="La IA respondió automáticamente a este contacto">
                                 <Sparkles className="h-3 w-3" /> Respondido con IA
                               </span>
                             ) : catCfg.label && (
-                              <span className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${catCfg.bg} ${catCfg.text}`}>
+                              <span className={`${CHIP_MINI} ${catCfg.bg} ${catCfg.text}`}>
                                 {catCfg.label}
                               </span>
                             )}
                             {campaignName && (
-                              <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[6px] bg-primary/10 px-2.5 text-[13px] font-medium leading-none text-primary whitespace-nowrap">
+                              <span className={`${CHIP_MINI} bg-accent text-accent-foreground`}>
                                 <Megaphone className="h-3 w-3" /> {campaignName}
                               </span>
                             )}
                             {campaignManager && (
                               <span
-                                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-semibold whitespace-nowrap dark:!border-white/15 dark:!bg-white/10 dark:!text-foreground"
+                                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[10.5px] font-semibold whitespace-nowrap dark:!border-white/15 dark:!bg-white/10 dark:!text-foreground"
                                 style={{ backgroundColor: campaignManager.color + "14", color: campaignManager.color, border: "1px solid " + campaignManager.color + "33" }}
                                 title={"Responsable: " + campaignManager.name}
                               >
@@ -3328,7 +3342,7 @@ export default function Unibox() {
                               </span>
                             )}
                             {msgFolder && (
-                              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium whitespace-nowrap dark:!bg-white/10 dark:!text-foreground" style={{ backgroundColor: `${msgFolder.color}18`, color: msgFolder.color }}>
+                              <span className={`${CHIP_MINI} dark:!bg-white/10 dark:!text-foreground`} style={{ backgroundColor: `${msgFolder.color}18`, color: msgFolder.color }}>
                                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: msgFolder.color }} />
                                 {msgFolder.name}
                               </span>
@@ -3362,10 +3376,10 @@ export default function Unibox() {
           <div ref={readingPaneRef} className="relative hidden lg:flex flex-1 flex-col bg-card">
             {!selected && (
               <div className="flex flex-1 flex-col items-center justify-center px-10 text-center">
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-md bg-primary/10">
                   <MailOpen className="h-8 w-8 text-primary" />
                 </div>
-                <h3 className="font-display text-lg font-bold text-foreground">Tu bandeja unificada</h3>
+                <h3 className="font-display text-lg font-semibold tracking-[-0.03em] text-foreground">Tu bandeja unificada</h3>
                 <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
                   Selecciona un mensaje de la lista para leerlo y responder aquí.
                 </p>
@@ -3380,10 +3394,10 @@ export default function Unibox() {
           normal fullscreen modal with backdrop. ── */}
       <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); setShowFullEmail(false); } }}>
         <DialogContent
-          className={`p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-2xl outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
+          className={`p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-modal outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
             readerExpanded
               ? "w-screen h-screen max-w-none rounded-none border-0"
-              : "w-[95vw] max-w-[1400px] h-[92dvh] max-h-[92dvh] rounded-xl"
+              : "w-[95vw] max-w-[1400px] h-[92dvh] max-h-[92dvh] rounded-md"
           }`}
         >
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -3397,14 +3411,14 @@ export default function Unibox() {
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div className="flex-1 min-w-0">
-                      <h2 className="text-lg md:text-xl font-medium text-foreground leading-tight flex items-center gap-2 flex-wrap">
+                      <h2 className="font-display text-lg md:text-xl font-semibold tracking-[-0.03em] text-foreground leading-tight flex items-center gap-2 flex-wrap">
                         {decodeSubject(selected.subject)}
                         {aiReplied(selected.from_email) ? (
-                          <span className="inline-flex h-[26px] items-center gap-1 rounded-[6px] bg-violet-100 px-2.5 text-[13px] font-medium leading-none text-violet-700 whitespace-nowrap dark:bg-violet-500/20 dark:text-violet-300" title="La IA respondió automáticamente a este contacto">
+                          <span className={`${CHIP_MINI} bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300`} title="La IA respondió automáticamente a este contacto">
                             <Sparkles className="h-3 w-3" /> Respondido con IA
                           </span>
                         ) : selectedCatConfig?.label && (
-                          <span className={`inline-flex h-[26px] items-center rounded-[6px] px-2.5 text-[13px] font-medium leading-none whitespace-nowrap ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
+                          <span className={`${CHIP_MINI} ${selectedCatConfig.bg} ${selectedCatConfig.text}`}>
                             {selectedCatConfig.label}
                           </span>
                         )}
@@ -3480,7 +3494,7 @@ export default function Unibox() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className={`h-8 w-8 ${isImportant(selected) ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-500"}`}
+                        className={`h-8 w-8 ${isImportant(selected) ? "text-warning hover:text-warning/80" : "text-muted-foreground hover:text-warning"}`}
                         onClick={() => toggleImportant(selected)}
                         title={isImportant(selected) ? "Quitar de Importantes" : "Marcar como importante"}
                       >
@@ -3516,7 +3530,7 @@ export default function Unibox() {
                   <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-5 md:px-8 md:py-7">
                     {/* Reminder banner */}
                     {reminders[selected.id] && (
-                      <div className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs ${isReminderDue(selected.id) ? "border border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
+                      <div className={`flex items-center justify-between rounded-md px-3 py-2 text-xs ${isReminderDue(selected.id) ? "border border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
                         <span className="flex items-center gap-1.5">
                           <Bell className="h-3.5 w-3.5" />
                           {isReminderDue(selected.id) ? "⚡ Recordatorio vencido — " : "Recordatorio: "}
@@ -3528,7 +3542,7 @@ export default function Unibox() {
 
                     {/* Translate button */}
                     {!translatedBody && (
-                      <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/40 px-4 py-2.5 dark:border-border dark:bg-muted/70">
+                      <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/40 px-4 py-2.5 dark:border-border dark:bg-muted/70">
                         <Languages className="h-5 w-5 text-primary flex-shrink-0" />
                         <div className="flex-1">
                           {detectedLang && detectedLang !== "es" ? (
@@ -3543,7 +3557,7 @@ export default function Unibox() {
                       </div>
                     )}
                     {translatedBody && (
-                      <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5">
+                      <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-4 py-2.5">
                         <Languages className="h-5 w-5 text-primary flex-shrink-0" />
                         <p className="text-sm text-foreground flex-1">Traducido al español</p>
                         <button onClick={handleTranslateBody} className="text-sm text-primary font-medium hover:underline">Ver original</button>
@@ -3575,7 +3589,7 @@ export default function Unibox() {
                         const dateStr = msgDate.toLocaleString("es", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
                         return (
-                          <div key={tm.id + "-" + idx} className={`rounded-xl border shadow-sm ${isSent ? "border-primary/20 bg-primary/5" : "border-border/60 bg-card"}`}>
+                          <div key={tm.id + "-" + idx} className={`rounded-md border shadow-rest ${isSent ? "border-primary/20 bg-primary/5" : "border-border/60 bg-card"}`}>
                             <div className="flex items-center gap-2.5 border-b border-border/40 dark:border-border/80 px-3 py-3 sm:gap-3 sm:px-5 sm:py-3.5">
                               <div className={`h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
                                 isSent ? "bg-primary/10 text-primary" : (selectedCatConfig?.bg || "bg-muted") + " " + (selectedCatConfig?.text || "text-muted-foreground")
@@ -3588,7 +3602,7 @@ export default function Unibox() {
                                     {isSent ? "Yo" : (tm.from_name || tm.from_email?.split("@")[0])}
                                   </span>
                                   {isSent && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Enviado</span>
+                                    <span className={`${CHIP_MINI} bg-accent text-accent-foreground`}>Enviado</span>
                                   )}
                                   {isSent && accountEmailMap[tm.account_id] && (
                                     <span className="text-xs text-muted-foreground truncate">desde &lt;{accountEmailMap[tm.account_id]}&gt;</span>
@@ -3627,7 +3641,7 @@ export default function Unibox() {
                         );
                       })
                     ) : (
-                      <div className="rounded-lg border border-border/50 bg-card dark:border-border">
+                      <div className="rounded-md border border-border/50 bg-card dark:border-border">
                         <div className="flex items-center gap-3 px-4 py-3">
                           <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedCatConfig?.bg || "bg-muted"} ${selectedCatConfig?.text || "text-muted-foreground"}`}>
                             {getInitials(selected.from_name, selected.from_email)}
@@ -3678,7 +3692,7 @@ export default function Unibox() {
                       <Send className="h-3 w-3 flex-shrink-0" />
                       <span className="truncate">→ {selected.from_name || selected.from_email}</span>
                       {detectedLang && detectedLang !== "es" && (
-                          <span className="hidden items-center gap-1 whitespace-nowrap rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info sm:inline-flex">
+                          <span className={`${CHIP_MINI} hidden bg-info/15 text-info sm:inline-flex`}>
                           <Languages className="h-2.5 w-2.5" />
                           Auto-traducir a {langLabels[detectedLang] || detectedLang}
                         </span>
@@ -3712,7 +3726,7 @@ export default function Unibox() {
 
                   {/* AI suggestion area */}
                   {aiSuggestion && (
-                    <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-medium text-primary flex items-center gap-1">
                           <Sparkles className="h-3 w-3" /> Sugerencia de {aiPromptName}
@@ -3737,14 +3751,14 @@ export default function Unibox() {
                     ref={replyRef}
                     id="unibox-reply-textarea"
                     placeholder="Escribe tu respuesta…"
-                      className="mb-2.5 min-h-[92px] resize-none rounded-xl border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-sm focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
+                      className="mb-2.5 min-h-[92px] resize-none rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
                     value={reply}
                     onChange={e => setReply(e.target.value)}
                   />
                   {replyFiles.length > 0 && (
                     <div className="mb-2.5 flex flex-wrap gap-2">
                       {replyFiles.map((f, i) => (
-                        <span key={`${f.filename}-${i}`} className="inline-flex max-w-[240px] items-center gap-1.5 rounded-lg border border-border/60 bg-muted/40 py-1 pl-2 pr-1 text-xs">
+                        <span key={`${f.filename}-${i}`} className="inline-flex max-w-[240px] items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 py-1 pl-2 pr-1 text-xs">
                           <FileText className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
                           <span className="min-w-0 truncate font-medium text-foreground">{f.filename}</span>
                           <span className="flex-shrink-0 text-[10px] text-muted-foreground">{(f.size / 1024).toFixed(0)} KB</span>
@@ -3757,7 +3771,7 @@ export default function Unibox() {
                   )}
                   {/* "Para" — recipients as chips, like a normal compose. The person you
                       reply to is always included; add more (they persist on the thread). */}
-                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2 py-1.5">
+                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
                     <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Para</span>
                     {selected?.from_email && (
                       <span className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground">
@@ -3839,11 +3853,11 @@ export default function Unibox() {
                             <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={saveTemplate}><Star className="h-3.5 w-3.5" /> Guardar la actual</Button>
                           </div>
                           {templates.length === 0 ? (
-                            <p className="rounded-lg border border-dashed border-border p-3 text-center text-xs text-muted-foreground">Sin plantillas. Escribe una respuesta y pulsa <b className="text-foreground">"Guardar la actual"</b>; luego aplícala con un clic.</p>
+                            <p className="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted-foreground">Sin plantillas. Escribe una respuesta y pulsa <b className="text-foreground">"Guardar la actual"</b>; luego aplícala con un clic.</p>
                           ) : (
                             <div className="max-h-64 space-y-1 overflow-y-auto">
                               {templates.map((t) => (
-                                <div key={t.id} className="group flex items-start justify-between gap-2 rounded-lg border border-border p-2 hover:bg-muted/40">
+                                <div key={t.id} className="group flex items-start justify-between gap-2 rounded-md border border-border p-2 hover:bg-muted/40">
                                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => applyTemplate(t)} title="Aplicar plantilla">
                                     <p className="truncate text-xs font-medium text-foreground">{t.name}</p>
                                     <p className="truncate text-[11px] text-muted-foreground">{(t.body || "").replace(/<[^>]+>/g, " ").slice(0, 60)}</p>
@@ -3937,7 +3951,7 @@ export default function Unibox() {
             ) : (
               <div className="space-y-1.5">
                 {blockedEntries.map((entry) => (
-                  <div key={entry.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2">
+                  <div key={entry.id} className="flex items-center gap-3 rounded-md border border-border/60 bg-card px-3 py-2">
                     <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md ${entry.entry_type === "domain" ? "bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300" : "bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-300"}`}>
                       {entry.entry_type === "domain" ? <Globe className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
                     </span>
@@ -3975,7 +3989,7 @@ export default function Unibox() {
       <Dialog open={sigOpen} onOpenChange={setSigOpen}>
         <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 font-display">
+            <DialogTitle className="flex items-center gap-2 font-display tracking-[-0.03em]">
               <Pencil className="h-5 w-5 text-primary" /> Firma electrónica
             </DialogTitle>
             <DialogDescription>

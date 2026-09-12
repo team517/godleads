@@ -490,7 +490,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
                       if (!active || !payload?.length) return null;
                       const p = payload[0].payload as DayPoint;
                       return (
-                        <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
+                        <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-raised">
                           <p className="mb-1 font-medium capitalize">{p.full}</p>
                           <p className="font-semibold" style={{ color: "hsl(var(--brand-cyan))" }}>{p.envios.toLocaleString("es")} {p.envios === 1 ? "envío" : "envíos"}</p>
                           {p.respuestas > 0 && <p style={{ color: "hsl(var(--success))" }}>{p.respuestas} {p.respuestas === 1 ? "respuesta" : "respuestas"}</p>}
@@ -511,7 +511,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
             <h4 className="text-sm font-semibold mb-3">Analítica por paso</h4>
             <div className="space-y-2">
               {stepStats.map((s: any) => (
-                <div key={s.id} className={`flex items-center gap-4 rounded-lg border p-3 text-sm ${s._other ? "bg-muted/40" : ""}`}>
+                <div key={s.id} className={`flex items-center gap-4 rounded-md border p-3 text-sm ${s._other ? "bg-muted/40" : ""}`}>
                   <span className="font-medium text-primary whitespace-nowrap">
                     {s._other ? "Otros" : `Paso ${s.step_order}`}
                   </span>

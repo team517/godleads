@@ -28,7 +28,7 @@ export function SelectableCard({
       aria-checked={selected}
       onClick={onSelect}
       className={cn(
-        "group relative flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-all",
+        "group relative flex w-full items-start gap-3 rounded-md border p-4 text-left transition-all",
         selected
           ? "border-primary bg-primary/5 ring-1 ring-primary/30"
           : "border-border bg-card hover:border-primary/40 hover:bg-muted/40",
@@ -38,7 +38,7 @@ export function SelectableCard({
       {icon && (
         <span
           className={cn(
-            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
             selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
           )}
         >

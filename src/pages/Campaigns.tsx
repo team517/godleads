@@ -60,7 +60,7 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <h1 className="font-display text-lg sm:text-2xl font-light tracking-tight truncate">{campaign.name}</h1>
+      <h1 className="font-display text-lg sm:text-2xl font-semibold tracking-[-0.03em] truncate">{campaign.name}</h1>
       <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5 text-muted-foreground" /></Button>
       <Badge variant={status.variant}>{status.label}</Badge>
     </div>
@@ -420,15 +420,15 @@ export default function Campaigns() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Campañas</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Gestiona y sigue todas tus campañas</p>
+          <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Campañas</h1>
+          <p className="text-[13px] text-muted-foreground">Gestiona y sigue todas tus campañas</p>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
             <Button size="sm" className="gap-2 self-end sm:self-auto"><Plus className="h-4 w-4" /> Crear campaña</Button>
           </DialogTrigger>
           <DialogContent className="max-w-sm">
-            <DialogHeader><DialogTitle className="font-display">Crear campaña</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle className="font-display tracking-[-0.03em]">Crear campaña</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1"><Label>Nombre de la campaña</Label><Input value={form.name} onChange={e => setForm({ name: e.target.value })} placeholder="Prospección Q1" /></div>
               <Button onClick={handleCreate} className="w-full" disabled={!form.name} variant={form.name ? "default" : "secondary"}>Crear</Button>
@@ -441,8 +441,8 @@ export default function Campaigns() {
         <Card>
           <CardContent className="p-12 text-center">
             <Send className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-display font-semibold mb-2">Aún no hay campañas</h3>
-            <p className="text-sm text-muted-foreground">Crea tu primera campaña de cold email.</p>
+            <h3 className="font-display font-semibold tracking-[-0.03em] mb-2">Aún no hay campañas</h3>
+            <p className="text-[15px] text-muted-foreground">Crea tu primera campaña de cold email.</p>
           </CardContent>
         </Card>
       ) : (
@@ -465,17 +465,17 @@ export default function Campaigns() {
           {campaigns.map((campaign) => {
             const status = statusConfig[campaign.status] || statusConfig.draft;
             return (
-              <Card key={campaign.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setSelectedId(campaign.id)}>
+              <Card key={campaign.id} className="hover:shadow-raised transition-shadow cursor-pointer" onClick={() => setSelectedId(campaign.id)}>
                 <CardContent className="p-3 sm:p-5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-medium text-sm sm:text-base truncate">{campaign.name}</h3>
-                        <Badge variant={status.variant} className="text-[10px] sm:text-xs">{status.label}</Badge>
+                        <h3 className="font-semibold text-[15px] truncate">{campaign.name}</h3>
+                        <Badge variant={status.variant} className="text-[10.5px] font-semibold">{status.label}</Badge>
                         {(() => {
                           const mgr = (campaign as any).manager_id ? managers.find((m) => m.id === (campaign as any).manager_id) : null;
                           return mgr ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-[10px] sm:text-[11px] font-semibold whitespace-nowrap bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
+                            <span className="inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2 text-[10.5px] font-semibold whitespace-nowrap bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
                               style={{ "--mgr": mgr.color } as any}
                               title={"Responsable: " + mgr.name}>
                               <span className="flex items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ backgroundColor: mgr.color, width: 16, height: 16 }}>
@@ -486,7 +486,7 @@ export default function Campaigns() {
                           ) : null;
                         })()}
                       </div>
-                      <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+                      <p className="text-[13px] text-muted-foreground mt-1">
                         {new Date(campaign.created_at).toLocaleDateString("es")}
                       </p>
                     </div>
@@ -527,7 +527,7 @@ export default function Campaigns() {
       <Dialog open={!!remixDest} onOpenChange={(o) => { if (!remixRunning && !o) { setRemixDest(null); setRemixProgress(null); } }}>
         <DialogContent className="max-w-md" onInteractOutside={(e) => { if (remixRunning) e.preventDefault(); }}>
           <DialogHeader>
-            <DialogTitle className="font-display flex items-center gap-2">
+            <DialogTitle className="font-display tracking-[-0.03em] flex items-center gap-2">
               <Shuffle className="h-4 w-4 text-primary" /> Remix — fusionar en «{remixDest?.name}»
             </DialogTitle>
           </DialogHeader>
@@ -544,10 +544,10 @@ export default function Campaigns() {
                     <button
                       key={c.id}
                       onClick={() => runRemix(remixDest, c)}
-                      className="w-full text-left rounded-lg border border-border/60 p-3 hover:bg-muted/50 hover:border-primary/40 transition-colors flex items-center justify-between gap-2"
+                      className="w-full text-left rounded-md border border-border/60 p-3 hover:bg-muted/50 hover:border-primary/40 transition-colors flex items-center justify-between gap-2"
                     >
-                      <span className="font-medium text-sm truncate">{c.name}</span>
-                      <Badge variant={st.variant} className="text-[10px] shrink-0">{st.label}</Badge>
+                      <span className="font-semibold text-[15px] truncate">{c.name}</span>
+                      <Badge variant={st.variant} className="text-[10.5px] font-semibold shrink-0">{st.label}</Badge>
                     </button>
                   );
                 })}

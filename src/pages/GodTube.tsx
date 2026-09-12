@@ -166,11 +166,11 @@ const GodTube = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-destructive/10 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center">
             <Tv className="h-5 w-5 text-destructive" />
           </div>
           <div>
-            <h1 className="text-xl font-light tracking-tight text-foreground">GodTube</h1>
+            <h1 className="font-display text-xl font-semibold tracking-[-0.03em] text-foreground">GodTube</h1>
             <p className="text-xs text-muted-foreground">Videos y tutoriales de la comunidad</p>
           </div>
         </div>
@@ -196,7 +196,7 @@ const GodTube = () => {
       {officialVideos.length > 0 && (
         <section>
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-lg font-light tracking-tight text-foreground">Tutoriales GodLeads</h2>
+            <h2 className="font-display text-lg font-semibold tracking-[-0.03em] text-foreground">Tutoriales GodLeads</h2>
             <span className="bg-primary text-primary-foreground text-[9px] font-bold rounded-full px-2 py-0.5">Oficial</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
@@ -222,15 +222,15 @@ const GodTube = () => {
 
       {/* Recent videos */}
       <section>
-        <h2 className="text-lg font-light tracking-tight text-foreground mb-4">Videos recientes</h2>
+        <h2 className="font-display text-lg font-semibold tracking-[-0.03em] text-foreground mb-4">Videos recientes</h2>
         {recentVideos.length === 0 && officialVideos.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">
             <Tv className="h-12 w-12 mx-auto mb-3 opacity-30" />
             <p className="font-medium">Aún no hay videos</p>
-            <p className="text-sm mt-1">¡Crea tu canal y sube el primero!</p>
+            <p className="text-[15px] mt-1">¡Crea tu canal y sube el primero!</p>
           </div>
         ) : recentVideos.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay más videos por ahora</p>
+          <p className="text-[15px] text-muted-foreground">No hay más videos por ahora</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {recentVideos.map((v) => (

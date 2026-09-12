@@ -73,9 +73,9 @@ const normalizeEmailAccount = <T extends Record<string, any>>(account: T): T => 
 type AuthStatusValue = "pass" | "warn" | "fail" | undefined;
 function AuthChip({ label, status }: { label: string; status: AuthStatusValue }) {
   const meta =
-    status === "pass" ? { cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", Icon: ShieldCheck, text: "OK" }
-    : status === "warn" ? { cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30", Icon: ShieldQuestion, text: "Revisar" }
-    : status === "fail" ? { cls: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30", Icon: ShieldAlert, text: "Falta" }
+    status === "pass" ? { cls: "bg-success/10 text-success border-success/30", Icon: ShieldCheck, text: "OK" }
+    : status === "warn" ? { cls: "bg-warning/10 text-warning border-warning/30", Icon: ShieldQuestion, text: "Revisar" }
+    : status === "fail" ? { cls: "bg-destructive/10 text-destructive border-destructive/30", Icon: ShieldAlert, text: "Falta" }
     : { cls: "bg-muted text-muted-foreground border-border", Icon: ShieldQuestion, text: "—" };
   const { Icon } = meta;
   return (
@@ -1146,8 +1146,8 @@ export default function EmailAccounts() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Cuentas de Email</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Gestiona tus cuentas SMTP/IMAP</p>
+          <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Cuentas de Email</h1>
+          <p className="text-xs sm:text-[15px] text-muted-foreground">Gestiona tus cuentas SMTP/IMAP</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {accounts.length > 0 && (
@@ -1256,7 +1256,7 @@ export default function EmailAccounts() {
             </Button>
           </div>
           {allTags.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No tienes ningún tag creado.</p>
+            <p className="text-[15px] text-muted-foreground text-center py-8">No tienes ningún tag creado.</p>
           ) : (
             <div className="space-y-2">
               {allTags.map(tag => {
@@ -1772,7 +1772,7 @@ export default function EmailAccounts() {
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="p-6">
             <h3 className="font-display font-semibold mb-2">Importar cuentas desde CSV</h3>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="text-[15px] text-muted-foreground mb-4">
               Columnas: Email, First Name, Last Name, IMAP Username, IMAP Password, IMAP Host, IMAP Port, SMTP Username, SMTP Password, SMTP Host, SMTP Port
             </p>
             <Input type="file" accept=".csv" onChange={handleCSV} className="max-w-sm" />
@@ -1785,13 +1785,13 @@ export default function EmailAccounts() {
           <CardContent className="p-12 text-center">
             <Mail className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-display font-semibold mb-2">No tienes cuentas de email</h3>
-            <p className="text-sm text-muted-foreground">Añade tu primera cuenta o importa varias con CSV.</p>
+            <p className="text-[15px] text-muted-foreground">Añade tu primera cuenta o importa varias con CSV.</p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2">
           {filteredAccounts.map((account) => (
-            <Card key={account.id} className={`hover:shadow-md transition-shadow ${selectedIds.has(account.id) ? "ring-2 ring-primary/40" : ""} ${filterTag && !(account.tags || []).includes(filterTag) ? "opacity-60 border-dashed" : ""}`}>
+            <Card key={account.id} className={`hover:shadow-raised transition-shadow ${selectedIds.has(account.id) ? "ring-2 ring-primary/40" : ""} ${filterTag && !(account.tags || []).includes(filterTag) ? "opacity-60 border-dashed" : ""}`}>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
@@ -1803,7 +1803,7 @@ export default function EmailAccounts() {
                       <Mail className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <p className="font-medium text-sm">{account.email}</p>
+                      <p className="font-medium text-[15px]">{account.email}</p>
                       <p className="text-xs text-muted-foreground">{account.first_name} {account.last_name}</p>
                     </div>
                   </div>
@@ -1816,7 +1816,7 @@ export default function EmailAccounts() {
                       }
                       if (ic.ok) {
                         return (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] font-semibold text-success">
                             <CheckCircle className="h-3 w-3" /> IMAP conectado
                             {ic.reverifying && <span title="Verificando la conexión en vivo…" className="inline-flex"><Loader2 className="h-2.5 w-2.5 animate-spin opacity-60" /></span>}
                           </span>
@@ -1833,7 +1833,7 @@ export default function EmailAccounts() {
                         );
                       }
                       return (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-600 dark:text-red-400" title={ic.error || "Fallo de conexión IMAP"}>
+                        <span className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[11px] font-semibold text-destructive" title={ic.error || "Fallo de conexión IMAP"}>
                           <XCircle className="h-3 w-3" /> IMAP sin conexión
                           <button onClick={() => recheckImap(account.id)} className="ml-1 underline decoration-dotted">reintentar</button>
                         </span>
@@ -1886,7 +1886,7 @@ export default function EmailAccounts() {
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                           Autenticación del dominio
                           {auth?.reverifying && !auth?.loading && (
-                            <span className="inline-flex items-center gap-1 text-[9px] font-normal text-emerald-600/70 dark:text-emerald-400" title="Comprobando los registros DNS en vivo…">
+                            <span className="inline-flex items-center gap-1 text-[9px] font-medium text-success/80" title="Comprobando los registros DNS en vivo…">
                               <Loader2 className="h-2.5 w-2.5 animate-spin" /> en vivo
                             </span>
                           )}
@@ -1927,7 +1927,7 @@ export default function EmailAccounts() {
                         )}
                       </div>
                       {dkimMissing && (
-                        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400">
+                        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-destructive">
                           <ShieldAlert className="h-3 w-3" /> Falta el DKIM en @{dom} — añádelo en tu proveedor para mejorar la entregabilidad.
                         </p>
                       )}
@@ -1942,7 +1942,7 @@ export default function EmailAccounts() {
                     <div className="mt-3 flex gap-6 items-end">
                       <div>
                         <p className="text-xs text-muted-foreground">Enviados hoy</p>
-                        <p className="font-semibold text-sm">{account.sent_today}/{effLimit}</p>
+                        <p className="font-semibold text-[15px]">{account.sent_today}/{effLimit}</p>
                       </div>
                       <div className="flex-1">
                         <p className="text-xs text-muted-foreground mb-1 flex flex-wrap items-center gap-2">

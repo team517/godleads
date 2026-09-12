@@ -18,12 +18,23 @@ export default {
         "1.25": "5px",
         "13": "3.25rem",
       },
+      boxShadow: {
+        /* Sombras del diseño, tintadas de navy (DESIGN.md). */
+        rest: "var(--shadow-rest)",
+        raised: "var(--shadow-raised)",
+        float: "var(--shadow-float)",
+        modal: "var(--shadow-modal)",
+        /* NO llamar a esta clave "primary": chocaria con colors.primary y Tailwind
+           emitiria .shadow-primary como color de sombra sin sombra. */
+        btn: "var(--shadow-primary)",
+      },
       fontFamily: {
         // DM Sans is the Smartlead face; Inter stays as the first fallback so
         // nothing shifts if DM Sans hasn't loaded yet.
-        sans: ["DM Sans", "Inter", "system-ui", "-apple-system", "sans-serif"],
-        display: ["DM Sans", "Inter", "system-ui", "-apple-system", "sans-serif"],
-        serif: ["Arapey", "Georgia", "serif"],
+        /* Diseño "Primary": Inter para el cuerpo, Bricolage Grotesque para titulares y cifras. */
+        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        display: ["Bricolage Grotesque", "Inter", "system-ui", "-apple-system", "sans-serif"],
+        serif: ["Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -104,9 +115,12 @@ export default {
         "gradient-sky": "var(--gradient-sky)",
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        /* El diseño usa 6px para casi todo (botones, campos, tarjetas), con 4px en
+           piezas pequeñas. Por eso md y lg valen lo mismo: cualquiera de los dos
+           da los 6px correctos y no hay forma de equivocarse. */
+        lg: "var(--radius)",              /* 6px */
+        md: "var(--radius)",              /* 6px */
+        sm: "calc(var(--radius) - 2px)",  /* 4px */
       },
       keyframes: {
         "accordion-down": {

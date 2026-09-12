@@ -164,7 +164,7 @@ export default function SettingsPage() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="font-display text-base">Avisos del monitor</CardTitle>
+          <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Avisos del monitor</CardTitle>
           <CardDescription>Emails automáticos cuando detectamos un problema real en el envío (motor parado, rebotes altos, etc.). Si lo apagas, no recibirás ninguno. Aunque esté activo, no se avisa si no hay campañas activas ni cuentas enviando.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -216,7 +216,7 @@ export default function SettingsPage() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="font-display text-base flex items-center gap-2">
+          <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em] flex items-center gap-2">
             <Shield className="h-4 w-4 text-primary" />
             Mantener sesión iniciada
           </CardTitle>
@@ -260,8 +260,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-light tracking-tight">Configuración</h1>
-        <p className="text-sm text-muted-foreground">Gestiona tu perfil, plan y preferencias</p>
+        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Configuración</h1>
+        <p className="text-[15px] text-muted-foreground">Gestiona tu perfil, plan y preferencias</p>
       </div>
 
       <Tabs defaultValue="profile">
@@ -274,7 +274,7 @@ export default function SettingsPage() {
         <TabsContent value="profile" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="font-display text-base">Información de la cuenta</CardTitle>
+              <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Información de la cuenta</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Avatar section */}
@@ -293,7 +293,7 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-lg">{profile.full_name || "Sin nombre"}</p>
-                  <p className="text-sm text-muted-foreground">{user?.email}</p>
+                  <p className="text-[15px] text-muted-foreground">{user?.email}</p>
                   <p className="text-xs text-muted-foreground mt-1">Elige un avatar o sube tu propia foto</p>
                 </div>
               </div>
@@ -420,7 +420,7 @@ export default function SettingsPage() {
                   {isCurrentPlan && <Badge className="absolute -top-2.5 left-4 bg-primary">Tu plan</Badge>}
                   {popular && !isCurrentPlan && <Badge className="absolute -top-2.5 left-4" variant="secondary">Popular</Badge>}
                   <CardHeader>
-                    <CardTitle className="font-display">{config.label}</CardTitle>
+                    <CardTitle className="font-display text-[19px] font-semibold tracking-[-0.03em]">{config.label}</CardTitle>
                     <CardDescription>
                       <span className="text-3xl font-bold text-foreground">€{price}</span>
                       <span className="text-muted-foreground">/{billingPeriod === "monthly" ? "mes" : "año"}</span>
@@ -459,7 +459,7 @@ export default function SettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-display text-base">Configuración de envío global</CardTitle>
+              <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Configuración de envío global</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
@@ -469,7 +469,7 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted-foreground">Delay aleatorio entre 6-8 minutos para evitar spam</p>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">Los límites diarios y horarios de envío se configuran por cuenta y por campaña.</p>
+              <p className="text-[15px] text-muted-foreground">Los límites diarios y horarios de envío se configuran por cuenta y por campaña.</p>
             </CardContent>
           </Card>
 

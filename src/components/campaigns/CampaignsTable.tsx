@@ -61,16 +61,23 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+/** Pastilla de estado del diseño "Primary" (DESIGN.md): radio 999px, 13px/600,
+ *  fondo tintado con el texto de SU MISMO tono. Los tonos son TOKENS
+ *  (`success`/`warning`/`info`/`muted`), que ya se aclaran en `.dark`, así que la
+ *  pastilla sigue al tema sin necesidad de variantes `dark:`. */
+const STATUS_PILL_BASE =
+  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[13px] font-semibold leading-none";
+
 const statusPill: Record<string, { label: string; className: string; dot: string }> = {
   active: {
     label: "Activa",
-    className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25",
-    dot: "bg-emerald-500",
+    className: "bg-success/12 text-success border-success/25",
+    dot: "bg-success",
   },
   paused: {
     label: "Pausada",
-    className: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/25",
-    dot: "bg-amber-500",
+    className: "bg-warning/15 text-warning border-warning/30",
+    dot: "bg-warning",
   },
   draft: {
     label: "Borrador",
@@ -79,8 +86,8 @@ const statusPill: Record<string, { label: string; className: string; dot: string
   },
   completed: {
     label: "Completada",
-    className: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/25",
-    dot: "bg-blue-500",
+    className: "bg-info/12 text-info border-info/25",
+    dot: "bg-info",
   },
 };
 
@@ -90,7 +97,7 @@ const ringColor: Record<string, string> = {
   // centred % label keep their contrast on a dark row.
   active: "hsl(var(--success))",
   paused: "hsl(var(--warning))",
-  completed: "hsl(var(--brand-cyan))",
+  completed: "hsl(var(--info))",
   draft: "hsl(var(--muted-foreground))",
 };
 
@@ -106,8 +113,8 @@ function HeadCell({
   className?: string;
 }) {
   return (
-    <th scope="col" className={cn("px-4 py-2.5 text-left font-medium whitespace-nowrap", className)}>
-      <span className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground">
+    <th scope="col" className={cn("px-4 py-2.5 text-left font-semibold whitespace-nowrap", className)}>
+      <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-muted-foreground">
         <Icon className="h-3.5 w-3.5" /> {label}
       </span>
     </th>
@@ -131,8 +138,8 @@ function Metric({
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
       {Icon && <Icon className={cn("h-3.5 w-3.5 self-center", className)} />}
       <span className={cn("text-[15px] font-semibold tabular-nums", className)}>{value === null ? "—" : value}</span>
-      {value !== null && pct && <span className="text-xs font-medium text-muted-foreground">{pct}</span>}
-      {warn && <AlertTriangle className="h-3.5 w-3.5 self-center text-amber-500" aria-label="Tasa de rebote alta" />}
+      {value !== null && pct && <span className="text-[13px] font-semibold text-muted-foreground">{pct}</span>}
+      {warn && <AlertTriangle className="h-3.5 w-3.5 self-center text-warning" aria-label="Tasa de rebote alta" />}
     </span>
   );
 }
@@ -184,7 +191,7 @@ export default function CampaignsTable({
               aria-selected={tab === t.key}
               onClick={() => setTab(t.key)}
               className={cn(
-                "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                "-mb-px border-b-2 px-3 py-2 font-display text-[13px] font-semibold tracking-[-0.03em] transition-colors",
                 tab === t.key
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground",
@@ -207,8 +214,8 @@ export default function CampaignsTable({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+      <div className="overflow-x-auto rounded-md border border-border bg-card shadow-rest">
+        <table className="w-full min-w-[900px] border-collapse text-[15px]">
           <thead>
             <tr className="border-b border-border bg-muted/50">
               <HeadCell icon={Megaphone} label="Campaña" className="min-w-[280px]" />
@@ -224,7 +231,7 @@ export default function CampaignsTable({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-12 text-center text-[13px] text-muted-foreground">
                   {q.trim()
                     ? `Ninguna campaña coincide con «${q.trim()}».`
                     : "No hay campañas en esta pestaña."}
@@ -249,7 +256,7 @@ export default function CampaignsTable({
                 <tr
                   key={campaign.id}
                   onClick={() => onSelect(campaign.id)}
-                  className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/40"
+                  className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/50"
                 >
                   {/* Campaña */}
                   <td className="px-4 py-3">
@@ -257,13 +264,8 @@ export default function CampaignsTable({
                       <CampaignProgressRing sent={prog.sent} total={prog.total} color={ringColor[status]} />
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-semibold text-foreground">{campaign.name}</span>
-                          <span
-                            className={cn(
-                              "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                              pill.className,
-                            )}
-                          >
+                          <span className="truncate text-[15px] font-semibold text-foreground">{campaign.name}</span>
+                          <span className={cn(STATUS_PILL_BASE, pill.className)}>
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
                             {pill.label}
                           </span>
@@ -272,7 +274,7 @@ export default function CampaignsTable({
                               dark row. */}
                           {mgr && (
                             <span
-                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[11px] font-semibold bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
+                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[10.5px] font-semibold bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
                               style={{ "--mgr": mgr.color } as any}
                               title={"Responsable: " + mgr.name}
                             >
@@ -286,7 +288,7 @@ export default function CampaignsTable({
                             </span>
                           )}
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
+                        <p className="mt-0.5 text-[13px] text-muted-foreground">
                           {steps} {steps === 1 ? "secuencia" : "secuencias"}
                           {created && !isNaN(created.getTime()) && (
                             <> · Creada {format(created, "d MMM, HH:mm", { locale: es })}</>

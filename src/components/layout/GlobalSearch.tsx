@@ -124,20 +124,20 @@ export function GlobalSearch() {
   return (
     <div ref={boxRef} className="relative w-80">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-      {/* #fcfbff is the house input surface in light; in dark it falls back to the
-          secondary surface so the field stays distinguishable from the top bar. */}
+      {/* El propio Input ya trae la superficie de campo del diseño (clara y oscura);
+          aquí solo se ajusta el espacio para la lupa y el spinner. */}
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => { if (query.trim()) setOpen(true); }}
         onKeyDown={onKeyDown}
         placeholder="Buscar campañas, leads, correos..."
-        className="pl-10 pr-9 bg-[#fcfbff] dark:bg-secondary text-foreground placeholder:text-muted-foreground border border-border"
+        className="pl-10 pr-9 text-[15px] text-foreground placeholder:text-muted-foreground border border-border"
       />
       {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
 
       {open && query.trim() && (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-float">
           {results.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
               {loading ? "Buscando…" : "Sin resultados"}
@@ -159,8 +159,8 @@ export function GlobalSearch() {
                         <Icon className="h-4 w-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-foreground">{r.title}</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">{r.subtitle}</span>
+                        <span className="block truncate text-[15px] font-semibold text-foreground">{r.title}</span>
+                        <span className="block truncate text-[12.5px] text-muted-foreground">{r.subtitle}</span>
                       </span>
                     </button>
                   </li>

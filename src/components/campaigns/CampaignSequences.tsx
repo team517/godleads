@@ -825,7 +825,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i === 0 ? "Email inicial" : `Follow-up ${i}`}</span>
                       <div className="flex items-center gap-1">
                         {stepVariants.length > 0 && (
-                          <Badge variant="outline" className="h-4 px-1 text-[10px]">{stepVariants.length + 1} var</Badge>
+                          <Badge variant="outline" className="h-4 px-1 text-[10.5px] font-semibold">{stepVariants.length + 1} var</Badge>
                         )}
                         <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${isSelected ? "rotate-90" : ""}`} />
                       </div>
@@ -1238,7 +1238,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                 title="Adjuntar un archivo que se enviará con cada email de este paso (máx. 5 MB)"
               >
                 {uploadingAttach ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />} Adjuntar archivo
-                {stepAttachments.length > 0 && <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10px]">{stepAttachments.length}</Badge>}
+                {stepAttachments.length > 0 && <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10.5px] font-semibold">{stepAttachments.length}</Badge>}
               </Button>
             </div>
 
@@ -1318,7 +1318,7 @@ export default function CampaignSequences({ campaignId }: Props) {
           </div>
 
           {/* ── Inbox-placement (spam) test: does THIS email land in inbox or spam? ── */}
-          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+          <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-2">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-primary" />
               <span className="text-sm font-medium">Verificar entregabilidad (spam / bandeja)</span>
@@ -1495,7 +1495,7 @@ export default function CampaignSequences({ campaignId }: Props) {
     {/* Ampliar: ver el email completo sin scroll apretado */}
     <Dialog open={expandOpen} onOpenChange={setExpandOpen}>
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="font-display text-base">Email completo</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="font-display tracking-[-0.03em] text-base">Email completo</DialogTitle></DialogHeader>
         <div className={PAPER + " p-5"}>
           <p className="mb-3 border-b border-zinc-200 pb-2 text-sm">
             <span className="text-zinc-500">Asunto: </span>

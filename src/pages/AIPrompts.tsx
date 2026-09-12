@@ -88,7 +88,7 @@ function PromptsTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Configura prompts de IA asociados a tags de tus cuentas. La IA sugerirá respuestas en el Unibox.</p>
+        <p className="text-[15px] text-muted-foreground">Configura prompts de IA asociados a tags de tus cuentas. La IA sugerirá respuestas en el Unibox.</p>
         <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) resetForm(); }}>
           <DialogTrigger asChild>
             <Button className="gap-2" onClick={openCreate}><Plus className="h-4 w-4" /> Crear prompt</Button>
@@ -130,17 +130,17 @@ function PromptsTab() {
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mb-4"><Brain className="h-8 w-8 text-primary" /></div>
             <h3 className="font-display font-semibold text-lg mb-2">Sin prompts configurados</h3>
-            <p className="text-sm text-muted-foreground text-center max-w-sm mb-4">Crea un prompt de IA y asócialo a los tags de tus cuentas.</p>
+            <p className="text-[15px] text-muted-foreground text-center max-w-sm mb-4">Crea un prompt de IA y asócialo a los tags de tus cuentas.</p>
             <Button onClick={openCreate} className="gap-2"><Plus className="h-4 w-4" /> Crear tu primer prompt</Button>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {prompts.map(p => (
-            <Card key={p.id} className="group hover:shadow-md transition-shadow">
+            <Card key={p.id} className="group hover:shadow-raised transition-shadow">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
-                  <CardTitle className="text-base flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />{p.name}</CardTitle>
+                  <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em] flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" />{p.name}</CardTitle>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(p)}><Pencil className="h-3.5 w-3.5" /></Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDelete(p.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -168,11 +168,11 @@ export default function AIPrompts() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-light tracking-tight flex items-center gap-2">
+        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] flex items-center gap-2">
           <Brain className="h-6 w-6 text-primary" />
           Asistente IA
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-[15px] text-muted-foreground mt-1">
           Gestiona prompts, configura tus agentes de respuesta y consulta su actividad.
         </p>
       </div>

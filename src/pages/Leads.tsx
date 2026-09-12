@@ -488,8 +488,8 @@ export default function Leads() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight">Leads</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Gestiona tus contactos y carpetas</p>
+          <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Leads</h1>
+          <p className="text-xs sm:text-[15px] text-muted-foreground">Gestiona tus contactos y carpetas</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <label className="cursor-pointer">
@@ -535,7 +535,7 @@ export default function Leads() {
           <Button
             variant="outline"
             size="sm"
-            className="gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+            className="gap-2 border-success/30 text-success"
             disabled={totalCount === 0 || verifying}
             onClick={openVerifyDialog}
           >
@@ -614,7 +614,7 @@ export default function Leads() {
 
       {/* Floating progress banners - fixed at bottom so user can keep navigating */}
       {csvParsing && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-xl shadow-lg p-4 space-y-2">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-lg shadow-raised p-4 space-y-2">
           <div className="flex items-center gap-3">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
             <span className="text-sm font-medium">
@@ -734,7 +734,7 @@ export default function Leads() {
                 <tr>
                   <th className="p-2 w-10"></th>
                   {csvHeaders.map(h => (
-                    <th key={h} className="text-left p-2 font-medium text-xs capitalize whitespace-nowrap">{h}</th>
+                    <th key={h} className="text-left p-2 text-[13px] font-semibold text-muted-foreground capitalize whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -803,7 +803,7 @@ export default function Leads() {
             {loadingUnverifiedCount ? (
               <div className="flex items-center justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : unverifiedTotalCount === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">Todos los leads ya están verificados.</p>
+              <p className="text-[15px] text-muted-foreground text-center py-4">Todos los leads ya están verificados.</p>
             ) : (
                 <>
                   <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
@@ -817,11 +817,11 @@ export default function Leads() {
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">Coste</span>
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Gratis</span>
+                      <span className="font-semibold text-success">Gratis</span>
                     </div>
                   </div>
 
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-[15px] text-muted-foreground">
                     Se procesarán absolutamente todos los leads pendientes de la lista actual y los no contactables se eliminarán automáticamente.
                   </p>
                   <Button
@@ -840,7 +840,7 @@ export default function Leads() {
 
       {/* Import Progress - floating banner */}
       {importProgress.active && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-xl shadow-lg p-4 space-y-2">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[90vw] max-w-md bg-background border rounded-lg shadow-raised p-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-primary" /> Importando leads...</span>
             <span className="font-medium">{importProgress.current.toLocaleString()} / {importProgress.total.toLocaleString()}</span>
@@ -865,7 +865,7 @@ export default function Leads() {
           <CardContent className="p-12 text-center">
             <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-display font-semibold mb-2">{search ? "Sin resultados" : "No tienes leads"}</h3>
-            <p className="text-sm text-muted-foreground">{search ? "Prueba con otra búsqueda" : "Importa leads desde un CSV o añádelos manualmente."}</p>
+            <p className="text-[15px] text-muted-foreground">{search ? "Prueba con otra búsqueda" : "Importa leads desde un CSV o añádelos manualmente."}</p>
           </CardContent>
         </Card>
       ) : (
@@ -890,16 +890,16 @@ export default function Leads() {
                             onCheckedChange={toggleSelectAll}
                           />
                         </th>
-                        <th className="px-3 py-3 text-left text-xs font-medium text-muted-foreground w-10">#</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Email</th>
+                        <th className="px-3 py-3 text-left text-[13px] font-semibold text-muted-foreground w-10">#</th>
+                        <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Email</th>
                         {fieldCols.map(col => (
-                          <th key={col} className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                          <th key={col} className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em] whitespace-nowrap">
                             {col.replace(/_/g, " ")}
                           </th>
                         ))}
-                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Estado</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Verificación</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Carpeta</th>
+                        <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Estado</th>
+                        <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Verificación</th>
+                        <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Carpeta</th>
                         <th className="px-4 py-3 w-10"></th>
                       </tr>
                     </thead>
@@ -927,7 +927,7 @@ export default function Leads() {
                           ))}
                           <td className="px-4 py-3">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                              lead.status === "replied" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" :
+                              lead.status === "replied" ? "bg-success/10 text-success" :
                               lead.status === "contacted" ? "bg-primary/10 text-primary" :
                               lead.status === "bounced" ? "bg-destructive/10 text-destructive" :
                               "bg-muted text-muted-foreground"
@@ -935,9 +935,9 @@ export default function Leads() {
                           </td>
                           <td className="px-4 py-3">
                             {lead.verification_status === "valid" ? (
-                              <Badge variant="outline" className="text-[10px] bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-300">Verificado</Badge>
+                              <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/30">Verificado</Badge>
                             ) : lead.verification_status === "risky" ? (
-                              <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300">Arriesgado</Badge>
+                              <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/30">Arriesgado</Badge>
                             ) : (
                               <span className="text-xs text-muted-foreground">Sin verificar</span>
                             )}
@@ -962,7 +962,7 @@ export default function Leads() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[15px] text-muted-foreground">
             Mostrando {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} de {totalCount} leads
           </p>
           <div className="flex gap-2">

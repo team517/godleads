@@ -113,17 +113,17 @@ export default function DeliverabilityTest() {
 
   const secsSince = sentAt ? Math.floor((Date.now() - sentAt) / 1000) : 0;
   const folderChip = (f: Result["folder"]) => {
-    if (f === "inbox") return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/40">📥 Bandeja</Badge>;
-    if (f === "spam") return <Badge className="bg-red-100 text-red-700 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/40">🚫 Spam</Badge>;
-    if (f === "missing") return <Badge className="bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/40">❓ No llegó</Badge>;
+    if (f === "inbox") return <Badge className="bg-success/10 text-success border-success/30">📥 Bandeja</Badge>;
+    if (f === "spam") return <Badge className="bg-destructive/10 text-destructive border-destructive/30">🚫 Spam</Badge>;
+    if (f === "missing") return <Badge className="bg-warning/10 text-warning border-warning/30">❓ No llegó</Badge>;
     return <Badge variant="outline">⚠ Error IMAP</Badge>;
   };
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="font-display text-xl sm:text-2xl font-light tracking-tight flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-primary" /> Test de entregabilidad</h1>
-        <p className="text-xs sm:text-sm text-muted-foreground">Comprueba si tus correos caen en <strong>Bandeja</strong> o <strong>Spam</strong>. Los buzones semilla son un sistema <strong>aparte</strong> — no entran en tu Unibox.</p>
+        <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em] flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-primary" /> Test de entregabilidad</h1>
+        <p className="text-xs sm:text-[15px] text-muted-foreground">Comprueba si tus correos caen en <strong>Bandeja</strong> o <strong>Spam</strong>. Los buzones semilla son un sistema <strong>aparte</strong> — no entran en tu Unibox.</p>
       </div>
 
       {/* Seeds management */}
@@ -184,7 +184,7 @@ export default function DeliverabilityTest() {
             {sending ? "Enviando prueba…" : "Enviar prueba a los buzones semilla"}
           </Button>
           {seeds.length === 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> Añade al menos un buzón semilla arriba.</p>
+            <p className="text-xs font-medium text-warning flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> Añade al menos un buzón semilla arriba.</p>
           )}
         </CardContent>
       </Card>
@@ -193,7 +193,7 @@ export default function DeliverabilityTest() {
       {testId && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <p className="text-sm text-muted-foreground">Prueba enviada hace {secsSince}s. Los correos tardan un poco — <strong>espera 1-2 min</strong> y pulsa comprobar.</p>
+            <p className="text-[15px] text-muted-foreground">Prueba enviada hace {secsSince}s. Los correos tardan un poco — <strong>espera 1-2 min</strong> y pulsa comprobar.</p>
             <Button onClick={checkTest} disabled={checking} variant="secondary" className="gap-2">
               {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {checking ? "Comprobando…" : "Comprobar dónde cayó"}

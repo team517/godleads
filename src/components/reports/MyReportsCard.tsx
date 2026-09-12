@@ -78,7 +78,7 @@ export default function MyReportsCard() {
   return (
     <Card className="border-primary/30">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base"><FileBarChart className="h-4 w-4 text-primary" /> Mis informes automáticos (mi cuenta)</CardTitle>
+        <CardTitle className="flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]"><FileBarChart className="h-4 w-4 text-primary" /> Mis informes automáticos (mi cuenta)</CardTitle>
         <CardDescription>Recibe los informes de <b>tus propias campañas</b>: cada 48h a las 10:00 (lun–jue) + repaso los viernes. Solo entre semana. (Tu resumen diario de leads calientes a las 18:00 ya está activo.)</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -96,7 +96,7 @@ export default function MyReportsCard() {
                   <div className="space-y-1.5">
                     <Label className="text-xs">Enviar desde la cuenta</Label>
                     {accounts.length === 0 ? (
-                      <p className="text-[11px] text-amber-600">No tienes cuentas conectadas. Conéctala en "Cuentas Email".</p>
+                      <p className="text-[11px] font-medium text-warning">No tienes cuentas conectadas. Conéctala en "Cuentas Email".</p>
                     ) : (
                       <select value={fromAccount} onChange={(e) => setFromAccount(e.target.value)} className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm">
                         <option value="">— Elige una cuenta —</option>

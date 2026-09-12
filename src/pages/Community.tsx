@@ -367,9 +367,9 @@ export default function Community() {
   };
 
   const statusColor = (s: string) => {
-    if (s === "safe") return "bg-emerald-500/10 text-emerald-600 border-emerald-500/30";
+    if (s === "safe") return "bg-success/10 text-success border-success/30";
     if (s === "blocked") return "bg-destructive/10 text-destructive border-destructive/30";
-    return "bg-amber-500/10 text-amber-600 border-amber-500/30";
+    return "bg-warning/10 text-warning border-warning/30";
   };
 
   const statusLabel = (s: string) => {
@@ -383,7 +383,7 @@ export default function Community() {
   const renderBubble = (msg: CommunityMessage, isOwn: boolean) => {
     const isBlocked = msg.moderation_status === "blocked";
     return (
-      <div className={`rounded-xl px-3 py-2 text-sm ${
+      <div className={`rounded-lg px-3 py-2 text-sm ${
         isBlocked && isOwn
           ? "bg-destructive/10 text-muted-foreground line-through opacity-50"
           : isOwn
@@ -428,7 +428,7 @@ export default function Community() {
             </Button>
           )}
           <div>
-            <h1 className="text-lg sm:text-xl font-light tracking-tight text-foreground">
+            <h1 className="font-display text-lg sm:text-xl font-semibold tracking-[-0.03em] text-foreground">
               {activeThread ? "Hilo" : "Comunidad"}
             </h1>
             <p className="text-xs text-muted-foreground">
@@ -488,7 +488,7 @@ export default function Community() {
                       {format(new Date(activeThreadMsg.created_at), "d MMM, HH:mm", { locale: es })}
                     </span>
                   </div>
-                  <p className="text-sm mt-1 whitespace-pre-wrap">{activeThreadMsg.content}</p>
+                  <p className="text-[15px] mt-1 whitespace-pre-wrap">{activeThreadMsg.content}</p>
                 </div>
               </div>
             </div>
@@ -499,7 +499,7 @@ export default function Community() {
             {threadReplies.length === 0 && (
               <div className="text-center text-muted-foreground py-10">
                 <MessageCircle className="h-10 w-10 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Sé el primero en responder</p>
+                <p className="text-[15px]">Sé el primero en responder</p>
               </div>
             )}
             {threadReplies.map(msg => {
@@ -548,10 +548,10 @@ export default function Community() {
                 <DialogContent className="max-w-[95vw] sm:max-w-md">
                   <DialogHeader><DialogTitle>Compartir plantilla en hilo</DialogTitle></DialogHeader>
                   <ScrollArea className="max-h-60">
-                    {templates.length === 0 && <p className="text-sm text-muted-foreground py-4 text-center">No tienes plantillas guardadas</p>}
+                    {templates.length === 0 && <p className="text-[15px] text-muted-foreground py-4 text-center">No tienes plantillas guardadas</p>}
                     {templates.map((t) => (
                       <button key={t.id} onClick={() => shareTemplate(t)} className="w-full text-left px-3 py-2 hover:bg-muted rounded-lg transition-colors">
-                        <p className="text-sm font-medium text-foreground">{t.name}</p>
+                        <p className="text-[15px] font-medium text-foreground">{t.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{t.subject}</p>
                       </button>
                     ))}
@@ -580,7 +580,7 @@ export default function Community() {
             {messages.length === 0 && (
               <div className="text-center text-muted-foreground py-20">
                 <Shield className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                <p className="text-sm">¡Crea el primer hilo de la comunidad!</p>
+                <p className="text-[15px]">¡Crea el primer hilo de la comunidad!</p>
               </div>
             )}
             <div className="space-y-2">
@@ -594,7 +594,7 @@ export default function Community() {
                     onClick={() => setActiveThread(msg.id)}
                     className="w-full text-left group"
                   >
-                    <div className="flex items-start gap-3 rounded-xl border border-border p-4 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-start gap-3 rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors">
                       <Avatar className="h-9 w-9 flex-shrink-0">
                         <AvatarImage src={(isOwn ? profile.avatar_url : avatarMap[msg.user_id]) || undefined} alt={msg.user_name} />
                         <AvatarFallback className="bg-primary/20 text-xs font-bold text-primary">
@@ -620,7 +620,7 @@ export default function Community() {
                             </button>
                           )}
                         </div>
-                        <p className={`text-sm ${isBlocked && isOwn ? "line-through opacity-50" : ""}`}>
+                        <p className={`text-[15px] ${isBlocked && isOwn ? "line-through opacity-50" : ""}`}>
                           {msg.message_type === "image" && "📷 "}
                           {msg.message_type === "video" && "🎥 "}
                           {msg.message_type === "template" && "📄 "}
@@ -655,10 +655,10 @@ export default function Community() {
                 <DialogContent className="max-w-[95vw] sm:max-w-md">
                   <DialogHeader><DialogTitle>Compartir plantilla</DialogTitle></DialogHeader>
                   <ScrollArea className="max-h-60">
-                    {templates.length === 0 && <p className="text-sm text-muted-foreground py-4 text-center">No tienes plantillas guardadas</p>}
+                    {templates.length === 0 && <p className="text-[15px] text-muted-foreground py-4 text-center">No tienes plantillas guardadas</p>}
                     {templates.map((t) => (
                       <button key={t.id} onClick={() => shareTemplate(t)} className="w-full text-left px-3 py-2 hover:bg-muted rounded-lg transition-colors">
-                        <p className="text-sm font-medium text-foreground">{t.name}</p>
+                        <p className="text-[15px] font-medium text-foreground">{t.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{t.subject}</p>
                       </button>
                     ))}

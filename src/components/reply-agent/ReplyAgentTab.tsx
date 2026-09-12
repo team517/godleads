@@ -135,7 +135,7 @@ export function ReplyAgentTab() {
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
               <Bot className="h-8 w-8 text-primary" />
             </div>
-            <h3 className="font-display mb-2 text-lg font-semibold">Sin agentes de respuesta</h3>
+            <h3 className="font-display tracking-[-0.03em] mb-2 text-lg font-semibold">Sin agentes de respuesta</h3>
             <p className="mb-4 max-w-sm text-center text-sm text-muted-foreground">
               Crea tu primer agente para que responda a los leads interesados sin que tengas que estar encima.
             </p>
@@ -150,7 +150,7 @@ export function ReplyAgentTab() {
             const auto = a.reply_mode === "auto";
             const cats = a.category_mode === "all" ? [...REPLYABLE_CATEGORIES] : (a.categories || []);
             return (
-              <Card key={a.id} className={`group transition-shadow hover:shadow-md ${a.is_active ? "border-primary/30" : ""}`}>
+              <Card key={a.id} className={`group transition-shadow hover:shadow-raised ${a.is_active ? "border-primary/30" : ""}`}>
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
                     <button
@@ -180,11 +180,11 @@ export function ReplyAgentTab() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge variant={auto ? "default" : "secondary"} className="gap-1 text-[10px]">
+                    <Badge variant={auto ? "default" : "secondary"} className="gap-1 text-[10.5px] font-semibold">
                       {auto ? <Bot className="h-2.5 w-2.5" /> : <UserCheck className="h-2.5 w-2.5" />}
                       {auto ? "Envío automático" : "Borradores para revisar"}
                     </Badge>
-                    <Badge variant={a.is_active ? "outline" : "secondary"} className="text-[10px]">
+                    <Badge variant={a.is_active ? "outline" : "secondary"} className="text-[10.5px] font-semibold">
                       {a.is_active ? "Activo" : "Inactivo"}
                     </Badge>
                   </div>
@@ -204,7 +204,7 @@ export function ReplyAgentTab() {
                       <span className="text-[10px] italic text-muted-foreground">Sin categorías</span>
                     ) : (
                       cats.map((c) => (
-                        <Badge key={c} variant="secondary" className="text-[10px]">{c}</Badge>
+                        <Badge key={c} variant="secondary" className="text-[10.5px] font-semibold">{c}</Badge>
                       ))
                     )}
                   </div>

@@ -238,7 +238,7 @@ export function WorkflowCanvas({ nodes, edges, onChange }: Props) {
         </div>
 
         {/* Zoom indicator */}
-        <div className="absolute bottom-3 right-3 text-xs text-muted-foreground bg-card/80 backdrop-blur rounded-md px-2 py-1 border border-border">
+        <div className="absolute bottom-3 right-3 text-[12.5px] font-semibold text-muted-foreground bg-card/80 backdrop-blur rounded-md px-2 py-1 border border-border shadow-rest">
           {Math.round(scale * 100)}%
         </div>
       </div>

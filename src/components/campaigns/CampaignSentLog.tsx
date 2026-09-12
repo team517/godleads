@@ -132,7 +132,7 @@ export default function CampaignSentLog({ campaignId }: Props) {
         return (
           <Card
             key={email.id}
-            className="cursor-pointer hover:shadow-md transition-shadow"
+            className="cursor-pointer hover:shadow-raised transition-shadow"
             onClick={() => setExpandedId(isExpanded ? null : email.id)}
           >
             <CardContent className="p-4">

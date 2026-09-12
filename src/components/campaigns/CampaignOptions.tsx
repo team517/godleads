@@ -25,7 +25,7 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   return (
     <div className="space-y-2">
       <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+      <div className="divide-y divide-border/50 overflow-hidden rounded-md border border-border/60 bg-card shadow-rest">
         {children}
       </div>
     </div>
@@ -52,7 +52,7 @@ function Row({
     <div className={`px-4 py-3.5 ${className}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          {icon && <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tints[tint]}`}>{icon}</span>}
+          {icon && <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${tints[tint]}`}>{icon}</span>}
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-sm font-medium text-foreground">{title}</p>
@@ -73,7 +73,7 @@ function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; o
   const dec = () => onChange(Math.max(min, value - step));
   const inc = () => onChange(max != null ? Math.min(max, value + step) : value + step);
   return (
-    <div className="inline-flex items-center overflow-hidden rounded-lg border border-border bg-background">
+    <div className="inline-flex items-center overflow-hidden rounded-md border border-border bg-background">
       <button type="button" onClick={dec} className="flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><Minus className="h-3.5 w-3.5" /></button>
       <input
         type="number" value={value}
@@ -93,7 +93,7 @@ function Stepper({ value, onChange, min = 0, max, step = 1 }: { value: number; o
   );
 }
 
-const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">Pro</Badge>;
+const proBadge = <Badge className="h-4 bg-amber-500/15 px-1.5 text-[10.5px] font-semibold text-amber-600 dark:text-amber-400">Pro</Badge>;
 
 export default function CampaignOptions({ campaignId }: Props) {
   const confirm = useConfirm();
@@ -554,7 +554,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                       })}
                     </div>
                   )}
-                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-2.5">
                     {accounts.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No hay cuentas conectadas.</p>
                     ) : accounts.map(acc => {
@@ -565,7 +565,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                           <Checkbox checked={checked} disabled={viaTag}
                             onCheckedChange={() => { setUnsubAccountIds(p => p.includes(acc.id) ? p.filter(i => i !== acc.id) : [...p, acc.id]); markDirty(); }} />
                           <span className={viaTag ? "text-muted-foreground" : ""}>{acc.email}</span>
-                          {viaTag && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">vía tag</Badge>}
+                          {viaTag && <Badge variant="outline" className="px-1.5 py-0 text-[10.5px] font-semibold">vía tag</Badge>}
                         </label>
                       );
                     })}
@@ -581,7 +581,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           control={<Switch checked={prioritizeNewLeads} onCheckedChange={v => { setPrioritizeNewLeads(!!v); markDirty(); }} />}
         />
         <Row icon={<TrendingUp className="h-4 w-4" />} tint="violet"
-          title="Aumento gradual" badge={<Badge variant="secondary" className="h-4 px-1.5 text-[10px]">SlowRamp</Badge>}
+          title="Aumento gradual" badge={<Badge variant="secondary" className="h-4 px-1.5 text-[10.5px] font-semibold">SlowRamp</Badge>}
           desc="Sube poco a poco el volumen diario por cuenta para calentar los buzones."
           control={<Switch checked={slowRampEnabled} onCheckedChange={v => { setSlowRampEnabled(v); markDirty(); }} />}
         >
@@ -598,7 +598,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                 </div>
               </div>
               {rampInfo && (
-                <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                <p className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
                   <TrendingUp className="mr-1 inline h-3 w-3 text-violet-600 dark:text-violet-400" /> Día {rampInfo.days + 1} de campaña → límite efectivo hoy: <span className="font-semibold text-foreground">{rampInfo.eff} emails/cuenta</span>
                   {dailyLimit > 0 && <span> (máx. global: {dailyLimit})</span>}
                 </p>
@@ -617,11 +617,11 @@ export default function CampaignOptions({ campaignId }: Props) {
           </div>
 
           {/* Ritmo de envío (auto) — así reparte esta campaña, de forma independiente */}
-          <div className="rounded-lg border border-violet-200/70 bg-violet-50/60 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/20">
+          <div className="rounded-md border border-violet-200/70 bg-violet-50/60 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/20">
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-violet-600 dark:text-violet-400" />
               <span className="text-sm font-semibold text-foreground">Ritmo automático</span>
-              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10.5px] font-semibold">
                 {slowRampEnabled ? "Slow Ramp activo" : "Ritmo pleno"}
               </Badge>
             </div>
@@ -650,7 +650,7 @@ export default function CampaignOptions({ campaignId }: Props) {
           {usedAccounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">Selecciona cuentas abajo para ver el reparto y el slow ramp por cuenta.</p>
           ) : (
-            <div className="max-h-72 space-y-2.5 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
+            <div className="max-h-72 space-y-2.5 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-2.5">
               {usedAccounts.map((acc: any) => {
                 const { limit, accRampDay } = effLimitFor(acc);
                 const pct = Math.min(((acc.sent_today || 0) / Math.max(1, limit)) * 100, 100);
@@ -660,7 +660,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                       <span className="truncate">{acc.email}</span>
                       <span className="flex flex-shrink-0 items-center gap-1.5">
                         {acc.warmup_enabled && accRampDay && (
-                          <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">🐢 Día {accRampDay}</span>
+                          <span className="rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">🐢 Día {accRampDay}</span>
                         )}
                         <span className="font-medium">{acc.sent_today || 0}/{limit}</span>
                       </span>
@@ -713,15 +713,15 @@ export default function CampaignOptions({ campaignId }: Props) {
 
         <Row icon={<Mail className="h-4 w-4" />} tint="primary" title="Cuentas individuales"
           desc={accounts.length === 0 ? "No hay cuentas conectadas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña."}
-          badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{totalAccountsUsed} en uso</Badge> : undefined}
+          badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10.5px] font-semibold">{totalAccountsUsed} en uso</Badge> : undefined}
           control={accounts.length > 0 ? (
-            <button type="button" onClick={() => setAccountsExpanded(v => !v)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
+            <button type="button" onClick={() => setAccountsExpanded(v => !v)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
               {accountsExpanded ? "Ocultar" : `Ver ${accounts.length}`}
               <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${accountsExpanded ? "rotate-180" : ""}`} />
             </button>
           ) : undefined}>
           {accounts.length > 0 && accountsExpanded && (
-            <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-2.5">
+            <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-2.5">
               {accounts.map(acc => {
                 const fromTag = tagAccountIds.has(acc.id);
                 const isChecked = selectedAccounts.includes(acc.id) || fromTag;
@@ -729,7 +729,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                   <label key={acc.id} className="flex cursor-pointer items-center gap-2 text-sm">
                     <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
                     <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
-                    {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">vía tag</Badge>}
+                    {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10.5px] font-semibold">vía tag</Badge>}
                     {(acc.tags || []).length > 0 && <span className="ml-auto truncate text-[10px] text-muted-foreground">{(acc.tags || []).join(", ")}</span>}
                   </label>
                 );
@@ -742,7 +742,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       {/* ── ENTREGABILIDAD ── */}
       <Section label="Entregabilidad">
         <Row icon={<Zap className="h-4 w-4" />} tint="emerald" title="Optimización de entrega"
-          badge={<Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">Recomendado</Badge>}
+          badge={<Badge variant="outline" className="h-4 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[10.5px] font-semibold text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">Recomendado</Badge>}
           desc="Desactiva el tracking de apertura para mejorar la entregabilidad.">
           <div className="space-y-2.5">
             <label className="flex cursor-pointer items-center gap-3">
@@ -846,14 +846,14 @@ export default function CampaignOptions({ campaignId }: Props) {
                   const isBest = v.replyRate === maxRate && v.sent >= 3;
                   const isWorst = v.replyRate === Math.min(...abStats.map((s: any) => s.replyRate)) && abStats.length > 1 && v.sent >= 3;
                   return (
-                    <div key={v.index} className={`rounded-lg border p-3 space-y-2 ${isBest ? "border-green-500/50 bg-green-500/5 dark:border-green-400/50 dark:bg-green-500/10" : isWorst ? "border-destructive/30 bg-destructive/5" : ""}`}>
+                    <div key={v.index} className={`rounded-md border p-3 space-y-2 ${isBest ? "border-green-500/50 bg-green-500/5 dark:border-green-400/50 dark:bg-green-500/10" : isWorst ? "border-destructive/30 bg-destructive/5" : ""}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Badge variant={isBest ? "default" : "outline"} className="text-[10px] h-5 px-1.5">
+                          <Badge variant={isBest ? "default" : "outline"} className="text-[10.5px] font-semibold h-5 px-1.5">
                             {v.label}
                           </Badge>
-                          {isBest && <Badge className="text-[10px] h-5 px-1.5 bg-green-600 text-white dark:bg-green-500 dark:text-green-950">🏆 Mejor</Badge>}
-                          {isWorst && <Badge variant="destructive" className="text-[10px] h-5 px-1.5">⚠️ Peor</Badge>}
+                          {isBest && <Badge className="text-[10.5px] font-semibold h-5 px-1.5 bg-green-600 text-white dark:bg-green-500 dark:text-green-950">🏆 Mejor</Badge>}
+                          {isWorst && <Badge variant="destructive" className="text-[10.5px] font-semibold h-5 px-1.5">⚠️ Peor</Badge>}
                         </div>
                         <span className="text-xs font-bold">{v.replyRate}% reply</span>
                       </div>
