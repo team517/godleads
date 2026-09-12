@@ -12,6 +12,12 @@ vi.mock("@/integrations/supabase/client", () => ({
     auth: { getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }) },
     from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }) }),
     rpc: () => Promise.resolve({ data: null, error: null }),
+    storage: {
+      from: () => ({
+        upload: () => Promise.resolve({ data: { path: "p" }, error: null }),
+        getPublicUrl: () => ({ data: { publicUrl: "https://cdn.test/logo.png" } }),
+      }),
+    },
   },
 }));
 
@@ -29,7 +35,7 @@ const usage = (over: Partial<ClientUsage> = {}): ClientUsage => ({
   ...over,
 });
 
-const client = (id: string, name: string): ClientRow => ({
+const client = (id: string, name: string, over: Partial<ClientRow> = {}): ClientRow => ({
   id,
   name,
   company_name: `${name} S.L.`,
@@ -39,6 +45,10 @@ const client = (id: string, name: string): ClientRow => ({
   notes: null,
   created_at: "2026-09-01T10:00:00Z",
   stats: { campaigns: 2, sent: 120, replied: 7 },
+  login_email: null,
+  allowed_sections: [],
+  setup: { datos: true, acceso: false, logo: false, colores: false, permisos: false, campanas: true },
+  ...over,
 });
 
 /** Respuestas por acción; cada test cambia las que le interesan. */
@@ -198,5 +208,146 @@ describe("Clientes", () => {
     routes.list = { status: 500, body: { error: "boom" } };
     renderPage();
     expect(await screen.findByText("No pudimos cargar tus clientes")).toBeInTheDocument();
+  });
+});
+
+// ── Configuración por fases ───────────────────────────────────────────────────
+// El progreso NO se guarda en esta pantalla: sale del objeto `setup` que manda el
+// servidor, así que se puede dejar a medias y retomar desde cualquier fase.
+describe("Clientes · configuración por fases", () => {
+  const only = (c: ClientRow) => {
+    routes.list.body.clients = [c];
+  };
+  const openConfig = async (name: string) => {
+    fireEvent.click(await screen.findByRole("button", { name: `Configurar el cliente ${name}` }));
+    return screen.findByText(`Configurar «${name}»`);
+  };
+
+  it("las fichas de cada cliente dicen qué fases están hechas y cuáles no", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        setup: { datos: true, acceso: true, logo: false, colores: false, permisos: true, campanas: false },
+      }),
+    );
+    renderPage();
+    expect(await screen.findByLabelText("Datos: hecho")).toBeInTheDocument();
+    expect(screen.getByLabelText("Acceso: hecho")).toBeInTheDocument();
+    expect(screen.getByLabelText("Permisos: hecho")).toBeInTheDocument();
+    expect(screen.getByLabelText("Logo: pendiente")).toBeInTheDocument();
+    expect(screen.getByLabelText("Colores: pendiente")).toBeInTheDocument();
+  });
+
+  it("abre la configuración en la primera fase que falta", async () => {
+    only(client("vera", "Clínica Vera", { setup: { datos: true, acceso: true, logo: true, colores: false, permisos: false, campanas: true } }));
+    renderPage();
+    await openConfig("Clínica Vera");
+    expect(await screen.findByText("Fase 4 · Colores")).toBeInTheDocument();
+  });
+
+  it("la fase de acceso avisa en claro de que la contraseña NO se guarda", async () => {
+    only(client("vera", "Clínica Vera", { setup: { datos: true, acceso: false, logo: false, colores: false, permisos: false, campanas: false } }));
+    renderPage();
+    await openConfig("Clínica Vera");
+
+    expect(await screen.findByText("Fase 2 · Acceso")).toBeInTheDocument();
+    expect(screen.getByText(/no la guardamos/i)).toBeInTheDocument();
+    expect(screen.getByText(/le pones una nueva desde aquí/i)).toBeInTheDocument();
+    // Y viene una contraseña fuerte ya puesta, con su botón de copiar.
+    const pass = screen.getByLabelText("Contraseña") as HTMLInputElement;
+    expect(pass.value.length).toBeGreaterThanOrEqual(12);
+    expect(screen.getByRole("button", { name: /Copiar/ })).toBeInTheDocument();
+  });
+
+  it("crear el acceso manda email y contraseña a create_login y cuenta el error del servidor", async () => {
+    only(client("vera", "Clínica Vera", { setup: { datos: true, acceso: false, logo: false, colores: false, permisos: false, campanas: false } }));
+    routes.create_login = { status: 409, body: { error: "Ese email ya tiene una cuenta en la plataforma" } };
+    renderPage();
+    await openConfig("Clínica Vera");
+    fireEvent.change(await screen.findByLabelText("Email de acceso"), { target: { value: "ana@verasalud.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /Crear acceso/ }));
+
+    await waitFor(() => expect(calls.some((c) => c.action === "create_login")).toBe(true));
+    const call = calls.find((c) => c.action === "create_login")!;
+    expect(call.payload.email).toBe("ana@verasalud.com");
+    expect(String(call.payload.password).length).toBeGreaterThanOrEqual(12);
+    expect(await screen.findByText("Ese email ya tiene una cuenta en la plataforma")).toBeInTheDocument();
+  });
+
+  it("con acceso ya creado ofrece cambiar la contraseña y quitar el acceso", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        login_email: "ana@verasalud.com",
+        setup: { datos: true, acceso: true, logo: false, colores: false, permisos: false, campanas: false },
+      }),
+    );
+    renderPage();
+    await openConfig("Clínica Vera");
+    fireEvent.click(screen.getByRole("button", { name: /Acceso/ }));
+    expect(await screen.findByText("ana@verasalud.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cambiar contraseña/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Quitar acceso/ })).toBeInTheDocument();
+  });
+
+  it("set_sections viaja SOLO con secciones de la lista blanca", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        // Una sección inventada (o antigua) no debe salir de aquí.
+        allowed_sections: ["resumen", "campanas", "loquesea"],
+        setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
+      }),
+    );
+    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["resumen", "campanas"] } };
+    renderPage();
+    await openConfig("Clínica Vera");
+    expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
+    await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
+    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["resumen", "campanas"]);
+  });
+
+  it("marcar una sección la añade a lo que se guarda", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        allowed_sections: ["resumen"],
+        setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
+      }),
+    );
+    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["resumen", "informes"] } };
+    renderPage();
+    await openConfig("Clínica Vera");
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Informes/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
+    await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
+    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["resumen", "informes"]);
+  });
+
+  it("el resumen dice qué falta en vez de afirmar que está listo, y da el enlace de acceso", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        setup: { datos: true, acceso: false, logo: true, colores: true, permisos: true, campanas: true },
+      }),
+    );
+    renderPage();
+    await openConfig("Clínica Vera");
+    fireEvent.click(screen.getByRole("button", { name: /Resumen/ }));
+    expect(await screen.findByText("Todavía falta una fase")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fase 2 · Acceso" })).toBeInTheDocument();
+    expect(screen.queryByText(/Todo listo/)).not.toBeInTheDocument();
+    expect((screen.getByLabelText("Enlace de acceso del cliente") as HTMLInputElement).value).toContain("/acceso-cliente");
+  });
+
+  it("cuando no falta nada, el resumen dice que el cliente está conectado", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        login_email: "ana@verasalud.com",
+        allowed_sections: ["resumen", "campanas"],
+        setup: { datos: true, acceso: true, logo: true, colores: true, permisos: true, campanas: true },
+      }),
+    );
+    renderPage();
+    await openConfig("Clínica Vera");
+    expect(await screen.findByText(/Todo listo: Clínica Vera ya está conectado/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copiar enlace/ })).toBeInTheDocument();
   });
 });

@@ -6,34 +6,60 @@
 // comprueba public.client_slots_for). Aquí el botón se desactiva cuando no
 // quedan plazas, pero la negativa de verdad siempre llega como un 402 de la
 // función: nunca se crea nada por confiar en este cálculo.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
 import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
+import { extractLogoColor } from "@/lib/logoColor";
 import {
   Archive,
   Building2,
+  Check,
+  Copy,
+  Eye,
+  Image as ImageIcon,
+  KeyRound,
+  Link2,
   Loader2,
   MessageSquareReply,
   Megaphone,
+  Palette,
   Pencil,
   Plus,
+  RefreshCw,
   Send,
   Settings2,
+  ShieldCheck,
   Sparkles,
+  Upload,
+  UserCog,
   X,
 } from "lucide-react";
 
 type ClientStats = { campaigns: number; sent: number; replied: number };
+
+/** Qué fases están hechas. Lo calcula el SERVIDOR a partir de las columnas
+ *  (`setup` en la respuesta de `list`): así nunca hay un "paso 3 de 5" guardado
+ *  que se desincronice de la realidad, y la configuración se puede retomar
+ *  cuando sea desde cualquier fase. */
+export type ClientSetup = {
+  datos: boolean;
+  acceso: boolean;
+  logo: boolean;
+  colores: boolean;
+  permisos: boolean;
+  campanas: boolean;
+};
 
 export type ClientRow = {
   id: string;
@@ -45,7 +71,56 @@ export type ClientRow = {
   notes: string | null;
   created_at: string;
   stats?: ClientStats;
+  login_email?: string | null;
+  allowed_sections?: string[] | null;
+  setup?: ClientSetup;
 };
+
+/** Las cuatro secciones del área del cliente. La lista blanca de verdad está en
+ *  la edge function; esta es la misma lista para no mandar nunca otra cosa. */
+const CLIENT_SECTIONS = [
+  { key: "resumen", label: "Resumen", help: "Los totales de sus campañas: leads, enviados, respuestas y rebotes." },
+  { key: "campanas", label: "Campañas", help: "La lista de sus campañas, con las cifras de cada una." },
+  { key: "respuestas", label: "Respuestas", help: "Las respuestas que llegan de sus leads." },
+  { key: "informes", label: "Informes", help: "Los informes de resultados que le preparas." },
+] as const;
+
+/** Las fases, en orden de recorrido. `key` coincide con el objeto `setup`. */
+const PHASES = [
+  { key: "datos", label: "Datos", n: 1 },
+  { key: "acceso", label: "Acceso", n: 2 },
+  { key: "logo", label: "Logo", n: 3 },
+  { key: "colores", label: "Colores", n: 4 },
+  { key: "permisos", label: "Permisos", n: 5 },
+] as const;
+
+type PhaseKey = (typeof PHASES)[number]["key"];
+type StepKey = PhaseKey | "final";
+
+/** Contraseña fuerte por defecto. Se genera con crypto cuando existe: una
+ *  contraseña de acceso no se saca de Math.random si se puede evitar. */
+function generatePassword(length = 16): string {
+  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789@#%*?+";
+  const out: string[] = [];
+  const rnd = globalThis.crypto;
+  if (rnd?.getRandomValues) {
+    const buf = new Uint32Array(length);
+    rnd.getRandomValues(buf);
+    for (let i = 0; i < length; i++) out.push(alphabet[buf[i] % alphabet.length]);
+  } else {
+    for (let i = 0; i < length; i++) out.push(alphabet[Math.floor(Math.random() * alphabet.length)]);
+  }
+  return out.join("");
+}
+
+async function copyToClipboard(text: string, what: string) {
+  try {
+    await navigator.clipboard?.writeText(text);
+    toast.success(`${what} copiado`);
+  } catch {
+    toast.error(`No se pudo copiar. ${what}: ${text}`);
+  }
+}
 
 export type ClientUsage = {
   slots: number;
@@ -93,6 +168,34 @@ function Stat({ value, label, className }: { value: number; label: string; class
   );
 }
 
+/** Fila de fichas con lo que ya está hecho de cada cliente. Se lee del `setup`
+ *  del servidor, así que refleja el estado real aunque se configure a trozos. */
+function SetupChips({ setup }: { setup?: ClientSetup }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {PHASES.map((p) => {
+        const done = !!setup?.[p.key];
+        const text = `${p.label}: ${done ? "hecho" : "pendiente"}`;
+        return (
+          <span
+            key={p.key}
+            aria-label={text}
+            title={text}
+            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold ${
+              done
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border bg-muted/40 text-muted-foreground"
+            }`}
+          >
+            {done && <Check className="h-3 w-3" />}
+            {p.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Clientes() {
   const confirm = useConfirm();
   const [clients, setClients] = useState<ClientRow[]>([]);
@@ -109,6 +212,11 @@ export default function Clientes() {
   const [form, setForm] = useState(emptyForm);
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Configuración por fases: se guarda SÓLO el id. El cliente que se pinta sale
+  // siempre de la lista recién cargada, así que las fases hechas vienen del
+  // servidor y no de lo que esta pantalla crea recordar.
+  const [configId, setConfigId] = useState<string | null>(null);
+  const configClient = useMemo(() => clients.find((c) => c.id === configId) || null, [clients, configId]);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -424,6 +532,9 @@ export default function Clientes() {
                         <p className="truncate text-[13px] text-muted-foreground">
                           {[c.company_name, c.contact_email].filter(Boolean).join(" · ") || "Sin datos de contacto"}
                         </p>
+                        <div className="mt-1.5">
+                          <SetupChips setup={c.setup} />
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -437,7 +548,16 @@ export default function Clientes() {
                     <Stat value={c.stats?.replied ?? 0} label="respuestas" className="text-teal-600 dark:text-teal-400" />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-end">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 text-[13px]"
+                        aria-label={`Configurar el cliente ${c.name}`}
+                        onClick={() => setConfigId(c.id)}
+                      >
+                        <Settings2 className="h-3.5 w-3.5" /> Configurar
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -531,6 +651,673 @@ export default function Clientes() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Configuración por fases */}
+      {configClient && (
+        <ClientSetupDialog
+          client={configClient}
+          onClose={() => setConfigId(null)}
+          onChanged={load}
+        />
+      )}
     </div>
+  );
+}
+
+/** La primera fase que falta — para abrir el panel donde el trabajo se quedó. */
+function firstPendingStep(setup?: ClientSetup): StepKey {
+  const pending = PHASES.find((p) => !setup?.[p.key]);
+  return pending ? pending.key : "final";
+}
+
+const STEP_ORDER: StepKey[] = [...PHASES.map((p) => p.key), "final"];
+
+/** Un aviso corto, siempre visible, dentro de una fase. */
+function PhaseNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="rounded-md border border-border bg-muted/40 p-2.5 text-[13px] text-muted-foreground">{children}</p>
+  );
+}
+
+function PhaseHeader({ n, title, help }: { n: number | null; title: string; help: string }) {
+  return (
+    <div className="space-y-1">
+      <p className="font-display text-[17px] font-semibold tracking-[-0.03em] text-foreground">
+        {n ? `Fase ${n} · ${title}` : title}
+      </p>
+      <p className="text-[13px] text-muted-foreground">{help}</p>
+    </div>
+  );
+}
+
+/**
+ * Configuración por fases de un cliente.
+ *
+ * No es un formulario largo: son cinco fases que se pueden hacer en cualquier
+ * orden, dejar a medias y retomar otro día. El progreso NO se guarda aquí —
+ * se lee de `client.setup`, que el servidor deriva de las propias columnas.
+ */
+function ClientSetupDialog({
+  client,
+  onClose,
+  onChanged,
+}: {
+  client: ClientRow;
+  onClose: () => void;
+  onChanged: () => Promise<void> | void;
+}) {
+  const confirm = useConfirm();
+  const setup = client.setup;
+  const [step, setStep] = useState<StepKey>(() => firstPendingStep(client.setup));
+  const [busy, setBusy] = useState<string | null>(null);
+
+  // Fase 1 · Datos
+  const [datos, setDatos] = useState({
+    name: client.name || "",
+    company_name: client.company_name || "",
+    contact_email: client.contact_email || "",
+    notes: client.notes || "",
+  });
+  const [datosError, setDatosError] = useState<string | null>(null);
+
+  // Fase 2 · Acceso
+  const [loginEmail, setLoginEmail] = useState(client.contact_email || "");
+  const [password, setPassword] = useState(() => generatePassword());
+  const [accesoError, setAccesoError] = useState<string | null>(null);
+  // La última contraseña puesta en ESTA sesión, para poder copiarla justo después
+  // de ponerla. No se guarda en ningún sitio: al cerrar el panel desaparece.
+  const [lastPassword, setLastPassword] = useState<string | null>(null);
+
+  // Fase 3 · Logo
+  const [logoUrl, setLogoUrl] = useState(client.logo_url || "");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Fase 4 · Colores
+  const [color, setColor] = useState(client.brand_color || "#6E58F1");
+
+  // Fase 5 · Permisos
+  const [sections, setSections] = useState<string[]>(() => [...(client.allowed_sections || [])]);
+
+  const accessLink = `${window.location.origin}/acceso-cliente`;
+  const pending = useMemo(() => PHASES.filter((p) => !setup?.[p.key]), [setup]);
+  const goNext = () => {
+    const i = STEP_ORDER.indexOf(step);
+    setStep(STEP_ORDER[Math.min(i + 1, STEP_ORDER.length - 1)]);
+  };
+
+  /** Una sola puerta: llama, refresca la lista y devuelve la respuesta cruda. */
+  const run = async (key: string, action: string, payload: Record<string, unknown>) => {
+    setBusy(key);
+    const res = await callClients(action, payload).catch((e) => ({
+      status: 0,
+      body: { error: (e as Error).message },
+    }));
+    setBusy(null);
+    if (res.status === 200) await onChanged();
+    return res;
+  };
+
+  const saveDatos = async () => {
+    const name = datos.name.trim();
+    if (!name) {
+      setDatosError("Pon un nombre para el cliente.");
+      return;
+    }
+    setDatosError(null);
+    const { status, body } = await run("datos", "update", {
+      id: client.id,
+      name,
+      company_name: datos.company_name.trim(),
+      contact_email: datos.contact_email.trim(),
+      notes: datos.notes.trim(),
+    });
+    if (status === 409) {
+      setDatosError(body?.error || "Ya tienes un cliente con ese nombre");
+      return;
+    }
+    if (status !== 200) {
+      setDatosError(body?.message || body?.error || "No se pudieron guardar los datos.");
+      return;
+    }
+    toast.success("Datos guardados");
+    goNext();
+  };
+
+  const createAccess = async () => {
+    setAccesoError(null);
+    const { status, body } = await run("acceso", "create_login", {
+      id: client.id,
+      email: loginEmail.trim(),
+      password,
+      full_name: client.name,
+    });
+    if (status !== 200) {
+      setAccesoError(body?.message || body?.error || "No se pudo crear el acceso.");
+      return;
+    }
+    setLastPassword(password);
+    toast.success("Acceso creado");
+  };
+
+  const resetPassword = async () => {
+    setAccesoError(null);
+    const { status, body } = await run("password", "reset_login_password", { id: client.id, password });
+    if (status !== 200) {
+      setAccesoError(body?.message || body?.error || "No se pudo cambiar la contraseña.");
+      return;
+    }
+    setLastPassword(password);
+    toast.success("Contraseña cambiada");
+  };
+
+  const removeAccess = async () => {
+    const ok = await confirm({
+      title: "Quitar el acceso",
+      description:
+        `La cuenta ${client.login_email || ""} dejará de existir y el cliente ya no podrá entrar. ` +
+        "Sus campañas y sus datos no se tocan: puedes volver a crearle acceso cuando quieras.",
+      confirmText: "Quitar acceso",
+      destructive: true,
+    });
+    if (!ok) return;
+    const { status, body } = await run("quitar", "remove_login", { id: client.id });
+    if (status !== 200) {
+      setAccesoError(body?.message || body?.error || "No se pudo quitar el acceso.");
+      return;
+    }
+    setLastPassword(null);
+    setPassword(generatePassword());
+    toast.success("Acceso retirado");
+  };
+
+  const uploadLogo = async (file: File) => {
+    if (file.size > 3 * 1024 * 1024) {
+      toast.error("El logo debe pesar menos de 3 MB");
+      return;
+    }
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "png").toLowerCase();
+      const rand = Math.random().toString(36).slice(2, 10);
+      const path = `client-logos/${Date.now()}-${rand}.${ext}`;
+      const { error } = await supabase.storage
+        .from("godtube-media")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (error) throw error;
+      const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
+      setLogoUrl(data.publicUrl);
+      // De paso, el color de marca sale del propio logo.
+      const hex = await extractLogoColor(file).catch(() => null);
+      if (hex) setColor(hex);
+      toast.success("Logo subido. Guárdalo para dejarlo fijo.");
+    } catch (e) {
+      toast.error((e as Error).message || "No se pudo subir el logo");
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const saveLogo = async () => {
+    const { status, body } = await run("logo", "update", { id: client.id, logo_url: logoUrl.trim() });
+    if (status !== 200) {
+      toast.error(body?.message || body?.error || "No se pudo guardar el logo.");
+      return;
+    }
+    toast.success(logoUrl.trim() ? "Logo guardado" : "Logo quitado");
+    if (logoUrl.trim()) goNext();
+  };
+
+  const colorFromLogo = async () => {
+    const src = logoUrl.trim() || client.logo_url || "";
+    if (!src) return;
+    setBusy("color-logo");
+    const hex = await extractLogoColor(src).catch(() => null);
+    setBusy(null);
+    if (hex) {
+      setColor(hex);
+      toast.success(`Color del logo: ${hex}`);
+    } else toast.error("No pudimos sacar el color de ese logo. Elígelo a mano.");
+  };
+
+  const saveColor = async () => {
+    const { status, body } = await run("colores", "update", { id: client.id, brand_color: color });
+    if (status !== 200) {
+      toast.error(body?.message || body?.error || "No se pudo guardar el color.");
+      return;
+    }
+    toast.success("Color guardado");
+    goNext();
+  };
+
+  const savePermisos = async () => {
+    // Sólo se manda lo que existe: si algo no está en la lista, no viaja.
+    const clean = sections.filter((s) => CLIENT_SECTIONS.some((x) => x.key === s));
+    const { status, body } = await run("permisos", "set_sections", { id: client.id, sections: clean });
+    if (status !== 200) {
+      toast.error(body?.message || body?.error || "No se pudieron guardar los permisos.");
+      return;
+    }
+    toast.success("Permisos guardados");
+    goNext();
+  };
+
+  const toggleSection = (key: string) =>
+    setSections((s) => (s.includes(key) ? s.filter((x) => x !== key) : [...s, key]));
+
+  const spin = (key: string) => busy === key;
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
+      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display tracking-[-0.03em]">Configurar «{client.name}»</DialogTitle>
+          <DialogDescription>
+            Cinco fases. Puedes hacerlas en el orden que quieras, dejarlo a medias y volver: lo hecho se queda hecho.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-5 sm:grid-cols-[190px_1fr]">
+          {/* Navegación de fases */}
+          <nav aria-label="Fases de configuración" className="flex flex-row flex-wrap gap-1 sm:flex-col">
+            {PHASES.map((p) => {
+              const done = !!setup?.[p.key];
+              const active = step === p.key;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => setStep(p.key)}
+                  aria-current={active ? "step" : undefined}
+                  className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-[13px] font-semibold transition-colors ${
+                    active ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10.5px] ${
+                      done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {done ? <Check className="h-3 w-3" /> : p.n}
+                  </span>
+                  {p.label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setStep("final")}
+              aria-current={step === "final" ? "step" : undefined}
+              className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-[13px] font-semibold transition-colors ${
+                step === "final" ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted/50"
+              }`}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <ShieldCheck className="h-3 w-3" />
+              </span>
+              Resumen
+            </button>
+          </nav>
+
+          {/* Contenido de la fase */}
+          <div className="min-w-0 space-y-4">
+            {step === "datos" && (
+              <>
+                <PhaseHeader n={1} title="Datos" help="Quién es el cliente. Solo el nombre es obligatorio." />
+                <div className="space-y-1">
+                  <Label htmlFor="fase1-nombre">Nombre</Label>
+                  <Input
+                    id="fase1-nombre"
+                    value={datos.name}
+                    aria-invalid={!!datosError}
+                    onChange={(e) => { setDatos({ ...datos, name: e.target.value }); setDatosError(null); }}
+                  />
+                  {datosError && <p className="text-[13px] font-semibold text-destructive">{datosError}</p>}
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="fase1-empresa">Empresa</Label>
+                  <Input
+                    id="fase1-empresa"
+                    value={datos.company_name}
+                    onChange={(e) => setDatos({ ...datos, company_name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="fase1-email">Email de contacto</Label>
+                  <Input
+                    id="fase1-email"
+                    type="email"
+                    value={datos.contact_email}
+                    onChange={(e) => setDatos({ ...datos, contact_email: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="fase1-notas">Notas</Label>
+                  <Textarea
+                    id="fase1-notas"
+                    rows={3}
+                    value={datos.notes}
+                    onChange={(e) => setDatos({ ...datos, notes: e.target.value })}
+                  />
+                </div>
+                <Button onClick={saveDatos} disabled={spin("datos")} className="gap-2">
+                  {spin("datos") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar datos
+                </Button>
+              </>
+            )}
+
+            {step === "acceso" && (
+              <>
+                <PhaseHeader
+                  n={2}
+                  title="Acceso"
+                  help="La cuenta con la que el cliente entra a ver sus resultados. Solo puede mirar: no crea, no cambia, no borra."
+                />
+                {client.login_email ? (
+                  <>
+                    <div className="rounded-md border border-border bg-card p-3 shadow-rest">
+                      <p className="text-[13px] text-muted-foreground">El cliente ya puede entrar con</p>
+                      <p className="mt-0.5 flex items-center gap-2 break-all font-mono text-[15px] font-semibold text-foreground">
+                        {client.login_email}
+                        <button
+                          type="button"
+                          aria-label="Copiar el email de acceso"
+                          className="text-muted-foreground hover:text-primary"
+                          onClick={() => copyToClipboard(client.login_email || "", "Email")}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      </p>
+                    </div>
+                    {lastPassword && (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                        <p className="text-[13px] font-semibold text-foreground">
+                          Esta es la contraseña que acabas de poner. Cópiala ahora: no la guardamos.
+                        </p>
+                        <p className="mt-1 flex items-center gap-2 break-all font-mono text-[15px] text-foreground">
+                          {lastPassword}
+                          <button
+                            type="button"
+                            aria-label="Copiar la contraseña"
+                            className="text-muted-foreground hover:text-primary"
+                            onClick={() => copyToClipboard(lastPassword, "Contraseña")}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </p>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="fase2-nueva">Cambiar contraseña</Label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input id="fase2-nueva" className="w-56 font-mono" value={password} onChange={(e) => setPassword(e.target.value)} />
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPassword(generatePassword())}>
+                          <RefreshCw className="h-3.5 w-3.5" /> Generar otra
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(password, "Contraseña")}>
+                          <Copy className="h-3.5 w-3.5" /> Copiar
+                        </Button>
+                      </div>
+                      <PhaseNote>
+                        No la guardamos en ningún sitio: si el cliente la pierde, le pones una nueva desde aquí.
+                      </PhaseNote>
+                      <Button onClick={resetPassword} disabled={spin("password") || password.length < 8} className="gap-2">
+                        {spin("password") && <Loader2 className="h-4 w-4 animate-spin" />} Cambiar contraseña
+                      </Button>
+                    </div>
+                    {accesoError && <p className="text-[13px] font-semibold text-destructive">{accesoError}</p>}
+                    <div className="border-t border-border pt-3">
+                      <Button variant="outline" size="sm" className="gap-1.5 text-destructive" onClick={removeAccess} disabled={spin("quitar")}>
+                        {spin("quitar") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Quitar acceso
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <Label htmlFor="fase2-email">Email de acceso</Label>
+                      <Input
+                        id="fase2-email"
+                        type="email"
+                        value={loginEmail}
+                        onChange={(e) => { setLoginEmail(e.target.value); setAccesoError(null); }}
+                        placeholder="ana@verasalud.com"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="fase2-pass">Contraseña</Label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          id="fase2-pass"
+                          className="w-56 font-mono"
+                          value={password}
+                          onChange={(e) => { setPassword(e.target.value); setAccesoError(null); }}
+                        />
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPassword(generatePassword())}>
+                          <RefreshCw className="h-3.5 w-3.5" /> Generar otra
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(password, "Contraseña")}>
+                          <Copy className="h-3.5 w-3.5" /> Copiar
+                        </Button>
+                      </div>
+                    </div>
+                    <PhaseNote>
+                      Cópiala y mándasela al cliente: <strong>no la guardamos</strong> en ningún sitio. Si se pierde, le
+                      pones una nueva desde aquí — nadie puede recuperarla.
+                    </PhaseNote>
+                    {accesoError && <p className="text-[13px] font-semibold text-destructive">{accesoError}</p>}
+                    <Button onClick={createAccess} disabled={spin("acceso")} className="gap-2">
+                      {spin("acceso") ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Crear acceso
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
+
+            {step === "logo" && (
+              <>
+                <PhaseHeader n={3} title="Logo" help="El logo del cliente. Lo verá en la cabecera de su área." />
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    aria-label="Archivo de logo"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); }}
+                  />
+                  <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                    {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir archivo
+                  </Button>
+                  {logoUrl ? (
+                    <img src={logoUrl} alt="Logo del cliente" className="h-10 max-w-[140px] rounded-md border border-border object-contain" />
+                  ) : (
+                    <span className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
+                      <ImageIcon className="h-4 w-4" />
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="fase3-url">…o pega la dirección de una imagen</Label>
+                  <Input id="fase3-url" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={saveLogo} disabled={spin("logo") || uploading} className="gap-2">
+                    {spin("logo") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar logo
+                  </Button>
+                  {logoUrl && (
+                    <Button variant="outline" size="sm" onClick={() => setLogoUrl("")} disabled={spin("logo")}>
+                      Quitar
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {step === "colores" && (
+              <>
+                <PhaseHeader n={4} title="Colores" help="El color con el que se pinta su área. Así la ve él." />
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="fase4-color">Color de marca</Label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="fase4-color"
+                        type="color"
+                        value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6E58F1"}
+                        onChange={(e) => setColor(e.target.value.toUpperCase())}
+                        className="h-9 w-12 cursor-pointer rounded-md border border-border bg-background"
+                      />
+                      <Input value={color} onChange={(e) => setColor(e.target.value)} className="w-28 font-mono" />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={!(logoUrl.trim() || client.logo_url) || spin("color-logo")}
+                    onClick={colorFromLogo}
+                  >
+                    {spin("color-logo") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Palette className="h-3.5 w-3.5" />} Sacar del logo
+                  </Button>
+                </div>
+                {/* Vista previa de su área, con su color */}
+                <div className="overflow-hidden rounded-md border border-border shadow-rest">
+                  <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="" className="h-6 max-w-[90px] object-contain" />
+                    ) : (
+                      <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: `${color}1a`, color }}>
+                        <Building2 className="h-3 w-3" />
+                      </span>
+                    )}
+                    <span className="text-[13px] font-semibold text-foreground">{client.company_name || client.name}</span>
+                    <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Eye className="h-3 w-3" /> Vista previa
+                    </span>
+                  </div>
+                  <div className="space-y-2 bg-background p-3">
+                    <div className="flex gap-2">
+                      <span className="rounded-md border border-border bg-card px-2 py-1 text-[12px] font-semibold text-muted-foreground">
+                        Enviados <span className="tabular-nums text-foreground">1.240</span>
+                      </span>
+                      <span className="rounded-md border px-2 py-1 text-[12px] font-semibold" style={{ borderColor: `${color}55`, background: `${color}14`, color }}>
+                        Respuestas <span className="tabular-nums">37</span>
+                      </span>
+                    </div>
+                    <span className="inline-flex rounded-md px-3 py-1.5 text-[13px] font-semibold text-white" style={{ background: color }}>
+                      Así se ven sus botones
+                    </span>
+                  </div>
+                </div>
+                <Button onClick={saveColor} disabled={spin("colores")} className="gap-2">
+                  {spin("colores") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar color
+                </Button>
+              </>
+            )}
+
+            {step === "permisos" && (
+              <>
+                <PhaseHeader n={5} title="Qué puede ver" help="Marca las secciones que quieres abrirle. Todo lo demás no existe para él." />
+                <div className="space-y-2">
+                  {CLIENT_SECTIONS.map((s) => (
+                    <label
+                      key={s.key}
+                      htmlFor={`fase5-${s.key}`}
+                      className={`flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5 transition-colors ${
+                        sections.includes(s.key) ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted/40"
+                      }`}
+                    >
+                      <Checkbox
+                        id={`fase5-${s.key}`}
+                        className="mt-0.5"
+                        checked={sections.includes(s.key)}
+                        onCheckedChange={() => toggleSection(s.key)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-[15px] font-semibold text-foreground">{s.label}</span>
+                        <span className="block text-[13px] text-muted-foreground">{s.help}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {sections.length === 0 && (
+                  <PhaseNote>Sin ninguna marcada, el cliente entra y no ve nada. Marca al menos una.</PhaseNote>
+                )}
+                <Button onClick={savePermisos} disabled={spin("permisos")} className="gap-2">
+                  {spin("permisos") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar permisos
+                </Button>
+              </>
+            )}
+
+            {step === "final" && (
+              <>
+                <PhaseHeader n={null} title="Resumen" help="Lo que queda por hacer, y el enlace que le mandas al cliente." />
+                {pending.length === 0 ? (
+                  <div className="rounded-md border border-success/40 bg-success/10 p-3">
+                    <p className="flex items-center gap-1.5 font-display text-[15px] font-semibold tracking-[-0.02em] text-foreground">
+                      <Check className="h-4 w-4 text-success" /> Todo listo: {client.name} ya está conectado
+                    </p>
+                    <p className="mt-1 text-[13px] text-muted-foreground">
+                      Entra con <span className="font-mono text-foreground">{client.login_email}</span> y ve
+                      {" "}
+                      {(client.allowed_sections || []).length} sección
+                      {(client.allowed_sections || []).length === 1 ? "" : "es"} de su área.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
+                    <p className="font-display text-[15px] font-semibold tracking-[-0.02em] text-foreground">
+                      Todavía falta {pending.length === 1 ? "una fase" : `${pending.length} fases`}
+                    </p>
+                    <ul className="mt-1.5 space-y-1">
+                      {pending.map((p) => (
+                        <li key={p.key} className="text-[13px] text-muted-foreground">
+                          <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setStep(p.key)}>
+                            Fase {p.n} · {p.label}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-[13px] text-muted-foreground">
+                      Puedes dejarlo aquí y seguir otro día: lo guardado no se pierde.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <Label htmlFor="fase-final-enlace">Enlace de acceso del cliente</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input id="fase-final-enlace" readOnly value={accessLink} className="max-w-xs font-mono text-[13px]" />
+                    <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(accessLink, "Enlace")}>
+                      <Copy className="h-3.5 w-3.5" /> Copiar enlace
+                    </Button>
+                  </div>
+                  <p className="text-[13px] text-muted-foreground">
+                    <Link2 className="mr-1 inline h-3.5 w-3.5" />
+                    Entra ahí con su email y su contraseña y aterriza directamente en su área.
+                  </p>
+                </div>
+
+                {!setup?.campanas && (
+                  <PhaseNote>
+                    <UserCog className="mr-1 inline h-3.5 w-3.5" />
+                    Aún no tiene ninguna campaña asignada. Se hace desde las opciones de cada campaña, y entonces
+                    empezará a ver cifras.
+                  </PhaseNote>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={!!busy}>
+            Cerrar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
     if (action === "list") {
       const { data: clients, error } = await db
         .from("clients")
-        .select("id, name, company_name, contact_email, logo_url, brand_color, notes, created_at")
+        .select("id, name, company_name, contact_email, logo_url, brand_color, notes, created_at, login_user_id, allowed_sections")
         .eq("owner_user_id", user.id)
         .is("archived_at", null)
         .order("created_at", { ascending: false });
@@ -108,7 +108,32 @@ Deno.serve(async (req) => {
           }
         }
       }
-      return json({ clients: (clients || []).map((c) => ({ ...c, stats: stats[c.id] })), usage: await readUsage() });
+      // Email de la cuenta de acceso, cuando exista: vive en auth, no en clients.
+      const loginEmails: Record<string, string> = {};
+      for (const c of clients || []) {
+        if (!c.login_user_id) continue;
+        try {
+          const { data: u } = await db.auth.admin.getUserById(c.login_user_id as string);
+          if (u?.user?.email) loginEmails[c.id] = u.user.email;
+        } catch { /* si no se puede leer, se muestra sin email */ }
+      }
+
+      return json({
+        clients: (clients || []).map((c) => ({
+          ...c,
+          stats: stats[c.id],
+          login_email: loginEmails[c.id] || null,
+          setup: {
+            datos: !!c.name,
+            acceso: !!c.login_user_id,
+            logo: !!(c.logo_url || "").trim(),
+            colores: !!(c.brand_color || "").trim(),
+            permisos: (c.allowed_sections || []).length > 0,
+            campanas: (stats[c.id]?.campaigns || 0) > 0,
+          },
+        })),
+        usage: await readUsage(),
+      });
     }
 
     // ── Cuánto margen tengo ───────────────────────────────────────────────────
@@ -190,6 +215,12 @@ Deno.serve(async (req) => {
       if (!gone) return json({ error: "Cliente no encontrado" }, 404);
       // Las campañas que apuntaban a él se quedan sin cliente, no se borran.
       await db.from("campaigns").update({ client_id: null }).eq("client_id", id).eq("user_id", user.id);
+      // Y su acceso deja de existir: archivado no debe poder seguir entrando.
+      const { data: archived } = await db.from("clients").select("login_user_id").eq("id", id).maybeSingle();
+      if (archived?.login_user_id) {
+        await db.from("clients").update({ login_user_id: null }).eq("id", id);
+        await db.auth.admin.deleteUser(archived.login_user_id as string).catch(() => {});
+      }
       return json({ ok: true, usage: await readUsage() });
     }
 
@@ -241,6 +272,89 @@ Deno.serve(async (req) => {
       }, { onConflict: "user_id" });
 
       return json({ ok: true, added: qty, usage: await readUsage() });
+    }
+
+
+    // ── Secciones que el cliente puede ver ────────────────────────────────────
+    if (action === "set_sections") {
+      const id = String(body?.id || "");
+      const raw = Array.isArray(body?.sections) ? body.sections : [];
+      // Lista blanca: sólo estas secciones existen en el área del cliente.
+      const ALLOWED = ["resumen", "campanas", "respuestas", "informes"];
+      const sections = [...new Set(raw.map((s: unknown) => String(s)))].filter((s) => ALLOWED.includes(s));
+      if (!id) return json({ error: "Falta el id" }, 400);
+      const { data: upd, error } = await db.from("clients")
+        .update({ allowed_sections: sections })
+        .eq("id", id).eq("owner_user_id", user.id)
+        .select("id, allowed_sections").maybeSingle();
+      if (error) throw error;
+      if (!upd) return json({ error: "Cliente no encontrado" }, 404);
+      return json({ ok: true, allowed_sections: upd.allowed_sections });
+    }
+
+    // ── Crear el acceso del cliente ───────────────────────────────────────────
+    // Crea una cuenta que sólo sirve para MIRAR lo de este cliente. La marca
+    // profiles.client_login_of es lo que impide que sea un usuario normal.
+    if (action === "create_login") {
+      const id = String(body?.id || "");
+      const email = String(body?.email || "").trim().toLowerCase();
+      const password = String(body?.password || "");
+      if (!id) return json({ error: "Falta el id" }, 400);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Email no válido" }, 400);
+      if (password.length < 8) return json({ error: "La contraseña necesita al menos 8 caracteres" }, 400);
+
+      const { data: cli } = await db.from("clients")
+        .select("id, login_user_id").eq("id", id).eq("owner_user_id", user.id).is("archived_at", null).maybeSingle();
+      if (!cli) return json({ error: "Cliente no encontrado" }, 404);
+      if (cli.login_user_id) return json({ error: "Este cliente ya tiene acceso" }, 409);
+
+      // Nunca se toca una cuenta que ya exista: sería apoderarse de ella.
+      const { data: created, error: createErr } = await db.auth.admin.createUser({
+        email, password, email_confirm: true,
+        user_metadata: { full_name: String(body?.full_name || "").trim() || email },
+      });
+      if (createErr || !created?.user) {
+        const msg = createErr?.message || "No se pudo crear el acceso";
+        const taken = /already|exists|registered/i.test(msg);
+        return json({ error: taken ? "Ese email ya tiene una cuenta en la plataforma" : msg }, taken ? 409 : 400);
+      }
+
+      // La marca va en el perfil (lo crea el trigger de alta) y el enlace en clients.
+      await db.from("profiles").update({ client_login_of: id }).eq("user_id", created.user.id);
+      const { error: linkErr } = await db.from("clients")
+        .update({ login_user_id: created.user.id }).eq("id", id).eq("owner_user_id", user.id);
+      if (linkErr) {
+        // Si no se pudo enlazar, no se deja una cuenta huérfana suelta.
+        await db.auth.admin.deleteUser(created.user.id).catch(() => {});
+        throw linkErr;
+      }
+      return json({ ok: true, login_email: email });
+    }
+
+    // ── Cambiar la contraseña del acceso ──────────────────────────────────────
+    // No guardamos contraseñas en claro (el portal antiguo de la agencia sí lo
+    // hace y es una deuda conocida): si se pierde, se pone otra.
+    if (action === "reset_login_password") {
+      const id = String(body?.id || "");
+      const password = String(body?.password || "");
+      if (password.length < 8) return json({ error: "La contraseña necesita al menos 8 caracteres" }, 400);
+      const { data: cli } = await db.from("clients")
+        .select("login_user_id").eq("id", id).eq("owner_user_id", user.id).maybeSingle();
+      if (!cli?.login_user_id) return json({ error: "Este cliente no tiene acceso" }, 404);
+      const { error } = await db.auth.admin.updateUserById(cli.login_user_id as string, { password });
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    // ── Quitar el acceso ──────────────────────────────────────────────────────
+    if (action === "remove_login") {
+      const id = String(body?.id || "");
+      const { data: cli } = await db.from("clients")
+        .select("login_user_id").eq("id", id).eq("owner_user_id", user.id).maybeSingle();
+      if (!cli?.login_user_id) return json({ error: "Este cliente no tiene acceso" }, 404);
+      await db.from("clients").update({ login_user_id: null }).eq("id", id).eq("owner_user_id", user.id);
+      await db.auth.admin.deleteUser(cli.login_user_id as string).catch(() => {});
+      return json({ ok: true });
     }
 
     return json({ error: "Acción no reconocida" }, 400);

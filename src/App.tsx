@@ -47,6 +47,7 @@ const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
 const GodTube = lazyWithRetry(() => import("./pages/GodTube"));
 const Partners = lazyWithRetry(() => import("./pages/Partners"));
 const Metrics = lazyWithRetry(() => import("./pages/Metrics"));
+const AreaCliente = lazyWithRetry(() => import("./pages/AreaCliente"));
 
 const queryClient = new QueryClient();
 
@@ -77,6 +78,15 @@ const App = () => (
               {/* Public client onboarding portal — client logs in with the
                   credentials the owner created and sees only their own progress. */}
               <Route path="/o/:slug" element={<OnboardingPortal />} />
+              {/* Entrada del cliente: el mismo login, con una dirección que se le
+                  puede mandar tal cual. Al entrar, ProtectedRoute le lleva a su área. */}
+              <Route path="/acceso-cliente" element={<Auth />} />
+              {/* Área del cliente: fuera de AppLayout a propósito — no tiene la barra
+                  lateral de la aplicación porque no tiene aplicación, sólo su área. */}
+              <Route
+                path="/area-cliente"
+                element={<ProtectedRoute><AreaCliente /></ProtectedRoute>}
+              />
               <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/email-accounts" element={<EmailAccounts />} />
