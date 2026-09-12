@@ -21,16 +21,14 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!user) return <Navigate to="/auth" replace />;
 
-  // La cuenta de acceso de un cliente NO es un cliente de pago: no es suya la
-  // suscripción ni el plan, así que nunca puede toparse con el muro de pago. Y no
-  // es un usuario de la aplicación: sólo existe para mirar su área (y /settings,
-  // para cambiarse la contraseña). Va ANTES de la comprobación de prueba a
-  // propósito; la marca client_login_of la pone el servidor y la congela RLS.
-  if (profile.client_login_of) {
-    const p = location.pathname;
-    if (p === "/area-cliente" || p.startsWith("/settings")) return <>{children}</>;
-    return <Navigate to="/area-cliente" replace />;
-  }
+  // La cuenta de un cliente es una cuenta NORMAL de la plataforma: entra al mismo
+  // producto, con sus propias campañas, buzones, leads y Unibox bajo su user_id
+  // (RLS ya los aísla). Lo único que la acota son sus `allowed_routes`, que escribe
+  // el servidor desde las secciones que le abre su dueño — ver más abajo.
+  //
+  // Nunca se topa con el muro de pago: paga su dueño. Eso lo garantiza
+  // decideAccess (allowed_routes no vacío → "free", así que trialExpired es false);
+  // está fijado en src/test/client-account-access.test.ts.
 
   // Paywall: a NEW self-signup whose 5-day trial ended (and hasn't subscribed) must pay to continue.
   // Staff, admin-created clients, grandfathered accounts and subscribers never reach here — the

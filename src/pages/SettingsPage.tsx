@@ -28,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 import { EmailDomainHealthCard } from "@/components/settings/EmailDomainHealthCard";
 import { BlocklistCard } from "@/components/settings/BlocklistCard";
 import { AiKeyCard } from "@/components/settings/AiKeyCard";
+import { PlanUsageCard } from "@/components/settings/PlanUsageCard";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
   { tier: "starter", features: ["1,000 leads", "3 cuentas de email", "Campañas ilimitadas", "Follow-ups automáticos", "Soporte por email"] },
@@ -397,6 +398,10 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Lo consumido del plan este mes — incluye las cuentas de los clientes,
+              porque sus envíos gastan este mismo plan. Sólo informa: no bloquea. */}
+          <PlanUsageCard tier={tier} isTrialing={isTrialing} />
 
           {/* Billing toggle */}
           <div className="flex items-center justify-center gap-3">

@@ -1,6 +1,10 @@
-// Clientes del usuario de pago: agrupar campañas por cliente y ver sus números
-// por separado. Un cliente NO es una cuenta aparte — vive dentro de esta cuenta
-// (tabla `clients`), así que sus envíos van en el mismo plan.
+// Clientes del usuario de pago: darles cuenta propia en la plataforma y ver sus
+// números por separado.
+//
+// Un cliente con acceso ES una cuenta normal: entra al mismo producto y trabaja
+// con SUS campañas, SUS buzones, SUS leads y SU Unibox, aislados por RLS bajo su
+// propio user_id. Lo que se paga es la PLAZA, y lo que envíe cuenta en el plan de
+// su dueño — de ahí la línea de consumo de la cabecera, que la suma el servidor.
 //
 // El TOPE de clientes lo aplica el servidor (edge function `clients`, que
 // comprueba public.client_slots_for). Aquí el botón se desactiva cuando no
@@ -19,7 +23,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
-import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
+import { PLAN_CONFIG, getPlanLimits, useSubscription } from "@/contexts/SubscriptionContext";
+import { usePlanUsage } from "@/hooks/usePlanUsage";
+import { familyNote, monthlyEmailsLine, usageTone } from "@/lib/plan-usage";
 import { extractLogoColor } from "@/lib/logoColor";
 import {
   Archive,
@@ -35,6 +41,7 @@ import {
   LayoutDashboard,
   Link2,
   Loader2,
+  Mail,
   MessageSquareReply,
   Megaphone,
   Palette,
@@ -47,6 +54,7 @@ import {
   Sparkles,
   Upload,
   UserCog,
+  Users,
   X,
 } from "lucide-react";
 
@@ -81,10 +89,13 @@ export type ClientRow = {
 };
 
 /** Las secciones REALES de la aplicación que se le pueden abrir al cliente, con
- *  el mismo icono que llevan en la barra lateral de la agencia para que se
- *  reconozcan de un vistazo. La lista blanca de verdad está en la edge function
- *  `clients` (y en la BD); esta es la misma lista, palabra por palabra, para no
- *  mandar nunca una clave que el servidor vaya a rechazar. */
+ *  el mismo icono que llevan en la barra lateral para que se reconozcan de un
+ *  vistazo. La lista blanca de verdad está en la edge function `clients` (y en la
+ *  BD, en client_routes_for_sections); esta es la misma lista, palabra por
+ *  palabra, para no mandar nunca una clave que el servidor vaya a rechazar.
+ *
+ *  El cliente entra a la aplicación NORMAL: estas secciones son las suyas, con sus
+ *  propios datos bajo su propio usuario, no una vista de los del dueño. */
 const CLIENT_SECTIONS = [
   {
     key: "dashboard",
@@ -93,16 +104,28 @@ const CLIENT_SECTIONS = [
     help: "Un resumen con sus totales: leads, enviados, respuestas y rebotes.",
   },
   {
+    key: "cuentas",
+    label: "Cuentas de email",
+    icon: Mail,
+    help: "Conecta y gestiona sus propios buzones.",
+  },
+  {
     key: "campanas",
     label: "Campañas",
     icon: Send,
-    help: "La lista de sus campañas con las cifras de cada una.",
+    help: "Crea sus campañas y ve las cifras de cada una.",
+  },
+  {
+    key: "leads",
+    label: "Leads",
+    icon: Users,
+    help: "Sube y gestiona sus listas.",
   },
   {
     key: "unibox",
     label: "Unibox",
     icon: Inbox,
-    help: "Las respuestas que llegan de sus leads, solo de sus campañas.",
+    help: "Las respuestas que llegan a sus buzones, y responder desde ahí.",
   },
   {
     key: "estadisticas",
@@ -226,6 +249,43 @@ function SetupChips({ setup }: { setup?: ClientSetup }) {
         );
       })}
     </div>
+  );
+}
+
+/** El consumo del plan de este mes, sumando al dueño y a sus clientes. Es una
+ *  medida: aquí no se bloquea nada, sólo se cuenta lo que dice el servidor. */
+function PlanConsumoLine() {
+  const { tier, isTrialing } = useSubscription();
+  const { usage, loading, error } = usePlanUsage();
+  const limit = getPlanLimits(tier, isTrialing).emailsPerMonth;
+
+  if (loading) {
+    return (
+      <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" /> Contando los envíos de este mes…
+      </p>
+    );
+  }
+  if (error || !usage) {
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        No pudimos leer el consumo de tu plan. Lo verás en <Link to="/settings" className="font-semibold text-primary hover:underline">Configuración</Link>.
+      </p>
+    );
+  }
+  const tone = usageTone(usage.enviados, limit);
+  const nota = familyNote(usage.cuentas);
+  return (
+    <p className="text-[13px] text-muted-foreground">
+      <span
+        className={`font-semibold tabular-nums ${
+          tone === "over" ? "text-destructive" : tone === "warn" ? "text-warning" : "text-foreground"
+        }`}
+      >
+        {monthlyEmailsLine(usage.enviados, limit)}
+      </span>
+      {nota ? ` · ${nota}` : " · Lo que envíen tus clientes cuenta aquí."}
+    </p>
   );
 }
 
@@ -425,8 +485,11 @@ export default function Clientes() {
               {usage.extra_slots > 0 && ` · ${usage.extra_slots} plaza${usage.extra_slots === 1 ? "" : "s"} extra`}
             </p>
           ) : (
-            <p className="text-[13px] text-muted-foreground">Agrupa tus campañas por cliente.</p>
+            <p className="text-[13px] text-muted-foreground">Dale cuenta propia a cada cliente.</p>
           )}
+          {/* Consumo del plan: esta es la pantalla donde se piensa en clientes, y
+              lo que ellos envían gasta este mismo plan. */}
+          <PlanConsumoLine />
         </div>
         {atCap ? (
           <Tooltip>
@@ -512,8 +575,8 @@ export default function Clientes() {
             <Building2 className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
             <h3 className="mb-2 font-display font-semibold tracking-[-0.03em]">Aún no tienes clientes</h3>
             <p className="mx-auto max-w-md text-[15px] text-muted-foreground">
-              Agrupa campañas por cliente para ver sus resultados por separado. Los envíos de tus clientes van en tu
-              mismo plan.
+              Dale a cada cliente su propia cuenta en la plataforma y ve sus resultados por separado. Lo que envíen va en
+              tu mismo plan.
             </p>
           </CardContent>
         </Card>
@@ -1044,7 +1107,7 @@ function ClientSetupDialog({
                 <PhaseHeader
                   n={2}
                   title="Acceso"
-                  help="La cuenta con la que el cliente entra a ver sus resultados. Solo puede mirar: no crea, no cambia, no borra."
+                  help="La cuenta con la que el cliente entra a la plataforma. Es una cuenta normal: trabaja con sus propios datos, y sólo ve las secciones que le abras en la fase 5."
                 />
                 {client.login_email ? (
                   <>
@@ -1149,7 +1212,7 @@ function ClientSetupDialog({
 
             {step === "logo" && (
               <>
-                <PhaseHeader n={3} title="Logo" help="El logo del cliente. Lo verá en la cabecera de su área." />
+                <PhaseHeader n={3} title="Logo" help="El logo del cliente. Lo verá en la barra lateral al entrar." />
                 <div className="flex flex-wrap items-center gap-3">
                   <input
                     ref={fileRef}
@@ -1189,7 +1252,7 @@ function ClientSetupDialog({
 
             {step === "colores" && (
               <>
-                <PhaseHeader n={4} title="Colores" help="El color con el que se pinta su área. Así la ve él." />
+                <PhaseHeader n={4} title="Colores" help="El color con el que se le pinta la plataforma. Así la ve él." />
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="space-y-1">
                     <Label htmlFor="fase4-color">Color de marca</Label>
@@ -1255,7 +1318,7 @@ function ClientSetupDialog({
                 <PhaseHeader
                   n={5}
                   title="Qué puede ver"
-                  help="Marca las secciones de la aplicación que quieres abrirle. Todo lo demás no existe para él."
+                  help="Marca las secciones de la plataforma que quieres abrirle. Trabajará en ellas con sus propios datos; todo lo demás no existe para él."
                 />
                 <div className="space-y-2">
                   {CLIENT_SECTIONS.map((s) => {
@@ -1311,7 +1374,7 @@ function ClientSetupDialog({
                       Entra con <span className="font-mono text-foreground">{client.login_email}</span> y ve
                       {" "}
                       {(client.allowed_sections || []).length} sección
-                      {(client.allowed_sections || []).length === 1 ? "" : "es"} de su área.
+                      {(client.allowed_sections || []).length === 1 ? "" : "es"} de la plataforma.
                     </p>
                   </div>
                 ) : (
@@ -1334,6 +1397,12 @@ function ClientSetupDialog({
                   </div>
                 )}
 
+                {/* Qué es, exactamente, lo que el cliente se lleva. */}
+                <PhaseNote>
+                  Entra en la plataforma con su cuenta y trabaja con sus propias campañas, buzones y respuestas; lo que
+                  envíe cuenta en tu plan.
+                </PhaseNote>
+
                 <div className="space-y-1">
                   <Label htmlFor="fase-final-enlace">Enlace de acceso del cliente</Label>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1344,7 +1413,7 @@ function ClientSetupDialog({
                   </div>
                   <p className="text-[13px] text-muted-foreground">
                     <Link2 className="mr-1 inline h-3.5 w-3.5" />
-                    Entra ahí con su email y su contraseña y aterriza directamente en su área.
+                    Entra ahí con su email y su contraseña y aterriza directamente en la plataforma.
                   </p>
                 </div>
 

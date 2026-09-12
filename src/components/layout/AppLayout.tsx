@@ -32,9 +32,9 @@ export function AppLayout() {
   // Per-client branding: tint the accent color from brand_color.
   const brandStyle = brandStyleFor(profile.brand_color);
 
-  // La cuenta de acceso de un cliente no tiene aplicación: sólo su área de lectura.
-  // Aquí sólo puede aterrizar en /settings (su contraseña), y sin barra lateral.
-  const isClientLogin = !!profile.client_login_of;
+  // La cuenta de un cliente usa el MISMO envoltorio que cualquier otra: barra
+  // lateral, barra superior y navegación inferior. Lo que ve dentro lo deciden sus
+  // `allowed_routes` (las escribe el servidor), no una excusa de interfaz.
 
   // Access control: a client (allowed_routes set) can't reach a disallowed route by URL.
   const allowed = profile.allowed_routes;
@@ -56,26 +56,24 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen" style={brandStyle}>
       {/* Overlay for mobile */}
-      {isMobile && sidebarOpen && !isClientLogin && (
+      {isMobile && sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/50"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {!isClientLogin && (
-        <AppSidebar
-          isMobile={isMobile}
-          isOpen={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          collapsed={isCollapsed}
-          onToggleCollapse={toggleCollapsed}
-        />
-      )}
+      <AppSidebar
+        isMobile={isMobile}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        collapsed={isCollapsed}
+        onToggleCollapse={toggleCollapsed}
+      />
 
       <div
         className={`flex flex-1 flex-col transition-[margin] duration-200 ${
-          isClientLogin ? "ml-0" : isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"
+          isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"
         }`}
       >
         <Topbar onMenuToggle={() => setSidebarOpen(true)} isMobile={isMobile} />
@@ -84,7 +82,7 @@ export function AppLayout() {
         </main>
       </div>
 
-      {isMobile && !isClientLogin && <MobileBottomNav />}
+      {isMobile && <MobileBottomNav />}
 
       <KeepSessionBanner />
       <PushPrompt />

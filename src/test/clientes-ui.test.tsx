@@ -6,12 +6,15 @@ import { ConfirmProvider } from "@/hooks/useConfirm";
 import Clientes, { type ClientRow, type ClientUsage } from "@/pages/Clientes";
 
 // La página habla con la edge function `clients` (el único sitio donde se aplica
-// el tope), así que el doble de prueba es el fetch + la sesión de Supabase.
+// el tope), así que el doble de prueba es el fetch + la sesión de Supabase. El
+// consumo del plan viene de dos RPC del servidor (`rpc`), que cada test ajusta.
+let rpcResults: Record<string, { data: any; error: any }>;
+
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     auth: { getSession: () => Promise.resolve({ data: { session: { access_token: "t" } }, error: null }) },
     from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }) }),
-    rpc: () => Promise.resolve({ data: null, error: null }),
+    rpc: (fn: string) => Promise.resolve(rpcResults[fn] ?? { data: null, error: null }),
     storage: {
       from: () => ({
         upload: () => Promise.resolve({ data: { path: "p" }, error: null }),
@@ -20,6 +23,21 @@ vi.mock("@/integrations/supabase/client", () => ({
     },
   },
 }));
+
+// El plan (tier) y el usuario los dan los contextos de la aplicación; aquí sólo
+// interesa que la página pinte lo que el servidor le diga, así que se fijan.
+// Los objetos son CONSTANTES a propósito: si cambiaran de identidad en cada
+// render, cualquier hook que dependa de ellos pediría las cifras en bucle.
+vi.mock("@/contexts/AuthContext", () => {
+  const auth = { user: { id: "u1", email: "dueno@agencia.com" }, loading: false };
+  return { useAuth: () => auth };
+});
+
+vi.mock("@/contexts/SubscriptionContext", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/contexts/SubscriptionContext")>();
+  const sub = { tier: "growth" as const, isTrialing: false };
+  return { ...real, useSubscription: () => sub };
+});
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
@@ -64,6 +82,13 @@ const fetchMock = vi.fn(async (_url: string, init: any) => {
 
 beforeEach(() => {
   calls = [];
+  rpcResults = {
+    my_monthly_send_usage: {
+      data: [{ enviados: 12345, desde: "2026-09-01T00:00:00Z", hasta: "2026-10-01T00:00:00Z", cuentas: 1 }],
+      error: null,
+    },
+    my_mailbox_usage: { data: [{ conectados: 37, totales: 40 }], error: null },
+  };
   routes = {
     list: { status: 200, body: { clients: [client("vera", "Clínica Vera"), client("nomo", "Nomo"), client("adwake", "Adwake")], usage: usage() } },
   };
@@ -201,13 +226,50 @@ describe("Clientes", () => {
   it("explica qué es un cliente cuando no hay ninguno", async () => {
     routes.list.body = { clients: [], usage: usage({ used: 0, remaining: 5 }) };
     renderPage();
-    expect(await screen.findByText(/Agrupa campañas por cliente para ver sus resultados por separado/)).toBeInTheDocument();
+    expect(await screen.findByText(/Dale a cada cliente su propia cuenta en la plataforma/)).toBeInTheDocument();
   });
 
   it("avisa cuando la carga falla en vez de mostrar una lista vacía", async () => {
     routes.list = { status: 500, body: { error: "boom" } };
     renderPage();
     expect(await screen.findByText("No pudimos cargar tus clientes")).toBeInTheDocument();
+  });
+});
+
+// ── Consumo del plan en la cabecera ───────────────────────────────────────────
+// La cifra la suma el SERVIDOR sobre toda la familia del plan (el dueño y sus
+// cuentas de cliente). Aquí sólo se comprueba que se pinta lo que llega, que se
+// dice de dónde sale, y que un fallo se cuenta en vez de inventar un 0.
+describe("Clientes · consumo del plan", () => {
+  it("dice los correos del mes contra el tope del plan", async () => {
+    renderPage();
+    expect(await screen.findByText("12.345 de 180.000 correos este mes")).toBeInTheDocument();
+  });
+
+  it("avisa de que la cifra incluye las cuentas de los clientes cuando el servidor ha sumado más de una", async () => {
+    rpcResults.my_monthly_send_usage.data = [
+      { enviados: 150000, desde: "2026-09-01T00:00:00Z", hasta: "2026-10-01T00:00:00Z", cuentas: 4 },
+    ];
+    renderPage();
+    expect(await screen.findByText("150.000 de 180.000 correos este mes")).toBeInTheDocument();
+    expect(screen.getByText(/Incluye lo que envían las 3 cuentas de tus clientes/)).toBeInTheDocument();
+  });
+
+  it("no bloquea nada al pasarse del tope: sigue pudiendo añadir clientes", async () => {
+    rpcResults.my_monthly_send_usage.data = [
+      { enviados: 200000, desde: "2026-09-01T00:00:00Z", hasta: "2026-10-01T00:00:00Z", cuentas: 2 },
+    ];
+    renderPage();
+    expect(await screen.findByText("200.000 de 180.000 correos este mes")).toBeInTheDocument();
+    expect(addButton()).not.toBeDisabled();
+  });
+
+  it("si la RPC falla lo dice, no muestra un 0 falso", async () => {
+    rpcResults.my_monthly_send_usage = { data: null, error: { message: "permission denied" } };
+    rpcResults.my_mailbox_usage = { data: null, error: { message: "permission denied" } };
+    renderPage();
+    expect(await screen.findByText(/No pudimos leer el consumo de tu plan/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 de 180.000 correos este mes/)).not.toBeInTheDocument();
   });
 });
 
@@ -288,7 +350,7 @@ describe("Clientes · configuración por fases", () => {
     expect(screen.getByRole("button", { name: /Quitar acceso/ })).toBeInTheDocument();
   });
 
-  it("la fase 5 ofrece las cinco secciones REALES de la aplicación, con su explicación", async () => {
+  it("la fase 5 ofrece las SIETE secciones de la lista blanca, con su explicación", async () => {
     only(
       client("vera", "Clínica Vera", {
         allowed_sections: [],
@@ -299,14 +361,47 @@ describe("Clientes · configuración por fases", () => {
     await openConfig("Clínica Vera");
     expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
 
-    for (const label of ["Dashboard", "Campañas", "Unibox", "Estadísticas", "IA"]) {
+    // Las mismas siete de client_routes_for_sections, ni una más.
+    for (const label of [
+      "Dashboard",
+      "Cuentas de email",
+      "Campañas",
+      "Leads",
+      "Unibox",
+      "Estadísticas",
+      "IA",
+    ]) {
       expect(screen.getByRole("checkbox", { name: new RegExp(label) })).toBeInTheDocument();
     }
-    expect(screen.getByText("Las respuestas que llegan de sus leads, solo de sus campañas.")).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(7);
+    // Las dos nuevas se explican por lo que el cliente HACE con ellas, no por lo que mira.
+    expect(screen.getByText("Conecta y gestiona sus propios buzones.")).toBeInTheDocument();
+    expect(screen.getByText("Sube y gestiona sus listas.")).toBeInTheDocument();
     expect(screen.getByText("La evolución de envíos y respuestas por día.")).toBeInTheDocument();
     // Las secciones inventadas de antes ya no existen.
     expect(screen.queryByRole("checkbox", { name: /Informes/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: /Respuestas/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /^Respuestas/ })).not.toBeInTheDocument();
+  });
+
+  it("marcar «Cuentas de email» y «Leads» las manda al servidor con su clave de la lista blanca", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        allowed_sections: ["dashboard"],
+        setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
+      }),
+    );
+    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["cuentas", "dashboard", "leads"] } };
+    renderPage();
+    await openConfig("Clínica Vera");
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Cuentas de email/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Leads/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
+    await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
+    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual([
+      "dashboard",
+      "cuentas",
+      "leads",
+    ]);
   });
 
   it("set_sections viaja SOLO con secciones de la lista blanca", async () => {

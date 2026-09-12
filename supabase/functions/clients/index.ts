@@ -30,6 +30,16 @@ const EXTRA_CLIENT_SLOT_USD = 15;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+/** Pone las rutas de la cuenta del cliente a partir de sus secciones.
+ *  La traducción sección→ruta vive en SQL (client_routes_for_sections) para que
+ *  el menú y la restricción no puedan discrepar. */
+async function syncClientRoutes(db: any, loginUserId: string, sections: string[]) {
+  const { data: routes } = await db.rpc("client_routes_for_sections", { p_sections: sections });
+  await db.from("profiles")
+    .update({ allowed_routes: (routes as string[]) || [] })
+    .eq("user_id", loginUserId);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -281,15 +291,20 @@ Deno.serve(async (req) => {
       const raw = Array.isArray(body?.sections) ? body.sections : [];
       // Lista blanca: sólo estas secciones existen en el área del cliente.
       // Las secciones REALES de la aplicación (la interfaz repite esta lista).
-      const ALLOWED = ["dashboard", "campanas", "unibox", "estadisticas", "ia"];
+      // Las secciones REALES de la aplicación. El cliente entra en la plataforma
+      // normal, así que para crear campañas necesita también buzones y leads.
+      const ALLOWED = ["dashboard", "cuentas", "campanas", "leads", "unibox", "estadisticas", "ia"];
       const sections = [...new Set(raw.map((s: unknown) => String(s)))].filter((s) => ALLOWED.includes(s));
       if (!id) return json({ error: "Falta el id" }, 400);
       const { data: upd, error } = await db.from("clients")
         .update({ allowed_sections: sections })
         .eq("id", id).eq("owner_user_id", user.id)
-        .select("id, allowed_sections").maybeSingle();
+        .select("id, allowed_sections, login_user_id").maybeSingle();
       if (error) throw error;
       if (!upd) return json({ error: "Cliente no encontrado" }, 404);
+      // Si el cliente ya tiene cuenta, sus rutas se ponen al día: son lo que le
+      // limita la aplicación, así que deben seguir a las secciones.
+      if (upd.login_user_id) await syncClientRoutes(db, upd.login_user_id as string, sections);
       return json({ ok: true, allowed_sections: upd.allowed_sections });
     }
 
@@ -321,7 +336,11 @@ Deno.serve(async (req) => {
       }
 
       // La marca va en el perfil (lo crea el trigger de alta) y el enlace en clients.
+      // Y con ella las RUTAS: el cliente usa la plataforma normal, limitada a las
+      // secciones que le haya abierto su dueño.
       await db.from("profiles").update({ client_login_of: id }).eq("user_id", created.user.id);
+      const { data: secRow } = await db.from("clients").select("allowed_sections").eq("id", id).maybeSingle();
+      await syncClientRoutes(db, created.user.id, (secRow?.allowed_sections as string[]) || []);
       const { error: linkErr } = await db.from("clients")
         .update({ login_user_id: created.user.id }).eq("id", id).eq("owner_user_id", user.id);
       if (linkErr) {
