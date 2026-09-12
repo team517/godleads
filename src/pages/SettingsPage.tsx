@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
-import { useSubscription, PLAN_CONFIG, FREE_LIMITS, TRIAL_LIMITS, PlanTier, clientsFeature } from "@/contexts/SubscriptionContext";
+import { useSubscription, PLAN_CONFIG, FREE_LIMITS, TRIAL_LIMITS, PlanTier, clientsFeature, emailsFeature } from "@/contexts/SubscriptionContext";
 import { toast } from "sonner";
 import { Check, Crown, Zap, Loader2, ExternalLink, XCircle, Camera, Shield } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -417,6 +417,7 @@ export default function SettingsPage() {
               // Los clientes incluidos salen de PLAN_CONFIG, igual que leads y cuentas.
               const feats = [
                 ...features.slice(0, 2),
+                emailsFeature(planTier as Exclude<PlanTier, "free">),
                 clientsFeature(planTier as Exclude<PlanTier, "free">),
                 ...features.slice(2),
               ];

@@ -280,7 +280,8 @@ Deno.serve(async (req) => {
       const id = String(body?.id || "");
       const raw = Array.isArray(body?.sections) ? body.sections : [];
       // Lista blanca: sólo estas secciones existen en el área del cliente.
-      const ALLOWED = ["resumen", "campanas", "respuestas", "informes"];
+      // Las secciones REALES de la aplicación (la interfaz repite esta lista).
+      const ALLOWED = ["dashboard", "campanas", "unibox", "estadisticas", "ia"];
       const sections = [...new Set(raw.map((s: unknown) => String(s)))].filter((s) => ALLOWED.includes(s));
       if (!id) return json({ error: "Falta el id" }, 400);
       const { data: upd, error } = await db.from("clients")

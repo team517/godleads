@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Wordmark } from "@/components/Wordmark";
-import { PLAN_CONFIG, clientsFeature } from "@/contexts/SubscriptionContext";
+import { PLAN_CONFIG, clientsFeature, emailsFeature } from "@/contexts/SubscriptionContext";
 import "@/styles/onepulso-landing.css";
 
 /* =============================================================================
@@ -1413,6 +1413,7 @@ function Precios() {
                 </div>
                 <p className="mb-2 mt-3 text-[15px] leading-[1.5] text-secondary-foreground">{p.desc}</p>
                 {/* Clientes incluidos — la misma cifra que aplica el plan. */}
+                <p className="mb-1 text-[13px] font-semibold text-primary">{emailsFeature(p.key)}</p>
                 <p className="mb-5 text-[13px] font-semibold text-primary">{clientsFeature(p.key)}</p>
                 <a
                   href={p.cta.href}

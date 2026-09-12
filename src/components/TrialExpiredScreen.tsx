@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, Zap, Loader2, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { PLAN_CONFIG, PlanTier, clientsFeature } from "@/contexts/SubscriptionContext";
+import { PLAN_CONFIG, PlanTier, clientsFeature, emailsFeature } from "@/contexts/SubscriptionContext";
 import { toast } from "sonner";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
@@ -67,6 +67,7 @@ export function TrialExpiredScreen() {
             // Clientes incluidos — misma fuente que el tope real del plan.
             const feats = [
               ...features.slice(0, 2),
+              emailsFeature(planTier as Exclude<PlanTier, "free">),
               clientsFeature(planTier as Exclude<PlanTier, "free">),
               ...features.slice(2),
             ];

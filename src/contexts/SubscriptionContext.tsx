@@ -9,7 +9,11 @@ export const PLAN_CONFIG = {
   starter: {
     label: "Starter",
     maxLeads: 1000,
-    maxAccounts: 3,
+    // Correos al mes: es el metro con el que se vende (como Smartlead). El motor
+    // topa cada buzón en 30 al día, así que los buzones incluidos salen de la
+    // cifra mensual: 6.000 / 30 días = 200 al día = 7 buzones. Se dan 10.
+    emailsPerMonth: 6000,
+    maxAccounts: 10,
     // Clientes que puede crear el usuario dentro de su cuenta (sección Clientes).
     // Es la MISMA cifra que aplica el servidor en public.client_slots_for; aquí
     // solo sirve para que los precios digan la verdad — el tope no se decide aquí.
@@ -20,8 +24,12 @@ export const PLAN_CONFIG = {
   },
   growth: {
     label: "Growth",
-    maxLeads: 10000,
-    maxAccounts: 15,
+    maxLeads: 100000,
+    // 180.000 al mes = 6.000 al día. A 30 por buzón hacen falta 200 buzones:
+    // los 15 de antes solo podían mandar unos 13.500 al mes, trece veces menos
+    // que lo que promete el plan.
+    emailsPerMonth: 180000,
+    maxAccounts: 200,
     maxClients: 5,
     monthly: { priceId: "price_1T45T82ObXNkJIexHb0OjLpo", price: 79 },
     annual: { priceId: "price_1T45TQ2ObXNkJIexO5rlaZOv", price: 790 },
@@ -30,6 +38,7 @@ export const PLAN_CONFIG = {
   scale: {
     label: "Scale",
     maxLeads: Infinity,
+    emailsPerMonth: 500000,   // 500.000 al mes ≈ 16.700 al día
     maxAccounts: Infinity,
     maxClients: 10,
     monthly: { priceId: "price_1T45Tb2ObXNkJIex9ZwHkVt8", price: 199 },
@@ -38,6 +47,12 @@ export const PLAN_CONFIG = {
   },
 } as const;
 
+/** Línea de "correos al mes" para las tarjetas de precio. Sale de PLAN_CONFIG,
+ *  la misma fuente que cobra Stripe. */
+export function emailsFeature(tier: Exclude<PlanTier, "free">): string {
+  return `${PLAN_CONFIG[tier].emailsPerMonth.toLocaleString("es-ES")} correos al mes`;
+}
+
 /** Línea de "clientes incluidos" para las tarjetas de precio. Sale de PLAN_CONFIG
  *  para que la interfaz no pueda contradecir al plan. */
 export function clientsFeature(tier: Exclude<PlanTier, "free">): string {
@@ -45,8 +60,8 @@ export function clientsFeature(tier: Exclude<PlanTier, "free">): string {
   return n === 0 ? "Sin gestión de clientes" : `${n} clientes`;
 }
 
-export const FREE_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };
-export const TRIAL_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };
+export const FREE_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity, emailsPerMonth: Infinity, maxClients: 0 };
+export const TRIAL_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity, emailsPerMonth: Infinity, maxClients: 0 };
 
 function getTierFromProductId(productId: string | null): PlanTier {
   if (!productId) return "free";
@@ -58,7 +73,12 @@ function getTierFromProductId(productId: string | null): PlanTier {
 
 export function getPlanLimits(tier: PlanTier, _isTrialing: boolean) {
   if (tier === "free") return FREE_LIMITS;
-  return { maxLeads: PLAN_CONFIG[tier].maxLeads, maxAccounts: PLAN_CONFIG[tier].maxAccounts };
+  return {
+    maxLeads: PLAN_CONFIG[tier].maxLeads,
+    maxAccounts: PLAN_CONFIG[tier].maxAccounts,
+    emailsPerMonth: PLAN_CONFIG[tier].emailsPerMonth,
+    maxClients: PLAN_CONFIG[tier].maxClients,
+  };
 }
 
 interface SubscriptionContextType {

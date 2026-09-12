@@ -23,12 +23,16 @@ import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
 import { extractLogoColor } from "@/lib/logoColor";
 import {
   Archive,
+  BarChart3,
+  Brain,
   Building2,
   Check,
   Copy,
   Eye,
   Image as ImageIcon,
+  Inbox,
   KeyRound,
+  LayoutDashboard,
   Link2,
   Loader2,
   MessageSquareReply,
@@ -76,13 +80,42 @@ export type ClientRow = {
   setup?: ClientSetup;
 };
 
-/** Las cuatro secciones del área del cliente. La lista blanca de verdad está en
- *  la edge function; esta es la misma lista para no mandar nunca otra cosa. */
+/** Las secciones REALES de la aplicación que se le pueden abrir al cliente, con
+ *  el mismo icono que llevan en la barra lateral de la agencia para que se
+ *  reconozcan de un vistazo. La lista blanca de verdad está en la edge function
+ *  `clients` (y en la BD); esta es la misma lista, palabra por palabra, para no
+ *  mandar nunca una clave que el servidor vaya a rechazar. */
 const CLIENT_SECTIONS = [
-  { key: "resumen", label: "Resumen", help: "Los totales de sus campañas: leads, enviados, respuestas y rebotes." },
-  { key: "campanas", label: "Campañas", help: "La lista de sus campañas, con las cifras de cada una." },
-  { key: "respuestas", label: "Respuestas", help: "Las respuestas que llegan de sus leads." },
-  { key: "informes", label: "Informes", help: "Los informes de resultados que le preparas." },
+  {
+    key: "dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    help: "Un resumen con sus totales: leads, enviados, respuestas y rebotes.",
+  },
+  {
+    key: "campanas",
+    label: "Campañas",
+    icon: Send,
+    help: "La lista de sus campañas con las cifras de cada una.",
+  },
+  {
+    key: "unibox",
+    label: "Unibox",
+    icon: Inbox,
+    help: "Las respuestas que llegan de sus leads, solo de sus campañas.",
+  },
+  {
+    key: "estadisticas",
+    label: "Estadísticas",
+    icon: BarChart3,
+    help: "La evolución de envíos y respuestas por día.",
+  },
+  {
+    key: "ia",
+    label: "IA",
+    icon: Brain,
+    help: "Cómo la IA ha clasificado sus respuestas: interesados, preguntas, no interesados…",
+  },
 ] as const;
 
 /** Las fases, en orden de recorrido. `key` coincide con el objeto `setup`. */
@@ -1219,28 +1252,43 @@ function ClientSetupDialog({
 
             {step === "permisos" && (
               <>
-                <PhaseHeader n={5} title="Qué puede ver" help="Marca las secciones que quieres abrirle. Todo lo demás no existe para él." />
+                <PhaseHeader
+                  n={5}
+                  title="Qué puede ver"
+                  help="Marca las secciones de la aplicación que quieres abrirle. Todo lo demás no existe para él."
+                />
                 <div className="space-y-2">
-                  {CLIENT_SECTIONS.map((s) => (
-                    <label
-                      key={s.key}
-                      htmlFor={`fase5-${s.key}`}
-                      className={`flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5 transition-colors ${
-                        sections.includes(s.key) ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted/40"
-                      }`}
-                    >
-                      <Checkbox
-                        id={`fase5-${s.key}`}
-                        className="mt-0.5"
-                        checked={sections.includes(s.key)}
-                        onCheckedChange={() => toggleSection(s.key)}
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-[15px] font-semibold text-foreground">{s.label}</span>
-                        <span className="block text-[13px] text-muted-foreground">{s.help}</span>
-                      </span>
-                    </label>
-                  ))}
+                  {CLIENT_SECTIONS.map((s) => {
+                    const on = sections.includes(s.key);
+                    return (
+                      <label
+                        key={s.key}
+                        htmlFor={`fase5-${s.key}`}
+                        className={`flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5 transition-colors ${
+                          on ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted/40"
+                        }`}
+                      >
+                        <Checkbox
+                          id={`fase5-${s.key}`}
+                          className="mt-0.5"
+                          checked={on}
+                          onCheckedChange={() => toggleSection(s.key)}
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+                            on ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          <s.icon className="h-4 w-4" strokeWidth={1.9} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[15px] font-semibold text-foreground">{s.label}</span>
+                          <span className="block text-[13px] text-muted-foreground">{s.help}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
                 {sections.length === 0 && (
                   <PhaseNote>Sin ninguna marcada, el cliente entra y no ve nada. Marca al menos una.</PhaseNote>

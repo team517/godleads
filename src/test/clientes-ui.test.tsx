@@ -288,38 +288,59 @@ describe("Clientes · configuración por fases", () => {
     expect(screen.getByRole("button", { name: /Quitar acceso/ })).toBeInTheDocument();
   });
 
+  it("la fase 5 ofrece las cinco secciones REALES de la aplicación, con su explicación", async () => {
+    only(
+      client("vera", "Clínica Vera", {
+        allowed_sections: [],
+        setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
+      }),
+    );
+    renderPage();
+    await openConfig("Clínica Vera");
+    expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
+
+    for (const label of ["Dashboard", "Campañas", "Unibox", "Estadísticas", "IA"]) {
+      expect(screen.getByRole("checkbox", { name: new RegExp(label) })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Las respuestas que llegan de sus leads, solo de sus campañas.")).toBeInTheDocument();
+    expect(screen.getByText("La evolución de envíos y respuestas por día.")).toBeInTheDocument();
+    // Las secciones inventadas de antes ya no existen.
+    expect(screen.queryByRole("checkbox", { name: /Informes/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Respuestas/ })).not.toBeInTheDocument();
+  });
+
   it("set_sections viaja SOLO con secciones de la lista blanca", async () => {
     only(
       client("vera", "Clínica Vera", {
         // Una sección inventada (o antigua) no debe salir de aquí.
-        allowed_sections: ["resumen", "campanas", "loquesea"],
+        allowed_sections: ["dashboard", "campanas", "loquesea"],
         setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
       }),
     );
-    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["resumen", "campanas"] } };
+    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["dashboard", "campanas"] } };
     renderPage();
     await openConfig("Clínica Vera");
     expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
     await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
-    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["resumen", "campanas"]);
+    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["dashboard", "campanas"]);
   });
 
   it("marcar una sección la añade a lo que se guarda", async () => {
     only(
       client("vera", "Clínica Vera", {
-        allowed_sections: ["resumen"],
+        allowed_sections: ["dashboard"],
         setup: { datos: true, acceso: true, logo: true, colores: true, permisos: false, campanas: true },
       }),
     );
-    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["resumen", "informes"] } };
+    routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["dashboard", "estadisticas"] } };
     renderPage();
     await openConfig("Clínica Vera");
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Informes/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Estadísticas/ }));
     fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
     await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
-    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["resumen", "informes"]);
+    expect(calls.find((c) => c.action === "set_sections")!.payload.sections).toEqual(["dashboard", "estadisticas"]);
   });
 
   it("el resumen dice qué falta en vez de afirmar que está listo, y da el enlace de acceso", async () => {
@@ -341,7 +362,7 @@ describe("Clientes · configuración por fases", () => {
     only(
       client("vera", "Clínica Vera", {
         login_email: "ana@verasalud.com",
-        allowed_sections: ["resumen", "campanas"],
+        allowed_sections: ["dashboard", "campanas"],
         setup: { datos: true, acceso: true, logo: true, colores: true, permisos: true, campanas: true },
       }),
     );
