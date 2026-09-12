@@ -66,7 +66,7 @@ type TabKey = (typeof TABS)[number]["key"];
  *  (`success`/`warning`/`info`/`muted`), que ya se aclaran en `.dark`, así que la
  *  pastilla sigue al tema sin necesidad de variantes `dark:`. */
 const STATUS_PILL_BASE =
-  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[13px] font-semibold leading-none";
+  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-[3px] text-[13px] font-semibold leading-none";
 
 const statusPill: Record<string, { label: string; className: string; dot: string }> = {
   active: {
@@ -274,7 +274,7 @@ export default function CampaignsTable({
                               dark row. */}
                           {mgr && (
                             <span
-                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border py-0.5 pl-0.5 pr-2 text-[10.5px] font-semibold bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
+                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border py-0.5 pl-0.5 pr-2 text-[10.5px] font-semibold bg-[color-mix(in_srgb,var(--mgr)_9%,transparent)] border-[color-mix(in_srgb,var(--mgr)_22%,transparent)] text-[color:var(--mgr)] dark:bg-[color-mix(in_srgb,var(--mgr)_22%,transparent)] dark:border-[color-mix(in_srgb,var(--mgr)_42%,transparent)] dark:text-[color:color-mix(in_srgb,var(--mgr)_70%,white)]"
                               style={{ "--mgr": mgr.color } as any}
                               title={"Responsable: " + mgr.name}
                             >

@@ -74,7 +74,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 const pill =
-  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[13px] font-semibold leading-none whitespace-nowrap";
+  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-[3px] text-[13px] font-semibold leading-none whitespace-nowrap";
 
 const PILLS = {
   ok: "bg-emerald-50 text-emerald-700 border-emerald-600/30 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30",
@@ -155,7 +155,7 @@ function LimitCell({ row, compact }: { row: Row; compact?: boolean }) {
         className={cn("h-1.5 bg-muted", full ? "[&>div]:bg-emerald-500" : "[&>div]:bg-violet-500")}
       />
       {accRampDay !== null && (
-        <span className="inline-block rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">
+        <span className="inline-block rounded-md bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">
           🐢 Día {accRampDay}
         </span>
       )}
@@ -320,7 +320,7 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
           {campaignTags.map((t) => (
             <span
               key={t}
-              className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground"
+              className="inline-flex items-center gap-1 rounded-md border border-primary/25 bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground"
             >
               <Tag className="h-3 w-3" /> {t}
             </span>

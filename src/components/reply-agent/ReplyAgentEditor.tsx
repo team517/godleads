@@ -419,7 +419,7 @@ export function ReplyAgentEditor({
                               type="button"
                               onClick={() => toggleTag(tag)}
                               className={cn(
-                                "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-all",
+                                "inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-all",
                                 draft.account_tags.includes(tag)
                                   ? "border-transparent bg-primary text-primary-foreground shadow-btn"
                                   : "border-border bg-card text-muted-foreground hover:bg-muted/60",

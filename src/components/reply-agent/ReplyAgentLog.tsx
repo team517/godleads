@@ -129,7 +129,7 @@ export function ReplyAgentLog() {
           type="button"
           onClick={() => setFilter(null)}
           className={cn(
-            "rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
+            "rounded-md border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
             filter === null ? "border-transparent bg-primary text-primary-foreground shadow-btn" : "border-border bg-card text-muted-foreground hover:bg-muted/60",
           )}
         >
@@ -141,7 +141,7 @@ export function ReplyAgentLog() {
             type="button"
             onClick={() => setFilter(filter === s ? null : s)}
             className={cn(
-              "rounded-full border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
+              "rounded-md border px-3 py-1.5 text-[13px] font-semibold leading-none shadow-rest transition-colors",
               filter === s ? "border-transparent bg-primary text-primary-foreground shadow-btn" : "border-border bg-card text-muted-foreground hover:bg-muted/60",
             )}
           >
