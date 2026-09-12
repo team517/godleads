@@ -74,6 +74,9 @@ export default function Campaigns() {
   // Instant re-entry: paint the cached list immediately, refresh in background.
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("campaigns:list") || []);
   const [managers, setManagers] = useState<{ id: string; name: string; color: string }[]>([]);
+  // Clientes de la cuenta — UNA consulta para toda la lista (el chip de cada fila
+  // sale de aquí; nunca una consulta por campaña).
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("campaigns:list"));
   // All campaigns' metrics from ONE server-side RPC → cards render instantly with
   // zero per-card queries (was: up to 5000 sent_emails rows downloaded PER card).
@@ -94,6 +97,8 @@ export default function Campaigns() {
     // Responsables ("quién se encarga") — para el badge de cada tarjeta.
     (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id)
       .then(({ data: mgrs }: any) => setManagers(mgrs || []));
+    (supabase as any).from("clients").select("id, name").eq("owner_user_id", user.id).is("archived_at", null)
+      .then(({ data: cli }: any) => setClients(cli || []));
     setCampaigns(data || []);
     cacheSet("campaigns:list", data || []);
     setLoading(false);
@@ -452,6 +457,7 @@ export default function Campaigns() {
           <CampaignsTable
             campaigns={campaigns}
             managers={managers}
+            clients={clients}
             progressMap={progressMap}
             metricsFor={metricsFor}
             onSelect={setSelectedId}

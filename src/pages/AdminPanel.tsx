@@ -200,7 +200,7 @@ export default function AdminPanel() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)]">
+    <div className="flex flex-col gap-6 pb-10">
       {/* Header */}
       <div className="flex items-center justify-between px-1 pb-4">
         <div>
@@ -233,11 +233,11 @@ export default function AdminPanel() {
       </div>
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex h-[60vh] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="flex flex-1 gap-0 rounded-lg border bg-card overflow-hidden min-h-0">
+        <div className="flex h-[60vh] gap-0 rounded-lg border bg-card overflow-hidden min-h-0">
           {/* User list */}
           <div className="w-[400px] flex-shrink-0 flex flex-col border-r bg-muted/20">
             <div className="p-3 border-b bg-card">
@@ -307,6 +307,132 @@ export default function AdminPanel() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Usuarios registrados y cuántos clientes tiene cada uno */}
+      <UsersAndClients />
+    </div>
+  );
+}
+
+type UserClientRow = {
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  company_name: string | null;
+  created_at: string;
+  tier: string;
+  status: string;
+  extra_slots: number;
+  slots: number;
+  clients_count: number;
+};
+
+/** Tabla "Usuarios y clientes": sale del RPC admin_users_with_client_counts(), que
+ *  YA comprueba el rol admin dentro y ordena en el servidor. Si responde
+ *  `forbidden` (o cualquier error), la sección simplemente no se muestra. */
+function UsersAndClients() {
+  const [rows, setRows] = useState<UserClientRow[] | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await (supabase as any).rpc("admin_users_with_client_counts");
+    if (error) {
+      setHidden(true);
+      setLoading(false);
+      return;
+    }
+    setRows((data as UserClientRow[]) || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (hidden) return null;
+
+  return (
+    <div className="space-y-3 px-1">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-[19px] font-semibold tracking-[-0.03em] flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-primary" /> Usuarios y clientes
+          </h2>
+          <p className="text-[13px] text-muted-foreground">
+            Quién se ha registrado y cuántos clientes ha creado dentro de su cuenta.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="gap-2" onClick={load} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Actualizar
+        </Button>
+      </div>
+
+      {loading && !rows ? (
+        <div className="flex items-center justify-center rounded-md border border-border bg-card py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border bg-card shadow-rest">
+          <table className="w-full min-w-[720px] border-collapse text-[15px]">
+            <thead>
+              <tr className="border-b border-border bg-muted/50 text-[13px] font-semibold text-muted-foreground">
+                <th scope="col" className="px-4 py-2.5 text-left">Usuario</th>
+                <th scope="col" className="px-4 py-2.5 text-left">Plan</th>
+                <th scope="col" className="px-4 py-2.5 text-left">Estado</th>
+                <th scope="col" className="px-4 py-2.5 text-left">Clientes / plazas</th>
+                <th scope="col" className="px-4 py-2.5 text-left">Registro</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(rows || []).length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-10 text-center text-[13px] text-muted-foreground">
+                    No hay usuarios que mostrar.
+                  </td>
+                </tr>
+              )}
+              {(rows || []).map((r) => (
+                <tr key={r.user_id} className="border-b border-border/60 last:border-b-0">
+                  <td className="px-4 py-3">
+                    <p className="text-[15px] font-semibold text-foreground">
+                      {r.full_name || r.company_name || (r.email || "").split("@")[0] || "Sin nombre"}
+                    </p>
+                    <p className="text-[13px] text-muted-foreground">{r.email || "Sin email"}</p>
+                  </td>
+                  <td className="px-4 py-3 text-[15px] capitalize">
+                    {r.tier === "free" ? "Gratuito" : PLAN_CONFIG[r.tier as keyof typeof PLAN_CONFIG]?.label || r.tier}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-md border px-2 py-[2px] text-[13px] font-semibold ${
+                      r.status === "active" || r.status === "trialing"
+                        ? "bg-success/12 text-success border-success/25"
+                        : r.status === "past_due"
+                          ? "bg-warning/15 text-warning border-warning/30"
+                          : "bg-muted text-muted-foreground border-border"
+                    }`}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-[15px] font-semibold tabular-nums text-violet-600 dark:text-violet-400">
+                      {Number(r.clients_count)}
+                    </span>
+                    <span className="text-[13px] text-muted-foreground"> / {r.slots >= 100000 ? "sin tope" : r.slots}</span>
+                    {r.extra_slots > 0 && (
+                      <span className="text-[13px] text-muted-foreground"> · {r.extra_slots} extra</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-[13px] text-muted-foreground">
+                    {r.created_at
+                      ? new Date(r.created_at).toLocaleDateString("es", { day: "numeric", month: "short", year: "numeric" })
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

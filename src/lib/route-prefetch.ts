@@ -12,6 +12,7 @@ const routeMap: Record<string, ImportThunk> = {
   "/email-accounts": () => import("@/pages/EmailAccounts"),
   "/campaigns":      () => import("@/pages/Campaigns"),
   "/leads":          () => import("@/pages/Leads"),
+  "/clientes":       () => import("@/pages/Clientes"),
   "/unibox":         () => import("@/pages/Unibox"),
   "/stats":          () => import("@/pages/Stats"),
   "/deliverability": () => import("@/pages/DeliverabilityTest"),

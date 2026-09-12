@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
-import { useSubscription, PLAN_CONFIG } from "@/contexts/SubscriptionContext";
+import { useSubscription, PLAN_CONFIG, clientsFeature } from "@/contexts/SubscriptionContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -294,7 +294,8 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
                         </span>
                       </div>
                       <ul className="text-[11px] text-muted-foreground space-y-0.5 mb-2.5">
-                        {plan.features.map((f) => (
+                        {/* Clientes incluidos: sale de PLAN_CONFIG, como los leads y las cuentas. */}
+                        {[...plan.features, clientsFeature(plan.key)].map((f) => (
                           <li key={f} className="flex items-center gap-1.5">
                             <span className="text-primary">✓</span> {f}
                           </li>

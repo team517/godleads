@@ -26,6 +26,7 @@ const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
 const EmailAccounts = lazyWithRetry(() => import("./pages/EmailAccounts"));
 const Campaigns = lazyWithRetry(() => import("./pages/Campaigns"));
 const Leads = lazyWithRetry(() => import("./pages/Leads"));
+const Clientes = lazyWithRetry(() => import("./pages/Clientes"));
 const Unibox = lazyWithRetry(() => import("./pages/Unibox"));
 const Stats = lazyWithRetry(() => import("./pages/Stats"));
 const Personalizacion = lazyWithRetry(() => import("./pages/Personalizacion"));
@@ -81,6 +82,7 @@ const App = () => (
                 <Route path="/email-accounts" element={<EmailAccounts />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/leads" element={<Leads />} />
+                <Route path="/clientes" element={<Clientes />} />
                 <Route path="/unibox" element={<Unibox />} />
                 <Route path="/stats" element={<Stats />} />
                 <Route path="/personalizacion" element={<Personalizacion />} />

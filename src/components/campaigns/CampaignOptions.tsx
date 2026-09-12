@@ -10,7 +10,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 interface Props { campaignId: string; }
@@ -221,6 +222,13 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [newManagerName, setNewManagerName] = useState("");
   const [creatingManager, setCreatingManager] = useState(false);
 
+  // ── Cliente al que pertenece la campaña ──
+  // Los clientes se crean en /clientes (consumen plaza de plan); aquí solo se elige
+  // uno. `client_id` se guarda con el resto de opciones (update normal, la RLS de
+  // campaigns ya permite al dueño editar su campaña).
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+  const [clientId, setClientId] = useState<string | null>(null);
+
   const createManager = async () => {
     const name = newManagerName.trim();
     if (!name || !user) return;
@@ -271,16 +279,18 @@ export default function CampaignOptions({ campaignId }: Props) {
   useEffect(() => {
     const load = async () => {
       if (!user) return;
-      const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes] = await Promise.all([
+      const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes, cliRes] = await Promise.all([
         supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id).eq("status", "connected"),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         supabase.from("email_tags").select("name").eq("user_id", user.id).order("name"),
         (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
+        (supabase as any).from("clients").select("id, name").eq("owner_user_id", user.id).is("archived_at", null).order("name"),
       ]);
       setSavedTags((tagsRes.data || []).map((t: any) => t.name));
       setManagers((mgrRes.data as any) || []);
+      setClients((cliRes.data as any) || []);
       setAccounts(accRes.data || []);
       setSelectedAccounts((caRes.data || []).map((r: any) => r.account_id));
       const steps = stepsRes.data || [];
@@ -318,6 +328,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         setSignatureHtml(d.signature_html ?? "");
         setBreakThreadAfter(d.break_thread_after ?? 0);
         setManagerId(d.manager_id ?? null);
+        setClientId(d.client_id ?? null);
       }
     };
     load();
@@ -364,6 +375,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       signature_html: signatureHtml,
       break_thread_after: breakThreadAfter,
       manager_id: managerId,
+      client_id: clientId,
     } as any).eq("id", campaignId);
     // Only confirm when the DB actually accepted the update — otherwise a failed
     // save used to still show "guardadas" and the options were silently lost.
@@ -929,8 +941,33 @@ export default function CampaignOptions({ campaignId }: Props) {
         </Row>
       </Section>
 
-      {/* ── EQUIPO: responsable de la campaña ── */}
+      {/* ── EQUIPO: cliente y responsable de la campaña ── */}
       <Section label="Equipo">
+        <Row icon={<Building2 className="h-4 w-4" />} tint="blue" title="Cliente"
+          desc="De qué cliente es esta campaña. Sus resultados se agrupan en Clientes; los envíos van en tu mismo plan."
+          control={
+            <Select
+              value={clientId ?? "none"}
+              onValueChange={(v) => { setClientId(v === "none" ? null : v); markDirty(); }}
+            >
+              <SelectTrigger className="h-9 w-[200px] text-sm" aria-label="Cliente de la campaña">
+                <SelectValue placeholder="Sin cliente" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Sin cliente</SelectItem>
+                {clients.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        >
+          {clients.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              Aún no tienes clientes. Créalos en la sección <strong>Clientes</strong> y vuelve aquí para asignar esta campaña.
+            </p>
+          )}
+        </Row>
         <Row icon={<Users className="h-4 w-4" />} tint="violet" title="Responsable de la campaña"
           desc="Quién se encarga. Se muestra en la lista de campañas y junto a cada mensaje en el Unibox.">
           <div className="space-y-3">

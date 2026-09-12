@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText } from "lucide-react";
+  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText, Building2 } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,6 +17,7 @@ const mainNav = [
   { icon: Mail, label: "Cuentas Email", path: "/email-accounts" },
   { icon: Send, label: "Campañas", path: "/campaigns" },
   { icon: Users, label: "Leads", path: "/leads" },
+  { icon: Building2, label: "Clientes", path: "/clientes" },
   { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
   { icon: Inbox, label: "Unibox", path: "/unibox" },
 ];

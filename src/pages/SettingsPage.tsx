@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
-import { useSubscription, PLAN_CONFIG, FREE_LIMITS, TRIAL_LIMITS, PlanTier } from "@/contexts/SubscriptionContext";
+import { useSubscription, PLAN_CONFIG, FREE_LIMITS, TRIAL_LIMITS, PlanTier, clientsFeature } from "@/contexts/SubscriptionContext";
 import { toast } from "sonner";
 import { Check, Crown, Zap, Loader2, ExternalLink, XCircle, Camera, Shield } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -414,6 +414,12 @@ export default function SettingsPage() {
               const price = billingPeriod === "monthly" ? config.monthly.price : config.annual.price;
               const priceId = billingPeriod === "monthly" ? config.monthly.priceId : config.annual.priceId;
               const popular = planTier === "growth";
+              // Los clientes incluidos salen de PLAN_CONFIG, igual que leads y cuentas.
+              const feats = [
+                ...features.slice(0, 2),
+                clientsFeature(planTier as Exclude<PlanTier, "free">),
+                ...features.slice(2),
+              ];
 
               return (
                 <Card key={planTier} className={`relative ${isCurrentPlan ? "border-primary ring-2 ring-primary/20" : popular ? "border-primary/40" : ""}`}>
@@ -428,7 +434,7 @@ export default function SettingsPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <ul className="space-y-2">
-                      {features.map(f => (
+                      {feats.map(f => (
                         <li key={f} className="flex items-center gap-2 text-sm">
                           <Check className="h-4 w-4 text-primary flex-shrink-0" />
                           {f}

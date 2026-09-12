@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
   AlertTriangle,
+  Building2,
   Copy,
   MailOpen,
   MessageSquareReply,
@@ -35,10 +36,14 @@ export type CampaignMetrics = {
 
 export type CampaignManager = { id: string; name: string; color: string };
 
+export type CampaignClient = { id: string; name: string };
+
 export interface CampaignsTableProps {
   /** FULL list of campaigns (tab counts are always computed over this, never over the filtered view). */
   campaigns: any[];
   managers?: CampaignManager[];
+  /** Clients of the account, loaded ONCE by the page — never one query per row. */
+  clients?: CampaignClient[];
   /** leads emailed / total leads, per campaign id (already computed by the page, count-only queries). */
   progressMap: Record<string, { sent: number; total: number }>;
   /** Metrics resolver from the page (single RPC) — may return null/undefined while loading. */
@@ -147,6 +152,7 @@ function Metric({
 export default function CampaignsTable({
   campaigns,
   managers = [],
+  clients = [],
   progressMap,
   metricsFor,
   onSelect,
@@ -250,6 +256,7 @@ export default function CampaignsTable({
               const bounceRate = sent > 0 ? (bounced / sent) * 100 : 0;
               const steps = m?.sequences ?? 0;
               const mgr = campaign.manager_id ? managers.find((x) => x.id === campaign.manager_id) : null;
+              const client = campaign.client_id ? clients.find((x) => x.id === campaign.client_id) : null;
               const created = campaign.created_at ? new Date(campaign.created_at) : null;
 
               return (
@@ -269,6 +276,16 @@ export default function CampaignsTable({
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
                             {pill.label}
                           </span>
+                          {/* Cliente de la campaña — chip CUADRADO (6px), no pastilla. */}
+                          {client && (
+                            <span
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-accent px-2 py-[2px] text-[10.5px] font-semibold text-accent-foreground"
+                              title={`Cliente: ${client.name}`}
+                            >
+                              <Building2 className="h-3 w-3" />
+                              {client.name}
+                            </span>
+                          )}
                           {/* Manager colour is user data → tint/border/text derived from it with
                               color-mix, stronger + lighter under `dark:` so the chip reads on a
                               dark row. */}

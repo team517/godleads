@@ -10,6 +10,10 @@ export const PLAN_CONFIG = {
     label: "Starter",
     maxLeads: 1000,
     maxAccounts: 3,
+    // Clientes que puede crear el usuario dentro de su cuenta (sección Clientes).
+    // Es la MISMA cifra que aplica el servidor en public.client_slots_for; aquí
+    // solo sirve para que los precios digan la verdad — el tope no se decide aquí.
+    maxClients: 0,
     monthly: { priceId: "price_1T45Sb2ObXNkJIexkE6GEzxU", price: 29 },
     annual: { priceId: "price_1T45Sw2ObXNkJIexJrrQjQJ5", price: 290 },
     productIds: ["prod_U29mvQRMbo5m6f", "prod_U29mwf36xp5tzO"],
@@ -18,6 +22,7 @@ export const PLAN_CONFIG = {
     label: "Growth",
     maxLeads: 10000,
     maxAccounts: 15,
+    maxClients: 5,
     monthly: { priceId: "price_1T45T82ObXNkJIexHb0OjLpo", price: 79 },
     annual: { priceId: "price_1T45TQ2ObXNkJIexO5rlaZOv", price: 790 },
     productIds: ["prod_U29mEi2w9ltRwG", "prod_U29nlSXrrxJsWI"],
@@ -26,11 +31,19 @@ export const PLAN_CONFIG = {
     label: "Scale",
     maxLeads: Infinity,
     maxAccounts: Infinity,
+    maxClients: 10,
     monthly: { priceId: "price_1T45Tb2ObXNkJIex9ZwHkVt8", price: 199 },
     annual: { priceId: "price_1T45Tn2ObXNkJIexpae7rzAg", price: 1990 },
     productIds: ["prod_U29nsLzCYygn4u", "prod_U29n2lYSL63LWg"],
   },
 } as const;
+
+/** Línea de "clientes incluidos" para las tarjetas de precio. Sale de PLAN_CONFIG
+ *  para que la interfaz no pueda contradecir al plan. */
+export function clientsFeature(tier: Exclude<PlanTier, "free">): string {
+  const n = PLAN_CONFIG[tier].maxClients;
+  return n === 0 ? "Sin gestión de clientes" : `${n} clientes`;
+}
 
 export const FREE_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };
 export const TRIAL_LIMITS = { maxLeads: Infinity, maxAccounts: Infinity };

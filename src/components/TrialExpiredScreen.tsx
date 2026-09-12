@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, Zap, Loader2, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { PLAN_CONFIG, PlanTier } from "@/contexts/SubscriptionContext";
+import { PLAN_CONFIG, PlanTier, clientsFeature } from "@/contexts/SubscriptionContext";
 import { toast } from "sonner";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
@@ -64,6 +64,12 @@ export function TrialExpiredScreen() {
             const price = billingPeriod === "monthly" ? config.monthly.price : config.annual.price;
             const priceId = billingPeriod === "monthly" ? config.monthly.priceId : config.annual.priceId;
             const popular = planTier === "growth";
+            // Clientes incluidos — misma fuente que el tope real del plan.
+            const feats = [
+              ...features.slice(0, 2),
+              clientsFeature(planTier as Exclude<PlanTier, "free">),
+              ...features.slice(2),
+            ];
 
             return (
               <Card key={planTier} className={`relative ${popular ? "border-primary ring-2 ring-primary/20" : ""}`}>
@@ -77,7 +83,7 @@ export function TrialExpiredScreen() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <ul className="space-y-2">
-                    {features.map(f => (
+                    {feats.map(f => (
                       <li key={f} className="flex items-center gap-2 text-sm">
                         <Check className="h-4 w-4 text-primary flex-shrink-0" />
                         {f}
