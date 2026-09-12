@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, Users, MailOpen, MessageSquareReply, Smile, AlertTriangle } from "lucide-react";
+import { Send, Users, MessageSquareReply, Smile, AlertTriangle } from "lucide-react";
 
 type Stats = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number };
 
@@ -55,7 +55,6 @@ export default function CampaignMetricsInline({ campaignId, metrics }: { campaig
     // variants one shade lighter so the numbers stay readable on a dark background.
     { label: "Enviados",    value: m?.sent ?? 0,      sub: null,                 icon: Send,               color: "text-indigo-600 dark:text-indigo-400" },
     { label: "Contactados", value: m?.contacted ?? 0, sub: null,               icon: Users,              color: "text-violet-600 dark:text-violet-400" },
-    { label: "Abiertos",    value: m?.opened ?? 0,    sub: pct(m?.opened ?? 0),  icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
     { label: "Respondidos", value: m?.replied ?? 0,   sub: replyPct,             icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { label: "Positivos",   value: m?.positive ?? 0,  sub: null,                 icon: Smile,              color: "text-emerald-600 dark:text-emerald-400" },
     { label: "Rebotados",   value: m?.bounced ?? 0,   sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },

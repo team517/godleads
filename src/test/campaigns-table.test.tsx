@@ -77,7 +77,9 @@ describe("CampaignsTable", () => {
     const row = rowOf("Prospección Q1");
     expect(within(row).getByText("200")).toBeInTheDocument();   // leads totales
     expect(within(row).getByText("100")).toBeInTheDocument();   // enviados
-    expect(within(row).getByText("40.0%")).toBeInTheDocument(); // abiertos / enviados
+    // La columna "Abiertos" se retiró: no hay seguimiento de apertura, así que
+    // siempre marcaba 0 y engañaba. Se comprueba que ya NO aparece.
+    expect(within(row).queryByText("40.0%")).not.toBeInTheDocument();
     expect(within(row).getByText("20.0%")).toBeInTheDocument(); // respondidos / contactados (10/50)
     expect(within(row).getByText("50.0%")).toBeInTheDocument(); // positivos / respondidos (5/10)
     expect(within(row).getByText("3 secuencias", { exact: false })).toBeInTheDocument();

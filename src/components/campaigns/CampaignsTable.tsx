@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Building2,
   Copy,
-  MailOpen,
   MessageSquareReply,
   Megaphone,
   Pause,
@@ -227,7 +226,6 @@ export default function CampaignsTable({
               <HeadCell icon={Megaphone} label="Campaña" className="min-w-[280px]" />
               <HeadCell icon={Users} label="Leads" />
               <HeadCell icon={Send} label="Enviados" />
-              <HeadCell icon={MailOpen} label="Abiertos" />
               <HeadCell icon={MessageSquareReply} label="Respondidos" />
               <HeadCell icon={Smile} label="Positivos" />
               <HeadCell icon={AlertTriangle} label="Rebotados" />
@@ -321,13 +319,6 @@ export default function CampaignsTable({
                   </td>
                   <td className="px-4 py-3">
                     <Metric value={m === null ? null : sent} className="text-indigo-600 dark:text-indigo-400" />
-                  </td>
-                  <td className="px-4 py-3">
-                    <Metric
-                      value={m === null ? null : m.opened}
-                      pct={pctOf(m?.opened ?? 0, sent)}
-                      className="text-fuchsia-600 dark:text-fuchsia-400"
-                    />
                   </td>
                   <td className="px-4 py-3">
                     <Metric

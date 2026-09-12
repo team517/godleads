@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Send, Users, MailOpen, MessageSquareReply, AlertTriangle,
+  Send, Users, MessageSquareReply, AlertTriangle,
   Play, Pause, FileEdit, ExternalLink, DollarSign,
 } from "lucide-react";
 
@@ -92,7 +92,6 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp }: Pr
   const metrics = [
     { key: "sent",     label: "Enviados",      value: m.sent,          sub: null,            icon: Send,               color: "text-primary" },
     { key: "contacted",label: "Contactados",   value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
-    { key: "opened",   label: "Abiertos",      value: m.opened,        sub: pct(m.opened),   icon: MailOpen,           color: "text-fuchsia-600 dark:text-fuchsia-400" },
     { key: "replied",  label: "Respondidos",   value: m.replied,       sub: replyPct,        icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { key: "positive", label: "Positivos",     value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
     { key: "bounced",  label: "Rebotados",     value: m.bounced,       sub: pct(m.bounced),  icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
