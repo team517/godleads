@@ -13,6 +13,7 @@ import { useConfirm } from "@/hooks/useConfirm";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
 
 interface Props { campaignId: string; }
 
@@ -291,7 +292,16 @@ export default function CampaignOptions({ campaignId }: Props) {
       setSavedTags((tagsRes.data || []).map((t: any) => t.name));
       setManagers((mgrRes.data as any) || []);
       setClients((cliRes.data as any) || []);
-      setAccounts(accRes.data || []);
+      {
+        // Días de envío REALES por cuenta (misma cuenta que el motor); se adjuntan
+        // a cada cuenta para que el warm-up no se calcule por calendario.
+        let realDays: Record<string, number> = {};
+        try {
+          const { data: sd } = await (supabase as any).rpc("my_account_sending_days");
+          realDays = sendDaysMap(sd);
+        } catch { /* si falla, se asume 0 días: el escalón inicial */ }
+        setAccounts((accRes.data || []).map((a: any) => ({ ...a, _sendDays: realDays[a.id] ?? 0 })));
+      }
       setSelectedAccounts((caRes.data || []).map((r: any) => r.account_id));
       const steps = stepsRes.data || [];
       setAbSteps(steps);
@@ -476,21 +486,15 @@ export default function CampaignOptions({ campaignId }: Props) {
     [accounts, selectedAccounts, tagAccountIds],
   );
 
-  // Effective daily limit per account = smallest of account daily_limit, account slow
-  // ramp, and campaign slow ramp. Mirrors process-campaign-queue.getEffectiveLimit.
-  const HARD_DAILY_CAP = 30;
+  // Límite diario efectivo por cuenta = el menor entre el daily_limit, el warm-up de
+  // la cuenta y el arranque lento de la campaña. Calca process-campaign-queue.
+  // getEffectiveLimit: el warm-up sube por DÍAS DE ENVÍO REALES (acc._sendDays del
+  // RPC), no por calendario — sin campaña activa o en día sin envío, no sube.
   const effLimitFor = (acc: any) => {
-    let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
-    let accRampDay: number | null = null;
-    if (acc.warmup_enabled && acc.warmup_started_at) {
-      const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
-      const inc = acc.warmup_increment || 2;
-      const target = acc.warmup_limit || limit;
-      accRampDay = days + 1;
-      limit = Math.min(limit, Math.min((days + 1) * inc, target));
-    }
+    const r = effectiveDailyLimit(acc, acc?._sendDays);
+    let limit = r.limit;
     if (rampInfo) limit = Math.min(limit, rampInfo.eff);
-    return { limit, accRampDay };
+    return { limit, accRampDay: r.accRampDay };
   };
   const sentTodayTotal = usedAccounts.reduce((s: number, a: any) => s + (a.sent_today || 0), 0);
   const capacityToday = usedAccounts.reduce((s: number, a: any) => s + effLimitFor(a).limit, 0);

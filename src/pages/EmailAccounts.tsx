@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
 import { Button } from "@/components/ui/button";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -89,6 +90,9 @@ export default function EmailAccounts() {
   const { user } = useAuth();
   // Instant re-entry: seed from session cache, refresh in background.
   const [accounts, setAccounts] = useState<any[]>(() => cacheGet<any[]>("accounts:list") || []);
+  // Días de envío REALES por cuenta (RPC), la misma cuenta que usa el motor para el
+  // warm-up. Sin esto la pantalla contaba días de calendario y el límite "subía solo".
+  const [sendDaysByAccount, setSendDaysByAccount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("accounts:list"));
   const [showBulk, setShowBulk] = useState(false);
   const [showBulkIonos, setShowBulkIonos] = useState(false);
@@ -406,6 +410,10 @@ export default function EmailAccounts() {
       if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
       const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
       setAccounts(normalized);
+      try {
+        const { data: sd } = await (supabase as any).rpc("my_account_sending_days");
+        setSendDaysByAccount(sendDaysMap(sd));
+      } catch { /* si falla, effectiveDailyLimit asume 0 días: el escalón inicial, nunca de más */ }
       cacheSet("accounts:list", normalized); // instant paint on next visit
     } catch (e: any) {
       console.warn("loadAccounts threw, keeping current list:", e?.message || e);
@@ -954,41 +962,12 @@ export default function EmailAccounts() {
   // Effective daily limit = min((day+1) * increment, target). Day computed from warmup_started_at.
   const rampInfo = (acc: any) => {
     if (!acc?.warmup_enabled || !acc?.warmup_started_at) return null;
-    // Count only SENDING days (Mon–Fri) since the start date, mirroring the engine's
-    // countSendingDays. The ramp advances ONE step per day emails actually go out, so it
-    // does NOT climb on weekends (Sat/Sun) — the card stays flat Fri→Sat→Sun→Mon instead of
-    // ticking up on days nothing is sent. (Uses the standard Mon–Fri window; matches the
-    // engine for the default send_days.)
-    const s = new Date(acc.warmup_started_at);
-    const startUTC = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
-    const n = new Date();
-    const nowUTC = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
-    // Reference = the most recent SEND day: today if it's a weekday, else step back to Friday.
-    // So on Sat/Sun the card shows the last day that actually sent — the number does NOT tick
-    // up on non-send days; it climbs again on Monday when sending resumes.
-    let refUTC = nowUTC;
-    for (let g = 0; g < 7; g++) {
-      const dow = new Date(refUTC).getUTCDay(); // 0 = Sun … 6 = Sat
-      if (dow !== 0 && dow !== 6) break;
-      refUTC -= 86400000;
-    }
-    // Count weekdays STRICTLY BEFORE that send day (mirrors the engine's countSendingDays).
-    let days = 0;
-    for (let t = startUTC; t < refUTC; t += 86400000) {
-      const dow = new Date(t).getUTCDay();
-      if (dow !== 0 && dow !== 6) days++;
-    }
-    const inc = acc.warmup_increment || 2;
+    // Mismo cálculo que el motor: la rampa avanza por DÍAS DE ENVÍO REALES (RPC
+    // my_account_sending_days), no por calendario. Sin campaña activa → 0 días → se
+    // queda en el escalón inicial; fin de semana o día sin envío → no suma.
+    const r = effectiveDailyLimit(acc, sendDaysByAccount[acc.id]);
     const target = acc.warmup_limit || acc.daily_limit || 30;
-    // warmup_day (repurposed) = the STARTING daily limit (day 1). If 0/absent, start
-    // from `inc` (legacy: inc + days*inc = (days+1)*inc).
-    const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
-    // During warm-up the ramp climbs from startBase up to `target` (the intended daily max).
-    // It is deliberately NOT capped by daily_limit — otherwise an account whose daily_limit
-    // equals the start (e.g. 18) would read "18" forever and never climb. This mirrors the
-    // engine's getEffectiveLimit, which during warm-up uses min(ramp, HARD_CAP), not daily_limit.
-    const eff = Math.min(startBase + days * inc, target);
-    return { day: days + 1, eff, target };
+    return { day: r.accRampDay ?? 1, eff: r.limit, target };
   };
 
   const handleApplySlowRamp = async () => {

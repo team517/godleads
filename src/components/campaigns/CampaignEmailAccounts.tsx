@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
 
 /**
  * "Cuentas" tab of a campaign — the Smartlead-style Email Accounts table.
@@ -52,18 +53,12 @@ type SortKey = "email" | "sent" | "leads";
  * process-campaign-queue.getEffectiveLimit; the campaign-level slow ramp (a further cap shown
  * in the Opciones tab) is not applied here, this column is the per-ACCOUNT ceiling.
  */
-const HARD_DAILY_CAP = 30;
 function effLimitFor(acc: any): { limit: number; accRampDay: number | null } {
-  let limit = Math.min(acc?.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
-  let accRampDay: number | null = null;
-  if (acc?.warmup_enabled && acc?.warmup_started_at) {
-    const days = Math.max(0, Math.floor((Date.now() - new Date(acc.warmup_started_at).getTime()) / 86400000));
-    const inc = acc.warmup_increment || 2;
-    const target = acc.warmup_limit || limit;
-    accRampDay = days + 1;
-    limit = Math.min(limit, Math.min((days + 1) * inc, target));
-  }
-  return { limit: Math.max(1, limit), accRampDay };
+  // Días de envío REALES adjuntados en load() como acc._sendDays (RPC
+  // my_account_sending_days). Misma fórmula que el motor: la rampa sube solo los
+  // días que la cuenta envió de verdad en una campaña, nunca por calendario.
+  const r = effectiveDailyLimit(acc, acc?._sendDays);
+  return { limit: r.limit, accRampDay: r.accRampDay };
 }
 
 /** PostgREST chokes on very long `in` lists — ask in slices. */
@@ -246,6 +241,15 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
         }
         accounts.push(...((data ?? []) as any[]));
       }
+
+      // Días de envío REALES por cuenta (misma cuenta que el motor). Se adjuntan a
+      // cada cuenta para que effLimitFor no calcule el warm-up por calendario.
+      let realDays: Record<string, number> = {};
+      try {
+        const { data: sd } = await (supabase as any).rpc("my_account_sending_days");
+        realDays = sendDaysMap(sd);
+      } catch { /* si falla, se asume 0 días: el escalón inicial */ }
+      for (const a of accounts) a._sendDays = realDays[a.id] ?? 0;
 
       const byId = new Map<string, any>(accounts.map((a) => [a.id, a]));
       setRows(stats.map((s) => ({ ...s, account: byId.get(s.account_id) ?? { id: s.account_id } })));
