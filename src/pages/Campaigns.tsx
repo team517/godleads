@@ -465,6 +465,7 @@ export default function Campaigns() {
             onDuplicate={handleDuplicate}
             onRemix={(c) => setRemixDest(c)}
             onDelete={handleDelete}
+            onReload={load}
           />
         </div>
         <div className="space-y-3 md:hidden">

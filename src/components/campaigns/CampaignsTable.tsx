@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
@@ -8,6 +8,7 @@ import {
   MessageSquareReply,
   Megaphone,
   Pause,
+  Pencil,
   Play,
   Search,
   Send,
@@ -16,11 +17,14 @@ import {
   Smile,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
+import BulkEditCampaigns from "@/components/campaigns/BulkEditCampaigns";
 
 export type CampaignMetrics = {
   sent: number;
@@ -52,6 +56,8 @@ export interface CampaignsTableProps {
   onDuplicate: (campaign: any) => void;
   onRemix: (campaign: any) => void;
   onDelete: (id: string) => void;
+  /** Reload the campaigns list after a bulk edit writes to the DB. */
+  onReload?: () => void;
 }
 
 /** Only the statuses the app actually writes/knows (see statusConfig in Campaigns.tsx). */
@@ -159,9 +165,13 @@ export default function CampaignsTable({
   onDuplicate,
   onRemix,
   onDelete,
+  onReload,
 }: CampaignsTableProps) {
   const [tab, setTab] = useState<TabKey>("all");
   const [q, setQ] = useState("");
+  // Bulk selection (Smartlead-style): pick several campaigns, edit their options at once.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   // Counts ALWAYS over the full list (not the filtered view).
   const counts = useMemo(() => {
@@ -182,6 +192,31 @@ export default function CampaignsTable({
       return true;
     });
   }, [campaigns, tab, q]);
+
+  // Keep the selection valid if the underlying list changes (deleted campaigns drop out).
+  useEffect(() => {
+    setSelected((prev) => {
+      const ids = new Set(campaigns.map((c) => c.id));
+      const next = new Set<string>();
+      prev.forEach((id) => { if (ids.has(id)) next.add(id); });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [campaigns]);
+
+  const visibleIds = useMemo(() => rows.map((r) => r.id as string), [rows]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selected.has(id));
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  const toggleOne = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const clearSelection = () => setSelected(new Set());
+  const selectedIds = useMemo(() => [...selected], [selected]);
 
   return (
     <div className="space-y-3">
@@ -218,11 +253,31 @@ export default function CampaignsTable({
         </div>
       </div>
 
+      {/* Bulk action bar — appears when at least one campaign is selected. */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-2.5">
+          <span className="text-[13px] font-semibold text-foreground">{selected.size} seleccionada{selected.size === 1 ? "" : "s"}</span>
+          <Button size="sm" className="h-8 gap-1.5" onClick={() => setBulkOpen(true)}>
+            <Pencil className="h-3.5 w-3.5" /> Editar ({selected.size})
+          </Button>
+          <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-muted-foreground" onClick={clearSelection}>
+            <X className="h-3.5 w-3.5" /> Quitar selección
+          </Button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto rounded-md border border-border bg-card shadow-rest">
         <table className="w-full min-w-[900px] border-collapse text-[15px]">
           <thead>
             <tr className="border-b border-border bg-muted/50">
+              <th scope="col" className="w-10 px-3 py-2.5">
+                <Checkbox
+                  checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                  onCheckedChange={toggleAll}
+                  aria-label="Seleccionar todas las campañas visibles"
+                />
+              </th>
               <HeadCell icon={Megaphone} label="Campaña" className="min-w-[280px]" />
               <HeadCell icon={Users} label="Leads" />
               <HeadCell icon={Send} label="Enviados" />
@@ -261,8 +316,19 @@ export default function CampaignsTable({
                 <tr
                   key={campaign.id}
                   onClick={() => onSelect(campaign.id)}
-                  className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/50"
+                  className={cn(
+                    "cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/50",
+                    selected.has(campaign.id) && "bg-primary/5 hover:bg-primary/10",
+                  )}
                 >
+                  {/* Selección */}
+                  <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selected.has(campaign.id)}
+                      onCheckedChange={() => toggleOne(campaign.id)}
+                      aria-label={`Seleccionar la campaña ${campaign.name}`}
+                    />
+                  </td>
                   {/* Campaña */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
@@ -399,6 +465,15 @@ export default function CampaignsTable({
           </tbody>
         </table>
       </div>
+
+      <BulkEditCampaigns
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        campaignIds={selectedIds}
+        managers={managers}
+        clients={clients}
+        onDone={() => { clearSelection(); onReload?.(); }}
+      />
     </div>
   );
 }
