@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+
+// La tabla monta el diálogo de edición masiva (BulkEditCampaigns), que usa useAuth.
+// El diálogo solo consulta a Supabase cuando está ABIERTO, así que basta con dar un
+// usuario de prueba para que el árbol renderice sin AuthProvider.
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
+
 import CampaignsTable, { type CampaignMetrics } from "@/components/campaigns/CampaignsTable";
 
 const campaigns = [
