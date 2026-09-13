@@ -241,15 +241,37 @@ export default function CampaignsTable({
             </button>
           ))}
         </div>
-        <div className="relative pb-2">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar campaña…"
-            aria-label="Buscar campaña"
-            className="h-9 w-56 pl-8 text-sm"
-          />
+        <div className="flex items-center gap-2 pb-2">
+          {/* Botón SIEMPRE visible: es la puerta de entrada a la edición masiva. Antes
+              solo salía una barra al marcar una casilla, así que parecía que no existía.
+              Sin nada seleccionado edita TODAS las visibles; con selección, solo esas. */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 gap-1.5 whitespace-nowrap"
+            disabled={visibleIds.length === 0}
+            onClick={() => {
+              if (selected.size === 0) {
+                if (visibleIds.length === 0) return;
+                setSelected(new Set(visibleIds));
+              }
+              setBulkOpen(true);
+            }}
+            title="Edita las opciones de varias campañas a la vez"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {selected.size > 0 ? `Editar (${selected.size})` : "Editar en masa"}
+          </Button>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar campaña…"
+              aria-label="Buscar campaña"
+              className="h-9 w-56 pl-8 text-sm"
+            />
+          </div>
         </div>
       </div>
 
