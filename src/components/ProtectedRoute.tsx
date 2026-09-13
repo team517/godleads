@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
+import { isAgencyAccount } from "@/lib/access";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -38,6 +39,14 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return <TrialExpiredScreen />;
   }
 
+
+  // "Clientes" (gestión de clientes del usuario final) no es para la agencia:
+  // support@, equipo@, el propietario y los gestores usan /admin/clients. Se
+  // bloquea también por URL, no sólo se oculta del menú.
+  if (location.pathname.startsWith("/clientes")
+      && isAgencyAccount(user.email ?? null, !!profile.is_client_manager)) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   // Redirect restricted users to their first allowed route
   if (profile.allowed_routes && profile.allowed_routes.length > 0) {

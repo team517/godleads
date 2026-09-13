@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
+import { isAgencyAccount } from "@/lib/access";
 import { isSessionKept, clearKeepSession } from "@/components/KeepSessionBanner";
 import { prefetchRoute, prefetchAllRoutesOnIdle } from "@/lib/route-prefetch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -61,6 +62,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Automatización access: the owner PLUS equipo@onepulso.online (granted same access as support@
   // plus Automatización). Seguimiento stays owner-only.
   const canAutomation = isOwner || userEmail === "equipo@onepulso.online";
+  // "Clientes" (gestión de clientes del usuario de pago) NO es para la agencia:
+  // support@/equipo@/propietario/gestores tienen su propio Portal de Clientes.
+  const isAgency = isAgencyAccount(userEmail, isManager) || isAdmin;
   // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
   const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
   const visibleTools = toolsNav.filter((item) => {
@@ -218,7 +222,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         <div>
           {!collapsed && <p className="px-3 mb-1 text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground">Principal</p>}
           <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border">
-            {mainNav.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
+            {mainNav.filter(item => (item.path !== "/clientes" || !isAgency) && (!allowedRoutes || allowedRoutes.includes(item.path))).map((item) => <NavItem key={item.path} item={item} />)}
           </div>
         </div>
 

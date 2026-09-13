@@ -35,6 +35,15 @@ export interface AccessInput {
   nowMs?: number;                      // injectable for tests
 }
 
+/** Cuenta de la AGENCIA (OnePulso): el propietario, support@ y equipo@, más
+ *  cualquier gestor de clientes. Son las que tienen su propio "Portal de Clientes"
+ *  (/admin/clients), así que NO deben ver la sección "Clientes" para usuarios
+ *  finales. Una sola definición para que el menú y el guardado de ruta coincidan. */
+export function isAgencyAccount(email: string | null, isClientManager: boolean): boolean {
+  const e = (email || "").toLowerCase();
+  return !!isClientManager || ADMIN_EMAILS.includes(e);
+}
+
 export function decideAccess(i: AccessInput): AccessDecision {
   const email = (i.email || "").toLowerCase();
   // Staff / free-access → always full access, never gated. Free-access emails (SPECIAL_*) get
