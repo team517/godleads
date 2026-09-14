@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { SavedSignatures } from "@/components/SavedSignatures";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import RichReplyEditor, { type RichReplyHandle } from "@/components/unibox/RichReplyEditor";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil, Star } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1309,7 +1310,7 @@ export default function Unibox() {
   const readingThreadRef = useRef<string | null>(null); // mirrors selectedId → skip auto-reload while a conversation is OPEN (don't yank the thread under the user)
   const backgroundSyncOffsetRef = useRef(0);
   const lastAutoSyncAttemptRef = useRef(0);
-  const replyRef = useRef<HTMLTextAreaElement>(null);
+  const replyRef = useRef<RichReplyHandle>(null);
   // Reading pane: on desktop the reader is portalled INTO this box so it fills
   // the "Tu bandeja unificada" area exactly (inline, no popup/overlay).
   const readingPaneRef = useRef<HTMLDivElement>(null);
@@ -1368,10 +1369,8 @@ export default function Unibox() {
   const [tplOpen, setTplOpen] = useState(false);
   const loadTemplates = async () => { try { const { data } = await (supabase as any).from("reply_templates").select("id, name, body").order("created_at", { ascending: false }); setTemplates((data as any[]) || []); } catch { /* */ } };
   const applyTemplate = (t: any) => {
-    const ta = replyRef.current;
-    if (ta && typeof ta.selectionStart === "number") {
-      const start = ta.selectionStart, end = ta.selectionEnd;
-      setReply(reply.slice(0, start) + (t.body || "") + reply.slice(end));
+    if (replyRef.current) {
+      replyRef.current.insertText(t.body || "");
     } else {
       setReply((prev) => prev ? `${prev}\n${t.body || ""}` : (t.body || ""));
     }
@@ -3788,13 +3787,15 @@ export default function Unibox() {
                     </div>
                   )}
 
-                    <Textarea
+                  {/* Editor que pinta los enlaces (azul, clicables) y guarda por debajo el
+                      mismo texto fuente con <a> que ya entienden IA, plantillas y envío. */}
+                  <RichReplyEditor
                     ref={replyRef}
                     id="unibox-reply-textarea"
                     placeholder="Escribe tu respuesta…"
-                      className="mb-2.5 min-h-[92px] resize-none rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
+                    className="mb-2.5 min-h-[92px] rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus:border-primary/40 focus:ring-2 focus:ring-primary/25"
                     value={reply}
-                    onChange={e => setReply(e.target.value)}
+                    onChange={setReply}
                   />
                   {replyFiles.length > 0 && (
                     <div className="mb-2.5 flex flex-wrap gap-2">
@@ -3851,16 +3852,10 @@ export default function Unibox() {
                           <Button size="sm" className="w-full" disabled={!linkUrl.trim()} onClick={() => {
                             const url = linkUrl.trim();
                             const text = linkText.trim() || url;
-                            const htmlLink = `<a href="${url}">${text}</a>`;
-                            const ta = replyRef.current;
-                            if (ta) {
-                              const start = ta.selectionStart;
-                              const end = ta.selectionEnd;
-                              const before = reply.slice(0, start);
-                              const after = reply.slice(end);
-                              setReply(before + htmlLink + after);
+                            if (replyRef.current) {
+                              replyRef.current.insertLink(url, text);
                             } else {
-                              setReply(prev => prev + htmlLink);
+                              setReply(prev => prev + `<a href="${url}">${text}</a>`);
                             }
                             setLinkUrl("");
                             setLinkText("");
