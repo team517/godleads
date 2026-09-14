@@ -16,6 +16,7 @@ import {
   Shuffle,
   Smile,
   Trash2,
+  UserCheck,
   Users,
   X,
 } from "lucide-react";
@@ -303,6 +304,7 @@ export default function CampaignsTable({
               <HeadCell icon={Megaphone} label="Campaña" className="min-w-[280px]" />
               <HeadCell icon={Users} label="Leads" />
               <HeadCell icon={Send} label="Enviados" />
+              <HeadCell icon={UserCheck} label="Contactados" />
               <HeadCell icon={MessageSquareReply} label="Respondidos" />
               <HeadCell icon={Smile} label="Positivos" />
               <HeadCell icon={AlertTriangle} label="Rebotados" />
@@ -312,7 +314,7 @@ export default function CampaignsTable({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-[13px] text-muted-foreground">
+                <td colSpan={9} className="px-4 py-12 text-center text-[13px] text-muted-foreground">
                   {q.trim()
                     ? `Ninguna campaña coincide con «${q.trim()}».`
                     : "No hay campañas en esta pestaña."}
@@ -407,6 +409,15 @@ export default function CampaignsTable({
                   </td>
                   <td className="px-4 py-3">
                     <Metric value={m === null ? null : sent} className="text-indigo-600 dark:text-indigo-400" />
+                  </td>
+                  <td className="px-4 py-3">
+                    {/* Contactados = leads distintos alcanzados (no cuenta los follow-ups),
+                        con su cobertura sobre el total de leads de la campaña. */}
+                    <Metric
+                      value={m === null ? null : contacted}
+                      pct={pctOf(contacted, prog.total)}
+                      className="text-sky-600 dark:text-sky-400"
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <Metric
