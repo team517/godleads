@@ -464,8 +464,39 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
   return unwrapHardBreaks(result);
 }
 
+/** Where the QUOTED previous message starts inside an HTML body: gmail/yahoo/thunderbird
+ *  quote blocks, Outlook's `appendonsend` block and its "De:/Enviado:" header, any
+ *  <blockquote>, or a textual "El … escribió:" / "On … wrote:" line. */
+const HTML_QUOTE_START_RE =
+  /<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|<div[^>]*id=["']?appendonsend|<(?:b|strong)[^>]*>\s*(?:De|From|Von|Da|Van)\s*:[\s\S]{0,400}?(?:Enviado|Sent|Date|Fecha|Data|Datum|Gesendet|Inviato)\s*:|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/gi;
+
+/** Visible characters of an HTML fragment (no head/style, tags or nbsp). */
+function visibleTextLength(html: string): number {
+  return html
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;|&#160;| /gi, " ")
+    .trim().length;
+}
+
+/** Index where the quoted chain begins, or -1. A marker only counts as a quote when there is
+ *  visible text BEFORE it: Outlook wraps the NEW reply itself in
+ *  `<blockquote class="elementToProof">`, and cutting there left an empty card. When the
+ *  blockquote is the first thing in the body it IS the message, so we move on to the next
+ *  marker (Outlook's appendonsend / "De:" header) for the real quote. */
+function findQuoteStart(html: string): number {
+  HTML_QUOTE_START_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = HTML_QUOTE_START_RE.exec(html)) !== null) {
+    if (visibleTextLength(html.slice(0, m.index)) >= 2) return m.index;
+    if (m[0].length === 0) HTML_QUOTE_START_RE.lastIndex++;
+  }
+  return -1;
+}
+
 /** Clean HTML email body for safe rendering — aggressively strips artifacts for a clean Gmail-style view */
-function cleanBodyHtml(raw: string | null, keepQuote = false): string {
+export function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   if (!raw) return "";
   // Decode a base64-encoded HTML body if it arrived un-decoded
   let html = repairMojibake(decodeBase64Body(raw));
@@ -476,8 +507,8 @@ function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   // so only the new message is shown — like Gmail collapses the quote. When the
   // user asks for the full email ("Ver completo"), keep the quote.
   if (!keepQuote) {
-    const qIdx = html.search(/<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/i);
-    if (qIdx > 30) html = html.slice(0, qIdx);
+    const qIdx = findQuoteStart(html);
+    if (qIdx > 0) html = html.slice(0, qIdx);
   }
 
   // Remove MIME headers that leaked into the HTML
@@ -594,15 +625,23 @@ function cleanBodyHtml(raw: string | null, keepQuote = false): string {
 
 /** HTML ready to paint, or "" when the cleaned HTML has NO visible content (e.g. a body that was
  *  cut off inside <head> at sync time) so the caller falls back to body_text instead of an empty card. */
-function renderableHtml(raw: string | null | undefined, keepQuote = false): string {
+const _renderableCache = new Map<string, string>();
+export function renderableHtml(raw: string | null | undefined, keepQuote = false): string {
   if (!raw || raw.trim().length <= 20) return "";
+  // Cached: the thread card calls this twice per message (test + paint) on every render.
+  const key = (keepQuote ? "1|" : "0|") + raw;
+  const hit = _renderableCache.get(key);
+  if (hit !== undefined) return hit;
   const html = cleanBodyHtml(raw, keepQuote);
   const visible = html
     .replace(/<img[^>]*>/gi, "IMG")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;|&#160;| /gi, " ")
     .trim();
-  return visible.length > 0 ? html : "";
+  const out = visible.length > 0 ? html : "";
+  if (_renderableCache.size > 2000) _renderableCache.clear();
+  _renderableCache.set(key, out);
+  return out;
 }
 
 /**
@@ -3627,10 +3666,10 @@ export default function Unibox() {
                                 <div className={MAIL_PLAIN}>
                                   {translatedBody}
                                 </div>
-                              ) : tm.body_html && tm.body_html.trim().length > 20 ? (
+                              ) : renderableHtml(tm.body_html, showFullEmail) ? (
                                 <div
                                   className={`${MAIL_PAPER} ${MAIL_PROSE}`}
-                                  dangerouslySetInnerHTML={{ __html: cleanBodyHtml(tm.body_html, showFullEmail) }}
+                                  dangerouslySetInnerHTML={{ __html: renderableHtml(tm.body_html, showFullEmail) }}
                                 />
                               ) : (
                                 <div className={MAIL_PLAIN}>
@@ -3662,10 +3701,10 @@ export default function Unibox() {
                             <div className={MAIL_PLAIN}>
                               {translatedBody}
                             </div>
-                          ) : selected.body_html && selected.body_html.trim().length > 20 ? (
+                          ) : renderableHtml(selected.body_html, showFullEmail) ? (
                             <div
                               className={`${MAIL_PAPER} ${MAIL_PROSE}`}
-                              dangerouslySetInnerHTML={{ __html: cleanBodyHtml(selected.body_html, showFullEmail) }}
+                              dangerouslySetInnerHTML={{ __html: renderableHtml(selected.body_html, showFullEmail) }}
                             />
                           ) : (
                             <div className={MAIL_PLAIN}>

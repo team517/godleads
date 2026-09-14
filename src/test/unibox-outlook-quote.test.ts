@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+import { cleanBodyHtml, renderableHtml } from "@/pages/Unibox";
+
+// Outlook (web/new) wraps the NEW reply in <blockquote class="elementToProof"> and puts the
+// quoted chain after <div id="appendonsend"> + <hr> + "De:/Enviado:". Cutting at the first
+// <blockquote> emptied the card in the Unibox (real case, 2026-09-14).
+const OUTLOOK = `<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css" style="display:none;"> P {margin-top:0;margin-bottom:0;} </style></head>
+<body dir="ltr"><blockquote class="elementToProof" style="background-color: rgb(255, 255, 255);">
+<div class="elementToProof" style="font-family: Aeonik, serif; font-size: 11pt;">Buenos días, Juan,&nbsp;</div>
+<div class="elementToProof"><br></div>
+<div class="elementToProof">Esta parte ya la tenemos cubierta y no estamos precisando un cambio.</div>
+<div class="elementToProof">Saludos,&nbsp;</div>
+</blockquote>
+<div id="appendonsend"></div>
+<hr style="display:inline-block;width:98%" tabindex="-1">
+<div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000"><b>De:</b> Juan &lt;juan@ejemplo.es&gt;<br>
+<b>Enviado:</b> lunes, 14 de septiembre de 2026 9:58<br><b>Asunto:</b> Juan - Cellect Energy</font></div>
+<div class="elementToProof">Hola Bertha, te escribo porque…</div>
+</body></html>`;
+
+const GMAIL = `<div dir="ltr">Sí, me interesa. ¿Hablamos el jueves?</div><br>
+<div class="gmail_quote"><div dir="ltr" class="gmail_attr">El lun, 14 sept 2026 a las 9:58, Juan escribió:<br></div>
+<blockquote class="gmail_quote">Hola, te escribo porque…</blockquote></div>`;
+
+const strip = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+
+describe("Unibox — corte de la cita en HTML", () => {
+  it("Outlook: conserva la respuesta nueva envuelta en blockquote y corta en la cita real", () => {
+    const out = strip(cleanBodyHtml(OUTLOOK));
+    expect(out).toContain("Buenos días, Juan");
+    expect(out).toContain("ya la tenemos cubierta");
+    expect(out).not.toContain("Enviado:");
+    expect(out).not.toContain("te escribo porque");
+  });
+
+  it("Gmail: sigue cortando en el bloque gmail_quote", () => {
+    const out = strip(cleanBodyHtml(GMAIL));
+    expect(out).toContain("me interesa");
+    expect(out).not.toContain("te escribo porque");
+  });
+
+  it("«Ver email completo» conserva la cita", () => {
+    expect(strip(cleanBodyHtml(OUTLOOK, true))).toContain("te escribo porque");
+  });
+
+  it("renderableHtml devuelve algo pintable para el caso Outlook y '' para HTML sin contenido", () => {
+    expect(renderableHtml(OUTLOOK)).not.toBe("");
+    expect(renderableHtml("<html><head><style>p{}</style></head><body></body></html>")).toBe("");
+  });
+});
