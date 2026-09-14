@@ -1283,6 +1283,10 @@ export default function Unibox() {
   // English/other-foreign messages are HIDDEN unless the sender is a known lead
   // (lead_id/campaign_id) or its domain is in this set — strict, no leaks.
   const [leadDomains, setLeadDomains] = useState<Set<string>>(new Set());
+  // Domains of the user's OWN mailboxes: a message whose References chain points at one of
+  // them is a reply to OUR mail, even when nothing links it to a lead/campaign (sent from
+  // another system with the same mailboxes) — it must never be hidden as outreach noise.
+  const [ownDomains, setOwnDomains] = useState<Set<string>>(new Set());
   const [leadDomainsReady, setLeadDomainsReady] = useState(false);
   const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1692,6 +1696,9 @@ export default function Unibox() {
       });
       setAccountsMap(map);
       setAccountEmailMap(emailMap);
+      setOwnDomains(new Set(
+        (accounts || []).map((a: any) => String(a.email || "").split("@")[1]?.toLowerCase().trim() || "").filter(Boolean),
+      ));
       setSigAccounts((accounts || []).map((a: any) => ({ id: a.id, email: a.email, tags: a.tags || [], signature_html: a.signature_html || "" })));
       setTcxAccounts(tcx);
     };
@@ -2126,13 +2133,13 @@ export default function Unibox() {
     //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso
     //    match immediately and the lead-DOMAIN match kicks in as soon as the set is ready.)
-    if (isCampaignRelevant(m, leadDomains)) return false;
+    if (isCampaignRelevant(m, leadDomains, ownDomains)) return false;
     // 2) Not campaign → hide only the clear WARM-UP / random noise (warm-up codes, or English/foreign
     //    mail from an unknown sender). Everything else — a legit human email that just isn't from a
     //    campaign — still shows ("que tenga sentido"). Raw everything stays under "Todos".
     if (isWarmupHidden(m)) return true;
     return false;
-  }, [isWarmupHidden, leadDomains]);
+  }, [isWarmupHidden, leadDomains, ownDomains]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
