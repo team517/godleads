@@ -23,6 +23,14 @@ const GMAIL = `<div dir="ltr">Sí, me interesa. ¿Hablamos el jueves?</div><br>
 <div class="gmail_quote"><div dir="ltr" class="gmail_attr">El lun, 14 sept 2026 a las 9:58, Juan escribió:<br></div>
 <blockquote class="gmail_quote">Hola, te escribo porque…</blockquote></div>`;
 
+// Outlook MÓVIL: la respuesta va en el primer <div>, luego la firma, y el bloque citado
+// (`mail-editor-reference-message-container`) lleva un <meta name="viewport"> seguido de
+// un salto de línea. La regla de adjuntos borraba "cualquier línea con name=" → se llevaba
+// la respuesta entera y sólo quedaba nuestro correo citado (real, 2026-09-14).
+const OUTLOOK_MOBILE = `<html><body><div style="direction: ltr;">Te agradezco el ofrecimiento, la suma de reuniones asciende a cero.</div><div><br></div><div>Un saludo</div><div id="ms-outlook-mobile-signature" dir="ltr"><div>Obtener <a href="https://aka.ms/o0ukef">Outlook para iOS</a></div></div><div id="mail-editor-reference-message-container"><div class="ms-outlook-mobile-reference-message skipProofing"><meta name="viewport" content="width=device-width, initial-scale=1">
+
+</div><div class="ms-outlook-mobile-reference-message"><div dir="ltr"><b>De:</b> Mario &lt;mario@ejemplo.info&gt;<br><b>Fecha:</b> lunes, 14 de septiembre de 2026 a las 13:55<br><b>Para:</b> maico@ejemplo.es<br><b>Asunto:</b> no te olvides de esto</div></div><div id="mail-editor-reference-message-body"><div>Buenas Maico, Quería hacerte seguimiento porque…</div></div></div></body></html>`;
+
 const strip = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
 describe("Unibox — corte de la cita en HTML", () => {
@@ -32,6 +40,16 @@ describe("Unibox — corte de la cita en HTML", () => {
     expect(out).toContain("ya la tenemos cubierta");
     expect(out).not.toContain("Enviado:");
     expect(out).not.toContain("te escribo porque");
+  });
+
+  it("Outlook móvil: la respuesta sobrevive al <meta name=…> de la cita y se corta en De:/Fecha:", () => {
+    const out = strip(cleanBodyHtml(OUTLOOK_MOBILE));
+    expect(out).toContain("Te agradezco el ofrecimiento");
+    expect(out).toContain("Un saludo");
+    expect(out).not.toContain("Fecha:");
+    expect(out).not.toContain("Buenas Maico");
+    // y con «Ver email completo» sigue estando todo
+    expect(strip(cleanBodyHtml(OUTLOOK_MOBILE, true))).toContain("Buenas Maico");
   });
 
   it("Gmail: sigue cortando en el bloque gmail_quote", () => {

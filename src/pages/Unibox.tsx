@@ -124,7 +124,11 @@ function stripAttachmentJunk(text: string): string {
   if (!text) return text;
   const idx = text.search(ATTACHMENT_CUT_RE);
   let t = idx >= 0 ? text.slice(0, idx) : text;
-  t = t.replace(/^.*\b(?:file)?name\*?=.*$/gim, "");
+  // Only MIME parameter lines (`filename="x.pdf"`, `name=...`): a line with NO tags.
+  // It used to match ANY line containing `name=`, and Outlook mobile puts a
+  // `<meta name="viewport">` on the same line as the reply text → the whole reply
+  // vanished and only the quoted message was left (real case, 2026-09-14).
+  t = t.replace(/^[^<>\n]*\b(?:file)?name\*?=[^<>\n]*$/gim, "");
   t = t.replace(/^Content-(?:Disposition|ID|Type|Transfer-Encoding|Description):.*$/gim, "");
   return t;
 }
