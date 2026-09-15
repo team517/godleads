@@ -1527,6 +1527,9 @@ export default function Unibox() {
       // if the stored warm-up flag says otherwise — those 373 replies were never labelled at all.
       const linked = !!(m.lead_id || m.campaign_id);
       if ((m as { is_warmup?: boolean }).is_warmup && !linked) continue;
+      // Only REAL thread replies get a category (same gate as the server cron): cold inbound spam
+      // has no thread headers and was being labelled "Interesado" from here (wyseemail, 2026-09-15).
+      if (!linked && !String((m as { ref_chain?: string | null }).ref_chain || "").trim()) continue;
       if (isBounceOrFailure(m.from_email) || isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked })) continue;
       const current: string[] = m.labels || [];
       // The server classifier (cron, AI-backed) is the authority: it marks what it labelled with

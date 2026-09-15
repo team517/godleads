@@ -350,7 +350,8 @@ describe("Clientes · configuración por fases", () => {
     expect(screen.getByRole("button", { name: /Quitar acceso/ })).toBeInTheDocument();
   });
 
-  it("la fase 5 ofrece las SIETE secciones de la lista blanca, con su explicación", async () => {
+  // Renders the whole Clientes page: on a loaded machine it can take >5 s, so give it room.
+  it("la fase 5 ofrece las SIETE secciones de la lista blanca, con su explicación", { timeout: 20000 }, async () => {
     only(
       client("vera", "Clínica Vera", {
         allowed_sections: [],

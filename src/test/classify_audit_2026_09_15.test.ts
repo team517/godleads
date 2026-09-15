@@ -12,6 +12,7 @@ const POOL_SUBJECTS = [
   "RE: Volunteers for Community Service", "RE: Sales Performance", "Re: Travel Reimbursement Process",
   "RE: New Employee Orientation", "RE: Annual Company Retreat", "RE: Investment Portfolio Review",
   "Re: Bug Fix Progress", "Re: Staff Wellness Program", "RE: Work Update", "RE: Project Deadline",
+  "RE: New Technology Implementation", "RE: Task Update: UI Design", "RE: New Tool Adoption", "RE: Year-End Celebration Plans",
 ];
 // …and what a real prospect answers: OUR subject, personalised, usually Spanish or with a name/brand.
 const REAL_SUBJECTS = [

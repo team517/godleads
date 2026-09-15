@@ -120,15 +120,20 @@ export function warmupPairCount(text: string | null, strict = true): number {
  *  (2026-09-15): 125 of 168 "Interesado" labels in a week were such threads that the short list
  *  in WARMUP_SUBJECT_RE missed — and 99 of them buzzed somebody's phone. A real prospect answers
  *  OUR subject ("Maria - HireTop", "una idea para X"), which never looks like this. */
-const OFFICE_WORD_RE = /\b(update|updates|review|meeting|training|event|workshop|project|team|budget|finance|financial|report|feedback|strategy|plan|plans|planning|timeline|goals|goal|newsletter|conference|schedule|session|program|initiative|policy|proposal|launch|orientation|retreat|reimbursement|wellness|productivity|tips|volunteer|volunteers|community|holiday|travel|office|vendor|negotiations?|priorities|milestone|downtime|notification|software|marketing|sales|client|customer|employee|staff|leadership|book\s+club|recommendation|retrospective|sprint|bug|fixes?|debrief|performance|quarterly|weekly|monthly|annual|upcoming|arrangements|process|courses?|development|expansion|opening|portfolio|investment|achievement|responsibility|compliance|survey|checklist|agenda|minutes|reminder|kickoff|status|recap|contribution|celebration|lunch|party|potluck|birthday|welcome|farewell|anniversary|award|recognition|deadline|guidelines|resources|benefits|onboarding|hiring|interview|recruitment|inventory|procurement|shipping|maintenance|security|backup|migration|rollout|upgrade|release|testing|audit|payroll|invoice|expenses|contract|partnership|collaboration|sponsorship|charity|donation|fundraiser|mentorship|internship|webinar|podcast|blog|content|brand|website|design|analytics|dashboard|metrics|roadmap|backlog|feature|request|ticket|support|helpdesk|matter|thoughts|ideas|brainstorm|suggestion|confirmation|debrief|assessment|evaluation|improvement|efficiency|opportunity|opportunities|insights?|overview|summary|catch-?up|check-?in|sync|discussion|announcement|invitation|reservation|logistics)\b/i;
+const OFFICE_WORD_RE = /\b(technology|implementation|adoption|tools?|tasks?|systems?|platform|year-end|quarter|update|updates|review|meeting|training|event|workshop|project|team|budget|finance|financial|report|feedback|strategy|plan|plans|planning|timeline|goals|goal|newsletter|conference|schedule|session|program|initiative|policy|proposal|launch|orientation|retreat|reimbursement|wellness|productivity|tips|volunteer|volunteers|community|holiday|travel|office|vendor|negotiations?|priorities|milestone|downtime|notification|software|marketing|sales|client|customer|employee|staff|leadership|book\s+club|recommendation|retrospective|sprint|bug|fixes?|debrief|performance|quarterly|weekly|monthly|annual|upcoming|arrangements|process|courses?|development|expansion|opening|portfolio|investment|achievement|responsibility|compliance|survey|checklist|agenda|minutes|reminder|kickoff|status|recap|contribution|celebration|lunch|party|potluck|birthday|welcome|farewell|anniversary|award|recognition|deadline|guidelines|resources|benefits|onboarding|hiring|interview|recruitment|inventory|procurement|shipping|maintenance|security|backup|migration|rollout|upgrade|release|testing|audit|payroll|invoice|expenses|contract|partnership|collaboration|sponsorship|charity|donation|fundraiser|mentorship|internship|webinar|podcast|blog|content|brand|website|design|analytics|dashboard|metrics|roadmap|backlog|feature|request|ticket|support|helpdesk|matter|thoughts|ideas|brainstorm|suggestion|confirmation|debrief|assessment|evaluation|improvement|efficiency|opportunity|opportunities|insights?|overview|summary|catch-?up|check-?in|sync|discussion|announcement|invitation|reservation|logistics)\b/i;
 export function looksLikeWarmupSubject(subject: string | null | undefined): boolean {
   const s = String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
   if (!s || s.length > 70) return false;
-  if (!/^[A-Za-z][A-Za-z' ]*$/.test(s)) return false;            // ASCII words only: no "-", digits, accents, brands
-  const words = s.split(/\s+/);
-  if (words.length < 2 || words.length > 6) return false;
-  // Every word Title-Case (small connectors allowed): "Update on Vendor Negotiations".
-  if (!words.every((w) => /^[A-Z][a-z']*$/.test(w) || /^(on|and|for|of|the|in|to|a|an|with|at|from)$/i.test(w))) return false;
+  // Our own subjects carry a name/company: "Maria - HireTop", "idea para X". A " - " separator,
+  // digits, accents, "@", "?" or "|" mean personalised → never a pool subject.
+  if (/ - |[0-9@?|¿!€$%]/.test(s) || /[^\x00-\x7F]/.test(s)) return false;
+  // ASCII letters, spaces, apostrophes, ONE inner colon ("Task Update: UI Design") and hyphenated
+  // Title words ("Year-End Celebration Plans").
+  if (!/^[A-Za-z][A-Za-z' :-]*$/.test(s) || (s.match(/:/g) || []).length > 1) return false;
+  const words = s.replace(/:/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 7) return false;
+  // Every word Title-Case (connectors and short acronyms like UI/HR/IT allowed).
+  if (!words.every((w) => /^[A-Z][a-z']*(-[A-Z][a-z']*)?$/.test(w) || /^[A-Z]{2,3}$/.test(w) || /^(on|and|for|of|the|in|to|a|an|with|at|from|vs)$/i.test(w))) return false;
   return OFFICE_WORD_RE.test(s);
 }
 
