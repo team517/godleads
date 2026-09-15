@@ -194,6 +194,11 @@ Deno.serve(async (req) => {
           // actionable: the rules say Derivado, the model tends to say out_of_office. Keep the
           // referral — there is somebody to write to.
           if (cat === "out_of_office" && batch[k].ruleVerdict === "derivado") cat = "derivado";
+          // "No contactar" is final and suppresses a lead for good. When the rules read the reply as
+          // a plain rejection and found NO cessation phrase (baja / no me escribáis / borrad mis
+          // datos — those make the rules say no_contactar themselves), the model's stricter reading
+          // ("Gracias, no estoy interesado" → no_contactar, GISMA 2026-09-15) is downgraded.
+          if (cat === "no_contactar" && batch[k].ruleVerdict === "not_interested") cat = "not_interested";
           batch[k].verdict = cat; batch[k].via = "ia";
         } else {
           aiFailures++;
