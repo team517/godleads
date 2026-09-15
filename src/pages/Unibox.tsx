@@ -3740,7 +3740,11 @@ export default function Unibox() {
                 </ScrollArea>
 
                 {/* Reply box */}
-                  <div className="border-t border-border/60 bg-card px-3 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4 md:pt-3 md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+                  {/* Reply footer: never taller than the viewport allows. A long reply used to grow
+                      this box past the dialog's bottom edge (overflow-hidden) and hide its own end
+                      and the "Responder" button. The editor scrolls inside; if drafts/suggestions
+                      still push it over, the footer itself scrolls. */}
+                  <div className="flex-shrink-0 max-h-[72dvh] overflow-y-auto border-t border-border/60 bg-card px-3 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4 md:pt-3 md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2 text-[10px] md:text-xs text-muted-foreground">
                       <Send className="h-3 w-3 flex-shrink-0" />
@@ -3807,7 +3811,7 @@ export default function Unibox() {
                     ref={replyRef}
                     id="unibox-reply-textarea"
                     placeholder="Escribe tu respuesta…"
-                    className="mb-2.5 min-h-[92px] rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus:border-primary/40 focus:ring-2 focus:ring-primary/25"
+                    className={`mb-2.5 min-h-[92px] overflow-y-auto rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus:border-primary/40 focus:ring-2 focus:ring-primary/25 ${readerExpanded ? "max-h-[58dvh]" : "max-h-[42dvh]"}`}
                     value={reply}
                     onChange={setReply}
                   />
