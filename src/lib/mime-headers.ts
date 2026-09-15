@@ -161,6 +161,38 @@ export function encodeMimeHeaderFolded(value: string): string {
  * at ≤78 chars with CRLF + TAB continuation. Use for To, Cc, References and any
  * other header whose value is a list that can grow without bound.
  */
+/**
+ * Threading headers for a reply, built ONCE, the same way, for every sender.
+ *
+ * RFC 5322 §3.6.4: In-Reply-To = the Message-ID of the message being answered;
+ * References = the parent's References followed by the parent's Message-ID. Ids go on
+ * the wire in angle brackets exactly once, never twice ("<<id>>" breaks Gmail threading),
+ * never duplicated, and the answered id is always the LAST one (that is the id the
+ * recipient's client matches). A very long chain is trimmed from the middle, keeping the
+ * root (first) and the most recent ids, so the folded header stays sane.
+ */
+export function threadHeaders(
+  inReplyTo: string | null | undefined,
+  references: string | null | undefined,
+  maxIds = 24,
+): { inReplyTo: string; references: string } | null {
+  const norm = (raw: string): string => {
+    const id = raw.trim().replace(/^<+/, "").replace(/>+$/, "").trim();
+    return id && id.includes("@") && !/[\s<>]/.test(id) ? `<${id}>` : "";
+  };
+  const parent = norm(String(inReplyTo || ""));
+  if (!parent) return null;
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  for (const part of String(references || "").split(/[\s,]+/)) {
+    const id = norm(part);
+    if (id && id !== parent && !seen.has(id)) { seen.add(id); chain.push(id); }
+  }
+  if (chain.length > maxIds - 1) chain.splice(1, chain.length - (maxIds - 1)); // keep root + newest
+  chain.push(parent);
+  return { inReplyTo: parent, references: chain.join(" ") };
+}
+
 export function foldHeader(name: string, value: string): string {
   const normalized = collapseHeaderWhitespace(value);
   const single = `${name}: ${normalized}`;

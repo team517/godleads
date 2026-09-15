@@ -69,6 +69,8 @@ export function generateMessageId(domain: string, now: Date = new Date()): strin
   return `<${stamp}.${randomToken(10)}.${randomToken(6)}@${domain || "localhost"}>`;
 }
 
+import { threadHeaders } from "./mime-headers.ts";
+
 /** Message-IDs go on the wire inside angle brackets, EXACTLY once. Every other code path in
  *  this repo stores them already bracketed; blind `<${id}>` produced `<<id@dom>>`. */
 function wrapId(id: string): string {
@@ -204,10 +206,13 @@ export function buildMimeMessage(o: {
   ];
   if (o.replyTo) headers.push(`Reply-To: <${o.replyTo}>`);
 
-  const irt = wrapId(o.inReplyTo || "");
-  if (irt) headers.push(`In-Reply-To: ${irt}`);
-  const refs = wrapRefs(o.references || "") || irt;
-  if (refs) headers.push(foldHeader("References", refs));
+  // Same threading rules as send-email (shared, tested): bracketed once, deduplicated, the
+  // answered id last, long chains trimmed from the middle.
+  const thread = threadHeaders(o.inReplyTo, o.references);
+  if (thread) {
+    headers.push(`In-Reply-To: ${thread.inReplyTo}`);
+    headers.push(foldHeader("References", thread.references));
+  }
 
   const altBoundary = `=_op_alt_${randomToken(12)}_${randomToken(8)}`;
   const plain = htmlToPlainText(o.html);

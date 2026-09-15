@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
-import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, textToHtmlBody } from "../_shared/mime-headers.ts";
+import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -345,19 +345,13 @@ async function sendSmtpEmail(
         `Reply-To: <${from}>`,
       ];
 
-      if (opts?.inReplyTo) {
-        const refId = opts.inReplyTo.includes("<") ? opts.inReplyTo : `<${opts.inReplyTo}>`;
-        headers.push(`In-Reply-To: ${refId}`);
-
-        const refs = opts.references
-          ? opts.references
-              .split(/\s+/)
-              .filter(Boolean)
-              .map((id) => (id.includes("<") ? id : `<${id}>`))
-              .join(" ")
-          : refId;
-        // A 20-message thread's References chain is one long line — fold it.
-        headers.push(foldHeader("References", refs));
+      // Threading (In-Reply-To + References) built by the shared, tested helper: ids
+      // bracketed exactly once, no duplicates, the answered id always last, long chains
+      // trimmed from the middle. A 20-message thread's References is one long line — fold it.
+      const thread = threadHeaders(opts?.inReplyTo, opts?.references);
+      if (thread) {
+        headers.push(`In-Reply-To: ${thread.inReplyTo}`);
+        headers.push(foldHeader("References", thread.references));
       }
 
       // Unsubscribe. RFC 8058 one-click REQUIRES an https URI: declaring

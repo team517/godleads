@@ -1,5 +1,49 @@
 import { describe, it, expect } from "vitest";
-import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace, hasHtmlMarkup, textToHtmlBody } from "@/lib/mime-headers";
+import { encodeMimeHeaderFolded, foldHeader, collapseHeaderWhitespace, hasHtmlMarkup, textToHtmlBody, threadHeaders } from "@/lib/mime-headers";
+
+// ── Threading headers of a Unibox reply (RFC 5322 §3.6.4) ─────────────────────────────────
+// What the recipient's client matches to keep the conversation in ONE thread: In-Reply-To =
+// the id of the message answered; References = the parent's chain + that id, last.
+describe("threadHeaders — In-Reply-To / References de una respuesta", () => {
+  it("responde al último mensaje recibido y hereda su cadena, con el id respondido al final", () => {
+    const t = threadHeaders("<c@lead.com>", "<a@ours.es> <b@lead.com>")!;
+    expect(t.inReplyTo).toBe("<c@lead.com>");
+    expect(t.references).toBe("<a@ours.es> <b@lead.com> <c@lead.com>");
+  });
+  it("pone los corchetes exactamente una vez (nunca <<id>>) y admite ids sin corchetes", () => {
+    const t = threadHeaders("c@lead.com", "<a@ours.es> b@lead.com")!;
+    expect(t.inReplyTo).toBe("<c@lead.com>");
+    expect(t.references).toBe("<a@ours.es> <b@lead.com> <c@lead.com>");
+    expect(threadHeaders("<<c@lead.com>>", "")!.inReplyTo).toBe("<c@lead.com>");
+  });
+  it("no duplica ids: la cadena guardada ya incluía el id respondido y el frontend lo añadió otra vez", () => {
+    const t = threadHeaders("<c@lead.com>", "<a@ours.es> <c@lead.com> <a@ours.es> <c@lead.com>")!;
+    expect(t.references).toBe("<a@ours.es> <c@lead.com>");
+  });
+  it("sin In-Reply-To no hay cabeceras de hilo (un primer contacto nunca se enhebra a nada)", () => {
+    expect(threadHeaders("", "<a@ours.es>")).toBeNull();
+    expect(threadHeaders(null, null)).toBeNull();
+  });
+  it("descarta basura (sin @, con espacios) sin romper la cadena", () => {
+    const t = threadHeaders("<c@lead.com>", "<a@ours.es> nonsense <no-at-sign> <b@lead.com>")!;
+    expect(t.references).toBe("<a@ours.es> <b@lead.com> <c@lead.com>");
+  });
+  it("recorta una cadena enorme por el medio: conserva la raíz y los más recientes", () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `<m${i}@x.com>`);
+    const t = threadHeaders("<last@x.com>", ids.join(" "), 24)!;
+    const out = t.references.split(" ");
+    expect(out.length).toBe(24);
+    expect(out[0]).toBe("<m0@x.com>");
+    expect(out[out.length - 1]).toBe("<last@x.com>");
+    expect(out[out.length - 2]).toBe("<m59@x.com>");
+  });
+  it("una cadena larga se pliega por debajo de 998 caracteres por línea", () => {
+    const ids = Array.from({ length: 24 }, (_, i) => `<20260914.14315${i}.abcdefghij.klmnop@oncontrolcentral.info>`);
+    const folded = foldHeader("References", threadHeaders(ids[23], ids.slice(0, 23).join(" "))!.references);
+    for (const line of folded.split("\r\n")) expect(line.length).toBeLessThanOrEqual(998);
+    expect(folded.replace(/\r\n[ \t]/g, " ")).toContain(ids[23]);
+  });
+});
 
 // Decode an "=?UTF-8?B?..?=" chain back to the original string, the way a mail client
 // does: unfold (CRLF + WSP), then base64-decode every word and concatenate.

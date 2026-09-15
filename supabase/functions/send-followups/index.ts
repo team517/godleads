@@ -11,6 +11,8 @@ function toHtml(text: string): string {
   if (/<(p|div|br|a)\b/i.test(text)) return text;
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="margin:0 0 10px">${p.replace(/\n/g, "<br>")}</p>`).join("") || `<p>${(text || "").replace(/\n/g, "<br>")}</p>`;
 }
+import { encodeMimeHeaderFolded, foldHeader, threadHeaders } from "../_shared/mime-headers.ts";
+
 async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string; msgId?: string }> {
   try {
     // Header-injection guard: strip CR/LF from any value that lands in an email header, so a crafted
@@ -23,12 +25,12 @@ async function sendSmtp(host: string, port: number, username: string, password: 
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
     const read = async () => { const b = new Uint8Array(4096); const n = await conn.read(b); return new TextDecoder().decode(b.subarray(0, n || 0)); };
     const send = async (cmd: string) => { await conn.write(new TextEncoder().encode(cmd + "\r\n")); return await read(); };
-    const inReplyTo = wrapId(opts?.inReplyTo || "");
-    const refs = (opts?.references || opts?.inReplyTo || "").trim();
-    const referencesHdr = refs ? refs.split(/\s+/).map(wrapId).filter(Boolean).join(" ") : "";
-    const threadHdrs = inReplyTo ? `In-Reply-To: ${inReplyTo}\r\nReferences: ${referencesHdr || inReplyTo}\r\n` : "";
+    // Same threading rules as every other sender (shared, tested helper): ids bracketed once,
+    // no duplicates, the answered id last, long chains trimmed and FOLDED under 998 chars.
+    const thread = threadHeaders(opts?.inReplyTo, opts?.references);
+    const threadHdrs = thread ? `In-Reply-To: ${thread.inReplyTo}\r\n${foldHeader("References", thread.references)}\r\n` : "";
     const ourId = `<${crypto.randomUUID()}@onepulso.online>`;
-    const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
+    const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${encodeMimeHeaderFolded(subject)}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
     await read();
     if (port === 587) { const ehlo = await send("EHLO onepulso"); if (ehlo.includes("STARTTLS")) { await conn.write(new TextEncoder().encode("STARTTLS\r\n")); await read(); conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host }); } }
     await send("EHLO onepulso");
