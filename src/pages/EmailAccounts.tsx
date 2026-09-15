@@ -109,12 +109,16 @@ export default function EmailAccounts() {
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-  const [bulkTagInput, setBulkTagInput] = useState("");
   const [savedTags, setSavedTags] = useState<{ id: string; name: string }[]>([]);
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingTagValue, setEditingTagValue] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
   const [showTagManager, setShowTagManager] = useState(false);
+  // "Crear tag" dialog: one obvious place to create a tag and, optionally, put accounts in it.
+  // The three inline inputs (disabled until typed, 7-char-wide placeholders) read as "no se puede".
+  const [createTagOpen, setCreateTagOpen] = useState(false);
+  const [createTagName, setCreateTagName] = useState("");
+  const [createTagScope, setCreateTagScope] = useState<"none" | "selected" | "visible">("none");
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [bulkEditForm, setBulkEditForm] = useState({
     daily_limit: "",
@@ -446,6 +450,36 @@ export default function EmailAccounts() {
     loadSavedTags();
   };
 
+  /** Create the tag (saved even with no accounts) and, if asked, put the selected / visible
+   *  accounts in it. Same writes as the inline flows, in one dialog that is never disabled. */
+  const openCreateTag = (scope: "none" | "selected" | "visible") => {
+    setCreateTagName("");
+    setCreateTagScope(scope);
+    setCreateTagOpen(true);
+  };
+  const handleCreateTagWithScope = async () => {
+    const name = createTagName.trim();
+    if (!name || !user) return;
+    const { error } = await supabase.from("email_tags").upsert({ user_id: user.id, name }, { onConflict: "user_id,name" } as any);
+    if (error) { toast.error(error.message); return; }
+    const targets = createTagScope === "selected"
+      ? accounts.filter(a => selectedIds.has(a.id))
+      : createTagScope === "visible" ? filteredAccounts : [];
+    let added = 0;
+    for (const account of targets) {
+      const currentTags: string[] = account.tags || [];
+      if (currentTags.includes(name)) continue;
+      const { error: upErr } = await supabase.from("email_accounts").update({ tags: [...currentTags, name] } as any).eq("id", account.id);
+      if (!upErr) added++;
+    }
+    toast.success(targets.length > 0 ? `Tag "${name}" creado y aplicado a ${added} cuentas` : `Tag "${name}" creado`);
+    setCreateTagOpen(false);
+    setCreateTagName("");
+    if (targets.length > 0) setSelectedIds(new Set());
+    loadSavedTags();
+    if (added > 0) loadAccounts();
+  };
+
   const handleDeleteSavedTag = async (tagName: string) => {
     if (!user) return;
     if (!window.confirm(`¿Eliminar el tag "${tagName}"? Se quitará de todas las cuentas que lo tengan.`)) return;
@@ -517,25 +551,6 @@ export default function EmailAccounts() {
     } else {
       setSelectedIds(new Set(filteredAccounts.map(a => a.id)));
     }
-  };
-
-  const handleBulkAddTag = async () => {
-    const newTags = bulkTagInput.split(",").map(t => t.trim()).filter(Boolean);
-    if (newTags.length === 0 || selectedIds.size === 0) return;
-    const selected = accounts.filter(a => selectedIds.has(a.id));
-    for (const account of selected) {
-      const currentTags: string[] = account.tags || [];
-      const uniqueNew = newTags.filter(t => !currentTags.includes(t));
-      if (uniqueNew.length > 0) {
-        await supabase.from("email_accounts").update({ tags: [...currentTags, ...uniqueNew] } as any).eq("id", account.id);
-      }
-    }
-    for (const t of newTags) await ensureTagSaved(t);
-    toast.success(`Tags "${newTags.join(", ")}" añadidos a ${selected.length} cuentas`);
-    setBulkTagInput("");
-    setSelectedIds(new Set());
-    loadAccounts();
-    loadSavedTags();
   };
 
   const handleBulkRemoveTag = async (tag: string) => {
@@ -1200,23 +1215,70 @@ export default function EmailAccounts() {
           );
         })}
         <div className="h-4 w-px bg-border" />
-        <div className="flex items-center gap-1">
-          <Input
-            placeholder="Nuevo tag…"
-            className="h-7 w-28 text-xs"
-            value={newTagInput}
-            onChange={e => setNewTagInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleCreateTag(); }}
-          />
-          <Button size="sm" variant="secondary" className="h-7 text-xs gap-1" onClick={handleCreateTag} disabled={!newTagInput.trim()}>
-            <Plus className="h-3 w-3" /> Crear
-          </Button>
-        </div>
+        <Button size="sm" className="h-7 text-xs gap-1" onClick={() => openCreateTag(selectedIds.size > 0 ? "selected" : "none")}>
+          <Plus className="h-3 w-3" /> Crear tag
+        </Button>
         <div className="h-4 w-px bg-border" />
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowTagManager(true)}>
           <Tag className="h-3 w-3" /> Ver todos los tags
         </Button>
       </div>
+
+      {/* Crear tag — nombre + a qué cuentas aplicarlo. Nunca aparece apagado. */}
+      <Dialog open={createTagOpen} onOpenChange={setCreateTagOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2"><Tag className="h-5 w-5" /> Crear tag</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="create-tag-name">Nombre del tag</Label>
+              <Input
+                id="create-tag-name"
+                autoFocus
+                placeholder="p. ej. ONEPULSO, Cliente X, Warm-up…"
+                value={createTagName}
+                onChange={e => setCreateTagName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleCreateTagWithScope(); }}
+                list="create-tag-suggestions"
+              />
+              <datalist id="create-tag-suggestions">
+                {allTags.map(t => <option key={t} value={t} />)}
+              </datalist>
+              {allTags.includes(createTagName.trim()) && (
+                <p className="text-xs text-muted-foreground">Ese tag ya existe: se añadirán las cuentas que elijas.</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Aplicar a</Label>
+              <div className="grid gap-2">
+                {([
+                  { key: "none", label: "Solo crear el tag", hint: "sin cuentas, para usarlo luego" },
+                  { key: "selected", label: `Cuentas seleccionadas (${selectedIds.size})`, hint: selectedIds.size === 0 ? "no hay ninguna seleccionada" : "las que has marcado en la lista" },
+                  { key: "visible", label: `Todas las visibles (${filteredAccounts.length})`, hint: filterTag ? `las del filtro "${filterTag}"` : "todas las de la lista actual" },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={opt.key === "selected" && selectedIds.size === 0}
+                    onClick={() => setCreateTagScope(opt.key)}
+                    className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:opacity-50 ${createTagScope === opt.key ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"}`}
+                  >
+                    <span className="font-medium">{opt.label}</span>
+                    <span className="text-xs text-muted-foreground">{opt.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateTagOpen(false)}>Cancelar</Button>
+            <Button onClick={handleCreateTagWithScope} disabled={!createTagName.trim()} className="gap-1">
+              <Plus className="h-4 w-4" /> {createTagScope === "none" ? "Crear tag" : "Crear y aplicar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Tag Manager Dialog */}
       <Dialog open={showTagManager} onOpenChange={setShowTagManager}>
@@ -1509,22 +1571,9 @@ export default function EmailAccounts() {
                 </>
               )}
               <div className="h-4 w-px bg-border" />
-              <div className="flex items-center gap-2">
-                 <Input
-                   placeholder="Tags separados por coma…"
-                   className="h-7 w-48 text-xs"
-                  value={bulkTagInput}
-                  onChange={e => setBulkTagInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") handleBulkAddTag(); }}
-                  list="bulk-tags-list"
-                />
-                <datalist id="bulk-tags-list">
-                  {allTags.map(t => <option key={t} value={t} />)}
-                </datalist>
-                <Button size="sm" variant="secondary" className="h-7 text-xs gap-1" onClick={handleBulkAddTag} disabled={!bulkTagInput.trim()}>
-                  <Tag className="h-3 w-3" /> Añadir tag
-                </Button>
-              </div>
+              <Button size="sm" className="h-7 text-xs gap-1" onClick={() => openCreateTag("selected")}>
+                <Tag className="h-3 w-3" /> Crear / añadir tag ({selectedIds.size})
+              </Button>
               {allTags.length > 0 && (
                 <>
                   <div className="h-4 w-px bg-border" />
