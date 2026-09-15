@@ -107,7 +107,20 @@ serve(async (req) => {
       const r = await sendSmtp(acct.smtp_host, acct.smtp_port, acct.smtp_username, acct.smtp_password, acct.email, "OnePulso", f.contact_email, subject, toHtml(f.body || ""), { inReplyTo: f.in_reply_to || "", references: f.references_hdr || f.in_reply_to || "" });
       // Reset for retry ONLY if it's still 'sending' — never resurrect a follow-up the owner
       // canceled while the send was in flight (.eq status sending guards against that).
-      if (!r.ok) { await admin.from("follow_ups").update({ status: "scheduled", note: `reintento: ${r.error || ""}`.slice(0, 200), updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "sending"); results.push({ id: f.id, error: r.error }); continue; }
+      if (!r.ok) {
+        // Retry next minute, but not forever: a permanent SMTP failure (auth, blocked mailbox)
+        // would otherwise hammer the server 1,440 times a day. After MAX_ATTEMPTS the follow-up
+        // is parked as 'error' with the reason, where the owner can see it and retry by hand.
+        const MAX_ATTEMPTS = 10;
+        const attempt = (Number((String(f.note || "").match(/^reintento (\d+)/) || [])[1]) || 0) + 1;
+        const reason = (r.error || "").slice(0, 150);
+        if (attempt >= MAX_ATTEMPTS) {
+          await admin.from("follow_ups").update({ status: "error", note: `error tras ${attempt} intentos: ${reason}`.slice(0, 200), updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "sending");
+        } else {
+          await admin.from("follow_ups").update({ status: "scheduled", note: `reintento ${attempt}: ${reason}`.slice(0, 200), updated_at: new Date().toISOString() }).eq("id", f.id).eq("status", "sending");
+        }
+        results.push({ id: f.id, error: r.error, attempt }); continue;
+      }
       await admin.from("follow_ups").update({ status: "sent", sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", f.id);
       // Record in sent_emails so it appears in the conversation timeline.
       try { await admin.from("sent_emails").insert({ user_id: f.owner_id, account_id: acct.id, to_email: f.contact_email, subject, body: toHtml(f.body || ""), status: "sent", sent_at: new Date().toISOString(), smtp_message_id: r.msgId || null }); } catch { /* non-fatal */ }

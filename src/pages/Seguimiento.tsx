@@ -49,7 +49,7 @@ export default function Seguimiento() {
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
 
   const loadFollowups = async () => {
-    try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
+    try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent", "error"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
   };
   const loadSegThreads = async () => {
     try { const { data } = await (supabase as any).from("seg_threads").select("*").order("last_imported_at", { ascending: false }).limit(100); setSegThreads((data as any[]) || []); } catch { /* */ }
@@ -214,7 +214,9 @@ export default function Seguimiento() {
   if ((user.email || "").toLowerCase() !== "hello@onepulso.blog") return <Navigate to="/dashboard" replace />;
 
   const today = dayISO(new Date());
-  const scheduled = followups.filter((f) => f.status === "scheduled");
+  // 'error' rows (SMTP failed 10 times, no sending mailbox) stay on the calendar in red: an
+  // invisible failed follow-up is a follow-up nobody knows was never sent.
+  const scheduled = followups.filter((f) => f.status === "scheduled" || f.status === "error");
   const fusOn = (d: Date) => scheduled.filter((f) => dayISO(new Date(f.scheduled_at)).getTime() === d.getTime()).sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
   // Rejilla del MES completo (empieza en lunes), 6 semanas.
   const firstOfMonth = new Date(calMonth.y, calMonth.m, 1);
@@ -380,7 +382,8 @@ export default function Seguimiento() {
                   <div className="space-y-0.5">
                     {items.map((f) => (
                       <div key={f.id} draggable onDragStart={() => setDragId(f.id)} onDragEnd={() => setDragId(null)} onClick={() => setFuDetail(f)}
-                        className="group cursor-pointer rounded border border-primary/30 bg-primary/5 px-1 py-0.5 text-[9px] leading-tight hover:border-primary" title="Ver el mensaje programado">
+                        className={`group cursor-pointer rounded border px-1 py-0.5 text-[9px] leading-tight ${f.status === "error" ? "border-destructive/50 bg-destructive/10 hover:border-destructive" : "border-primary/30 bg-primary/5 hover:border-primary"}`}
+                        title={f.status === "error" ? `NO ENVIADO — ${f.note || "error"}` : "Ver el mensaje programado"}>
                         <p className="flex items-center justify-between font-medium text-foreground">
                           <span className="truncate">{new Date(f.scheduled_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} {(f.contact_name || f.contact_email || "").split(/[ @]/)[0]}</span>
                           <button onClick={(e) => { e.stopPropagation(); cancelFollowup(f.id); }} className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" title="Cancelar"><X className="h-2.5 w-2.5" /></button>
@@ -408,6 +411,16 @@ export default function Seguimiento() {
                 <p><b className="text-foreground">Se envía:</b> {new Date(fuDetail.scheduled_at).toLocaleString("es-ES", { weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" })} <span className="text-muted-foreground">(desde team@)</span></p>
                 <p className="truncate"><b className="text-foreground">Asunto:</b> {fuDetail.subject || "Seguimiento"}</p>
               </div>
+              {fuDetail.status === "error" && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs">
+                  <p className="text-destructive"><b>No se envió.</b> {fuDetail.note || "Error de envío"}</p>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={async () => {
+                    await (supabase as any).from("follow_ups").update({ status: "scheduled", scheduled_at: new Date().toISOString(), note: null, updated_at: new Date().toISOString() }).eq("id", fuDetail.id).eq("status", "error");
+                    toast.success("Reprogramado: se reintenta en el próximo minuto");
+                    setFuDetail(null); loadFollowups();
+                  }}>Reintentar ahora</Button>
+                </div>
+              )}
               <div>
                 <p className="mb-1 text-xs font-semibold text-muted-foreground">Mensaje programado</p>
                 <div className="whitespace-pre-wrap break-words rounded-lg border border-border p-3 text-sm text-foreground">{cleanBody(fuDetail.body) || "(vacío)"}</div>
