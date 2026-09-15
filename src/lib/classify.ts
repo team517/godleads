@@ -44,6 +44,11 @@ const QUOTE_MARKERS: RegExp[] = [
   // read as the lead's words: a polite decline ("tenemos los servicios cubiertos") came out as
   // Interesado because our "¿te va bien verlo 10 minutos?" sat right below it.
   /(^|\n)\s*(de|from|von)\s*:[^\n]{0,140}\n(?:[^\n]{0,140}\n){0,2}?\s*(enviado(\s+el)?|sent|gesendet|fecha|date|envoy[ée]|para|to|an|asunto|subject|betreff|objet)\s*:/i,
+  // Apple Mail / iPhone quote headers folded onto the SAME line as the reply, further than 80
+  // chars from the line start ("BAJA Sent from my iPhone On 11 Sep 2026, at 17:10, X <…> wrote:"):
+  // a dated "On …, at HH:MM, … wrote:" / "El 11 sept 2026, a las 15:09, … escribió:" anywhere.
+  /\bon\s+\d{1,2}\s+[a-z]{3,9}\.?\s+\d{4},?\s+at\s+\d{1,2}:\d{2}[^\n]{0,140}?\bwrote\s*:/i,
+  /\bel\s+\d{1,2}\s+[a-zñ]{3,10}\.?\s+(de\s+)?\d{4},?\s+a\s+las\s+\d{1,2}:\d{2}[^\n]{0,140}?\bescribi[óo]\s*:/i,
 ];
 const FOOTER_MARKERS: RegExp[] = [
   /\b(aviso legal|legal notice|disclaimer|cláusula de confidencialidad)\b/i,
@@ -67,6 +72,15 @@ const FOOTER_MARKERS: RegExp[] = [
   /\b(los\s+)?datos\s+personales\b[^\n]{0,90}\b(se\s+(almacenan|conservan|tratan|utilizan|recaban)|almacenad|conservad|tratad|recabad)/i,
   /\bpuede[n]?\s+(acceder|rectificar|suprimir|eliminar|oponerse|limitar|ejercer|ejercitar)\b/i,
   /\bse\s+conservar[áa]n\s+(mientras|durante|el\s+tiempo)/i,
+  // LOPD footer of the "su dirección figura en nuestros archivos… si no desea recibir…" family
+  // (GISMA/we|go): its "mantener el contacto… remitirle información" read as a commercial opening
+  // and flipped "no estoy interesado" to Interesado (2026-09-15).
+  /\b(su|tu|vuestra)\s+direcci[óo]n\s+(de\s+)?(correo|e-?mail)(\s+electr[óo]nico)?\s+(figura|consta|est[áa]\s+(incluida|registrada)|ha\s+sido\s+(obtenida|incluida))/i,
+  /\bsi\s+no\s+desea[n]?\s+recibir\b/i,
+  // Mobile-client signatures: everything after them is a signature or the quoted mail.
+  /\b(sent\s+from\s+my\s+(iphone|ipad|android|samsung|mobile|galaxy)|enviado\s+desde\s+mi\s+(iphone|ipad|android|m[óo]vil|samsung|galaxy)|enviat\s+des\s+del\s+meu|(get|obt[ée]n(er)?)\s+outlook\s+(for|para)\s+(ios|android))\b/i,
+  // "Please consider the environment" / "Antes de imprimir…" footers.
+  /\b(antes\s+de\s+imprimir|imprim[ae]\s+(solamente|s[óo]lo|únicamente)|piensa\s+en\s+el\s+medio\s+ambiente|please\s+consider\s+the\s+environment|think\s+before\s+you\s+print|no\s+imprimas\s+este)\b/i,
 ];
 const MIME_NOISE = /(^|\n)\s*(--[_=]?[A-Za-z0-9_=.-]{12,}\s*(--)?|this message is in mime format[^\n]*|content-(type|transfer-encoding)\s*:[^\n]*|charset=[^\n]*)/gi;
 
@@ -77,7 +91,12 @@ export function authorText(raw: string): string {
   let cut = t.length;
   for (const re of [...QUOTE_MARKERS, ...FOOTER_MARKERS]) {
     const m = re.exec(t);
-    if (m && m.index >= 15 && m.index < cut) cut = m.index;
+    if (!m || m.index >= cut) continue;
+    // A marker in the first 15 chars is ignored ONLY when nothing was written before it: a terse
+    // "No gracias" / "No" / "BAJA" followed by the quote header used to keep OUR whole pitch
+    // ("El 11 sept… escribió:" sat at index 11) and the reply was judged on our own words.
+    const before = t.slice(0, m.index).replace(/[^\p{L}\p{N}]+/gu, "");
+    if (m.index >= 15 || before.length >= 2) cut = m.index;
   }
   return t.slice(0, cut);
 }
@@ -618,6 +637,12 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   const bodyText = looksBinary(body) ? "" : prep(body);
   const text = `${subjectText} ${bodyText}`.trim();
   if (text.replace(/\s+/g, "").length < 2) return "neutral"; // nothing meaningful to read
+
+  // ── One-word replies, judged on the BODY alone (the subject is our own line, not theirs):
+  // "BAJA" is an unsubscribe; "No" / "No gracias" / "No, thanks" is a rejection. Both were read
+  // as questions/referrals because our quoted pitch survived behind them (2026-09-15).
+  if (/^\s*(baja|unsubscribe|desuscribir)\s*[.!]*\s*$/i.test(bodyText)) return "no_contactar";
+  if (/^\s*no[.,!]*(\s+(gracias|thanks|thank\s+you|merci|grazie))?\s*[.!]*\s*$/i.test(bodyText)) return "not_interested";
 
   // ── §5.1 Delivery events: a bounce is a delivery fact, never a human intent (case 68).
   if (any(SYSTEM_BOUNCE, text)) return "out_of_office";

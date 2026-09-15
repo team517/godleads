@@ -29,7 +29,7 @@
 // label itself, but the Unibox labels a message the moment somebody opens it, so whoever
 // looked first silently stole the alert.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { classifyMessage } from "../_shared/classify.ts";
+import { classifyMessage, authorText } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce } from "../_shared/ai-classify.ts";
 
@@ -170,13 +170,21 @@ Deno.serve(async (req) => {
       if (breakerTripped) { for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
       if (Date.now() - startedAt > RUN_TIME_BUDGET_MS) { outOfTime = true; for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
       const batch = aiQueue.slice(i, i + AI_CONCURRENCY);
-      const results = await Promise.all(batch.map((p) => aiClassifyOnce(deepseekKey, p.m.subject, p.text)));
+      // The model reads ONLY the author's words (quote + legal footers cut), exactly what the
+      // prompt promises. It used to get the whole text and judged our own quoted pitch and the
+      // sender's RGPD footer ("lo veo con el equipo" → No contactar, 2026-09-15).
+      const results = await Promise.all(batch.map((p) => aiClassifyOnce(deepseekKey, p.m.subject, authorText(p.text))));
       for (let k = 0; k < batch.length; k++) {
         aiCalls++;
         const r = results[k];
         if (r.verdict) {
           consecutiveTransient = 0;
-          batch[k].verdict = r.verdict.category; batch[k].via = "ia";
+          let cat: string = r.verdict.category;
+          // An auto-reply that names a replacement ("ya no forma parte… escriba a X") is
+          // actionable: the rules say Derivado, the model tends to say out_of_office. Keep the
+          // referral — there is somebody to write to.
+          if (cat === "out_of_office" && batch[k].ruleVerdict === "derivado") cat = "derivado";
+          batch[k].verdict = cat; batch[k].via = "ia";
         } else {
           aiFailures++;
           // A transient failure leaves the row UNMARKED (next tick retries); a malformed answer

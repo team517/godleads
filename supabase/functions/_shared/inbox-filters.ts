@@ -89,7 +89,13 @@ const COMPOUND_SIDE_RE = /(ed|ing|ly|ive|able|ible|ful|less|ness|ous|al|er|est|i
  *  real prospect's "cost-effective" never counts; in non-strict mode (mail NOT linked to any
  *  lead — never a campaign reply) any remaining pair counts ("clock-speed", "noise-waste"). */
 export function warmupPairCount(text: string | null, strict = true): number {
-  const t = (text || "").slice(0, 1200);
+  // Emails, URLs and bare domains are NOT word pairs: "a.lombardi@tecno-group.eu" in a signature
+  // counted "tecno-group" twice and flagged a real client's replies (contract, payment) as
+  // warm-up, hiding them from the Unibox (2026-09-15). Strip them before counting.
+  const t = (text || "").slice(0, 1200)
+    .replace(/\S+@\S+/g, " ")
+    .replace(/(https?:\/\/|www\.)\S+/gi, " ")
+    .replace(/\b[a-z0-9][a-z0-9-]*\.(com|es|eu|net|org|io|info|store|online|cat|fr|it|de|uk|co|ai|app|dev|pro|group|tech|biz)\b/gi, " ");
   let n = 0;
   for (const m of t.match(WARMUP_PAIR_RE) || []) {
     if (HYPHEN_WHITELIST.test(m)) continue;
@@ -129,6 +135,15 @@ export function isWarmupMessage(input: { subject?: string | null; body?: string 
   if (pairs >= 1 && input.linked === false) return true;
   if (generic && b64) return true;
   return false;
+}
+
+/** Does the incoming mail's References / In-Reply-To chain carry a Message-ID at OUR mailbox's
+ *  domain? Then it answers something we sent (from godleads or any other system) — a genuine
+ *  reply, never warm-up, even when no sent_emails row links it to a lead or campaign. */
+export function refersToOwnDomain(refChain: string | null | undefined, ownEmail: string | null | undefined): boolean {
+  const dom = String(ownEmail || "").split("@")[1]?.toLowerCase().trim();
+  if (!dom || !refChain) return false;
+  return refChain.toLowerCase().includes("@" + dom);
 }
 
 const BOUNCE_LOCALPARTS = /^(mailer-daemon|postmaster|bounce|bounces|delivery|deliverability|abuse|failure-notice|mailer)@/i;
