@@ -50,8 +50,16 @@ const FOOTER_MARKERS: RegExp[] = [
   /\b(este (mensaje|correo|e-?mail)|el presente (mensaje|correo)|this (e-?mail|message))\b[^.\n]{0,60}\b(confidencial|confidential|destinatari|intended|privileged|contiene|contains|may contain|puede contener)/i,
   /\b(la información contenida|the information (contained|in this))\b/i,
   /\b(si (usted )?no es el destinatario|if you (are not the intended|have received this))\b/i,
-  /\b(protecci[óo]n de datos|data protection|datos personales|personal data|reglamento \(ue\)|ley org[áa]nica|rgpd|gdpr)\b[^.\n]{0,40}\b(responsable|finalidad|derechos|rights|tratamiento|processing|inform|conformidad|2016\/679|3\/2018)/i,
+  // `[^\n]` (not `[^.\n]`): the marker may sit right after a full stop — "comprometidos con el
+  // RGPD. Conozca el tratamiento…" (PASEK) never matched and its footer reached the classifier.
+  /\b(protecci[óo]n de datos|data protection|datos personales|personal data|reglamento \(ue\)|ley org[áa]nica|rgpd|gdpr)\b[^\n]{0,40}\b(responsable|finalidad|derechos|rights|tratamiento|processing|inform|conformidad|2016\/679|3\/2018)/i,
   /\b(informaci[óo]n b[áa]sica sobre|de conformidad con|en cumplimiento de|puede ejercer (sus|los) derechos)\b/i,
+  // Corporate GDPR boilerplate in signatures: "En X, estamos comprometidos con el RGPD", "At X, we
+  // are committed to GDPR", "Política de privacidad" / "Privacy Policy", "ejercite los derechos
+  // reconocidos…" — a warm "Propongo mañana a las 11" came out as No contactar from this footer.
+  /\b(comprometid[oa]s?\s+con\s+(el\s+|la\s+)?(rgpd|gdpr|protecci[óo]n\s+de\s+datos|privacidad)|committed\s+to\s+(the\s+)?(gdpr|data\s+protection|privacy))\b/i,
+  /\b(pol[íi]tica\s+de\s+privacidad|privacy\s+policy|pol[íi]tica\s+de\s+protecci[óo]n\s+de\s+datos)\b/i,
+  /\b(ejercit[ea]r?|ejerza|ejerzan|exercise)\s+(los|sus|the|your)\s+(derechos|rights)\b/i,
   /\b(please (notify|delete|destroy)|return the original message|notify (us|the sender) immediately)\b/i,
   // "Los datos personales … se almacenan/conservan…", "Puede acceder, rectificar o eliminar sus
   // datos", "Se conservarán mientras exista…" — the ASG-style privacy footer that dodged the
@@ -313,8 +321,12 @@ const DO_NOT_CONTACT = [
   /no\s+(me\s+|nos\s+)?(volv[áa]is|vuelvas?|volver)\s+a\s+(escribir|contactar|enviar|molestar|mandar)/i,
   /no\s+(me\s+|nos\s+)?(escrib[áa]is|escribas|contact[ée]is|mand[ée]is)\s+(m[áa]s|nunca m[áa]s)?/i,
   /leave (me|us) alone/i, /d[ée]jad?(me|nos) en paz/i, /\bgo away\b/i, /\bpls\s+delete\s+my\s+contact\b/i, /delete\s+my\s+(contact|details|data|email)/i,
-  // RGPD / data protection
-  /\brgpd\b/i, /\bgdpr\b/i, /\blopd\b/i,
+  // RGPD / data protection — ONLY with the author's own intent nearby (complaint, demand,
+  // consent, deletion). A bare "RGPD" is in half of Spain's corporate signatures ("comprometidos
+  // con el RGPD…") and, when the footer cut missed, it turned "Propongo mañana a las 11" into
+  // No contactar (PASEK, 2026-09-15). Both orders: "…viola el RGPD" / "RGPD: exijo que…".
+  /\b(rgpd|gdpr|lopd)\b[^\n]{0,80}\b(exij|exig|denunci|reclam|incumpl|viol|infracci|infring|ilegal|consentimiento|opongo|oposici|borr|elimin|suprim|baja|sancion|agencia\s+(espa[ñn]ola\s+)?de\s+protecci|mis\s+datos|nuestros\s+datos)/i,
+  /\b(exij|exig|denunci|reclam|incumpl|viol|infracci|infring|ilegal|consentimiento|opongo|oposici|borr|elimin|suprim|sancion|mis\s+datos|nuestros\s+datos)\w*[^\n]{0,80}\b(rgpd|gdpr|lopd)\b/i,
   // NOT the bare footer phrases ("protección de datos", "datos personales") — those live in every
   // corporate signature and mislabeled warm replies as No contactar when the footer cut missed.
   // Only the sender's own complaint about THEIR data counts:
