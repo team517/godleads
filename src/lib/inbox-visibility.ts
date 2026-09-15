@@ -6,6 +6,8 @@
 // clean view (it stays fully accessible under "Todos"). Pure + dependency-free so it can be tested.
 // Our OWN brand domains (onepulso + its sending variants, e.g. onepulso.online / .blog /
 // onnepulssoflow.eu) — mail from these always belongs in the clean view.
+import { looksLikeWarmupSubject } from "@/lib/inbox-filters";
+
 export function isOwnBrandDomain(dom: string): boolean {
   return /onepulso|onnepuls/i.test(dom);
 }
@@ -17,10 +19,13 @@ export function isOwnBrandDomain(dom: string): boolean {
  *  from such a sender was hidden as outreach noise (hello@hiretop.com, 2026-09-10). Cold
  *  spam fakes "RE:" in the subject but never references OUR Message-IDs. */
 export function isReplyToOurMail(
-  m: { ref_chain?: string | null },
+  m: { ref_chain?: string | null; subject?: string | null },
   ownDomains: Set<string> | undefined,
 ): boolean {
   if (!ownDomains || ownDomains.size === 0) return false;
+  // Warm-up pool threads ALSO reference our domain (our seed mailbox started them). Their
+  // generic English office subject gives them away — never let them through on this rule.
+  if (looksLikeWarmupSubject(m.subject)) return false;
   const refs = String(m.ref_chain || "").toLowerCase();
   if (!refs.includes("@")) return false;
   for (const d of ownDomains) {
@@ -30,7 +35,7 @@ export function isReplyToOurMail(
 }
 
 export function isCampaignRelevant(
-  m: { lead_id?: unknown; campaign_id?: unknown; from_email?: string | null; ref_chain?: string | null },
+  m: { lead_id?: unknown; campaign_id?: unknown; from_email?: string | null; ref_chain?: string | null; subject?: string | null },
   leadDomains: Set<string>,
   ownDomains?: Set<string>,
 ): boolean {

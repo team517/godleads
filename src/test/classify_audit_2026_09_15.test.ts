@@ -1,6 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { authorText, classifyMessage } from "@/lib/classify";
-import { isWarmupMessage, refersToOwnDomain, warmupPairCount } from "@/lib/inbox-filters";
+import { isWarmupMessage, looksLikeWarmupSubject, refersToOwnDomain, warmupPairCount } from "@/lib/inbox-filters";
+import { isCampaignRelevant } from "@/lib/inbox-visibility";
+
+// 125 of 168 "Interesado" labels in a week were warm-up pool threads with realistic English office
+// subjects that the short subject list missed; 99 of them pushed a phone. Real subjects seen:
+const POOL_SUBJECTS = [
+  "RE: Workshop Confirmation", "RE: Quarterly Goals Review", "RE: Health and Wellness Initiative",
+  "RE: Update on Vendor Negotiations", "RE: Book Club Event", "RE: Finance Updates", "RE: Project Timeline",
+  "RE: Company Newsletter Contribution", "RE: Upcoming Industry Conference", "RE: Productivity Tips",
+  "RE: Volunteers for Community Service", "RE: Sales Performance", "Re: Travel Reimbursement Process",
+  "RE: New Employee Orientation", "RE: Annual Company Retreat", "RE: Investment Portfolio Review",
+  "Re: Bug Fix Progress", "Re: Staff Wellness Program", "RE: Work Update", "RE: Project Deadline",
+];
+// …and what a real prospect answers: OUR subject, personalised, usually Spanish or with a name/brand.
+const REAL_SUBJECTS = [
+  "RE: idea para PASEK", "Re: Maria - HireTop", "RE: XAVI - SocialPubli", "Re: no te olvides de esto Ernesto",
+  "RE: GRUPO GISMA + CRM", "Re: una idea para Light and Studio", "RE: Juan - Cellect Energy",
+  "Re: Viste esto de Avanze Nuevas Tecnologias", "RE: Marketing Strategy - Acme Ltd", "Re: Meeting tomorrow?",
+  "RE: Alfons - EGA Master", "Respuesta automática: Maria - IPRoom", "(sin asunto)", "Re: Acquisition?",
+];
+
+describe("warm-up — asuntos genéricos de oficina en inglés (pools)", () => {
+  it("reconoce los asuntos reales de los pools", () => {
+    for (const s of POOL_SUBJECTS) expect(looksLikeWarmupSubject(s), s).toBe(true);
+  });
+  it("nunca marca un asunto de campaña real", () => {
+    for (const s of REAL_SUBJECTS) expect(looksLikeWarmupSubject(s), s).toBe(false);
+  });
+  it("un hilo de pool no enlazado es warm-up; el mismo asunto enlazado a un lead no lo es", () => {
+    expect(isWarmupMessage({ subject: "RE: Workshop Confirmation", body: "Sounds good, let's confirm.", fromEmail: "x@pool.com", ownMailboxes: new Set(), linked: false })).toBe(true);
+    expect(isWarmupMessage({ subject: "RE: Workshop Confirmation", body: "Sounds good, let's confirm.", fromEmail: "x@pool.com", ownMailboxes: new Set(), linked: true })).toBe(false);
+  });
+  it("la regla «responde a nuestro correo» no rescata un hilo de pool aunque referencie nuestro dominio", () => {
+    const own = new Set(["onnepulssogrowth.store"]);
+    expect(isCampaignRelevant({ from_email: "x@pool.com", subject: "RE: Workshop Confirmation", ref_chain: "<1@onnepulssogrowth.store>" }, new Set(), own)).toBe(false);
+    expect(isCampaignRelevant({ from_email: "hello@hiretop.com", subject: "Re: Maria - HireTop", ref_chain: "<1@onnepulssogrowth.store>" }, new Set(), own)).toBe(true);
+  });
+});
 
 // Real cases from the 2026-09-15 audit of 700 replies (21 days, all accounts). Each one was
 // wrongly labelled in production; the text is the author-only text the classifier receives.

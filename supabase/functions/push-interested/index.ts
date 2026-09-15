@@ -32,6 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { classifyMessage, authorText } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce } from "../_shared/ai-classify.ts";
+import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -148,11 +149,20 @@ Deno.serve(async (req) => {
     }
 
     // ── Phase 1: rules (pure CPU, microseconds each) ─────────────────────────────────────────
-    let scanned = 0, skipped = 0;
+    let scanned = 0, skipped = 0, warmupFlagged = 0;
     const pending: Pending[] = [];
     for (const m of (msgs || []) as Row[]) {
       scanned++;
       if (!isRealReply(m)) continue;
+      // Warm-up pool threads carry References (our seed mailbox started them) and generic English
+      // office subjects the sync detector used to miss; the model then read "let's confirm the
+      // workshop" as Interesado and 99 phones buzzed in a week (2026-09-15). Flag them here — the
+      // same detector as the sync, with the same lead/campaign exemption — and never judge them.
+      if (isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked: !!(m.lead_id || m.campaign_id) })) {
+        warmupFlagged++;
+        if (!dryRun) await admin.from("inbox_messages").update({ is_warmup: true }).eq("id", m.id);
+        continue;
+      }
       const labels = m.labels || [];
       // Already judged by this function (or relabelled by a human on top of it): leave it alone.
       if (!force && labels.includes(AI_MARKER)) { skipped++; continue; }

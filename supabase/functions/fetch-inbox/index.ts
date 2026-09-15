@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
-import { isWarmupMessage, refersToOwnDomain } from "../_shared/inbox-filters.ts";
+import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 import { extractPermanentBounceRecipients, isAutomatedSender } from "../_shared/bounce.ts";
 import { repairMojibakeBytes } from "../_shared/reply-text.ts";
 
@@ -1439,9 +1439,10 @@ serve(async (req) => {
             // Warm-up network traffic (own mailboxes, nonsense word pairs, generic office subjects,
             // base64 blobs, uppercase codes). Flagged at sync so NO consumer — Unibox labels, AI
             // agents, digest, reports, "replied" stats — ever counts it as a prospect reply.
-            // `linked` also when the References chain points at THIS mailbox's own domain: it is a
-            // reply to mail we sent (from any system), never warm-up — even with no sent_emails row.
-            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) || refersToOwnDomain(msg.ref_chain, account.email) }),
+            // NOTE: "References points at our own domain" is NOT a link: warm-up pool threads are
+            // started by our own seed mailboxes, so they reference our domain too. Only a real
+            // lead/campaign link may exempt a message from the warm-up detector.
+            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) }),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),

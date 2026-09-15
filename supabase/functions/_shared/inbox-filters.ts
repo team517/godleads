@@ -113,6 +113,25 @@ export function warmupPairCount(text: string | null, strict = true): number {
  *  - generic office subject + base64 body.
  * A single pair alone is NOT enough (a real prospect could write an unusual hyphenation).
  */
+/** Warm-up pools generate their threads from a finite list of generic ENGLISH office topics:
+ *  "Workshop Confirmation", "Quarterly Goals Review", "Health and Wellness Initiative", "Book
+ *  Club Event", "Update on Vendor Negotiations"… 2–6 Title-Case words, at least one from the
+ *  office vocabulary, and nothing personal (no name, no company, no "-"). Measured on 30 days
+ *  (2026-09-15): 125 of 168 "Interesado" labels in a week were such threads that the short list
+ *  in WARMUP_SUBJECT_RE missed — and 99 of them buzzed somebody's phone. A real prospect answers
+ *  OUR subject ("Maria - HireTop", "una idea para X"), which never looks like this. */
+const OFFICE_WORD_RE = /\b(update|updates|review|meeting|training|event|workshop|project|team|budget|finance|financial|report|feedback|strategy|plan|plans|planning|timeline|goals|goal|newsletter|conference|schedule|session|program|initiative|policy|proposal|launch|orientation|retreat|reimbursement|wellness|productivity|tips|volunteer|volunteers|community|holiday|travel|office|vendor|negotiations?|priorities|milestone|downtime|notification|software|marketing|sales|client|customer|employee|staff|leadership|book\s+club|recommendation|retrospective|sprint|bug|fixes?|debrief|performance|quarterly|weekly|monthly|annual|upcoming|arrangements|process|courses?|development|expansion|opening|portfolio|investment|achievement|responsibility|compliance|survey|checklist|agenda|minutes|reminder|kickoff|status|recap|contribution|celebration|lunch|party|potluck|birthday|welcome|farewell|anniversary|award|recognition|deadline|guidelines|resources|benefits|onboarding|hiring|interview|recruitment|inventory|procurement|shipping|maintenance|security|backup|migration|rollout|upgrade|release|testing|audit|payroll|invoice|expenses|contract|partnership|collaboration|sponsorship|charity|donation|fundraiser|mentorship|internship|webinar|podcast|blog|content|brand|website|design|analytics|dashboard|metrics|roadmap|backlog|feature|request|ticket|support|helpdesk|matter|thoughts|ideas|brainstorm|suggestion|confirmation|debrief|assessment|evaluation|improvement|efficiency|opportunity|opportunities|insights?|overview|summary|catch-?up|check-?in|sync|discussion|announcement|invitation|reservation|logistics)\b/i;
+export function looksLikeWarmupSubject(subject: string | null | undefined): boolean {
+  const s = String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
+  if (!s || s.length > 70) return false;
+  if (!/^[A-Za-z][A-Za-z' ]*$/.test(s)) return false;            // ASCII words only: no "-", digits, accents, brands
+  const words = s.split(/\s+/);
+  if (words.length < 2 || words.length > 6) return false;
+  // Every word Title-Case (small connectors allowed): "Update on Vendor Negotiations".
+  if (!words.every((w) => /^[A-Z][a-z']*$/.test(w) || /^(on|and|for|of|the|in|to|a|an|with|at|from)$/i.test(w))) return false;
+  return OFFICE_WORD_RE.test(s);
+}
+
 export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null }): boolean {
   const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
   // Our OWN seed mailboxes are warm-up whatever they write, and an explicit marker is definitive.
@@ -123,6 +142,8 @@ export function isWarmupMessage(input: { subject?: string | null; body?: string 
   // guard the code detector tripped on ordinary signatures (a phone/reference number, a base64
   // image blob) and silently hid 373 real replies from their own thread.
   if (input.linked === true) return false;
+  // Not linked + a generic English office subject = a warm-up pool thread.
+  if (looksLikeWarmupSubject(s)) return true;
   if (hasWarmupCodes(s, b)) return true;
   const pairs = warmupPairCount(s + " " + b, input.linked !== false);
   const generic = WARMUP_SUBJECT_RE.test(s.trim());
