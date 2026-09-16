@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
 import { PushPrompt } from "@/components/PushPrompt";
 import { ensurePushSubscription } from "@/lib/push-notifications";
+import { startVersionWatcher } from "@/lib/version-check";
 import { brandStyleFor } from "@/lib/brandColor";
 
 export function AppLayout() {
@@ -24,6 +25,8 @@ export function AppLayout() {
   // Heals a "granted but undeliverable" push subscription (missing row / old VAPID key).
   // Never prompts: it is a no-op unless permission is already granted.
   useEffect(() => {
+    // After every "Implementar" the open tab must pick up the new build by itself.
+    startVersionWatcher();
     if (user?.id) void ensurePushSubscription(user.id);
   }, [user?.id]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
