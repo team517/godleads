@@ -31,6 +31,21 @@ const OUTLOOK_MOBILE = `<html><body><div style="direction: ltr;">Te agradezco el
 
 </div><div class="ms-outlook-mobile-reference-message"><div dir="ltr"><b>De:</b> Mario &lt;mario@ejemplo.info&gt;<br><b>Fecha:</b> lunes, 14 de septiembre de 2026 a las 13:55<br><b>Para:</b> maico@ejemplo.es<br><b>Asunto:</b> no te olvides de esto</div></div><div id="mail-editor-reference-message-body"><div>Buenas Maico, Quería hacerte seguimiento porque…</div></div></div></body></html>`;
 
+// Thunderbird: EVERY paragraph of the new reply sits in <div class="moz-cite-prefix">, and so
+// does the attribution line right before <blockquote type="cite">. Treating the class as a
+// quote marker showed one line (or nothing). Real case: Auteide, 2026-09-16.
+const THUNDERBIRD = `<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>
+<div class="moz-cite-prefix">Hola Juanjo, soy Reynaldo, del Dep. de Marketing de Auteide.</div>
+<div class="moz-cite-prefix"><br></div>
+<div class="moz-cite-prefix">Te escribo para consultarte si podríamos fijar esa conversación para el próximo Lunes a las 12:00 hora Canaria.</div>
+<div class="moz-cite-prefix"><br></div>
+<div class="moz-cite-prefix">A espera de tu respuesta, recibe un cordial saludo.</div>
+<div class="moz-cite-prefix"><br></div>
+<div class="moz-cite-prefix">El 16/09/2026 a las 9:59, Bruno Tranche escribió:<br></div>
+<blockquote type="cite" cite="mid:2af11eeb@auteide.com"><p>-------- Mensaje reenviado --------</p><p>Asunto: que la IA recomiende a Auteide</p><p>Hola Reynaldo, te escribo porque…</p></blockquote>
+<div class="moz-signature">-- <br>Reynaldo Hernandez · Marketing</div>
+</body></html>`;
+
 const strip = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 
 describe("Unibox — corte de la cita en HTML", () => {
@@ -50,6 +65,16 @@ describe("Unibox — corte de la cita en HTML", () => {
     expect(out).not.toContain("Buenas Maico");
     // y con «Ver email completo» sigue estando todo
     expect(strip(cleanBodyHtml(OUTLOOK_MOBILE, true))).toContain("Buenas Maico");
+  });
+
+  it("Thunderbird: los párrafos nuevos en div.moz-cite-prefix se conservan y se corta en «El … escribió:»", () => {
+    const out = strip(cleanBodyHtml(THUNDERBIRD));
+    expect(out).toContain("Hola Juanjo, soy Reynaldo");
+    expect(out).toContain("Lunes a las 12:00 hora Canaria");
+    expect(out).toContain("recibe un cordial saludo");
+    expect(out).not.toContain("escribió:");
+    expect(out).not.toContain("Mensaje reenviado");
+    expect(strip(cleanBodyHtml(THUNDERBIRD, true))).toContain("Mensaje reenviado");
   });
 
   it("Gmail: sigue cortando en el bloque gmail_quote", () => {

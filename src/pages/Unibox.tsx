@@ -473,7 +473,12 @@ function cleanBodyTextRaw(raw: string | null, keepCodes = false): string {
  *  quote blocks, Outlook's `appendonsend` block and its "De:/Enviado:" header, any
  *  <blockquote>, or a textual "El … escribió:" / "On … wrote:" line. */
 const HTML_QUOTE_START_RE =
-  /<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted|moz-cite-prefix)|<blockquote\b|<div[^>]*id=["']?appendonsend|<(?:b|strong)[^>]*>\s*(?:De|From|Von|Da|Van)\s*:[\s\S]{0,400}?(?:Enviado|Sent|Date|Fecha|Data|Datum|Gesendet|Inviato)\s*:|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/gi;
+  // NOTE: `moz-cite-prefix` is NOT a quote marker on its own — Thunderbird puts the NEW
+  // reply paragraphs in div.moz-cite-prefix too (real case 2026-09-16: a 3-paragraph
+  // meeting proposal rendered as one line / an empty card). Only the attribution line
+  // ("El 16/09/2026 a las 9:59, X escribió:") inside such a div starts the quote; the
+  // <blockquote type="cite"> right after it is caught by the generic <blockquote rule.
+  /<(?:blockquote|div)[^>]*class=["']?[^"'>]*(?:gmail_quote|yahoo_quoted)|<div[^>]*class=["']?moz-cite-prefix["']?[^>]*>\s*(?:el|on|le|am|il|den|op)\b[^<]{0,200}?(?:escri(?:b|v)i\S{0,4}|wrote|a\s+écrit|schrieb|ha\s+scritto|escreveu)\s*:|<blockquote\b|<div[^>]*id=["']?appendonsend|<(?:b|strong)[^>]*>\s*(?:De|From|Von|Da|Van)\s*:[\s\S]{0,400}?(?:Enviado|Sent|Date|Fecha|Data|Datum|Gesendet|Inviato)\s*:|(?:^|\n)\s*Missatge de\b[\s\S]{0,160}?a les\s+\d{1,2}[:.]\d{2}\s*:|(?:^|\n)\s*(?:El|On)\b[\s\S]{0,140}?(?:escri(?:b|v)i[óo]|wrote|va escriure)[^\n]{0,30}:/gi;
 
 /** Visible characters of an HTML fragment (no head/style, tags or nbsp). */
 function visibleTextLength(html: string): number {

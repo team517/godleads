@@ -2,6 +2,31 @@ import { describe, it, expect } from "vitest";
 import { looksBinaryText, textFromHtml, replyTextForClassification, repairMojibakeBytes } from "@/lib/reply-text";
 import { classifyMessage } from "@/lib/classify";
 
+// Real case (Auteide, 2026-09-16): a Thunderbird HTML reply stored as mojibake, with two lone
+// surrogates and a couple of curly quotes ("â€œ") in its quoted part. The all-or-nothing pass
+// gave up on the whole text and the user read "podrÃ­amos fijar esa conversaciÃ³n".
+describe("repairMojibakeBytes — token a token", () => {
+  const moji = (s: string) => s; // the strings below are written already mangled
+  it("repara aunque haya un carácter no mapeable (surrogate suelto, emoji) en otra parte del texto", () => {
+    const s = moji("podrÃ­amos fijar esa conversaciÃ³n 😀 y \udc81 firma â€œhola â€�");
+    const out = repairMojibakeBytes(s);
+    expect(out).toContain("podríamos fijar esa conversación");
+    expect(out).toContain("😀");          // the emoji survives untouched
+    expect(out).toContain("“hola");             // â€œ → “
+    expect(out).toContain("â€�");     // an unrecoverable token is left as it was
+  });
+  it("no toca un token con un acento REAL (0xE9 no es byte inicial UTF-8 válido)", () => {
+    expect(repairMojibakeBytes("café y podrÃ­amos")).toBe("café y podríamos");
+  });
+  it("repara dentro de HTML sin tocar las etiquetas", () => {
+    expect(repairMojibakeBytes("<div class=\"moz-cite-prefix\">Hola, Â¿cÃ³mo estÃ¡s?</div>")).toBe("<div class=\"moz-cite-prefix\">Hola, ¿cómo estás?</div>");
+  });
+  it("texto limpio: idéntico", () => {
+    const clean = "Hola Juanjo, podríamos vernos el lunes — “sí”";
+    expect(repairMojibakeBytes(clean)).toBe(clean);
+  });
+});
+
 describe("texto que se clasifica", () => {
   const photoshopBytes = 'ExifII*(12i \n\'\n\'Adobe Photoshop 21.2 (Windows)2025:06:23 14:57:190231nv(~pHHAdobe_CMAdobed  \n\r\r\r\r"?\n\n3!1AQa"q2B#$Rb34rC%Scs5&DTdE£t6UeuF\'Vfv7GWgw5!1AQaq"2B#R3$brCScs4%&5DTdEU6teuFVfv\'7GWgw?';
   const html = '<html><head><style>v\:* {behavior:url(#default#VML);}</style></head><body><p>Buenos días</p><p>&nbsp;</p><p>Gracias por su email pero no estamos interesados</p><p>Atentamente,</p><table><tr><td>Carolina Marin</td></tr></table></body></html>';
