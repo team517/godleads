@@ -326,12 +326,12 @@ export default function CampaignSequences({ campaignId }: Props) {
     // test measures a representative email — not a broken "{{personalized_message}}".
     const fields = getTestFields();
     const { data, error } = await supabase.functions.invoke("placement-test", {
-      body: { action: "run", account_id: testAccountId, subject: renderVariables(getCurrentSubject(), fields), html: renderVariables(getCurrentBody(), fields) },
+      body: { action: "run", account_id: testAccountId, campaign_id: campaignId, subject: renderVariables(getCurrentSubject(), fields), body: renderVariables(getCurrentBody(), fields), fields },
     });
     setPlacRunning(false);
     if (error || data?.error) { toast.error(data?.error || error?.message || "Error al enviar la prueba"); return; }
     setPlacTestId(data.test_id);
-    toast.success(`Enviado a ${data.sent}/${data.seeds} buzones semilla. Espera 1-2 min y pulsa "Comprobar".`);
+    toast.success('Prueba enviada. Espera 1-2 min y pulsa "Comprobar dónde cayó".');
   };
   const checkPlacement = async () => {
     if (!placTestId) return;
@@ -1324,12 +1324,12 @@ export default function CampaignSequences({ campaignId }: Props) {
               <span className="text-sm font-medium">Verificar entregabilidad (spam / bandeja)</span>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Manda ESTE correo a tus buzones semilla (Gmail, Outlook…) y mira dónde cae. Los buzones semilla son un sistema aparte (no van al Unibox) — añádelos en <strong>Entregabilidad</strong> si aún no tienes.
+              Manda ESTE correo, con las variables ya cambiadas, a buzones reales de prueba y mira si cae en bandeja o en spam. Tienes la versión completa en <strong>Entregabilidad</strong>.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="secondary" className="h-7 gap-1.5 text-xs" onClick={runPlacement} disabled={placRunning || !testAccountId}>
                 {placRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                {placRunning ? "Enviando…" : "Enviar a semillas"}
+                {placRunning ? "Enviando…" : "Probar entregabilidad"}
               </Button>
               {placTestId && (
                 <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={checkPlacement} disabled={placChecking}>
@@ -1349,13 +1349,13 @@ export default function CampaignSequences({ campaignId }: Props) {
                 </div>
                 {placResults.map((r: any, i: number) => (
                   <div key={i} className="flex items-center justify-between text-xs">
-                    <span className="truncate">{r.email} <span className="text-muted-foreground">({r.provider})</span></span>
+                    <span className="truncate">{r.email ? <>{r.email} <span className="text-muted-foreground">({r.provider})</span></> : r.provider}</span>
                     <span className={
-                      r.folder === "inbox" ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                      r.folder === "inbox" || r.folder === "promotions" ? "text-emerald-600 dark:text-emerald-400 font-medium"
                       : r.folder === "spam" ? "text-red-600 dark:text-red-400 font-medium"
                       : "text-amber-600 dark:text-amber-400"
                     }>
-                      {r.folder === "inbox" ? "📥 Bandeja" : r.folder === "spam" ? "🚫 Spam" : r.folder === "missing" ? "❓ No llegó" : "⚠ Error"}
+                      {r.folder === "inbox" ? "Bandeja" : r.folder === "promotions" ? "Promociones" : r.folder === "spam" ? "Spam" : r.folder === "missing" ? "Aún no llegó" : "No se pudo comprobar"}
                     </span>
                   </div>
                 ))}
