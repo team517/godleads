@@ -1023,12 +1023,6 @@ export default function EmailAccounts() {
     return { day: r.accRampDay ?? 1, eff: r.limit, target };
   };
 
-  /** Límite de hoy: el de la rampa si está activa, y si no el límite diario configurado. */
-  const effectiveLimitOf = (acc: any) => {
-    const r = rampInfo(acc);
-    return r ? r.eff : (acc?.daily_limit || 30);
-  };
-
   const handleApplySlowRamp = async () => {
     if (!user) return;
     // "todas" = everything the current search/tag actually shows — applying a slow ramp to all
@@ -1920,7 +1914,7 @@ export default function EmailAccounts() {
             onRemoveTag={handleRemoveTag}
             allTags={allTags}
             filterTag={filterTag}
-            effectiveLimit={effectiveLimitOf}
+            rampOf={rampInfo}
           />
         </div>
         <div className="grid gap-3 grid-cols-1 md:hidden">

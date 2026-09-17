@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   CheckCircle, XCircle, Loader2, Pencil, RefreshCw, Trash2, Wand2, ShieldCheck, ShieldAlert, ShieldQuestion,
-  Server, X, Plus, ExternalLink,
+  Server, X, Plus, TrendingUp,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -32,8 +32,9 @@ interface Props {
   onRemoveTag: (id: string, tag: string) => void;
   allTags: string[];
   filterTag: string | null;
-  /** Límite efectivo de hoy (el del motor con la rampa aplicada). */
-  effectiveLimit: (account: any) => number;
+  /** Rampa de la cuenta si está activada: día en curso, límite de hoy y objetivo.
+   *  Es lo que decide el "0 / 2" de la columna y la etiqueta "Slow ramp". */
+  rampOf: (account: any) => { day: number; eff: number; target: number } | null;
 }
 
 const domainOf = (email: string) => (email || "").split("@")[1]?.trim().toLowerCase() || "";
@@ -58,7 +59,7 @@ const AUTH_CHIP: Record<string, string> = {
 /** SPF / DKIM / DMARC en tres pastillas mínimas: el registro y su estado por color. */
 function AuthPills({ auth }: { auth: DomainAuthLike | undefined }) {
   return (
-    <span className="inline-flex flex-wrap gap-1">
+    <span className="inline-flex flex-nowrap gap-1">
       {(["spf", "dkim", "dmarc"] as const).map((k) => {
         const st = auth?.[k];
         const cls = AUTH_CHIP[st ?? "none"];
@@ -122,7 +123,8 @@ export default function AccountsTable(p: Props) {
             {rows.map(({ account, domain, auth, verdict }) => {
               const prov = providerOf(account);
               const ic = p.imapChecks[account.id];
-              const limit = p.effectiveLimit(account);
+              const ramp = p.rampOf(account);
+              const limit = ramp ? ramp.eff : (account.daily_limit || 30);
               const used = account.sent_today || 0;
               const meta = LEVEL_META[verdict.level];
               const dimmed = p.filterTag && !(account.tags || []).includes(p.filterTag);
@@ -163,16 +165,25 @@ export default function AccountsTable(p: Props) {
                     </span>
                   </td>
 
-                  {/* Límite diario, como "0 / 30" de Smartlead, con su barra */}
-                  <td className="w-[110px] px-3 py-2.5 align-middle">
+                  {/* Límite diario, como "0 / 30" de Smartlead, con su barra. Si la cuenta está en
+                      slow ramp, el tope de hoy es el de la rampa y se dice con su etiqueta. */}
+                  <td className="w-[132px] px-3 py-2.5 align-middle">
                     <p className="whitespace-nowrap text-[13.5px] font-semibold tabular text-foreground">{used} / {limit}</p>
                     <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-muted">
                       <span className="block h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${Math.min((used / Math.max(1, limit)) * 100, 100)}%` }} />
                     </span>
+                    {ramp && (
+                      <span
+                        title={`Slow ramp activado · día ${ramp.day} · hoy ${ramp.eff} correos, objetivo ${ramp.target}`}
+                        className="mt-1.5 inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+                      >
+                        <TrendingUp className="h-2.5 w-2.5" /> Slow ramp · día {ramp.day}
+                      </span>
+                    )}
                   </td>
 
                   {/* Donde Smartlead pone el warm-up: los registros del dominio */}
-                  <td className="px-3 py-2.5 align-middle"><AuthPills auth={auth} /></td>
+                  <td className="whitespace-nowrap px-3 py-2.5 align-middle"><AuthPills auth={auth} /></td>
 
                   <td className="px-3 py-2.5 align-middle">
                     <div className="flex flex-col items-start gap-1">
