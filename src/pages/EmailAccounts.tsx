@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { filterAccounts } from "@/lib/account-filter";
 import AddAccountDialog, { type AddAccountMode } from "@/components/accounts/AddAccountDialog";
+import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
+import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
 import { accountsCsvTemplate, accountsToCsv, downloadCsv } from "@/lib/accounts-csv";
 import { isAgencyAccount } from "@/lib/access";
 import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search } from "lucide-react";
@@ -24,7 +26,7 @@ import { toast } from "sonner";
 
 const PROVIDER_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string; label: string; help: string }> = {
   gmail: { imap_host: "imap.gmail.com", imap_port: "993", smtp_host: "smtp.gmail.com", smtp_port: "587", label: "Gmail", help: "Usa una Contraseña de aplicación de Google (no tu contraseña normal). Actívala en myaccount.google.com → Seguridad → Contraseñas de aplicaciones." },
-  outlook: { imap_host: "outlook.office365.com", imap_port: "993", smtp_host: "smtp.office365.com", smtp_port: "587", label: "Outlook / Hotmail", help: "Usa tu contraseña de Microsoft. Si tienes 2FA activado, genera una Contraseña de aplicación en account.microsoft.com → Seguridad." },
+  outlook: { imap_host: "outlook.office365.com", imap_port: "993", smtp_host: "smtp.office365.com", smtp_port: "587", label: "Outlook / Hotmail", help: "Usa una Contraseña de aplicación de Microsoft (account.microsoft.com → Seguridad → Opciones de seguridad avanzadas). Ojo: Microsoft ha desactivado el acceso por contraseña (IMAP/SMTP) en muchas cuentas Outlook.com y Microsoft 365; si la verificación falla, tu cuenta necesita conexión OAuth o un buzón con SMTP propio." },
   ionos: { imap_host: "imap.ionos.es", imap_port: "993", smtp_host: "smtp.ionos.es", smtp_port: "587", label: "IONOS", help: "Usa la contraseña de tu buzón de correo IONOS. El usuario es tu dirección de email completa." },
   custom: { imap_host: "", imap_port: "993", smtp_host: "", smtp_port: "587", label: "Personalizado", help: "" },
 };
@@ -118,6 +120,10 @@ export default function EmailAccounts() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
+  const [addProvider, setAddProvider] = useState<ConnectProvider>("custom");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const draftAccountId = useRef<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
@@ -577,21 +583,51 @@ export default function EmailAccounts() {
     loadAccounts();
   };
 
+  // "Añadir cuenta": valida → guarda → VERIFICA la conexión real (SMTP + IMAP) antes de dar la
+  // cuenta por buena. Si el servidor rechaza las credenciales el diálogo sigue abierto con el
+  // motivo, y el reintento corrige la MISMA fila (draftAccountId) en vez de crear duplicados.
   const handleAdd = async () => {
-    if (!user) return;
-    const { error } = await supabase.from("email_accounts").insert({
-      user_id: user.id, email: form.email, first_name: form.first_name, last_name: form.last_name,
-      // Fall back to the standard ports / a 30/day cap when a field is blank or non-numeric —
-      // parseInt("") is NaN, which was stored as a NULL port and left the account unable to connect.
-      imap_username: form.imap_username, imap_password: form.imap_password, imap_host: form.imap_host, imap_port: parseInt(form.imap_port) || 993,
-      smtp_username: form.smtp_username, smtp_password: form.smtp_password, smtp_host: form.smtp_host, smtp_port: parseInt(form.smtp_port) || 587,
-      daily_limit: parseInt(form.daily_limit) || 30, status: "pending",
-    });
-    if (error) { toast.error(error.message); return; }
-    toast.success("Cuenta añadida correctamente");
-    setShowAdd(false);
-    setForm({ ...emptyForm });
-    loadAccounts();
+    if (!user || adding) return;
+    setAddError(null);
+    const built = buildAccountPayload(form, addProvider);
+    if ("error" in built) { setAddError(built.error); return; }
+    const payload = built.payload;
+    const draftId = draftAccountId.current;
+    if (accounts.some(a => a.id !== draftId && String(a.email || "").toLowerCase() === payload.email)) {
+      setAddError("Esa cuenta ya está en tu lista. Si no conecta, edítala desde la tabla.");
+      return;
+    }
+    setAdding(true);
+    try {
+      let accountId = draftId;
+      if (accountId) {
+        const { error } = await supabase.from("email_accounts").update(payload as any).eq("id", accountId);
+        if (error) throw new Error(error.message);
+      } else {
+        const { data, error } = await supabase.from("email_accounts")
+          .insert({ user_id: user.id, ...payload, status: "pending" } as any).select("id").single();
+        if (error) throw new Error(error.message);
+        accountId = (data as any).id as string;
+        draftAccountId.current = accountId;
+      }
+      const { data: result, error: fnError } = await supabase.functions.invoke("verify-email-connection", { body: { account_id: accountId } });
+      if (fnError) throw new Error(`No se pudo verificar la conexión: ${fnError.message}`);
+      if (result?.status === "connected") {
+        toast.success("Cuenta conectada — sincronizando bandeja…");
+        syncAccountInbox(accountId!);
+        draftAccountId.current = null;
+        setShowAdd(false);
+        setForm({ ...emptyForm });
+      } else {
+        const reason = result?.smtp?.error || result?.imap?.error || "el servidor no respondió";
+        setAddError(`No se pudo conectar: ${reason}. Revisa los datos y vuelve a intentarlo.`);
+      }
+      loadAccounts();
+    } catch (e: any) {
+      setAddError(e?.message || "Error inesperado al añadir la cuenta.");
+    } finally {
+      setAdding(false);
+    }
   };
 
   const handleEdit = (account: any) => {
@@ -1066,6 +1102,14 @@ export default function EmailAccounts() {
     }));
   };
 
+  /** "Añadir cuenta" → proveedor elegido: formulario LIMPIO con sus servidores ya puestos. */
+  const pickProvider = (provider: "gmail" | "outlook" | "custom") => {
+    const preset = PROVIDER_PRESETS[provider];
+    setAddProvider(provider);
+    setAddError(null);
+    setForm({ ...emptyForm, provider, imap_host: preset.imap_host, imap_port: preset.imap_port, smtp_host: preset.smtp_host, smtp_port: preset.smtp_port });
+  };
+
   const renderFormFields = () => {
     const preset = PROVIDER_PRESETS[form.provider] || PROVIDER_PRESETS.custom;
     const isPreset = form.provider !== "custom";
@@ -1181,9 +1225,15 @@ export default function EmailAccounts() {
           </Button>
           <AddAccountDialog
             open={showAdd}
-            onOpenChange={setShowAdd}
+            onOpenChange={(o) => { setShowAdd(o); if (!o) { draftAccountId.current = null; setAddError(null); } }}
             initialMode={addMode}
-            renderForm={renderFormFields}
+            renderForm={(provider) => (
+              <ConnectAccountForm provider={provider} form={form} disabled={adding}
+                onChange={(patch) => { setAddError(null); setForm(prev => ({ ...prev, ...patch })); }} />
+            )}
+            submitting={adding}
+            submitError={addError}
+            onPickProvider={pickProvider}
             onSubmitSingle={handleAdd}
             onCsvFile={importCsvFile}
             onDownloadTemplate={handleDownloadTemplate}

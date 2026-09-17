@@ -27,7 +27,7 @@ describe("CSV de cuentas", () => {
 function setup(over: Partial<React.ComponentProps<typeof AddAccountDialog>> = {}) {
   const props = {
     open: true, onOpenChange: vi.fn(), renderForm: () => <div>FORMULARIO SMTP</div>,
-    onSubmitSingle: vi.fn(), onCsvFile: vi.fn(), onDownloadTemplate: vi.fn(), onDownloadAccounts: vi.fn(), accountsCount: 3,
+    onPickProvider: vi.fn(), onSubmitSingle: vi.fn(), onCsvFile: vi.fn(), onDownloadTemplate: vi.fn(), onDownloadAccounts: vi.fn(), accountsCount: 3,
     ...over,
   };
   render(<AddAccountDialog {...props} />);
@@ -42,14 +42,38 @@ describe("AddAccountDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Descargar mails/ }));
     expect(p.onDownloadAccounts).toHaveBeenCalled();
   });
-  it("una cuenta: Continuar → formulario → Añadir cuenta", () => {
+  it("una cuenta: elige proveedor con su logo (Gmail / Outlook / SMTP) → formulario → Añadir cuenta", () => {
     const p = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(document.querySelector('[data-logo="gmail"]')).not.toBeNull();
+    expect(document.querySelector('[data-logo="outlook"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Gmail" }));
+    expect(p.onPickProvider).toHaveBeenCalledWith("gmail");
     expect(screen.getByText("FORMULARIO SMTP")).toBeInTheDocument();
+    expect(screen.getByText("Conectar con Gmail")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Añadir cuenta" }));
     expect(p.onSubmitSingle).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Volver/ }));
     expect(screen.getByText("Bulk connect")).toBeInTheDocument();
+  });
+  it("cada proveedor prepara el formulario con su clave", () => {
+    const p = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Outlook" }));
+    expect(p.onPickProvider).toHaveBeenLastCalledWith("outlook");
+    fireEvent.click(screen.getByRole("button", { name: /Volver/ }));
+    fireEvent.click(screen.getByRole("button", { name: "SMTP" }));
+    expect(p.onPickProvider).toHaveBeenLastCalledWith("custom");
+    expect(screen.getByText("Conectar con SMTP")).toBeInTheDocument();
+  });
+  it("el formulario recibe el proveedor elegido; el error se ve y, conectando, el botón se bloquea", () => {
+    const renderForm = vi.fn((p: string) => <div>form:{p}</div>);
+    const p = setup({ renderForm, submitError: "No se pudo conectar: SMTP auth failed", submitting: true });
+    fireEvent.click(screen.getByRole("button", { name: "Outlook" }));
+    expect(screen.getByText("form:outlook")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("SMTP auth failed");
+    const btn = screen.getByRole("button", { name: /Conectando/ });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(p.onSubmitSingle).not.toHaveBeenCalled();
   });
   it("Bulk connect: muestra la zona de subida con «Descargar plantilla» y entrega el archivo", () => {
     const p = setup({ initialMode: "bulk" });
