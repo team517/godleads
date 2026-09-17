@@ -635,6 +635,19 @@ export function cleanBodyHtml(raw: string | null, keepQuote = false): string {
 
 /** HTML ready to paint, or "" when the cleaned HTML has NO visible content (e.g. a body that was
  *  cut off inside <head> at sync time) so the caller falls back to body_text instead of an empty card. */
+/** HTML of the message being answered, to be quoted under a Unibox reply. The FULL original
+ *  (its own quoted chain included, as mail clients do), from the sanitized HTML when there is
+ *  one, else from the plain text as paragraphs. Capped: a 200 KB newsletter must not ride along. */
+export function buildReplyQuoteHtml(m: { body_html?: string | null; body_text?: string | null } | null | undefined): string {
+  if (!m) return "";
+  const html = renderableHtml(m.body_html, true);
+  if (html) return html.slice(0, 40_000);
+  const text = cleanBodyText(m.body_text || "", true).trim();
+  if (!text) return "";
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.slice(0, 20_000).split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+}
+
 const _renderableCache = new Map<string, string>();
 export function renderableHtml(raw: string | null | undefined, keepQuote = false): string {
   if (!raw || raw.trim().length <= 20) return "";
@@ -2854,6 +2867,18 @@ export default function Unibox() {
       const originalSubject = decodeSubject(replyTarget?.subject || selected.subject) || "";
       const replySubject = originalSubject.toLowerCase().startsWith("re:") ? originalSubject : `Re: ${originalSubject}`;
 
+      // QUOTE the message being answered under the reply, like every real mail client
+      // ("El 17 sept 2026, 9:13, X <x@y> escribió:" + the original). A two-line answer with a
+      // lone link and NO quoted context, from a cold domain, is what Gmail files as junk; with
+      // the quote it is visibly a conversation. The server appends it after the signature.
+      const quoteSrc: any = replyTarget || selected;
+      const quoteWhen = quoteSrc?.received_at
+        ? new Date(quoteSrc.received_at).toLocaleString("es-ES", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+        : "";
+      const quoteWho = [String(quoteSrc?.from_name || "").trim(), quoteSrc?.from_email ? `<${quoteSrc.from_email}>` : ""].filter(Boolean).join(" ");
+      const quoteHeader = quoteWho ? `El ${quoteWhen}, ${quoteWho} escribió:`.replace("El ,", "") : "";
+      const quoteHtml = buildReplyQuoteHtml(quoteSrc);
+
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
@@ -2867,6 +2892,8 @@ export default function Unibox() {
           // reply threads perfectly in every client, not just by subject.
           references: ([targetRefChain, targetMsgId].filter(Boolean).join(" ").trim()) || undefined,
           signature_html: acctSignature || undefined,
+          quote_html: quoteHtml || undefined,
+          quote_header: quoteHeader || undefined,
           attachments: replyFiles.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
           cc: ccList,   // extra people added to the thread ("Añadir persona")
         }),

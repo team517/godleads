@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { cleanBodyHtml, renderableHtml } from "@/pages/Unibox";
+import { buildReplyQuoteHtml, cleanBodyHtml, renderableHtml } from "@/pages/Unibox";
+
+// The reply sent from the Unibox quotes the message being answered (like any mail client):
+// a bare two-line answer with a lone link from a cold domain is what Gmail files as junk.
+describe("Unibox — cita del mensaje original al responder", () => {
+  it("usa el HTML saneado del original, completo (con su propia cita)", () => {
+    const q = buildReplyQuoteHtml({ body_html: `<div dir="ltr">Sí me interesa, ¿cuándo hablamos?</div><div class="gmail_quote">El jue, Maria escribió:<blockquote>Buenas Xavi…</blockquote></div>`, body_text: "x" });
+    expect(q).toContain("Sí me interesa");
+    expect(q).toContain("Buenas Xavi");
+    expect(q).not.toMatch(/<script/i);
+  });
+  it("sin HTML: párrafos a partir del texto, escapados", () => {
+    const q = buildReplyQuoteHtml({ body_html: null, body_text: "Hola María,\nme interesa & mucho.\n\nUn saludo" });
+    expect(q).toContain("Hola María,<br>me interesa &amp; mucho.");
+    expect(q).toContain("<p>Un saludo</p>");
+  });
+  it("sin contenido no inventa cita; y recorta originales enormes", () => {
+    expect(buildReplyQuoteHtml(null)).toBe("");
+    expect(buildReplyQuoteHtml({ body_html: "", body_text: "" })).toBe("");
+    expect(buildReplyQuoteHtml({ body_html: `<p>${"palabra ".repeat(20000)}</p>`, body_text: "" }).length).toBeLessThanOrEqual(40_000);
+  });
+});
 
 // Outlook (web/new) wraps the NEW reply in <blockquote class="elementToProof"> and puts the
 // quoted chain after <div id="appendonsend"> + <hr> + "De:/Enviado:". Cutting at the first

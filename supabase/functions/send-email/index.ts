@@ -62,6 +62,9 @@ function quotedPrintableEncode(input: string): string {
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i];
     if (b === 0x0a) { out += "\r\n"; lineLen = 0; continue; }
+    // RFC 2049 §3: never let an encoded line START with "." — SMTP dot-stuffing then grows
+    // it past 76 chars and some gateways mishandle it. Encode that one byte.
+    if (b === 0x2e && (lineLen === 0 || lineLen + 1 > 75)) { flush("=2E"); continue; }
     if (b === 0x09 || (b >= 0x20 && b <= 0x7e && b !== 0x3d)) {
       flush(String.fromCharCode(b));
     } else {
@@ -179,7 +182,11 @@ function htmlToPlainText(html: string): string {
     .replace(/<\/div>/gi, "\n")
     .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, (_m, href, text) => {
       const label = text.replace(/<[^>]+>/g, "").trim();
-      return label ? `${label} (${href})` : href;
+      // A link whose text IS its URL ("https://calendly.com/… (https://calendly.com/…)")
+      // read as a doubled, machine-made line in the plain part. Print it once.
+      const bare = (u: string) => u.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+      if (!label || bare(label) === bare(href)) return href;
+      return `${label} (${href})`;
     })
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
@@ -255,7 +262,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; quoteHtml?: string; quoteHeader?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
@@ -324,9 +331,23 @@ async function sendSmtpEmail(
       // to an HTML part full of live links reads as cloaking. htmlToPlainText already
       // renders each link as `label (href)`.
       const bodyPlain = htmlToPlainText(normalizedBody);
-      const plainText = sigHtml
+      let plainText = sigHtml
         ? `${bodyPlain}\n\n${htmlToPlainText(sigHtml)}`
         : bodyPlain;
+      // QUOTED ORIGINAL (replies only) — what every real mail client does: the answer, the
+      // signature, then "El …, X escribió:" + the message being answered. A two-line reply
+      // with a lone link from a cold domain, with NO quoted context, is the textbook shape
+      // of junk for Gmail; with the quote it reads as the conversation it is. Both
+      // alternatives carry the same quote so they keep saying the same thing.
+      let htmlWithQuote = normalizedHtml;
+      const quoteRaw = (opts?.inReplyTo && opts?.quoteHtml) ? sanitizeHtmlForDelivery(String(opts.quoteHtml)).slice(0, 60_000) : "";
+      if (quoteRaw) {
+        const header = String(opts?.quoteHeader || "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
+        const escHeader = header.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        htmlWithQuote = `${normalizedHtml}<br><br>${escHeader ? `<p style="margin:0 0 6px;color:#555555">${escHeader}</p>` : ""}<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #cccccc;padding-left:1ex">${quoteRaw}</blockquote>`;
+        const quotedPlain = htmlToPlainText(quoteRaw).split("\n").map((l) => `> ${l}`.trimEnd()).join("\n");
+        plainText = `${plainText}\n\n${header ? `${header}\n` : ""}${quotedPlain}`;
+      }
       // Human-style boundary, not bot fingerprint
       const boundary = `--==_mimepart_${randomString(16)}_${randomString(12)}`;
       const isReply = !!opts?.inReplyTo;
@@ -376,8 +397,8 @@ async function sendSmtpEmail(
         ? `${plainText}\n\nSi no deseas recibir más correos, date de baja aquí: ${unsubUrl}`
         : plainText;
       const htmlFinal = unsubUrl
-        ? `${normalizedHtml}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`
-        : normalizedHtml;
+        ? `${htmlWithQuote}<p style="font-size:12px;color:#888;margin-top:16px">Si no deseas recibir más correos, <a href="${unsubUrl}">date de baja aquí</a>.</p>`
+        : htmlWithQuote;
 
       // Pull base64 data: images (logos) out of the HTML → inline CID parts, then wrap
       // the result in a real HTML document (once; never if it already is one).
@@ -543,7 +564,9 @@ async function sendSmtpEmail(
         }
         await sendTls("DATA");
         const dataResp = await writeRawTls(buildMessage());
-        const sent = dataResp.includes("250");
+        // The reply to the message body itself must be a 250 (possibly multi-line). A bare
+        // includes("250") also matched a REJECTION whose text or queue id contained "250".
+        const sent = /^250[ -]/m.test(dataResp);
         try { await sendTls("QUIT"); } catch {}
         try { conn.close(); } catch {}
         return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
@@ -570,7 +593,9 @@ async function sendSmtpEmail(
     }
     await send("DATA");
     const dataResp = await writeRaw(buildMessage());
-    const sent = dataResp.includes("250");
+    // The reply to the message body itself must be a 250 (possibly multi-line). A bare
+        // includes("250") also matched a REJECTION whose text or queue id contained "250".
+        const sent = /^250[ -]/m.test(dataResp);
     try { await send("QUIT"); } catch {}
     try { conn.close(); } catch {}
     return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
@@ -621,6 +646,8 @@ serve(async (req) => {
       include_unsubscribe,
       attachments,
       signature_html,   // rich branded signature (from the Unibox reply)
+      quote_html,       // the message being answered, quoted under the reply (Unibox)
+      quote_header,     // "El 17 sept 2026 a las 9:13, X <x@y> escribió:"
       cc,               // extra people added to the thread (Unibox "Añadir persona")
     } = await req.json();
 
@@ -827,6 +854,9 @@ serve(async (req) => {
         signatureHtml: (signature_html && String(signature_html).trim())
           || (campaign_id ? (account as any).signature_html : undefined)
           || undefined,
+        // Quoted original under the reply — manual replies only, never campaign sends.
+        quoteHtml: !campaign_id && quote_html ? String(quote_html) : undefined,
+        quoteHeader: !campaign_id && quote_header ? String(quote_header) : undefined,
         attachments: safeAttachments,
         // Extra thread participants — drop the main recipient if it slipped in.
         cc: cleanCc.filter((e) => e !== cleanTo),
