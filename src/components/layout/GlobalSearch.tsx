@@ -122,8 +122,8 @@ export function GlobalSearch() {
   };
 
   return (
-    <div ref={boxRef} className="relative w-80">
-      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    <div ref={boxRef} className="group relative w-80 xl:w-96">
+      <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-white/60 transition-colors group-focus-within:text-muted-foreground" />
       {/* El propio Input ya trae la superficie de campo del diseño (clara y oscura);
           aquí solo se ajusta el espacio para la lupa y el spinner. */}
       <Input
@@ -132,9 +132,9 @@ export function GlobalSearch() {
         onFocus={() => { if (query.trim()) setOpen(true); }}
         onKeyDown={onKeyDown}
         placeholder="Buscar campañas, leads, correos..."
-        className="pl-10 pr-9 text-[15px] text-foreground placeholder:text-muted-foreground border border-border"
+        className="h-9 border-white/15 bg-white/10 pl-10 pr-9 text-[14px] text-white placeholder:text-white/55 transition-colors hover:bg-white/[0.14] focus-visible:border-white focus-visible:bg-white focus-visible:text-foreground focus-visible:placeholder:text-muted-foreground focus-visible:ring-white/20 dark:bg-white/10 dark:focus-visible:bg-card"
       />
-      {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
+      {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-white/70 group-focus-within:text-muted-foreground" />}
 
       {open && query.trim() && (
         <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-float">

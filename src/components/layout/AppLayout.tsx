@@ -56,12 +56,23 @@ export function AppLayout() {
 
   const isCollapsed = !isMobile && collapsed;
 
+  // La animación de entrada se dispara al cambiar de SECCIÓN (primer tramo de la ruta), no en
+  // cada sub-ruta: así una página no se remonta al moverse por dentro de sí misma.
+  const section = location.pathname.split("/")[1] || "";
+
   return (
-    <div className="flex min-h-screen" style={brandStyle}>
+    <div className="min-h-screen" style={brandStyle}>
+      <Topbar
+        onMenuToggle={() => setSidebarOpen(true)}
+        isMobile={isMobile}
+        collapsed={isCollapsed}
+        onToggleCollapse={toggleCollapsed}
+      />
+
       {/* Overlay for mobile */}
       {isMobile && sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50"
+          className="fixed inset-0 z-[55] bg-[#15113C]/45 backdrop-blur-[2px]"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -71,17 +82,17 @@ export function AppLayout() {
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         collapsed={isCollapsed}
-        onToggleCollapse={toggleCollapsed}
       />
 
       <div
-        className={`flex flex-1 flex-col transition-[margin] duration-200 ${
+        className={`flex min-h-screen flex-col pt-[calc(3.5rem+env(safe-area-inset-top))] transition-[margin] duration-200 ${
           isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"
         }`}
       >
-        <Topbar onMenuToggle={() => setSidebarOpen(true)} isMobile={isMobile} />
         <main className={`flex-1 ${isMobile ? "p-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]" : "p-6"}`}>
-          {pathAllowed ? <Outlet /> : <Navigate to={allowed![0]} replace />}
+          {pathAllowed
+            ? <div key={section} className="page-enter"><Outlet /></div>
+            : <Navigate to={allowed![0]} replace />}
         </main>
       </div>
 

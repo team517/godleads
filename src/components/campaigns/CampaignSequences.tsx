@@ -1478,7 +1478,7 @@ export default function CampaignSequences({ campaignId }: Props) {
 
           {steps.length > 0 && (
             <div className="rounded-md bg-destructive/10 p-3">
-              <p className="text-xs text-destructive font-medium">⚠️ Esto reemplazará los {steps.length} pasos actuales de la secuencia</p>
+              <p className="text-xs text-destructive font-medium">Esto reemplazará los {steps.length} pasos actuales de la secuencia</p>
             </div>
           )}
         </div>

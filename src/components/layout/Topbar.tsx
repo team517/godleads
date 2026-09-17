@@ -1,6 +1,5 @@
-import { Bell, BellOff, Search, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone } from "lucide-react";
+import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Slider } from "@/components/ui/slider";
@@ -11,7 +10,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useState, useCallback, useEffect } from "react";
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushState } from "@/lib/push-notifications";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Wordmark } from "@/components/Wordmark";
+import { clearKeepSession } from "@/components/KeepSessionBanner";
+import { prefetchRoute } from "@/lib/route-prefetch";
 import { useTheme } from "@/hooks/use-theme";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import coinIcon from "@/assets/coin-icon.png";
@@ -35,7 +37,13 @@ export function isNotificationEnabled() {
 interface TopbarProps {
   onMenuToggle?: () => void;
   isMobile?: boolean;
+  /** Menú lateral plegado (sólo escritorio): el botón de la barra lo abre y lo cierra. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
+
+/** Botón de icono sobre la barra oscura. */
+const TOPBAR_ICON = "relative flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
 
 const PLANS = [
   {
@@ -64,9 +72,10 @@ const COIN_PACKS = [
   { coins: 1000, price: "27,99€", priceId: "price_1TECo52ObXNkJIexehQMdRx4" },
 ];
 
-export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
+export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: TopbarProps) {
   const { isTrialing, trialDaysLeft, tier, subscribed } = useSubscription();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const { profile: profileData } = useProfile();
   const { theme, toggleTheme } = useTheme();
   const [notifyEnabled, setNotifyEnabled] = useState(_notifEnabled);
@@ -174,27 +183,55 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
 
   const coinDisplay = profileData.infiniteCoins ? "∞" : (profileData.coins > 999 ? "999+" : profileData.coins);
 
-  // h + pt: on iOS standalone the web view runs under the translucent status bar, so the
-  // header grows by the safe-area inset (0 everywhere else) and paints it white like the bar.
+  const allowed = profileData.allowed_routes;
+  const canSeeAI = !allowed || allowed.includes("/ai-prompts");
+
+  const handleSignOut = async () => {
+    clearKeepSession();
+    await signOut();
+    navigate("/");
+  };
+
+  // Barra de programa: el índigo oscuro del diseño, a todo el ancho y por encima del menú lateral.
+  // h + pt: en iOS a pantalla completa la vista corre bajo la barra de estado, así que la
+  // cabecera crece con el área segura (0 en el resto) y la pinta del mismo índigo.
   return (
-    <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between border-b border-border bg-topbar/[0.88] backdrop-blur-[8px] shadow-rest text-topbar-foreground text-[15px] font-medium px-4 pt-[env(safe-area-inset-top)] md:px-6">
-      <div className="flex items-center gap-3">
-        {isMobile && (
-          <Button variant="ghost" size="icon" onClick={onMenuToggle} aria-label="Abrir menú">
+    <header className="topbar-surface fixed inset-x-0 top-0 z-50 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between gap-3 border-b border-white/10 px-3 pt-[env(safe-area-inset-top)] text-[15px] font-medium text-topbar-foreground shadow-[0_2px_10px_rgba(21,17,60,.18)] md:px-4">
+      <span className="topbar-sheen" aria-hidden="true" />
+      <div className="relative flex min-w-0 items-center gap-2 md:gap-3">
+        {isMobile ? (
+          <button type="button" onClick={onMenuToggle} aria-label="Abrir menú" className={TOPBAR_ICON}>
             <Menu className="h-5 w-5" />
-          </Button>
+          </button>
+        ) : (
+          <button type="button" onClick={onToggleCollapse} aria-label={collapsed ? "Expandir menú" : "Plegar menú"} title={collapsed ? "Expandir menú" : "Plegar menú"} className={TOPBAR_ICON}>
+            {collapsed ? <PanelLeftOpen className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
+          </button>
         )}
-        {!isMobile && <GlobalSearch />}
+        <Link to="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="Ir al panel">
+          {profileData.logo_url ? (
+            <span className="flex h-8 items-center rounded-md bg-white px-2 shadow-rest">
+              <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[120px] object-contain" />
+            </span>
+          ) : (
+            <>
+              <span className="block h-[26px] w-[26px] rounded-[7px] bg-[linear-gradient(135deg,#8B6BFF_0%,#3B89E9_100%)] shadow-[0_2px_8px_rgba(139,107,255,.45),inset_0_1px_0_rgba(255,255,255,.35)]" />
+              <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-white" />
+            </>
+          )}
+        </Link>
+        {!isMobile && <span className="mx-1 hidden h-5 w-px bg-white/15 lg:block" />}
+        {!isMobile && <div className="hidden lg:block"><GlobalSearch /></div>}
       </div>
 
-      <div className="flex items-center gap-2 md:gap-3">
+      <div className="relative flex items-center gap-1 md:gap-1.5">
         {isTrialing && trialDaysLeft !== null && (
           <Badge
             variant="outline"
-            className={`gap-1.5 font-semibold px-2 md:px-3 py-1 text-xs md:text-[13px] ${
+            className={`mr-1 gap-1.5 px-2 py-1 text-xs font-semibold md:px-3 md:text-[13px] ${
               trialDaysLeft < 1
-                ? "border-destructive/30 text-destructive bg-destructive/10 dark:border-destructive/50 dark:bg-destructive/15"
-                : "border-border text-muted-foreground"
+                ? "border-red-300/50 bg-red-500/20 text-red-100"
+                : "border-white/20 bg-white/10 text-white/90"
             }`}
           >
             <Clock className="h-3 w-3 md:h-3.5 md:w-3.5" />
@@ -202,25 +239,32 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
           </Badge>
         )}
 
+        {canSeeAI && (
+          <Link
+            to="/ai-prompts"
+            onMouseEnter={() => prefetchRoute("/ai-prompts")}
+            className="mr-1 hidden h-8 items-center gap-1.5 rounded-md bg-white px-3 text-[13px] font-semibold text-[#33298F] shadow-[0_2px_6px_rgba(21,17,60,.18)] transition-transform hover:-translate-y-px active:translate-y-0 sm:inline-flex"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#6E58F1]" /> Pregunta a la IA
+          </Link>
+        )}
+
         {/* Dark mode toggle */}
-        <Button
-          variant="ghost"
-          size="icon"
+        <button
+          type="button"
           onClick={toggleTheme}
           title={theme === "dark" ? "Modo claro" : "Modo noche"}
+          aria-label={theme === "dark" ? "Modo claro" : "Modo noche"}
+          className={TOPBAR_ICON}
         >
-          {theme === "dark" ? (
-            <Sun className="h-5 w-5 text-warning" />
-          ) : (
-            <Moon className="h-5 w-5 text-muted-foreground" />
-          )}
-        </Button>
+          {theme === "dark" ? <Sun className="h-[18px] w-[18px] text-amber-300" /> : <Moon className="h-[18px] w-[18px]" />}
+        </button>
 
         {/* Coin / Credits button */}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative" title="Monedas">
-              <img src={coinIcon} alt="Monedas" className="h-8 w-8" />
+            <Button variant="ghost" size="icon" className={TOPBAR_ICON} title="Monedas">
+              <img src={coinIcon} alt="Monedas" className="h-7 w-7" />
               {(profileData.coins > 0 || profileData.infiniteCoins) && (
                 <span className="absolute -top-0.5 -right-1 bg-warning text-warning-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
                   {coinDisplay}
@@ -331,14 +375,14 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
         {/* Notifications */}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative" aria-label="Notificaciones">
+            <Button variant="ghost" size="icon" className={TOPBAR_ICON} aria-label="Notificaciones">
               {notifyEnabled ? (
-                <Bell className="h-5 w-5 text-primary" />
+                <Bell className="!h-[18px] !w-[18px]" />
               ) : (
-                <BellOff className="h-5 w-5 text-muted-foreground" />
+                <BellOff className="!h-[18px] !w-[18px] text-white/55" />
               )}
               {notifyEnabled && (
-                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary animate-pulse" />
+                <span className="live-dot absolute right-2 top-2 h-2 w-2 rounded-full bg-[#05D17F] ring-2 ring-[hsl(var(--topbar))]" />
               )}
             </Button>
           </PopoverTrigger>
@@ -404,14 +448,38 @@ export function Topbar({ onMenuToggle, isMobile }: TopbarProps) {
           </PopoverContent>
         </Popover>
 
-        <Link to="/settings">
-          <Avatar className="h-9 w-9 ring-2 ring-border cursor-pointer hover:ring-primary/40 transition-all">
-            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
-            <AvatarFallback className="bg-primary/10 text-primary text-sm font-bold">
-              {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-        </Link>
+        {/* Cuenta: avatar + desplegable, como en cualquier programa. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" aria-label="Cuenta" className="ml-1 flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
+              <Avatar className="h-8 w-8 ring-2 ring-white/25">
+                <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
+                <AvatarFallback className="bg-white/15 text-sm font-bold text-white">
+                  {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <ChevronDown className="hidden h-3.5 w-3.5 text-white/70 sm:block" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-0" align="end">
+            <div className="border-b p-3.5">
+              <p className="truncate text-[14px] font-semibold text-foreground">{profileData.full_name || "Sin nombre"}</p>
+              <p className="truncate text-[12.5px] text-muted-foreground">{user?.email}</p>
+              <span className="mt-2 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground">Plan {currentPlanLabel}</span>
+            </div>
+            <div className="p-1.5 text-[14px]">
+              <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                <Settings className="h-4 w-4 text-muted-foreground" /> Configuración
+              </Link>
+              <a href="mailto:support@onepulso.online" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                <LifeBuoy className="h-4 w-4 text-muted-foreground" /> Ayuda
+              </a>
+              <button type="button" onClick={handleSignOut} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
+                <LogOut className="h-4 w-4" /> Cerrar sesión
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
     </header>
   );

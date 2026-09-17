@@ -3619,7 +3619,7 @@ export default function Unibox() {
                       <div className={`flex items-center justify-between rounded-md px-3 py-2 text-xs ${isReminderDue(selected.id) ? "border border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
                         <span className="flex items-center gap-1.5">
                           <Bell className="h-3.5 w-3.5" />
-                          {isReminderDue(selected.id) ? "⚡ Recordatorio vencido — " : "Recordatorio: "}
+                          {isReminderDue(selected.id) ? "Recordatorio vencido — " : "Recordatorio: "}
                           {format(new Date(reminders[selected.id].remind_at), "d MMM yyyy", { locale: es })}
                         </span>
                         <button onClick={() => handleClearReminder(selected.id)} className="hover:opacity-70"><X className="h-3.5 w-3.5" /></button>

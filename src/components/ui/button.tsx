@@ -6,14 +6,15 @@ import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
   // Diseño "Primary": radio 6px, peso 600, alturas contenidas (DESIGN.md).
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-semibold ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  // Responde al dedo: sube la sombra al pasar y se hunde un 2% al pulsar (como un botón de verdad).
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-semibold ring-offset-background transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-btn hover:bg-primary-hover",
+          "bg-primary text-primary-foreground shadow-btn hover:bg-primary-hover hover:shadow-btn-hover",
         destructive: "bg-destructive text-destructive-foreground shadow-rest hover:bg-destructive/90",
-        outline: "border border-border bg-card text-secondary-foreground rounded-md shadow-rest hover:bg-secondary",
+        outline: "border border-[#D4D0E2] dark:border-border bg-card text-secondary-foreground rounded-md shadow-rest hover:border-primary hover:text-primary hover:bg-card",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary dark:hover:bg-accent",
         ghost: "text-primary hover:bg-secondary",
         link: "text-primary underline-offset-4 hover:underline",

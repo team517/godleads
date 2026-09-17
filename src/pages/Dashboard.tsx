@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CountUp } from "@/components/ui/count-up";
 import { Button } from "@/components/ui/button";
 import { Send, MessageCircle, Users, Mail, BarChart3, UserCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -59,12 +60,13 @@ export default function Dashboard() {
   // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
   const responseRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
 
+  // Como las métricas del diseño: etiqueta con icono del color de la cifra y cifra grande.
   const statCards = [
-    { label: "Correos enviados", value: stats.sent.toLocaleString(), icon: Send, color: "text-primary" },
-    { label: "Leads contactados", value: stats.contacted.toLocaleString(), icon: UserCheck, color: "text-info" },
-    { label: "Tasa de respuesta", value: `${responseRate}%`, icon: MessageCircle, color: "text-success" },
-    { label: "Leads totales", value: stats.leads.toLocaleString(), icon: Users, color: "text-info" },
-    { label: "Cuentas activas", value: stats.accounts.toLocaleString(), icon: Mail, color: "text-warning" },
+    { label: "Correos enviados", value: stats.sent, icon: Send, color: "text-primary" },
+    { label: "Leads contactados", value: stats.contacted, icon: UserCheck, color: "text-info" },
+    { label: "Tasa de respuesta", value: Number(responseRate), decimals: 1, suffix: "%", icon: MessageCircle, color: "text-success" },
+    { label: "Leads totales", value: stats.leads, icon: Users, color: "text-[hsl(var(--brand-indigo))]" },
+    { label: "Cuentas activas", value: stats.accounts, icon: Mail, color: "text-warning" },
   ];
 
   if (loading) {
@@ -76,7 +78,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="stagger space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Dashboard</h1>
@@ -84,15 +86,16 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="stagger grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((stat, i) => (
-          <Card key={i}>
-            <CardContent className="p-4 sm:p-6">
-              <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-primary/10 ${stat.color}`}>
-                <stat.icon className="h-4 w-4 sm:h-5 sm:w-5" />
-              </div>
-              <p className="mt-2 sm:mt-4 font-display text-lg sm:text-2xl font-semibold tracking-[-0.03em]">{stat.value}</p>
-              <p className="text-[11.5px] sm:text-[12.5px] font-medium text-muted-foreground">{stat.label}</p>
+          <Card key={i} className="lift">
+            <CardContent className="p-4 sm:p-5">
+              <p className="flex items-center gap-1.5 text-[11.5px] sm:text-[12.5px] font-medium text-muted-foreground">
+                <stat.icon className={`h-3.5 w-3.5 shrink-0 ${stat.color}`} strokeWidth={2} /> <span className="truncate">{stat.label}</span>
+              </p>
+              <p className={`mt-1.5 font-display text-[26px] sm:text-[32px] font-semibold leading-none tracking-[-0.03em] tabular ${stat.color}`}>
+                <CountUp value={stat.value} decimals={stat.decimals} suffix={stat.suffix} />
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -115,15 +118,14 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-3">
                 {campaigns.map((c: any) => (
-                  <div key={c.id} className="flex items-center justify-between rounded-lg border border-border bg-card p-4 shadow-rest">
-                    <div>
-                      <p className="text-[15px] font-semibold text-foreground">{c.name}</p>
-                      <span className={`text-[13px] font-semibold ${
-                        c.status === "active" ? "text-success" : c.status === "paused" ? "text-warning" : "text-muted-foreground"
-                      }`}>
-                        {c.status === "active" ? "Activa" : c.status === "paused" ? "Pausada" : c.status === "draft" ? "Borrador" : c.status}
-                      </span>
-                    </div>
+                  <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-rest transition-colors hover:border-[#C9BFFA] hover:bg-accent/30">
+                    <p className="min-w-0 truncate text-[15px] font-semibold text-foreground">{c.name}</p>
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold ${
+                      c.status === "active" ? "border-success/25 bg-success/10 text-success" : c.status === "paused" ? "border-warning/30 bg-warning/10 text-warning" : "border-border bg-muted text-muted-foreground"
+                    }`}>
+                      {c.status === "active" && <span className="live-dot h-1.5 w-1.5 rounded-full bg-[#05D17F]" />}
+                      {c.status === "active" ? "Activa" : c.status === "paused" ? "Pausada" : c.status === "draft" ? "Borrador" : c.status}
+                    </span>
                   </div>
                 ))}
               </div>

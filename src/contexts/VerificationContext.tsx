@@ -133,7 +133,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       }
 
       await refreshProfile();
-      toast.success(`✅ Verificación completada: ${totalValid} válidos, ${totalRisky} arriesgados, ${totalInvalid} eliminados`, { id: toastId, duration: 6000 });
+      toast.success(`Verificación completada: ${totalValid} válidos, ${totalRisky} arriesgados, ${totalInvalid} eliminados`, { id: toastId, duration: 6000 });
     } catch (err: any) {
       toast.error(err.message || "Error en la verificación", { id: toastId, duration: 5000 });
     } finally {

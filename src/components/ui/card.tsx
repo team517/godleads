@@ -3,10 +3,10 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-  // House cards: white, 1px #e7e2f5, 14px radius, no heavy shadow.
+  // Tarjeta del diseño "Primary": blanca, borde lavanda, radio 10px y la sombra navy de reposo.
   <div
     ref={ref}
-    className={cn("rounded-[14px] border border-border bg-card text-card-foreground shadow-none", className)}
+    className={cn("rounded-[10px] border border-border bg-card text-card-foreground shadow-rest", className)}
     {...props}
   />
 ));

@@ -115,11 +115,45 @@ export default function Auth() {
         </div>
       </div>
 
-      <div className="hidden lg:flex flex-1 items-center justify-center bg-gradient-to-br from-primary/5 via-brand-cyan/5 to-brand-sky/10 border-l">
-        <div className="max-w-md text-center px-8">
-          <Wordmark className="mx-auto h-12" colorClassName="text-primary" />
-          <h2 className="mt-6 font-display text-2xl font-semibold tracking-[-0.03em]">Escala tu outreach sin complicaciones</h2>
-          <p className="mt-4 text-muted-foreground">Conecta tus cuentas, importa leads y empieza a enviar campañas personalizadas en minutos.</p>
+      {/* Panel derecho: el "hero" oscuro del diseño — índigo #312A63 con su resplandor violeta,
+          titular que entra palabra a palabra y una tarjeta de producto en movimiento. */}
+      <div className="relative hidden flex-1 items-center justify-center overflow-hidden lg:flex m-3 rounded-[20px] bg-[#312A63] [background-image:radial-gradient(120%_90%_at_50%_0%,rgba(160,138,255,.52)_0%,rgba(12,21,18,0)_62%),linear-gradient(180deg,rgba(167,139,250,.09)_0%,rgba(12,21,18,0)_40%)]">
+        <div className="pointer-events-none absolute inset-0 opacity-60 [background-image:radial-gradient(rgba(255,255,255,.10)_1px,transparent_1.3px)] [background-size:22px_22px] [mask-image:radial-gradient(circle_at_50%_40%,#000_0%,transparent_72%)]" />
+        <div className="relative w-full max-w-[460px] px-8">
+          <h2 className="font-display text-[40px] font-semibold leading-[1.06] tracking-[-0.035em] text-white">
+            {["Convierte", "el", "correo", "en", "frío", "en"].map((w, i) => (
+              <span key={i} className="inline-block [animation:blurFadeIn_.7s_both]" style={{ animationDelay: `${0.05 + i * 0.09}s` }}>{w}&nbsp;</span>
+            ))}
+            <span className="inline-block bg-[linear-gradient(90deg,#7DE3FF_0%,#B79BFF_52%,#FF9BE0_100%)] bg-clip-text text-transparent [animation:blurFadeIn_.7s_both]" style={{ animationDelay: ".62s" }}>reuniones</span>
+          </h2>
+          <p className="mt-4 text-[16px] leading-relaxed text-[#E0DCFA] [animation:blurFadeIn_.7s_.75s_both]">
+            Conecta tus cuentas, importa tus leads y deja que las campañas trabajen: llegan a la bandeja de entrada y las respuestas te esperan en un solo sitio.
+          </p>
+
+          <div className="mt-9 rounded-[14px] border border-white/15 bg-white p-4 shadow-[0_18px_38px_rgba(21,17,60,.35)] [animation:blurFadeIn_.8s_.9s_both]">
+            <div className="flex items-center justify-between">
+              <span className="font-display text-[15px] font-semibold tracking-[-0.02em] text-[#0F172B]">Esta semana</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#CDF1E3] bg-[#F1EEF8] px-2.5 py-1 text-[11px] font-semibold text-[#05A063]">
+                <span className="live-dot block h-1.5 w-1.5 rounded-full bg-[#05D17F]" /> En directo
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-3 border-b border-[#EAE7F4] pb-3">
+              {[["Enviados", "24.800", "#6E58F1"], ["Abiertos", "13.240", "#3B89E9"], ["Respuestas", "3.160", "#05A063"]].map(([l, v, c]) => (
+                <div key={l}>
+                  <p className="text-[11.5px] text-[#65768D]">{l}</p>
+                  <p className="font-display text-[24px] font-semibold leading-tight tracking-[-0.03em]" style={{ color: c }}>{v}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2.5 rounded-[9px] border border-[#E8E5F2] bg-[#FBFAFF] p-2.5 [animation:rowPop_.5s_1.5s_both]">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,#6E58F1_0%,#3B89E9_100%)] text-[11px] font-semibold text-white">EW</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12.5px] font-semibold text-[#0F172B]">Emma Walsh · Voltera</p>
+                <p className="truncate text-[12px] text-[#45556C]">Me interesa, ¿cómo sería para un equipo de doce?</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-[#CDF1E3] px-2 py-0.5 text-[10.5px] font-semibold text-[#0A7A52]">Interesado</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

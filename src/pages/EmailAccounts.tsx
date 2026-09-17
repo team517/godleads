@@ -19,7 +19,7 @@ import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
 import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
 import { accountsCsvTemplate, accountsToCsv, downloadCsv } from "@/lib/accounts-csv";
 import { isAgencyAccount } from "@/lib/access";
-import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search } from "lucide-react";
+import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search, Globe, TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -832,7 +832,7 @@ export default function EmailAccounts() {
       // La función puede devolver null (respuesta vacía sin error): leer result.status
       // reventaba con un TypeError y el usuario solo veía "Error verificando: undefined".
       if (result?.status === "connected") {
-        toast.success("✅ Conexión verificada — sincronizando bandeja…");
+        toast.success("Conexión verificada — sincronizando bandeja…");
         // As soon as the mailbox connects, pull its inbox into the Unibox.
         syncAccountInbox(accountId);
       } else if (!result) {
@@ -1121,15 +1121,15 @@ export default function EmailAccounts() {
         <Select value={form.provider} onValueChange={handleProviderChange}>
           <SelectTrigger><SelectValue placeholder="Selecciona proveedor" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="gmail">📧 Gmail</SelectItem>
-            <SelectItem value="outlook">📬 Outlook / Hotmail</SelectItem>
-            <SelectItem value="ionos">🌐 IONOS</SelectItem>
-            <SelectItem value="custom">⚙️ Personalizado (SMTP/IMAP)</SelectItem>
+            <SelectItem value="gmail">Gmail</SelectItem>
+            <SelectItem value="outlook">Outlook / Hotmail</SelectItem>
+            <SelectItem value="ionos">IONOS</SelectItem>
+            <SelectItem value="custom">Personalizado (SMTP/IMAP)</SelectItem>
           </SelectContent>
         </Select>
         {preset.help && (
           <p className="text-xs text-muted-foreground mt-1 p-2 rounded bg-muted/50">
-            💡 {preset.help}
+            {preset.help}
           </p>
         )}
       </div>
@@ -1207,7 +1207,7 @@ export default function EmailAccounts() {
             </Button>
           )}
           <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulkIonos(true)}>
-            🌐 <span className="hidden sm:inline">IONOS en bloque</span><span className="sm:hidden">IONOS</span>
+            <Globe className="h-4 w-4" /> <span className="hidden sm:inline">IONOS en bloque</span><span className="sm:hidden">IONOS</span>
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={handleDownloadCSV}>
             <Download className="h-4 w-4" /> <span className="hidden sm:inline">Descargar CSV</span><span className="sm:hidden">CSV↓</span>
@@ -1445,7 +1445,7 @@ export default function EmailAccounts() {
       <Dialog open={showBulkIonos} onOpenChange={setShowBulkIonos}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display flex items-center gap-2">🌐 Importación masiva IONOS</DialogTitle>
+            <DialogTitle className="font-display flex items-center gap-2">Importación masiva IONOS</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
             IMAP imap.ionos.es:993 (SSL) · SMTP smtp.ionos.es:587 (STARTTLS) — se configura automáticamente.
@@ -1590,7 +1590,7 @@ export default function EmailAccounts() {
             </span>
           )}
           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowSlowRamp(true)}>
-            🐢 Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : `(${filteredAccounts.length})`}
+            <TrendingUp className="h-4 w-4" /> Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : `(${filteredAccounts.length})`}
           </Button>
           {selectedIds.size > 0 && (
             <>
@@ -1665,7 +1665,7 @@ export default function EmailAccounts() {
       <Dialog open={showSlowRamp} onOpenChange={setShowSlowRamp}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display">🐢 Slow ramp (calentamiento)</DialogTitle>
+            <DialogTitle className="font-display">Slow ramp (calentamiento)</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground">
@@ -1777,7 +1777,7 @@ export default function EmailAccounts() {
       {/* ── Signature Manager Dialog ── */}
       <Dialog open={showSignature} onOpenChange={setShowSignature}>
         <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display">✍️ Firma de correo</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">Firma de correo</DialogTitle></DialogHeader>
           <p className="text-xs text-muted-foreground">
             Se añade automáticamente <b>debajo de cada correo</b> (campañas y respuestas del Unibox) de las cuentas elegidas.
           </p>
@@ -2024,7 +2024,7 @@ export default function EmailAccounts() {
                           Uso
                           {ramp && (
                             <span className="text-[10px] rounded bg-primary/10 text-primary px-1.5 py-0.5">
-                              🐢 Slow ramp · Día {ramp.day} · hoy {ramp.eff} → objetivo {ramp.target}
+                              Slow ramp · Día {ramp.day} · hoy {ramp.eff} → objetivo {ramp.target}
                             </span>
                           )}
                         </p>

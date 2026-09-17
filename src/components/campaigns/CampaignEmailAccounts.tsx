@@ -151,7 +151,7 @@ function LimitCell({ row, compact }: { row: Row; compact?: boolean }) {
       />
       {accRampDay !== null && (
         <span className="inline-block rounded-md bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">
-          🐢 Día {accRampDay}
+          Día {accRampDay}
         </span>
       )}
     </div>

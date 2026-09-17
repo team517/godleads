@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ChevronLeft, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText, Building2 } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,40 +9,60 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 import { isAgencyAccount } from "@/lib/access";
-import { isSessionKept, clearKeepSession } from "@/components/KeepSessionBanner";
+import { clearKeepSession } from "@/components/KeepSessionBanner";
 import { prefetchRoute, prefetchAllRoutesOnIdle } from "@/lib/route-prefetch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-const mainNav = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: Mail, label: "Cuentas Email", path: "/email-accounts" },
-  { icon: Send, label: "Campañas", path: "/campaigns" },
-  { icon: Users, label: "Leads", path: "/leads" },
-  { icon: Building2, label: "Clientes", path: "/clientes" },
-  { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
-  { icon: Inbox, label: "Unibox", path: "/unibox" },
+type NavEntry = { icon: LucideIcon; label: string; path: string; exact?: boolean };
+type NavGroup = { id: string; title: string | null; items: NavEntry[] };
+
+// El menú se agrupa por lo que se hace, no por "principal / herramientas": cada sección se
+// pliega por su cuenta y recuerda su estado, como en cualquier programa de escritorio.
+const NAV_GROUPS: NavGroup[] = [
+  { id: "main", title: null, items: [
+    { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+    { icon: Send, label: "Campañas", path: "/campaigns" },
+    { icon: Inbox, label: "Unibox", path: "/unibox" },
+    { icon: Mail, label: "Cuentas Email", path: "/email-accounts" },
+    { icon: Users, label: "Leads", path: "/leads" },
+  ] },
+  { id: "ai", title: "Equipo IA", items: [
+    { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
+    { icon: Brain, label: "IA", path: "/ai-prompts" },
+    { icon: Workflow, label: "Automatización", path: "/automatizacion" },
+    { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
+    { icon: FileText, label: "Copy", path: "/copy" },
+  ] },
+  { id: "health", title: "Salud de envío", items: [
+    { icon: ShieldCheck, label: "Entregabilidad", path: "/deliverability" },
+  ] },
+  { id: "clients", title: "Clientes", items: [
+    { icon: Building2, label: "Clientes", path: "/clientes" },
+    { icon: Briefcase, label: "Portal de Clientes", path: "/admin/clients" },
+    { icon: Rocket, label: "Onboarding", path: "/onboarding" },
+    { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
+  ] },
+  { id: "perf", title: "Rendimiento", items: [
+    { icon: BarChart3, label: "Estadísticas", path: "/stats" },
+  ] },
+  { id: "admin", title: "Admin", items: [
+    { icon: Shield, label: "Panel Admin", path: "/admin", exact: true },
+  ] },
 ];
 
-const toolsNav = [
-  { icon: BarChart3, label: "Estadísticas", path: "/stats" },
-  { icon: ShieldCheck, label: "Entregabilidad", path: "/deliverability" },
-  { icon: Brain, label: "IA", path: "/ai-prompts" },
-  { icon: Rocket, label: "Onboarding", path: "/onboarding" },
-  { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
-  { icon: FileText, label: "Copy", path: "/copy" },
-  { icon: Workflow, label: "Automatización", path: "/automatizacion" },
-  { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
-];
+const GROUPS_KEY = "sidebarGroupsClosed";
+const readClosedGroups = (): Record<string, boolean> => {
+  try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || "{}") || {}; } catch { return {}; }
+};
 
 interface AppSidebarProps {
   isMobile?: boolean;
   isOpen?: boolean;
   onClose?: () => void;
   collapsed?: boolean;
-  onToggleCollapse?: () => void;
 }
 
-export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleCollapse }: AppSidebarProps) {
+export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarProps) {
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { profile: profileData } = useProfile();
@@ -54,6 +74,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // Personalización item from ANY screen, so you always know a batch is still running.
   const [personalizing, setPersonalizing] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>(readClosedGroups);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
   // Owner-only agency tools — never shown to clients/managers.
@@ -65,16 +86,22 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
   // "Clientes" (gestión de clientes del usuario de pago) NO es para la agencia:
   // support@/equipo@/propietario/gestores tienen su propio Portal de Clientes.
   const isAgency = isAgencyAccount(userEmail, isManager) || isAdmin;
-  // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
-  const OWNER_OR_MANAGER = new Set(["/onboarding", "/client-campaigns"]);
-  const visibleTools = toolsNav.filter((item) => {
-    if (item.path === "/automatizacion") return canAutomation;
+
+  /** Quién ve cada entrada. Las mismas reglas de siempre, en un solo sitio. */
+  const canSee = (path: string): boolean => {
+    // Admin / gestión: por rol, no por allowed_routes (un cliente nunca los tiene).
+    if (path === "/admin") return isAdmin;
+    if (path === "/admin/clients") return isAdmin || isManager;
+    if (allowedRoutes && !allowedRoutes.includes(path)) return false;
+    if (path === "/clientes") return !isAgency;
+    if (path === "/automatizacion") return canAutomation;
     // Copy (enviar el copy de las campañas a cada cliente): agencia — owner, managers (support@) y equipo@.
-    if (item.path === "/copy") return isOwner || isManager || userEmail === "equipo@onepulso.online";
-    if (item.path === "/seguimiento") return isOwner;
-    if (OWNER_OR_MANAGER.has(item.path)) return isOwner || isManager;
+    if (path === "/copy") return isOwner || isManager || userEmail === "equipo@onepulso.online";
+    if (path === "/seguimiento") return isOwner;
+    // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
+    if (path === "/onboarding" || path === "/client-campaigns") return isOwner || isManager;
     return true;
-  });
+  };
 
   useEffect(() => {
     setUnreadCount(readCachedUniboxUnread());
@@ -131,15 +158,30 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
     if (isMobile && onClose) onClose();
   };
 
+  const toggleGroup = (id: string) =>
+    setClosedGroups((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try { localStorage.setItem(GROUPS_KEY, JSON.stringify(next)); } catch { /* sin almacenamiento */ }
+      return next;
+    });
+
+  const isActivePath = (item: NavEntry) =>
+    item.exact ? location.pathname === item.path : location.pathname.startsWith(item.path);
+
+  // En escritorio el menú vive DEBAJO de la barra superior (que va a todo el ancho). En móvil
+  // es un cajón que la tapa, con su propia cabecera para cerrarlo.
   const sidebarClasses = cn(
-    "fixed left-0 top-0 z-40 flex h-screen flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[transform,width] duration-200",
-    collapsed ? "w-16" : "w-60",
+    "fixed left-0 z-40 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[transform,width] duration-200",
+    isMobile
+      ? "top-0 z-[60] h-[100dvh] w-[272px] shadow-modal"
+      : "top-[calc(3.5rem+env(safe-area-inset-top))] h-[calc(100dvh-3.5rem-env(safe-area-inset-top))]",
+    !isMobile && (collapsed ? "w-16" : "w-60"),
     isMobile && !isOpen && "-translate-x-full",
     isMobile && isOpen && "translate-x-0"
   );
 
-  const NavItem = ({ item }: { item: typeof mainNav[0] }) => {
-    const isActive = location.pathname.startsWith(item.path);
+  const NavItem = ({ item }: { item: NavEntry }) => {
+    const isActive = isActivePath(item);
     return (
       <Link
         to={item.path}
@@ -147,41 +189,37 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
         onMouseEnter={() => prefetchRoute(item.path)}
         onFocus={() => prefetchRoute(item.path)}
         title={collapsed ? item.label : undefined}
+        aria-current={isActive ? "page" : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-lg py-2.5 text-[15px] transition-all duration-150 relative group",
-          collapsed ? "justify-center px-0" : "px-3.5",
+          "group relative flex h-9 items-center gap-2.5 rounded-md text-[14.5px] transition-[color,background-color,box-shadow] duration-150",
+          collapsed ? "mx-auto w-10 justify-center px-0" : "px-2.5",
           isActive
-            ? cn(
-                "font-semibold text-sidebar-accent-foreground",
-                // Collapsed: only the square icon marks active — no side bar, no pill.
-                !collapsed && "bg-sidebar-accent before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-sidebar-primary"
-              )
-            : "font-medium text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
+            ? "is-selected font-semibold text-[hsl(var(--primary-glow))] dark:text-sidebar-accent-foreground"
+            : "font-medium text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-foreground"
         )}
       >
-        <span className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
-          isActive
-            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-rest"
-            : "bg-sidebar-accent/50 text-sidebar-foreground group-hover:bg-sidebar-accent group-hover:text-sidebar-accent-foreground"
-        )}>
-          <item.icon strokeWidth={1.9} className="h-[17px] w-[17px]" />
-        </span>
-        {!collapsed && item.label}
+        <item.icon
+          strokeWidth={isActive ? 2 : 1.75}
+          className={cn(
+            "h-[18px] w-[18px] shrink-0 transition-colors",
+            isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
+          )}
+        />
+        {!collapsed && <span className="truncate">{item.label}</span>}
         {item.path === "/unibox" && unreadCount > 0 && (
           collapsed ? (
-            <span className="absolute top-1 right-1.5 h-2 w-2 rounded-full bg-destructive" />
+            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-sidebar" />
           ) : (
-            <span className="ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
+            <span className="chip-pop ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )
         )}
         {item.path === "/personalizacion" && personalizing > 0 && (
           collapsed ? (
-            <span className="absolute top-1 right-1.5 h-2 w-2 rounded-full bg-primary animate-pulse" />
+            <span className="live-dot absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" />
           ) : (
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9.5px] font-bold text-primary">
               <Loader2 className="h-2.5 w-2.5 animate-spin" /> en curso
             </span>
           )
@@ -190,144 +228,91 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed, onToggleColla
     );
   };
 
+  const groups = NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((it) => canSee(it.path)) }))
+    .filter((g) => g.items.length > 0);
+
+  const utilBtn = "flex h-8 flex-1 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-card hover:text-foreground hover:shadow-rest";
+
   return (
-    <aside className={sidebarClasses}>
-      {/* iOS standalone: the status-bar strip continues the white bar of the house system.
-          Zero height on Android/desktop. */}
-      <div className="h-[env(safe-area-inset-top)] shrink-0 bg-topbar" />
-      {/* Logo + collapse toggle */}
-      <div className={cn("flex h-14 items-center border-b border-sidebar-border/50 dark:border-sidebar-border", collapsed ? "justify-center px-2" : "justify-between px-5")}>
-        {!collapsed && (
-          profileData.logo_url
-            ? <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-7 max-w-[150px] object-contain" />
-            : <Wordmark className="h-7" colorClassName="text-primary" />
-        )}
-        {isMobile ? (
-          <button onClick={onClose} className="text-muted-foreground hover:text-sidebar-foreground p-1">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+    <aside className={sidebarClasses} aria-label="Menú principal">
+      {/* Cajón móvil: cabecera propia (la barra superior queda debajo). */}
+      {isMobile && (
+        <div className="topbar-surface flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between px-4 pt-[env(safe-area-inset-top)]">
+          {profileData.logo_url
+            ? <span className="flex h-8 items-center rounded-md bg-white px-2"><img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[130px] object-contain" /></span>
+            : <Wordmark className="h-[22px]" colorClassName="text-white" />}
+          <button onClick={onClose} aria-label="Cerrar menú" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white">
+            <X className="h-5 w-5" />
           </button>
-        ) : (
-          <button
-            onClick={onToggleCollapse}
-            title={collapsed ? "Expandir panel" : "Colapsar panel"}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors"
-          >
-            <ChevronLeft className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")} />
-          </button>
-        )}
-      </div>
-
-      <nav className="flex-1 px-3 py-4 overflow-y-auto overflow-x-hidden">
-        {/* Main section */}
-        <div>
-          {!collapsed && <p className="px-3 mb-1 text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground">Principal</p>}
-          <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border">
-            {mainNav.filter(item => (item.path !== "/clientes" || !isAgency) && (!allowedRoutes || allowedRoutes.includes(item.path))).map((item) => <NavItem key={item.path} item={item} />)}
-          </div>
         </div>
+      )}
 
-        {/* Tools section */}
-        {(!allowedRoutes || visibleTools.some(item => allowedRoutes.includes(item.path))) && (
-        <div className="mt-4 pt-4 border-t border-sidebar-border/70 dark:border-sidebar-border">
-          {!collapsed && <p className="px-3 mb-1 text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground">Herramientas</p>}
-          <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border">
-            {visibleTools.filter(item => !allowedRoutes || allowedRoutes.includes(item.path)).map((item) => <NavItem key={item.path} item={item} />)}
-          </div>
-        </div>
-        )}
-
-        {/* Admin / client manager */}
-        {(isAdmin || isManager) && (
-          <div className="space-y-0.5 mt-4 pt-4 border-t border-sidebar-border/60 dark:border-sidebar-border">
-            {!collapsed && <p className="px-3 mb-2 text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground">{isAdmin ? "Admin" : "Gestión"}</p>}
-            {isAdmin && (
-            <Link
-              to="/admin"
-              onClick={handleNavClick}
-              title={collapsed ? "Panel Admin" : undefined}
-              className={cn(
-                "flex items-center gap-3 rounded-lg py-2 text-[15px] font-medium transition-all duration-150",
-                collapsed ? "justify-center px-0" : "px-3",
-                location.pathname === "/admin"
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                  : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
+      <nav className={cn("flex-1 overflow-y-auto overflow-x-hidden py-3", collapsed ? "px-2" : "px-3")}>
+        {groups.map((group, gi) => {
+          // Una sección plegada no esconde la pantalla en la que estás.
+          const hasActive = group.items.some(isActivePath);
+          const open = collapsed || !group.title || !closedGroups[group.id] || hasActive;
+          return (
+            <div key={group.id} className={cn(gi > 0 && "mt-2 border-t border-sidebar-border/70 pt-2")}>
+              {group.title && !collapsed && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={open}
+                  className="flex h-8 w-full items-center justify-between rounded-md px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {group.title}
+                  <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", !open && "-rotate-90")} />
+                </button>
               )}
-            >
-              <Shield className={cn("h-[18px] w-[18px] shrink-0", location.pathname === "/admin" ? "text-sidebar-accent-foreground" : "text-muted-foreground")} />
-              {!collapsed && "Panel Admin"}
-            </Link>
-            )}
-            <Link
-              to="/admin/clients"
-              onClick={handleNavClick}
-              title={collapsed ? "Portal de Clientes" : undefined}
-              className={cn(
-                "flex items-center gap-3 rounded-lg py-2 text-[15px] font-medium transition-all duration-150",
-                collapsed ? "justify-center px-0" : "px-3",
-                location.pathname.startsWith("/admin/clients")
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                  : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
-              )}
-            >
-              <Users className={cn("h-[18px] w-[18px] shrink-0", location.pathname.startsWith("/admin/clients") ? "text-sidebar-accent-foreground" : "text-muted-foreground")} />
-              {!collapsed && "Portal de Clientes"}
-            </Link>
-          </div>
-        )}
+              <div className="collapse-grid" data-open={open}>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => <NavItem key={item.path} item={item} />)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </nav>
 
-      {/* Footer */}
-      <div className="border-t border-sidebar-border/50 dark:border-sidebar-border p-3 space-y-2">
-        {/* User profile */}
-        <div className={cn("flex items-center gap-2.5 py-2", collapsed ? "justify-center px-0" : "px-3")} title={collapsed ? (profileData.full_name || user?.email || "") : undefined}>
-          <Avatar className="h-8 w-8 shrink-0 ring-2 ring-primary/20">
-            <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4,c0aede,d1f4a5,ffd5dc,ffdfbf`} />
-            <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-              {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold text-sidebar-foreground truncate">{profileData.full_name || "Sin nombre"}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{user?.email}</p>
+      {/* Pie: cuenta + fila de utilidades en una sola pieza, como en un programa de escritorio. */}
+      <div className={cn("shrink-0 border-t border-sidebar-border/70 safe-area-bottom", collapsed ? "p-2" : "p-3")}>
+        {!collapsed && (
+          <Link
+            to="/settings"
+            onClick={handleNavClick}
+            className="mb-2 flex items-center gap-2.5 rounded-md px-1.5 py-1.5 transition-colors hover:bg-sidebar-accent/70"
+          >
+            <Avatar className="h-8 w-8 shrink-0 ring-2 ring-primary/15">
+              <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4,c0aede,d1f4a5,ffd5dc,ffdfbf`} />
+              <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
+                {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-semibold text-foreground">{profileData.full_name || "Sin nombre"}</p>
+              <p className="truncate text-[11.5px] text-muted-foreground">{user?.email}</p>
             </div>
-          )}
-        </div>
-
-        <div className="divide-y divide-sidebar-border/50 dark:divide-sidebar-border border-t border-sidebar-border/50 dark:border-sidebar-border">
-        <Link
-          to="/settings"
-          onClick={handleNavClick}
-          title={collapsed ? "Configuración" : undefined}
-          className={cn(
-            "flex items-center gap-3 rounded-lg py-2 text-[15px] font-medium transition-all duration-150",
-            collapsed ? "justify-center px-0" : "px-3",
-            location.pathname.startsWith("/settings")
-              ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-              : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
-          )}
-        >
-          <Settings className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
-          {!collapsed && "Configuración"}
-        </Link>
-        <button
-          onClick={handleSoftExit}
-          title={collapsed ? "Salir" : undefined}
-          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[15px] font-medium text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
-        >
-          {/* Home, not LogOut: "Salir" solo vuelve al inicio sin cerrar sesión, y con la barra
-              plegada los dos botones quedaban idénticos. */}
-          <Home className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && "Salir"}
-        </button>
-        <button
-          onClick={handleSignOut}
-          title={collapsed ? "Cerrar sesión" : undefined}
-          className={cn("flex w-full items-center gap-3 rounded-lg py-2 text-[15px] font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-150", collapsed ? "justify-center px-0" : "px-3")}
-        >
-          <LogOut className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && "Cerrar sesión"}
-        </button>
+          </Link>
+        )}
+        <div className={cn("flex gap-0.5 rounded-lg border border-sidebar-border/80 bg-secondary/70 p-0.5", collapsed && "flex-col")}>
+          <Link
+            to="/settings"
+            onClick={handleNavClick}
+            title="Configuración"
+            aria-label="Configuración"
+            className={cn(utilBtn, location.pathname.startsWith("/settings") && "bg-card text-primary shadow-rest")}
+          >
+            <Settings className="h-4 w-4" />
+          </Link>
+          {/* Home, no LogOut: "Salir" sólo vuelve al inicio sin cerrar la sesión. */}
+          <button type="button" onClick={handleSoftExit} title="Salir al inicio (sin cerrar sesión)" aria-label="Salir al inicio" className={utilBtn}>
+            <Home className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={handleSignOut} title="Cerrar sesión" aria-label="Cerrar sesión" className={cn(utilBtn, "hover:!text-destructive")}>
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </aside>

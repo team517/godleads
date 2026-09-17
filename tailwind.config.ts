@@ -27,14 +27,17 @@ export default {
         /* NO llamar a esta clave "primary": chocaria con colors.primary y Tailwind
            emitiria .shadow-primary como color de sombra sin sombra. */
         btn: "var(--shadow-primary)",
+        "btn-hover": "var(--shadow-primary-hover)",
+        selected: "var(--shadow-selected)",
+        focus: "var(--shadow-focus)",
       },
       fontFamily: {
         // DM Sans is the Smartlead face; Inter stays as the first fallback so
         // nothing shifts if DM Sans hasn't loaded yet.
-        /* Diseño "Primary": Inter para el cuerpo, Bricolage Grotesque para titulares y cifras. */
+        /* Diseño "Primary": Inter para el cuerpo, Schibsted Grotesk para titulares y cifras. */
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
-        display: ["Bricolage Grotesque", "Inter", "system-ui", "-apple-system", "sans-serif"],
-        serif: ["Bricolage Grotesque", "Inter", "system-ui", "sans-serif"],
+        display: ["Schibsted Grotesk", "Inter", "system-ui", "-apple-system", "sans-serif"],
+        serif: ["Schibsted Grotesk", "Inter", "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",

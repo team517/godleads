@@ -608,7 +608,7 @@ export default function CampaignLeads({ campaignId }: Props) {
       });
       const result = await resp.json();
       if (result.success) {
-        toast.success(`✅ Email enviado a ${lead.email}`);
+        toast.success(`Email enviado a ${lead.email}`);
         await supabase.from("campaign_leads").update({
           current_step: cl.current_step + 1,
           last_sent_at: new Date().toISOString(),

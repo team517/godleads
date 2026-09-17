@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,11 +8,12 @@
   :root {
     /* ── Sistema de diseño "Primary" — fuente de verdad: DESIGN.md, extraído del
        proyecto de Claude Design del propietario.
-       Bricolage Grotesque en titulares y cifras · Inter en el resto · peso 600 por
-       defecto · violeta #6E58F1 · fondo #FBFBFB con tarjetas blancas · bordes
-       lavanda #E8E5F1 · texto azul tinta #0F172B · radio 6px · sombras tintadas
-       de navy. Solo VALORES de token: cada pantalla se re-tematiza sola. ── */
-    --background: 0 0% 98%;           /* #FBFBFB */
+       Schibsted Grotesk en titulares y cifras · Inter en el resto · peso 600 por
+       defecto · violeta #6E58F1 · fondo lavanda-blanco #FBFAFE con tarjetas blancas ·
+       bordes lavanda #EAE7F4 · texto azul tinta #0F172B · radio 6px · sombras tintadas
+       de navy · barra superior índigo oscuro #312A63 (el "hero" del diseño).
+       Solo VALORES de token: cada pantalla se re-tematiza sola. ── */
+    --background: 255 67% 99%;        /* #FBFAFE */
     --foreground: 223 48% 11%;        /* #0F172B */
 
     --card: 0 0% 100%;
@@ -37,24 +38,26 @@
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 255 30% 92%;            /* #E8E5F1 */
-    --input: 255 30% 92%;
+    --border: 254 37% 93%;            /* #EAE7F4 */
+    --input: 254 37% 93%;
     --ring: 249 84% 65%;
 
     --radius: 0.375rem;               /* 6px — el radio del diseño */
 
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 218 35% 18%;  /* #1D293D */
+    --sidebar-foreground: 215 22% 35%;  /* #45556C — el activo sube a violeta */
     --sidebar-primary: 249 84% 65%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 258 42% 95%;      /* #F1EEF8 */
     --sidebar-accent-foreground: 249 84% 65%;
-    --sidebar-border: 255 30% 92%;
+    --sidebar-border: 254 37% 93%;
     --sidebar-ring: 249 84% 65%;
 
-    /* Barra superior translúcida con desenfoque, como en el diseño. */
-    --topbar: 0 0% 100%;
-    --topbar-foreground: 223 48% 11%;
+    /* Barra superior: el índigo oscuro del "hero" del diseño (#312A63) con su mismo
+       resplandor violeta. Es lo que hace que el panel se lea como un programa. */
+    --topbar: 247 40% 28%;
+    --topbar-foreground: 0 0% 100%;
+    --topbar-glow: radial-gradient(70% 220% at 50% -90%, rgba(160,138,255,.55) 0%, rgba(49,42,99,0) 62%), linear-gradient(270deg, rgba(107,79,224,.55) 0%, rgba(51,41,143,0) 24%, rgba(51,41,143,0) 76%, rgba(107,79,224,.55) 100%);
 
     --success: 156 94% 32%;           /* #05A063 */
     --success-foreground: 0 0% 100%;
@@ -78,11 +81,15 @@
     --gradient-sky: linear-gradient(135deg, hsl(213 80% 57%), hsl(249 84% 65%));
 
     /* Sombras del diseño, tintadas de navy. Usar estas variables, no sombras negras. */
-    --shadow-rest: 0 2px 4px rgba(0,0,0,.05);
+    --shadow-rest: 0 2px 6px rgba(21,17,60,.04);
     --shadow-raised: 0 6px 18px rgba(21,17,60,.05);
     --shadow-float: 0 12px 32px rgba(21,17,60,.07);
     --shadow-modal: 0 18px 44px rgba(21,17,60,.10);
     --shadow-primary: 0 2px 4px hsl(249 84% 65% / .24);
+    --shadow-primary-hover: 0 6px 18px hsl(249 84% 65% / .38);
+    /* Pieza seleccionada del diseño (navPill): brillo violeta que sube desde abajo. */
+    --shadow-selected: inset 0 -7px 11px rgba(151,127,255,.22), 0 0 0 1px #C9BFFA;
+    --shadow-focus: 0 0 0 4px rgba(139,107,255,.16);
   }
 
   /* ── Modo oscuro. El diseño original no lo trae, así que se deriva de sus mismos
@@ -128,8 +135,9 @@
     --sidebar-border: 223 22% 25%;
     --sidebar-ring: 249 100% 78%;
 
-    --topbar: 223 30% 12%;
-    --topbar-foreground: 255 30% 96%;
+    --topbar: 247 42% 16%;            /* #1B173A */
+    --topbar-foreground: 0 0% 100%;
+    --topbar-glow: radial-gradient(70% 220% at 50% -90%, rgba(160,138,255,.38) 0%, rgba(27,23,58,0) 62%), linear-gradient(270deg, rgba(107,79,224,.35) 0%, rgba(51,41,143,0) 24%, rgba(51,41,143,0) 76%, rgba(107,79,224,.35) 100%);
 
     --success: 156 60% 50%;
     --success-foreground: 150 35% 8%;
@@ -157,6 +165,9 @@
     --shadow-float: 0 10px 28px rgba(0,0,0,.45);
     --shadow-modal: 0 18px 44px rgba(0,0,0,.55);
     --shadow-primary: 0 2px 4px hsl(249 100% 78% / .28);
+    --shadow-primary-hover: 0 6px 18px hsl(249 100% 78% / .30);
+    --shadow-selected: inset 0 -7px 11px rgba(151,127,255,.20), 0 0 0 1px hsl(252 40% 40%);
+    --shadow-focus: 0 0 0 4px rgba(163,146,255,.20);
   }
 }
 
@@ -169,13 +180,19 @@
     @apply bg-background text-foreground font-sans antialiased;
   }
 
-  /* Titulares del diseño "Primary": Bricolage Grotesque en peso 600 con tracking
+  /* Titulares del diseño "Primary": Schibsted Grotesk en peso 600 con tracking
      cerrado. El peso 600 es el peso por defecto de esta interfaz, no una excepción. */
   h1, h2, h3 {
-    font-family: "Bricolage Grotesque", "Inter", system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.02em;
+    font-family: "Schibsted Grotesk", "Inter", system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.03em;
     font-weight: 600;
   }
+  h3 { letter-spacing: -0.02em; }
+
+  /* Cifras alineadas en tablas y métricas: un programa no baila los números. */
+  table, .tabular { font-variant-numeric: tabular-nums; }
+
+  ::selection { background: hsl(var(--primary) / .18); }
 
   /* 26 page titles across the app still carry the old `font-light tracking-tight`
      utilities from the light-title pass (e.g. "Cuentas de Email"). Those pages
@@ -209,7 +226,7 @@
 
 /* Big KPI / display numbers — Arapey stays, the colour follows the theme. */
 .num-display {
-  font-family: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  font-family: "Schibsted Grotesk", "Inter", system-ui, sans-serif;
   font-weight: 600;
   letter-spacing: -0.03em;
   color: hsl(var(--primary));
@@ -235,4 +252,112 @@
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MOVIMIENTO — las mismas animaciones del diseño "Primary" (blurFadeIn, rowPop,
+   chipPop, pulseDot…), aplicadas al panel. Cortas, con una sola curva, y apagadas
+   si el sistema pide menos movimiento.
+   ───────────────────────────────────────────────────────────────────────────── */
+@keyframes blurFadeIn { from { opacity: 0; filter: blur(8px); transform: translateY(8px); } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+@keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes rowPop { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes chipPop { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }
+@keyframes pulseDot { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@keyframes sheen { 0% { transform: translateX(-120%); } 60%, 100% { transform: translateX(320%); } }
+@keyframes barGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* Entrada de cada pantalla al cambiar de ruta (AppLayout le pone la clave).
+   Sin `both`: al terminar no queda ningún transform/filter que rompa los `position: fixed`
+   o `sticky` de dentro de la página. */
+.page-enter { animation: blurFadeIn .42s cubic-bezier(.2,.7,.2,1); }
+
+/* Entrada escalonada de los hijos directos: tarjetas de un panel, bloques de una página. */
+.stagger > * { animation: riseIn .45s cubic-bezier(.2,.7,.2,1) backwards; }
+.stagger > *:nth-child(1) { animation-delay: .02s; }
+.stagger > *:nth-child(2) { animation-delay: .07s; }
+.stagger > *:nth-child(3) { animation-delay: .12s; }
+.stagger > *:nth-child(4) { animation-delay: .17s; }
+.stagger > *:nth-child(5) { animation-delay: .22s; }
+.stagger > *:nth-child(6) { animation-delay: .27s; }
+.stagger > *:nth-child(7) { animation-delay: .32s; }
+.stagger > *:nth-child(8) { animation-delay: .37s; }
+.stagger > *:nth-child(n+9) { animation-delay: .42s; }
+
+/* Filas de tabla: entran de lado, las primeras escalonadas (rowPop del diseño). */
+tbody.rows-in > tr { animation: rowPop .34s cubic-bezier(.2,.7,.2,1) backwards; }
+tbody.rows-in > tr:nth-child(1) { animation-delay: .02s; }
+tbody.rows-in > tr:nth-child(2) { animation-delay: .05s; }
+tbody.rows-in > tr:nth-child(3) { animation-delay: .08s; }
+tbody.rows-in > tr:nth-child(4) { animation-delay: .11s; }
+tbody.rows-in > tr:nth-child(5) { animation-delay: .14s; }
+tbody.rows-in > tr:nth-child(6) { animation-delay: .17s; }
+tbody.rows-in > tr:nth-child(7) { animation-delay: .20s; }
+tbody.rows-in > tr:nth-child(8) { animation-delay: .23s; }
+tbody.rows-in > tr:nth-child(n+9) { animation-delay: .26s; }
+
+/* Tablas hechas a mano (Leads, Campañas, Métricas…): misma cabecera lavanda y la misma
+   entrada de filas que el componente Table, sin tocar cada pantalla. `tr.plain` se libra. */
+main table > thead > tr:not(.plain) { background-color: hsl(var(--accent) / .6); }
+.dark main table > thead > tr:not(.plain) { background-color: hsl(var(--secondary)); }
+main table > thead > tr:not(.plain) > th { font-weight: 600; color: hsl(var(--secondary-foreground)); }
+main table > tbody > tr { transition: background-color .15s ease; }
+main table > tbody > tr:nth-child(-n+30) { animation: rowPop .34s cubic-bezier(.2,.7,.2,1) backwards; }
+main table > tbody > tr:nth-child(2) { animation-delay: .03s; }
+main table > tbody > tr:nth-child(3) { animation-delay: .06s; }
+main table > tbody > tr:nth-child(4) { animation-delay: .09s; }
+main table > tbody > tr:nth-child(5) { animation-delay: .12s; }
+main table > tbody > tr:nth-child(6) { animation-delay: .15s; }
+main table > tbody > tr:nth-child(7) { animation-delay: .18s; }
+main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
+
+/* Tarjeta que responde al ratón: sube 2px y gana la sombra violeta del diseño (stageOn). */
+.lift { transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.lift:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(110,88,241,.12); border-color: #C9BFFA; }
+.dark .lift:hover { box-shadow: 0 14px 32px rgba(0,0,0,.45); border-color: hsl(252 40% 40%); }
+
+/* Pieza seleccionada (menú lateral): el "navPill" del diseño. */
+.is-selected { background: hsl(var(--sidebar-accent)); box-shadow: var(--shadow-selected); }
+
+/* Punto "en directo". */
+.live-dot { animation: pulseDot 1.5s ease-in-out infinite; }
+
+/* Aparición de chips y contadores. */
+.chip-pop { animation: chipPop .28s cubic-bezier(.2,.7,.2,1) backwards; }
+
+/* Esqueleto de carga con barrido, en lugar de un gris que parpadea. */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, hsl(var(--muted)) 0%, hsl(var(--accent)) 45%, hsl(var(--muted)) 90%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Barra superior: el índigo del diseño con su resplandor, y un brillo que cruza de vez en cuando. */
+.topbar-surface { background-color: hsl(var(--topbar)); background-image: var(--topbar-glow); }
+.topbar-sheen { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.topbar-sheen::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 34%;
+  background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,.05) 40%, rgba(255,255,255,.11) 50%, rgba(255,255,255,.05) 60%, transparent 100%);
+  transform: translateX(-120%);
+  animation: sheen 11s ease-in-out 1.5s infinite;
+}
+
+/* Secciones plegables del menú: la altura se anima con grid (sin medir nada en JS). */
+.collapse-grid { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .24s cubic-bezier(.2,.7,.2,1), opacity .2s ease; }
+.collapse-grid[data-open="false"] { grid-template-rows: 0fr; opacity: 0; }
+.collapse-grid > * { min-height: 0; overflow: hidden; }
+
+/* Barras de desplazamiento finas y lavanda, no las del sistema. */
+* { scrollbar-width: thin; scrollbar-color: hsl(254 30% 84%) transparent; }
+.dark * { scrollbar-color: hsl(223 22% 30%) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: hsl(254 30% 86%); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: hsl(254 30% 76%); border: 3px solid transparent; background-clip: content-box; }
+.dark *::-webkit-scrollbar-thumb { background: hsl(223 22% 30%); border: 3px solid transparent; background-clip: content-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter, .stagger > *, tbody.rows-in > tr, main table > tbody > tr, .live-dot, .chip-pop, .skeleton-shimmer, .topbar-sheen::after { animation: none !important; }
+  .lift, .collapse-grid { transition: none !important; }
 }

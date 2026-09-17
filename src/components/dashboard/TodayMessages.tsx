@@ -99,7 +99,7 @@ export default function TodayMessages() {
               const notifSound = createNotificationSound();
               notifSound.play().catch(() => {});
               toast({
-                title: "📩 Nuevo mensaje",
+                title: "Nuevo mensaje",
                 description: `${msg.from_name || msg.from_email}: ${msg.subject || "(sin asunto)"}`,
               });
             }

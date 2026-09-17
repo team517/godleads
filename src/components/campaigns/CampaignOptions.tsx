@@ -646,18 +646,18 @@ export default function CampaignOptions({ campaignId }: Props) {
             ) : (
               <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                 <p>
-                  📨 Aprox. <span className="font-semibold text-foreground">1 correo por cuenta cada {fmtInterval(intervalPerAccountMin)}</span>
+                  Aprox. <span className="font-semibold text-foreground">1 correo por cuenta cada {fmtInterval(intervalPerAccountMin)}</span>
                   <span> (~{Math.round(quotaPerAccount)}/cuenta/día · {usedAccounts.length} cuentas)</span>
                 </p>
                 <p>
-                  🕒 Ventana de envío: <span className="font-medium text-foreground">{sendStartHour}:00–{sendEndHour}:00</span> ({Math.round(windowMinutes / 60)}h) · se auto-regula por horas
+                  Ventana de envío: <span className="font-medium text-foreground">{sendStartHour}:00–{sendEndHour}:00</span> ({Math.round(windowMinutes / 60)}h) · se auto-regula por horas
                 </p>
                 {slowRampEnabled && rampInfo ? (
                   <p>
-                    📈 Slow ramp: día <span className="font-medium text-foreground">{rampInfo.days + 1}</span> → hoy <span className="font-medium text-foreground">{rampInfo.eff} emails/cuenta</span>; el ritmo se acelera solo cada día.
+                    Slow ramp: día <span className="font-medium text-foreground">{rampInfo.days + 1}</span> → hoy <span className="font-medium text-foreground">{rampInfo.eff} emails/cuenta</span>; el ritmo se acelera solo cada día.
                   </p>
                 ) : (
-                  <p>📈 Slow ramp desactivado — envía al límite diario configurado desde el primer día.</p>
+                  <p>Slow ramp desactivado — envía al límite diario configurado desde el primer día.</p>
                 )}
               </div>
             )}
@@ -676,7 +676,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                       <span className="truncate">{acc.email}</span>
                       <span className="flex flex-shrink-0 items-center gap-1.5">
                         {acc.warmup_enabled && accRampDay && (
-                          <span className="rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">🐢 Día {accRampDay}</span>
+                          <span className="rounded-full bg-accent px-2 py-[3px] text-[10.5px] font-semibold text-accent-foreground">Día {accRampDay}</span>
                         )}
                         <span className="font-medium">{acc.sent_today || 0}/{limit}</span>
                       </span>
@@ -721,7 +721,7 @@ export default function CampaignOptions({ campaignId }: Props) {
             )}
             {selectedTags.some(t => accounts.filter(a => (a.tags || []).includes(t)).length === 0) && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                ⚠ Ese tag no está asignado a ninguna cuenta todavía. Asígnalo a tus cuentas en <span className="font-medium">Cuentas de email</span> (puedes hacerlo en bloque) para que se incluyan aquí.
+                Ese tag no está asignado a ninguna cuenta todavía. Asígnalo a tus cuentas en <span className="font-medium">Cuentas de email</span> (puedes hacerlo en bloque) para que se incluyan aquí.
               </p>
             )}
           </div>
@@ -868,12 +868,12 @@ export default function CampaignOptions({ campaignId }: Props) {
                           <Badge variant={isBest ? "default" : "outline"} className="text-[10.5px] font-semibold h-5 px-1.5">
                             {v.label}
                           </Badge>
-                          {isBest && <Badge className="text-[10.5px] font-semibold h-5 px-1.5 bg-green-600 text-white dark:bg-green-500 dark:text-green-950">🏆 Mejor</Badge>}
-                          {isWorst && <Badge variant="destructive" className="text-[10.5px] font-semibold h-5 px-1.5">⚠️ Peor</Badge>}
+                          {isBest && <Badge className="text-[10.5px] font-semibold h-5 px-1.5 bg-green-600 text-white dark:bg-green-500 dark:text-green-950">Mejor</Badge>}
+                          {isWorst && <Badge variant="destructive" className="text-[10.5px] font-semibold h-5 px-1.5">Peor</Badge>}
                         </div>
                         <span className="text-xs font-bold">{v.replyRate}% reply</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground truncate">📧 {v.subject || "Sin asunto"}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">{v.subject || "Sin asunto"}</p>
                       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                         <span>{v.sent} enviados</span>
                         <span>{v.replied} replies</span>
