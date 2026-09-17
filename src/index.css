@@ -209,8 +209,7 @@
 }
 
 /* House utilities. Kept outside @layer so they always ship (Tailwind purges
-   unused @layer components rules) — the Landing page's own onepulso-landing.css
-   loads later and keeps overriding its scoped .eyebrow. */
+   unused @layer components rules). */
 
 /* Field label / eyebrow — 13px uppercase, wide tracking, muted grey.
    Token-based (not a hardcoded hex) so it re-themes in dark mode. */

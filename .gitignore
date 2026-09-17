@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# La landing se monta desde landing-src/ al construir (scripts/build-landing.mjs)
+public/landing/onepulso-landing.html
