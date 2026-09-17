@@ -11,9 +11,12 @@ import DOMPurify from "dompurify";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { filterAccounts } from "@/lib/account-filter";
+import AddAccountDialog, { type AddAccountMode } from "@/components/accounts/AddAccountDialog";
+import { accountsCsvTemplate, accountsToCsv, downloadCsv } from "@/lib/accounts-csv";
+import { isAgencyAccount } from "@/lib/access";
 import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -94,7 +97,6 @@ export default function EmailAccounts() {
   // warm-up. Sin esto la pantalla contaba días de calendario y el límite "subía solo".
   const [sendDaysByAccount, setSendDaysByAccount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("accounts:list"));
-  const [showBulk, setShowBulk] = useState(false);
   const [showBulkIonos, setShowBulkIonos] = useState(false);
   const [ionosRows, setIonosRows] = useState<{ email: string; first_name: string; last_name: string; password: string }[]>([{ email: "", first_name: "", last_name: "", password: "" }]);
   const [ionosImporting, setIonosImporting] = useState(false);
@@ -102,6 +104,16 @@ export default function EmailAccounts() {
   const [ionosDefaultFirstName, setIonosDefaultFirstName] = useState("");
   const [ionosDefaultLastName, setIonosDefaultLastName] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [addMode, setAddMode] = useState<AddAccountMode>("single");
+  // SaaS users get ONE entry point ("Añadir cuenta"); the agency keeps the operator toolbar
+  // (verify all, DNS, IONOS bulk, signature manager).
+  const [isManager, setIsManager] = useState(false);
+  useEffect(() => {
+    if (!user) return;
+    (supabase as any).from("profiles").select("is_client_manager").eq("user_id", user.id).maybeSingle()
+      .then(({ data }: any) => setIsManager(!!data?.is_client_manager));
+  }, [user]);
+  const isAgency = isAgencyAccount(user?.email ?? null, isManager);
   const [showEdit, setShowEdit] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [verifying, setVerifying] = useState<string | null>(null);
@@ -640,27 +652,15 @@ export default function EmailAccounts() {
 
   const handleDownloadCSV = () => {
     if (!accounts.length) { toast.error("No hay cuentas para exportar"); return; }
-    const headers = ["email","first_name","last_name","imap_username","imap_password","imap_host","imap_port","smtp_username","smtp_password","smtp_host","smtp_port"];
-    const escape = (v: any) => {
-      const s = v == null ? "" : String(v);
-      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = [headers.join(",")];
-    for (const a of accounts) {
-      lines.push(headers.map(h => escape((a as any)[h] ?? "")).join(","));
-    }
-    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `cuentas-email-${new Date().toISOString().slice(0,10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`cuentas-email-${new Date().toISOString().slice(0,10)}.csv`, accountsToCsv(accounts as any));
     toast.success(`${accounts.length} cuentas exportadas`);
   };
+  const handleDownloadTemplate = () => {
+    downloadCsv("plantilla-cuentas-email.csv", accountsCsvTemplate());
+    toast.success("Plantilla descargada: rellena una fila por cuenta");
+  };
 
-  const handleCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const importCsvFile = (file: File) => {
     if (!file || !user) return;
     const reader = new FileReader();
     reader.onload = async (ev) => {
@@ -1144,6 +1144,8 @@ export default function EmailAccounts() {
           <p className="text-xs sm:text-[15px] text-muted-foreground">Gestiona tus cuentas SMTP/IMAP</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isAgency && (
+            <>
           {accounts.length > 0 && (
             <Button variant="outline" size="sm" className="gap-2" onClick={handleVerifyAll} disabled={verifyingAll.running}>
               {verifyingAll.running
@@ -1166,22 +1168,28 @@ export default function EmailAccounts() {
           <Button variant="outline" size="sm" className="gap-2" onClick={handleDownloadCSV}>
             <Download className="h-4 w-4" /> <span className="hidden sm:inline">Descargar CSV</span><span className="sm:hidden">CSV↓</span>
           </Button>
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowBulk(!showBulk)}>
-            <Upload className="h-4 w-4" /> <span className="hidden sm:inline">CSV en bloque</span><span className="sm:hidden">CSV</span>
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => { setAddMode("bulk"); setShowAdd(true); }}>
+            <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Bulk connect</span><span className="sm:hidden">Bulk</span>
           </Button>
           <Button variant="outline" size="sm" className="gap-2" onClick={openSignatureManager}>
             <Pencil className="h-4 w-4" /> <span className="hidden sm:inline">Firma</span><span className="sm:hidden">Firma</span>
           </Button>
-          <Dialog open={showAdd} onOpenChange={setShowAdd}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="gap-2"><Plus className="h-4 w-4" /> <span className="hidden sm:inline">Añadir Cuenta</span><span className="sm:hidden">Añadir</span></Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-              <DialogHeader><DialogTitle className="font-display">Añadir cuenta de email</DialogTitle></DialogHeader>
-              {renderFormFields()}
-              <Button onClick={handleAdd} className="w-full">Añadir cuenta</Button>
-            </DialogContent>
-          </Dialog>
+            </>
+          )}
+          <Button size="sm" className="gap-2" onClick={() => { setAddMode("single"); setShowAdd(true); }}>
+            <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Añadir cuenta</span><span className="sm:hidden">Añadir</span>
+          </Button>
+          <AddAccountDialog
+            open={showAdd}
+            onOpenChange={setShowAdd}
+            initialMode={addMode}
+            renderForm={renderFormFields}
+            onSubmitSingle={handleAdd}
+            onCsvFile={importCsvFile}
+            onDownloadTemplate={handleDownloadTemplate}
+            onDownloadAccounts={handleDownloadCSV}
+            accountsCount={accounts.length}
+          />
         </div>
       </div>
 
@@ -1796,17 +1804,6 @@ export default function EmailAccounts() {
         </DialogContent>
       </Dialog>
 
-      {showBulk && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="p-6">
-            <h3 className="font-display font-semibold mb-2">Importar cuentas desde CSV</h3>
-            <p className="text-[15px] text-muted-foreground mb-4">
-              Columnas: Email, First Name, Last Name, IMAP Username, IMAP Password, IMAP Host, IMAP Port, SMTP Username, SMTP Password, SMTP Host, SMTP Port
-            </p>
-            <Input type="file" accept=".csv" onChange={handleCSV} className="max-w-sm" />
-          </CardContent>
-        </Card>
-      )}
 
       {accounts.length === 0 ? (
         <Card>
