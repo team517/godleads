@@ -198,6 +198,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   return (
     <header className="topbar-surface fixed inset-x-0 top-0 z-50 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between gap-3 border-b border-white/10 px-3 pt-[env(safe-area-inset-top)] text-[15px] font-medium text-topbar-foreground shadow-[0_2px_10px_rgba(21,17,60,.18)] md:px-4">
       <span className="topbar-sheen" aria-hidden="true" />
+      <span className="brand-line" aria-hidden="true" />
       <div className="relative flex min-w-0 items-center gap-2 md:gap-3">
         {isMobile ? (
           <button type="button" onClick={onMenuToggle} aria-label="Abrir menú" className={TOPBAR_ICON}>
@@ -215,7 +216,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             </span>
           ) : (
             <>
-              <span className="block h-[26px] w-[26px] rounded-[7px] bg-[linear-gradient(135deg,#8B6BFF_0%,#3B89E9_100%)] shadow-[0_2px_8px_rgba(139,107,255,.45),inset_0_1px_0_rgba(255,255,255,.35)]" />
+              <span className="brand-mark block h-[26px] w-[26px] rounded-[7px]" />
               <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-white" />
             </>
           )}
@@ -243,9 +244,9 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           <Link
             to="/ai-prompts"
             onMouseEnter={() => prefetchRoute("/ai-prompts")}
-            className="mr-1 hidden h-8 items-center gap-1.5 rounded-md bg-white px-3 text-[13px] font-semibold text-[#33298F] shadow-[0_2px_6px_rgba(21,17,60,.18)] transition-transform hover:-translate-y-px active:translate-y-0 sm:inline-flex"
+            className="mr-1 hidden h-8 items-center gap-1.5 rounded-md bg-white px-3 text-[13px] font-semibold text-[hsl(var(--topbar))] shadow-[0_2px_6px_rgba(21,17,60,.18)] transition-transform hover:-translate-y-px active:translate-y-0 sm:inline-flex"
           >
-            <Sparkles className="h-3.5 w-3.5 text-[#6E58F1]" /> Pregunta a la IA
+            <Sparkles className="brand-spark h-3.5 w-3.5" /> <span className="text-gradient-brand">Pregunta a la IA</span>
           </Link>
         )}
 
@@ -452,12 +453,12 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         <Popover>
           <PopoverTrigger asChild>
             <button type="button" aria-label="Cuenta" className="ml-1 flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
-              <Avatar className="h-8 w-8 ring-2 ring-white/25">
+              <span className="brand-ring rounded-full p-[2px]"><Avatar className="h-8 w-8 ring-2 ring-[hsl(var(--topbar))]">
                 <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
                 <AvatarFallback className="bg-white/15 text-sm font-bold text-white">
                   {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
                 </AvatarFallback>
-              </Avatar>
+              </Avatar></span>
               <ChevronDown className="hidden h-3.5 w-3.5 text-white/70 sm:block" />
             </button>
           </PopoverTrigger>

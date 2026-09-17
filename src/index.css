@@ -75,7 +75,9 @@
     --brand-sky: 213 65% 72%;         /* #7FB0F0 */
 
     --gradient-hero: linear-gradient(135deg, hsl(249 84% 65% / 0.10), hsl(276 100% 55% / 0.05) 50%, hsl(213 80% 57% / 0.07));
-    --gradient-brand: linear-gradient(90deg, hsl(249 84% 65%), hsl(276 100% 55%) 55%, hsl(213 80% 57%));
+    /* El degradado de la casa (la palabra "revenue" del diseño): cian → violeta → rosa. */
+    --gradient-brand: linear-gradient(90deg, #2FC6EE 0%, #8B6BFF 52%, #FF6FC5 100%);
+    --gradient-brand-soft: linear-gradient(90deg, #7DE3FF 0%, #B79BFF 52%, #FF9BE0 100%);
     --gradient-warm: linear-gradient(135deg, hsl(249 84% 65%), hsl(276 100% 55%));
     --gradient-cool: linear-gradient(135deg, hsl(249 96% 62%), hsl(249 84% 65%));
     --gradient-sky: linear-gradient(135deg, hsl(213 80% 57%), hsl(249 84% 65%));
@@ -154,7 +156,8 @@
     --brand-sky: 213 80% 76%;
 
     --gradient-hero: linear-gradient(135deg, hsl(249 100% 78% / 0.14), hsl(276 100% 74% / 0.08) 50%, hsl(213 90% 72% / 0.10));
-    --gradient-brand: linear-gradient(90deg, hsl(249 100% 78%), hsl(276 100% 74%) 55%, hsl(213 90% 72%));
+    --gradient-brand: linear-gradient(90deg, #7DE3FF 0%, #B79BFF 52%, #FF9BE0 100%);
+    --gradient-brand-soft: linear-gradient(90deg, #7DE3FF 0%, #B79BFF 52%, #FF9BE0 100%);
     --gradient-warm: linear-gradient(135deg, hsl(249 100% 78%), hsl(276 100% 74%));
     --gradient-cool: linear-gradient(135deg, hsl(249 100% 82%), hsl(249 100% 78%));
     --gradient-sky: linear-gradient(135deg, hsl(213 90% 72%), hsl(249 100% 78%));
@@ -342,6 +345,52 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
   transform: translateX(-120%);
   animation: sheen 11s ease-in-out 1.5s infinite;
 }
+
+/* DEGRADADO DE LA CASA — cian → violeta → rosa. Es NUESTRO color: filo bajo la barra, pieza de
+   marca, anillo del avatar y el icono de la IA. Con marca de cliente desaparece (manda su color). */
+.brand-line { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--gradient-brand-soft); opacity: .95; pointer-events: none; }
+.brand-mark { background: linear-gradient(135deg, #2FC6EE 0%, #8B6BFF 52%, #FF6FC5 100%); box-shadow: 0 2px 8px rgba(139,107,255,.45), inset 0 1px 0 rgba(255,255,255,.4); }
+.brand-ring { background: var(--gradient-brand-soft); }
+.text-gradient-brand { background: var(--gradient-brand); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; }
+.brand-spark { color: #8B6BFF; }
+[data-brand] .brand-line { display: none; }
+[data-brand] .brand-spark { color: inherit; }
+[data-brand] .text-gradient-brand { background: none; -webkit-text-fill-color: currentColor; color: inherit; }
+[data-brand] .brand-ring { background: rgba(255,255,255,.3); }
+
+/* MARCA DEL CLIENTE — cuando la cuenta tiene `brand_color`, AppLayout pone `data-brand` y las
+   variables --brand-h / --brand-s / --brand-bar (src/lib/brandColor.ts). La barra superior pasa a
+   ser SU color (oscurecido sólo lo justo para que el blanco se lea), con el mismo resplandor del
+   diseño pero en su tono; la selección del menú y el foco se tiñen igual. */
+[data-brand] {
+  --topbar: var(--brand-bar);
+  --topbar-glow:
+    radial-gradient(70% 220% at 50% -90%, hsl(var(--brand-h) var(--brand-s) 78% / .50) 0%, hsl(var(--brand-h) var(--brand-s) 50% / 0) 62%),
+    linear-gradient(270deg, hsl(var(--brand-h) var(--brand-s) 62% / .40) 0%, hsl(var(--brand-h) var(--brand-s) 50% / 0) 24%, hsl(var(--brand-h) var(--brand-s) 50% / 0) 76%, hsl(var(--brand-h) var(--brand-s) 62% / .40) 100%);
+  --accent: var(--brand-h) 55% 95%;
+  --accent-foreground: var(--brand-bar);
+  --sidebar-accent: var(--brand-h) 60% 96%;
+  --sidebar-accent-foreground: var(--brand-bar);
+  --shadow-selected: inset 0 -7px 11px hsl(var(--brand-h) var(--brand-s) 62% / .16), 0 0 0 1px hsl(var(--brand-h) 55% 84%);
+  --shadow-focus: 0 0 0 4px hsl(var(--brand-h) var(--brand-s) 60% / .16);
+  --shadow-primary: 0 2px 4px hsl(var(--brand-h) var(--brand-s) 50% / .24);
+  --shadow-primary-hover: 0 6px 18px hsl(var(--brand-h) var(--brand-s) 50% / .34);
+  /* Con marca de cliente, lo que era nuestro degradado pasa a ser su color liso. */
+  --gradient-brand: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--primary)));
+  --gradient-brand-soft: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--primary)));
+}
+.dark[data-brand], .dark [data-brand] {
+  --accent: var(--brand-h) 28% 24%;
+  --accent-foreground: var(--brand-h) 85% 86%;
+  --sidebar-accent: var(--brand-h) 28% 24%;
+  --sidebar-accent-foreground: var(--brand-h) 85% 86%;
+  --shadow-selected: inset 0 -7px 11px hsl(var(--brand-h) var(--brand-s) 62% / .18), 0 0 0 1px hsl(var(--brand-h) 35% 38%);
+}
+/* Sin logo propio, la pieza de marca deja de ser violeta y se funde con su barra. */
+[data-brand] .brand-mark { background: rgba(255,255,255,.24) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,.4) !important; }
+/* Con marca, el texto de la entrada activa es su color oscuro (legible), no el violeta. */
+[data-brand] .is-selected { color: hsl(var(--sidebar-accent-foreground)) !important; }
+[data-brand] .is-selected svg { color: hsl(var(--sidebar-accent-foreground)); }
 
 /* Secciones plegables del menú: la altura se anima con grid (sin medir nada en JS). */
 .collapse-grid { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .24s cubic-bezier(.2,.7,.2,1), opacity .2s ease; }

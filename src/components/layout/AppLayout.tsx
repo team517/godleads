@@ -35,6 +35,24 @@ export function AppLayout() {
   // Per-client branding: tint the accent color from brand_color.
   const brandStyle = brandStyleFor(profile.brand_color);
 
+  // La marca se pone en <html>, no en el envoltorio: los diálogos, menús y avisos se pintan en
+  // un portal FUERA de este árbol, y con la marca en un div interior salían con nuestro violeta
+  // dentro de la cuenta de un cliente. Al salir del panel (o cambiar de cuenta) se retira.
+  useEffect(() => {
+    const root = document.documentElement;
+    const vars = (brandStyle || {}) as Record<string, string>;
+    const keys = Object.keys(vars);
+    if (keys.length === 0) return;
+    keys.forEach((k) => root.style.setProperty(k, vars[k]));
+    root.setAttribute("data-brand", "");
+    return () => {
+      keys.forEach((k) => root.style.removeProperty(k));
+      root.removeAttribute("data-brand");
+    };
+    // brand_color es lo único de lo que depende brandStyle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.brand_color]);
+
   // La cuenta de un cliente usa el MISMO envoltorio que cualquier otra: barra
   // lateral, barra superior y navegación inferior. Lo que ve dentro lo deciden sus
   // `allowed_routes` (las escribe el servidor), no una excusa de interfaz.
@@ -61,7 +79,7 @@ export function AppLayout() {
   const section = location.pathname.split("/")[1] || "";
 
   return (
-    <div className="min-h-screen" style={brandStyle}>
+    <div className="min-h-screen">
       <Topbar
         onMenuToggle={() => setSidebarOpen(true)}
         isMobile={isMobile}

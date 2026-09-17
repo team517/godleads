@@ -113,6 +113,7 @@ export default {
       backgroundImage: {
         "gradient-hero": "var(--gradient-hero)",
         "gradient-brand": "var(--gradient-brand)",
+        "gradient-brand-soft": "var(--gradient-brand-soft)",
         "gradient-warm": "var(--gradient-warm)",
         "gradient-cool": "var(--gradient-cool)",
         "gradient-sky": "var(--gradient-sky)",
