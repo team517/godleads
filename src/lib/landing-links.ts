@@ -20,3 +20,11 @@ export function landingTarget(href: string | null | undefined): LandingTarget | 
   if (!href) return null;
   return TARGETS[href.trim().toLowerCase()] ?? null;
 }
+
+/** ¿Ha terminado de desempaquetarse y ha pintado su contenido? */
+export function landingIsPainted(doc: Document | null | undefined): boolean {
+  if (!doc || !doc.body) return false;
+  if (doc.getElementById("__bundler_thumbnail") || doc.getElementById("__bundler_loading")) return false;
+  const h1 = doc.querySelector("h1");
+  return !!h1 && (h1.textContent || "").trim().length > 0;
+}

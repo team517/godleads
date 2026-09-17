@@ -15,6 +15,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { filterAccounts } from "@/lib/account-filter";
 import AddAccountDialog, { type AddAccountMode } from "@/components/accounts/AddAccountDialog";
+import AccountsTable from "@/components/accounts/AccountsTable";
+import { configSummary } from "@/lib/account-health";
 import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
 import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
 import { accountsCsvTemplate, accountsToCsv, downloadCsv } from "@/lib/accounts-csv";
@@ -1021,6 +1023,12 @@ export default function EmailAccounts() {
     return { day: r.accRampDay ?? 1, eff: r.limit, target };
   };
 
+  /** Límite de hoy: el de la rampa si está activa, y si no el límite diario configurado. */
+  const effectiveLimitOf = (acc: any) => {
+    const r = rampInfo(acc);
+    return r ? r.eff : (acc?.daily_limit || 30);
+  };
+
   const handleApplySlowRamp = async () => {
     if (!user) return;
     // "todas" = everything the current search/tag actually shows — applying a slow ramp to all
@@ -1178,6 +1186,12 @@ export default function EmailAccounts() {
   );
   };
 
+  // Cuántas cuentas tienen el dominio bien autenticado — se enseña junto al título.
+  const authSummary = configSummary(filteredAccounts.map((a) => {
+    const d = domainOf(a.email);
+    return { domain: d, auth: domainAuth[d] };
+  }));
+
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
   return (
@@ -1185,7 +1199,25 @@ export default function EmailAccounts() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Cuentas de Email</h1>
-          <p className="text-xs sm:text-[15px] text-muted-foreground">Gestiona tus cuentas SMTP/IMAP</p>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-[15px] text-muted-foreground">
+            <span>{accounts.length > 0 ? `${accounts.length} ${accounts.length === 1 ? "cuenta conectada" : "cuentas conectadas"}` : "Gestiona tus cuentas SMTP/IMAP"}</span>
+            {/* Resumen del DNS del dominio (SPF · DKIM · DMARC), no del warm-up. */}
+            {authSummary.ok > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[11.5px] font-semibold text-success">
+                <ShieldCheck className="h-3 w-3" /> {authSummary.ok} bien configuradas
+              </span>
+            )}
+            {authSummary.bad > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[11.5px] font-semibold text-destructive">
+                <ShieldAlert className="h-3 w-3" /> {authSummary.bad} con registros que faltan
+              </span>
+            )}
+            {authSummary.warn > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11.5px] font-semibold text-warning">
+                <ShieldQuestion className="h-3 w-3" /> {authSummary.warn} a revisar
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {isAgency && (
@@ -1864,7 +1896,34 @@ export default function EmailAccounts() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2">
+        <>
+        {/* Escritorio: tabla de cuentas conectadas (estilo Smartlead, con la autenticación del
+            dominio en lugar de sus columnas de warm-up). Móvil conserva las tarjetas. */}
+        <div className="hidden md:block">
+          <AccountsTable
+            accounts={filteredAccounts}
+            selectedIds={selectedIds}
+            allSelected={allSelected}
+            onToggleSelect={toggleSelect}
+            onToggleAll={toggleSelectAll}
+            imapChecks={imapChecks}
+            domainAuth={domainAuth}
+            dnsConfiguring={dnsConfiguring}
+            verifying={verifying}
+            onConfigureDns={configureDns}
+            onRecheckDomain={recheckDomain}
+            onRecheckImap={recheckImap}
+            onEdit={handleEdit}
+            onVerify={handleVerify}
+            onDelete={handleDelete}
+            onAddTag={handleAddTag}
+            onRemoveTag={handleRemoveTag}
+            allTags={allTags}
+            filterTag={filterTag}
+            effectiveLimit={effectiveLimitOf}
+          />
+        </div>
+        <div className="grid gap-3 grid-cols-1 md:hidden">
           {filteredAccounts.map((account) => (
             <Card key={account.id} className={`hover:shadow-raised transition-shadow ${selectedIds.has(account.id) ? "ring-2 ring-primary/40" : ""} ${filterTag && !(account.tags || []).includes(filterTag) ? "opacity-60 border-dashed" : ""}`}>
               <CardContent className="p-4 sm:p-6">
@@ -2054,6 +2113,7 @@ export default function EmailAccounts() {
             </Card>
           ))}
         </div>
+        </>
       )}
     </div>
   );

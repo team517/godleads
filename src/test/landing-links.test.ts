@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { landingTarget } from "@/lib/landing-links";
+import { landingIsPainted, landingTarget } from "@/lib/landing-links";
 
 describe("botones de la landing → aplicación real", () => {
   it("Log in y Start free llevan al acceso", () => {
@@ -16,6 +16,22 @@ describe("botones de la landing → aplicación real", () => {
     for (const h of ["#pricing", "#faq", "#scale", "#deliverability", "#inbox", "#top", "", null, undefined]) {
       expect(landingTarget(h as string)).toBeNull();
     }
+  });
+});
+
+describe("pantalla de carga de la landing", () => {
+  const docFrom = (html: string) => new DOMParser().parseFromString(html, "text/html");
+  it("mientras está la miniatura violeta del empaquetado, NO está lista", () => {
+    expect(landingIsPainted(docFrom('<body><div id="__bundler_thumbnail"></div><h1>Turn cold email</h1></body>'))).toBe(false);
+    expect(landingIsPainted(docFrom('<body><div id="__bundler_loading">Unpacking…</div></body>'))).toBe(false);
+  });
+  it("desempaquetada pero aún sin pintar el titular, tampoco", () => {
+    expect(landingIsPainted(docFrom("<body><x-dc></x-dc></body>"))).toBe(false);
+    expect(landingIsPainted(docFrom("<body><h1>  </h1></body>"))).toBe(false);
+    expect(landingIsPainted(null)).toBe(false);
+  });
+  it("con el titular pintado y sin miniatura, lista", () => {
+    expect(landingIsPainted(docFrom("<body><header></header><h1>Turn cold email into booked revenue</h1></body>"))).toBe(true);
   });
 });
 
