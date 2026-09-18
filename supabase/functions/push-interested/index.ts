@@ -291,7 +291,8 @@ Deno.serve(async (req) => {
       // repasos: si el modelo está caído y deciden sólo las reglas, un mensaje bien etiquetado se
       // quedaba SIN categoría y, con la marca "IA" puesta, ya nadie volvía a mirarlo.
       const previousCats = labels.filter((l) => CATEGORY_LABELS.includes(l));
-      const newLabels = etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, ...previousCats, AI_MARKER];
+      // Sin duplicados: cada repaso volvía a añadir la marca y las filas acababan con ["IA","IA","IA"].
+      const newLabels = Array.from(new Set(etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, ...previousCats, AI_MARKER]));
       // staleIds = rows pulled in by the catch-up sweep: label them, never buzz the phone for them.
       const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
