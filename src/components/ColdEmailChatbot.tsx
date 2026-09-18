@@ -651,9 +651,9 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
               type="button"
               onClick={() => setOpen(true)}
               aria-label="Preguntar a la IA de OnePulso"
-              className="grid h-14 w-14 place-items-center rounded-full border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,.96),rgba(243,246,255,.9))] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(255,255,255,.14),rgba(255,255,255,.06))]"
+              className="block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
             >
-              <SparkMark size={30} bare />
+              <SparkMark size={58} className="rounded-[18px]" />
             </button>
           </motion.div>
         )}

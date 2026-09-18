@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 
 type Row = Record<string, string> & { __idx: number };
@@ -73,12 +74,15 @@ function downloadSampleCsv() {
 
 export default function Personalizacion() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [filename, setFilename] = useState("");
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  /** Registro: las últimas personalizaciones de esta cuenta, para volver a cualquiera. */
+  const [history, setHistory] = useState<any[]>([]);
   const [emailColumn, setEmailColumn] = useState<string>("");
 
   const [prompt, setPrompt] = useState(
@@ -189,6 +193,59 @@ export default function Personalizacion() {
     })();
     return () => { alive = false; };
   }, [user]);
+
+  // ── Registro de personalizaciones ───────────────────────────────────────────────────
+  const loadHistory = useCallback(async () => {
+    if (!user) return;
+    const { data } = await (supabase as any)
+      .from("personalization_csv_jobs")
+      .select("id, filename, status, total, done, ok, failed, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(12);
+    setHistory(Array.isArray(data) ? data : []);
+  }, [user]);
+
+  useEffect(() => { void loadHistory(); }, [loadHistory]);
+  // Cuando una generación cambia de estado, el registro se pone al día solo.
+  useEffect(() => { if (jobStatus) void loadHistory(); }, [jobStatus, loadHistory]);
+
+  /** Vuelve a abrir una personalización del registro: su archivo, su prompt y sus mensajes. */
+  const openHistoryJob = async (id: string) => {
+    const { data: light } = await (supabase as any)
+      .from("personalization_csv_jobs")
+      .select("id, filename, prompt, provider, email_column, columns, status, total, done, ok, failed")
+      .eq("id", id).maybeSingle();
+    if (!light) { toast.error("Esa personalización ya no está"); return; }
+    const d = light as any;
+    setJobId(d.id);
+    setFilename(d.filename || "");
+    setPrompt(d.prompt || "");
+    setProvider(d.provider === "claude" ? "claude" : "deepseek");
+    setEmailColumn(d.email_column || "");
+    setColumns(Array.isArray(d.columns) ? d.columns : []);
+    setJobStatus(d.status || "");
+    setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
+    const { data: heavy } = await (supabase as any)
+      .from("personalization_csv_jobs").select("rows, results").eq("id", id).maybeSingle();
+    setRows(Array.isArray((heavy as any)?.rows) ? (heavy as any).rows : []);
+    setResults((heavy as any)?.results || {});
+    toast.success(`Abierta: ${d.filename || "personalización"}`);
+  };
+
+  const deleteHistoryJob = async (id: string) => {
+    const ok = await confirm({
+      title: "¿Borrar esta personalización del registro?",
+      description: "Se borran sus mensajes generados. El CSV original lo tienes tú.",
+      confirmText: "Borrar",
+      destructive: true,
+    });
+    if (!ok) return;
+    await (supabase as any).from("personalization_csv_jobs").delete().eq("id", id);
+    if (jobId === id) { setJobId(null); setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 }); setJobStatus(""); }
+    void loadHistory();
+    toast.success("Borrada del registro");
+  };
 
   // ── Poll the running job for progress; nudge the processor so it doesn't wait for the cron ──
   useEffect(() => {
@@ -682,6 +739,78 @@ export default function Personalizacion() {
                       {r.map((cell, i) => <td key={i} className="border-b border-border/70 px-4 py-2.5 last:border-r-0">{cell}</td>)}
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Registro: todo lo que se ha generado antes, para volver a abrirlo o descargarlo. */}
+      {history.length > 0 && (
+        <Card>
+          <CardContent className="p-5 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <span className="soft-card-icon"><BookMarked className="h-5 w-5" /></span>
+                <span>
+                  <span className="block font-display text-[17px] font-semibold text-foreground">Registro</span>
+                  <span className="block text-[12.5px] text-muted-foreground">Tus personalizaciones anteriores: ábrelas para verlas, descargarlas o mandarlas a una campaña.</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-[10px] border border-border">
+              <table className="w-full min-w-[720px] border-collapse text-[13px]">
+                <thead>
+                  <tr className="soft-thead">
+                    {["Archivo", "Cuándo", "Estado", "Mensajes", ""].map((h) => (
+                      <th key={h} className="border-b border-border px-4 py-2.5 text-left text-[12px] font-semibold text-[#536188] dark:text-muted-foreground">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => {
+                    const when = h.created_at ? new Date(h.created_at) : null;
+                    const state = h.status === "completed" ? { cls: "soft-state-good", txt: "Completada" }
+                      : h.status === "running" || h.status === "pending" ? { cls: "soft-state-wait", txt: "En curso" }
+                      : h.status === "cancelled" ? { cls: "soft-state-wait", txt: "Parada" }
+                      : { cls: "soft-state-bad", txt: "Con errores" };
+                    return (
+                      <tr key={h.id} className={`soft-row border-b border-border/70 last:border-0 ${jobId === h.id ? "bg-accent/50" : ""}`}>
+                        <td className="max-w-[280px] truncate px-4 py-3 font-medium text-foreground">{h.filename || "sin nombre"}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                          {when && !isNaN(when.getTime()) ? when.toLocaleString("es", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td className="px-4 py-3"><span className={`soft-state ${state.cls}`}>{state.txt}</span></td>
+                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                          <b className="text-foreground">{h.ok || 0}</b> de {h.total || 0}
+                          {h.failed > 0 ? <span className="text-destructive"> · {h.failed} fallidos</span> : null}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void openHistoryJob(h.id)}
+                              disabled={jobId === h.id}
+                              className="soft-control inline-flex h-9 items-center gap-1.5 px-3 text-[12.5px] disabled:opacity-50"
+                            >
+                              <Play className="h-3.5 w-3.5" /> {jobId === h.id ? "Abierta" : "Abrir"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteHistoryJob(h.id)}
+                              title="Borrar del registro"
+                              aria-label="Borrar del registro"
+                              className="soft-action soft-action-danger"
+                            >
+                              <Trash2 className="h-[17px] w-[17px]" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
