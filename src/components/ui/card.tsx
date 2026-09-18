@@ -3,12 +3,10 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-  // Tarjeta del diseño "Primary": blanca, borde lavanda, radio 10px y la sombra navy de reposo.
-  <div
-    ref={ref}
-    className={cn("rounded-[10px] border border-border bg-card text-card-foreground shadow-rest", className)}
-    {...props}
-  />
+  // Tarjeta de cristal del diseño del propietario (.soft-panel en index.css): radio 20,
+  // fondo translúcido con desenfoque y sombra suave. Al vivir aquí, TODAS las tarjetas
+  // del panel se ven igual sin tocar pantalla por pantalla.
+  <div ref={ref} className={cn("soft-panel text-card-foreground", className)} {...props} />
 ));
 Card.displayName = "Card";
 

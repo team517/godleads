@@ -80,7 +80,13 @@ export function AppLayout() {
   const section = location.pathname.split("/")[1] || "";
 
   return (
-    <div className="min-h-screen">
+    <div className="soft-surface min-h-screen">
+      {/* Fondo del diseño: la ola y las retículas de puntos, siempre detrás del contenido. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <span className="soft-wave-fixed" />
+        <span className="soft-dots-grid absolute bottom-10 left-6 hidden h-[120px] w-[120px] opacity-[.14] lg:block" />
+        <span className="soft-dots-grid absolute right-6 top-24 hidden h-[120px] w-[120px] opacity-[.14] lg:block" />
+      </div>
       <Topbar
         onMenuToggle={() => setSidebarOpen(true)}
         isMobile={isMobile}
@@ -108,7 +114,7 @@ export function AppLayout() {
           isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"
         }`}
       >
-        <main className={`flex-1 ${isMobile ? "p-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]" : "p-6"}`}>
+        <main className={`relative z-[1] flex-1 ${isMobile ? "p-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]" : "p-6"}`}>
           {pathAllowed
             ? <div key={section} className="page-enter"><Outlet /></div>
             : <Navigate to={allowed![0]} replace />}

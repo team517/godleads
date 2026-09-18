@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, Pencil, Check, X, Shuffle, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, ChevronRight, Home, Pencil, Check, X, Shuffle, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
@@ -433,15 +433,24 @@ export default function Campaigns() {
 
   // Campaign list view
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-7">
+      {/* Dónde estoy */}
+      <nav aria-label="Ruta" className="flex items-center gap-2.5 text-[14px] text-[#6875ac] dark:text-muted-foreground">
+        <Home className="h-4 w-4" />
+        <ChevronRight className="h-3.5 w-3.5 opacity-70" />
+        <span className="font-medium text-foreground/80">Campañas</span>
+      </nav>
+
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Campañas</h1>
-          <p className="text-[13px] text-muted-foreground">Gestiona y sigue todas tus campañas</p>
+          <h1 className="font-display text-[clamp(28px,3.2vw,38px)] font-semibold leading-[1.1] tracking-[-1.5px] text-[#080d35] dark:text-foreground">Campañas</h1>
+          <p className="mt-2 text-[17px] text-[#6672a7] dark:text-muted-foreground">Gestiona y sigue todas tus campañas</p>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-2 self-end sm:self-auto"><Plus className="h-4 w-4" /> Crear campaña</Button>
+            <button type="button" className="soft-primary inline-flex items-center gap-2 self-start whitespace-nowrap">
+              <Plus className="h-5 w-5" /> Crear campaña
+            </button>
           </DialogTrigger>
           <DialogContent className="max-w-sm">
             <DialogHeader><DialogTitle className="font-display tracking-[-0.03em]">Crear campaña</DialogTitle></DialogHeader>

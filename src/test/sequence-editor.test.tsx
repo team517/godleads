@@ -13,8 +13,9 @@ const saved: any[] = [];
 vi.mock("@/integrations/supabase/client", () => {
   const make = (t: string) => {
     const q: any = {};
-    for (const m of ["select", "eq", "order", "limit", "in", "gte", "not", "single", "maybeSingle", "delete"]) q[m] = () => q;
+    for (const m of ["select", "eq", "order", "limit", "in", "gte", "not", "single", "maybeSingle"]) q[m] = () => q;
     q.update = (payload: any) => { saved.push({ table: t, payload }); return q; };
+    q.delete = () => { saved.push({ table: t, deleted: true }); return q; };
     q.insert = (payload: any) => { saved.push({ table: t, insert: payload }); return q; };
     q.upsert = (payload: any) => { saved.push({ table: t, upsert: payload }); return q; };
     q.then = (res: (v: any) => void) => res({ data: tables[t] || [], error: null });
@@ -38,7 +39,7 @@ beforeEach(() => {
   saved.length = 0;
   tables = {
     campaign_steps: [
-      { id: "s1", step_order: 1, subject: "Una idea para {{company_name}}", body: "Hola, ¿hablamos?", delay_days: 0, variants: [], attachments: [] },
+      { id: "s1", step_order: 1, subject: "Una idea para {{company_name}}", body: "Hola, ¿hablamos?", delay_days: 0, variants: [], variants_off: [], attachments: [] },
       { id: "s2", step_order: 2, subject: "", body: "¿Pudiste verlo?", delay_days: 2, variants: [], attachments: [] },
     ],
     campaign_leads: [{ leads: { email: "marta@acme.es", custom_fields: { first_name: "Marta", company_name: "Acme SL" } } }],
@@ -110,6 +111,45 @@ describe("Editor de secuencia", () => {
     await renderEditor();
     expect((screen.getByLabelText("Cuánto esperar") as HTMLInputElement).value).toBe("2");
     expect(screen.getByText("Semanas")).toBeInTheDocument();
+  });
+
+  it("un paso se puede eliminar desde su raíl, y se pregunta antes", async () => {
+    await renderEditor();
+    fireEvent.click(screen.getAllByRole("button", { name: /^Eliminar$/ })[0]);
+    expect(await screen.findByText("¿Eliminar el paso 1?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    await waitFor(() => expect(saved.some((x) => x.table === "campaign_steps" && x.deleted)).toBe(true));
+  });
+
+  it("si se dice que no, el paso no se toca", async () => {
+    await renderEditor();
+    fireEvent.click(screen.getAllByRole("button", { name: /^Eliminar$/ })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByText("¿Eliminar el paso 1?")).toBeNull());
+    expect(saved.some((x) => x.deleted)).toBe(false);
+  });
+
+  it("apagar una variante la saca del envío, pero no la borra", async () => {
+    tables.campaign_steps[0].variants = [{ subject: "B", body: "cuerpo B" }];
+    await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: /^B$/ }));          // pestaña B
+    fireEvent.click(screen.getByTitle(/Apagar la versión B/));
+
+    // Lo que lee el motor se queda sin ella; su texto se guarda aparte, con su letra.
+    await waitFor(() => expect(lastFor("campaign_steps", "variants")).toEqual([]));
+    expect(lastFor("campaign_steps", "variants_off")[0]).toMatchObject({ subject: "B", body: "cuerpo B", off_slot: 1 });
+    expect(saved.some((x) => x.deleted)).toBe(false);                      // nada borrado
+    expect(screen.getByText(/no se envía/)).toBeInTheDocument();
+  });
+
+  it("y se puede volver a encender", async () => {
+    tables.campaign_steps[0].variants = [];
+    tables.campaign_steps[0].variants_off = [{ subject: "B", body: "cuerpo B", off_slot: 1 }];
+    await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: /^B$/ }));
+    fireEvent.click(screen.getByTitle(/Encender la versión B/));
+    await waitFor(() => expect(lastFor("campaign_steps", "variants")).toEqual([{ subject: "B", body: "cuerpo B" }]));
+    expect(lastFor("campaign_steps", "variants_off")).toEqual([]);
   });
 
   it("sin pasos, invita a crear el primero", async () => {

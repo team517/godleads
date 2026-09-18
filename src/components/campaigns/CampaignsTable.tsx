@@ -173,6 +173,7 @@ export default function CampaignsTable({
   // Bulk selection (Smartlead-style): pick several campaigns, edit their options at once.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [pageRaw, setPage] = useState(1);
 
   // Counts ALWAYS over the full list (not the filtered view).
   const counts = useMemo(() => {
@@ -204,7 +205,12 @@ export default function CampaignsTable({
     });
   }, [campaigns]);
 
-  const visibleIds = useMemo(() => rows.map((r) => r.id as string), [rows]);
+  // 25 por pagina: con muchas campañas la tabla no se hace infinita.
+  const PAGE_SIZE = 25;
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(pageRaw, pageCount);
+  const pageRows = useMemo(() => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [rows, page]);
+  const visibleIds = useMemo(() => pageRows.map((r) => r.id as string), [pageRows]);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someVisibleSelected = visibleIds.some((id) => selected.has(id));
   const toggleAll = () =>
@@ -222,34 +228,28 @@ export default function CampaignsTable({
   return (
     <div className="space-y-3">
       {/* Tabs + search */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border">
-        <div className="flex flex-wrap items-center gap-1" role="tablist" aria-label="Filtrar campañas por estado">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2.5" role="tablist" aria-label="Filtrar campañas por estado">
           {TABS.map((t) => (
             <button
               key={t.key}
               type="button"
               role="tab"
               aria-selected={tab === t.key}
-              onClick={() => setTab(t.key)}
-              className={cn(
-                "-mb-px border-b-2 px-3 py-2 font-display text-[13px] font-semibold tracking-[-0.03em] transition-colors",
-                tab === t.key
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
+              onClick={() => { setTab(t.key); setPage(1); }}
+              className={cn("soft-tab", tab === t.key && "soft-tab-on")}
             >
               {t.label} ({counts[t.key] ?? 0})
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2 pb-2">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Botón SIEMPRE visible: es la puerta de entrada a la edición masiva. Antes
               solo salía una barra al marcar una casilla, así que parecía que no existía.
               Sin nada seleccionado edita TODAS las visibles; con selección, solo esas. */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-9 gap-1.5 whitespace-nowrap"
+          <button
+            type="button"
+            className="soft-control inline-flex items-center gap-2 whitespace-nowrap px-5 disabled:opacity-50"
             disabled={visibleIds.length === 0}
             onClick={() => {
               if (selected.size === 0) {
@@ -260,17 +260,17 @@ export default function CampaignsTable({
             }}
             title="Edita las opciones de varias campañas a la vez"
           >
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="h-4 w-4" />
             {selected.size > 0 ? `Editar (${selected.size})` : "Editar en masa"}
-          </Button>
+          </button>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7b84ad]" />
+            <input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder="Buscar campaña…"
               aria-label="Buscar campaña"
-              className="h-9 w-56 pl-8 text-sm"
+              className="soft-control w-full pl-11 pr-4 font-normal sm:w-[300px]"
             />
           </div>
         </div>
@@ -290,11 +290,12 @@ export default function CampaignsTable({
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-md border border-border bg-card shadow-rest">
-        <table className="w-full min-w-[900px] border-collapse text-[15px]">
+      <div className="soft-panel overflow-hidden">
+       <div className="overflow-x-auto">
+        <table className="w-full min-w-[1100px] border-collapse text-[15px]">
           <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th scope="col" className="w-10 px-3 py-2.5">
+            <tr className="soft-thead">
+              <th scope="col" className="h-[66px] w-12 px-4">
                 <Checkbox
                   checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
                   onCheckedChange={toggleAll}
@@ -312,16 +313,16 @@ export default function CampaignsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {pageRows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-[13px] text-muted-foreground">
+                <td colSpan={9} className="px-4 py-14 text-center text-[14px] text-muted-foreground">
                   {q.trim()
                     ? `Ninguna campaña coincide con «${q.trim()}».`
                     : "No hay campañas en esta pestaña."}
                 </td>
               </tr>
             )}
-            {rows.map((campaign) => {
+            {pageRows.map((campaign) => {
               const status = statusPill[campaign.status] ? campaign.status : "draft";
               const pill = statusPill[status];
               const prog = progressMap[campaign.id] || { sent: 0, total: 0 };
@@ -341,12 +342,12 @@ export default function CampaignsTable({
                   key={campaign.id}
                   onClick={() => onSelect(campaign.id)}
                   className={cn(
-                    "cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/50",
+                    "soft-row cursor-pointer border-t border-[rgba(126,139,198,.12)] dark:border-border/60",
                     selected.has(campaign.id) && "bg-primary/5 hover:bg-primary/10",
                   )}
                 >
                   {/* Selección */}
-                  <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                  <td className="w-12 px-4 py-[17px]" onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selected.has(campaign.id)}
                       onCheckedChange={() => toggleOne(campaign.id)}
@@ -354,7 +355,7 @@ export default function CampaignsTable({
                     />
                   </td>
                   {/* Campaña */}
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <div className="flex items-center gap-3">
                       <CampaignProgressRing sent={prog.sent} total={prog.total} color={ringColor[status]} />
                       <div className="min-w-0">
@@ -404,13 +405,13 @@ export default function CampaignsTable({
                   </td>
 
                   {/* Numbers */}
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <Metric value={prog.total} className="text-violet-600 dark:text-violet-400" />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <Metric value={m === null ? null : sent} className="text-indigo-600 dark:text-indigo-400" />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     {/* Contactados = leads distintos alcanzados (no cuenta los follow-ups),
                         con su cobertura sobre el total de leads de la campaña. */}
                     <Metric
@@ -419,14 +420,14 @@ export default function CampaignsTable({
                       className="text-sky-600 dark:text-sky-400"
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <Metric
                       value={m === null ? null : replied}
                       pct={pctOf(replied, contacted)}
                       className="text-teal-600 dark:text-teal-400"
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <Metric
                       value={m === null ? null : m.positive}
                       pct={pctOf(m?.positive ?? 0, replied)}
@@ -434,7 +435,7 @@ export default function CampaignsTable({
                       className="text-emerald-600 dark:text-emerald-400"
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-[17px]">
                     <Metric
                       value={m === null ? null : bounced}
                       pct={pctOf(bounced, sent)}
@@ -444,52 +445,26 @@ export default function CampaignsTable({
                   </td>
 
                   {/* Acciones */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        aria-label={
-                          campaign.status === "active"
-                            ? `Pausar la campaña ${campaign.name}`
-                            : `Activar la campaña ${campaign.name}`
-                        }
+                  <td className="px-4 py-[17px]">
+                    <div className="flex items-center justify-end gap-[7px]" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className="soft-action"
+                        aria-label={campaign.status === "active" ? `Pausar la campaña ${campaign.name}` : `Activar la campaña ${campaign.name}`}
                         title={campaign.status === "active" ? "Pausar" : "Activar"}
                         onClick={() => onToggleStatus(campaign)}
                       >
-                        {campaign.status === "active" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        aria-label={`Duplicar la campaña ${campaign.name}`}
-                        title="Duplicar"
-                        onClick={() => onDuplicate(campaign)}
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        aria-label={`Remix — fusionar otra campaña en ${campaign.name}`}
-                        title="Remix — fusionar otra campaña aquí"
-                        onClick={() => onRemix(campaign)}
-                      >
-                        <Shuffle className="h-3.5 w-3.5 text-primary" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        aria-label={`Eliminar la campaña ${campaign.name}`}
-                        title="Eliminar"
-                        onClick={() => onDelete(campaign.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
+                        {campaign.status === "active" ? <Pause className="h-[17px] w-[17px]" /> : <Play className="h-[17px] w-[17px]" />}
+                      </button>
+                      <button type="button" className="soft-action" aria-label={`Duplicar la campaña ${campaign.name}`} title="Duplicar" onClick={() => onDuplicate(campaign)}>
+                        <Copy className="h-[17px] w-[17px]" />
+                      </button>
+                      <button type="button" className="soft-action" aria-label={`Remix — fusionar otra campaña en ${campaign.name}`} title="Remix — fusionar otra campaña aquí" onClick={() => onRemix(campaign)}>
+                        <Shuffle className="h-[17px] w-[17px]" />
+                      </button>
+                      <button type="button" className="soft-action soft-action-danger" aria-label={`Eliminar la campaña ${campaign.name}`} title="Eliminar" onClick={() => onDelete(campaign.id)}>
+                        <Trash2 className="h-[17px] w-[17px]" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -497,6 +472,32 @@ export default function CampaignsTable({
             })}
           </tbody>
         </table>
+       </div>
+      </div>
+
+      {/* Pie: cuántas se ven y, si hacen falta, las páginas. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-[#6975a6] dark:text-muted-foreground">
+        <span>
+          Mostrando {pageRows.length} de {rows.length} {rows.length === 1 ? "campaña" : "campañas"}
+          {rows.length !== campaigns.length && ` · ${campaigns.length} en total`}
+        </span>
+        {pageCount > 1 && (
+          <div className="flex items-center gap-2">
+            <button type="button" className="soft-page-btn" disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Página anterior">‹</button>
+            {Array.from({ length: pageCount }).map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setPage(i + 1)}
+                className={cn("soft-page-btn font-semibold", page === i + 1 && "soft-page-btn-on")}
+                aria-current={page === i + 1 ? "page" : undefined}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <button type="button" className="soft-page-btn" disabled={page >= pageCount} onClick={() => setPage(page + 1)} aria-label="Página siguiente">›</button>
+          </div>
+        )}
       </div>
 
       <BulkEditCampaigns

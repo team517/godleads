@@ -642,6 +642,111 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
   transition: left .5s ease;
 }
 
+
+/* ── La misma capa, para el PANEL entero ────────────────────────────────────────────────
+   Medidas del tercer HTML del propietario (Campañas): tarjetas de cristal de 20px, pestañas
+   de 12px, controles de 48px, cabecera de tabla con su degradado y acciones violetas.
+   Las usan las pantallas del panel, así que todo el software se ve igual. */
+
+/* Tarjeta de contenido: es lo que pinta <Card>, o sea TODAS las tarjetas del panel. */
+.soft-panel {
+  background: rgba(255,255,255,.76);
+  border: 1px solid rgba(126,139,198,.18);
+  border-radius: 20px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 50px rgba(70,80,150,.06);
+}
+.dark .soft-panel { background: hsl(var(--card) / .78); border-color: hsl(var(--border)); box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+
+/* Pestañas de filtro (Todas · Activas · …). */
+.soft-tab {
+  padding: 13px 21px;
+  border: 1px solid rgba(121,135,195,.18);
+  border-radius: 12px;
+  background: rgba(255,255,255,.65);
+  color: #596493;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.soft-tab:hover { background: #fff; }
+.soft-tab-on {
+  color: #7145ff;
+  border-color: rgba(113,69,255,.20);
+  background: linear-gradient(135deg, rgba(246,243,255,.95), rgba(237,247,255,.95));
+  box-shadow: 0 8px 20px rgba(89,75,190,.08);
+}
+.dark .soft-tab { background: hsl(var(--card) / .6); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+.dark .soft-tab:hover { background: hsl(var(--card)); }
+.dark .soft-tab-on { background: hsl(var(--accent)); color: hsl(var(--primary)); border-color: hsl(var(--primary) / .35); }
+
+/* Control de barra: buscador, botón de acción secundaria… */
+.soft-control {
+  height: 48px;
+  border: 1px solid rgba(121,135,195,.18);
+  border-radius: 12px;
+  background: rgba(255,255,255,.8);
+  color: #34416e;
+  font-size: 14px;
+  font-weight: 600;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.soft-control::placeholder { color: #7b84ad; font-weight: 400; }
+.soft-control:focus, .soft-control:focus-visible { outline: none; border-color: #7357ff; box-shadow: 0 0 0 4px rgba(115,87,255,.07); }
+.dark .soft-control { background: hsl(var(--card) / .7); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+
+/* Cabecera de tabla con el degradado del diseño. */
+.soft-thead { background: linear-gradient(90deg, rgba(246,244,255,.92), rgba(239,248,255,.88), rgba(250,244,255,.88)); }
+.dark .soft-thead { background: linear-gradient(90deg, hsl(255 25% 17%), hsl(205 25% 16%), hsl(280 25% 17%)); }
+.soft-row { transition: background-color .18s ease; }
+.soft-row:hover { background: rgba(245,248,255,.75); }
+.dark .soft-row:hover { background: hsl(var(--muted) / .45); }
+
+/* Acciones de una fila. */
+.soft-action { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; color: #654dff; transition: background-color .18s ease; }
+.soft-action:hover { background: #f0edff; }
+.soft-action-danger { color: #ff3544; }
+.soft-action-danger:hover { background: #fff0f2; }
+.dark .soft-action { color: hsl(var(--primary)); }
+.dark .soft-action:hover { background: hsl(var(--accent)); }
+.dark .soft-action-danger { color: #ff6b74; }
+.dark .soft-action-danger:hover { background: hsl(0 60% 20% / .4); }
+
+/* Paginación. */
+.soft-page-btn { width: 40px; height: 40px; border: 1px solid rgba(121,135,195,.18); border-radius: 10px; background: rgba(255,255,255,.75); color: #727ea8; }
+.soft-page-btn:disabled { opacity: .45; }
+.soft-page-btn-on { color: #624aff; border-color: #8d7aff; box-shadow: 0 7px 20px rgba(90,75,200,.10); }
+.dark .soft-page-btn { background: hsl(var(--card) / .7); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+.dark .soft-page-btn-on { color: hsl(var(--primary)); border-color: hsl(var(--primary) / .5); }
+
+/* Botón principal de una pantalla (Crear campaña…). */
+.soft-primary {
+  height: 56px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 13px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  background: linear-gradient(100deg, #168ff8, #5362ff 48%, #a72ef3);
+  box-shadow: 0 12px 28px rgba(91,70,255,.22);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.soft-primary:hover { transform: translateY(-2px); box-shadow: 0 17px 34px rgba(91,70,255,.30); }
+
+/* La ola y los puntos del fondo del panel. */
+.soft-wave-fixed {
+  position: fixed;
+  left: -10%;
+  bottom: -35%;
+  width: 120%;
+  height: 65%;
+  border-radius: 50% 50% 0 0;
+  background: linear-gradient(120deg, rgba(116,110,255,.08), rgba(68,196,255,.06), rgba(195,91,255,.07));
+  pointer-events: none;
+}
+.dark .soft-wave-fixed { background: linear-gradient(120deg, rgba(116,110,255,.10), rgba(68,196,255,.06), rgba(195,91,255,.08)); }
+
 /* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
 @keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
 @keyframes wvDash { to { stroke-dashoffset: -220; } }

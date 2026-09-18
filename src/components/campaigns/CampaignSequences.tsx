@@ -12,8 +12,12 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
+import {
+  addVariantTo, disableAll, disableSlot, enableAll, enableSlot, hasLiveVariants,
+  readState, removeSlot, versionsOf, writeSlot, type VariantState,
+} from "@/lib/step-variants";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Smile, Braces, Info, Mail, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Smile, Braces, Info, Mail, PowerOff, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
@@ -75,8 +79,9 @@ const PAPER =
    de la barra de formato y los de la barra de arriba. Sólo pintura: no saben nada de los
    datos. Los tamaños y colores salen de la capa "suave" de index.css. */
 
-function SeqRail({ Icon, title, sub, last, active, grip, tone = "step" }: {
+function SeqRail({ Icon, title, sub, last, active, grip, tone = "step", onDelete }: {
   Icon: typeof Mail; title: string; sub: string; last?: boolean; active?: boolean; grip?: boolean; tone?: "step" | "add";
+  onDelete?: () => void;
 }) {
   return (
     <div className="relative hidden pt-3 md:block">
@@ -85,6 +90,15 @@ function SeqRail({ Icon, title, sub, last, active, grip, tone = "step" }: {
       </div>
       {title && <h3 className="mb-[5px] mt-[18px] font-display text-[19px] font-semibold tracking-[-0.02em] text-foreground">{title}</h3>}
       {sub && <p className="text-[14px] leading-[1.35] text-[#727aa7] dark:text-muted-foreground">{sub}</p>}
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-[10px] border border-transparent px-2 py-1 text-[13px] font-semibold text-[#8b93bd] transition-colors hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive dark:text-muted-foreground"
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Eliminar
+        </button>
+      )}
       {grip && <GripVertical className="absolute -left-4 top-6 h-4 w-4 cursor-grab text-muted-foreground opacity-0 transition-opacity hover:opacity-100 active:cursor-grabbing" />}
       {!last && <span aria-hidden className="soft-rail-line absolute left-[31px] top-[62px] w-px" style={{ bottom: -75 }} />}
     </div>
@@ -218,7 +232,7 @@ export default function CampaignSequences({ campaignId }: Props) {
     const toDelete = ((cur || []) as any[]).map((s) => s.id).filter((id) => !targetIds.has(id));
     if (toDelete.length) await supabase.from("campaign_steps").delete().in("id", toDelete);
     for (const s of target) {
-      await supabase.from("campaign_steps").upsert({ id: s.id, campaign_id: campaignId, step_order: s.step_order, subject: s.subject ?? "", body: s.body ?? "", delay_days: s.delay_days ?? 0, variants: (s.variants ?? []) as any, attachments: (s.attachments ?? []) as any }, { onConflict: "id" });
+      await supabase.from("campaign_steps").upsert({ id: s.id, campaign_id: campaignId, step_order: s.step_order, subject: s.subject ?? "", body: s.body ?? "", delay_days: s.delay_days ?? 0, variants: (s.variants ?? []) as any, variants_off: (s.variants_off ?? []) as any, attachments: (s.attachments ?? []) as any }, { onConflict: "id" });
     }
   };
   const canUndo = histIdx.current > 0;
@@ -539,36 +553,42 @@ export default function CampaignSequences({ campaignId }: Props) {
     load();
   };
 
-  const addVariant = async (step: any) => {
-    const variants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
-    const letter = String.fromCharCode(66 + variants.length);
-    variants.push({ subject: "", body: "" });
-    await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
-    toast.success(`Variante ${letter} añadida`);
-    load();
+  /** Guarda el estado de versiones de un paso: lo que se envia (`variants`) y lo apagado
+   *  (`variants_off`, que el motor NO lee). Se pinta al momento y se guarda con el mismo respiro
+   *  que el texto. */
+  const applyVariantState = (step: any, next: VariantState) => {
+    setSteps((prev) => prev.map((x) => (x.id === step.id ? { ...x, variants: next.variants, variants_off: next.off } : x)));
+    queueSave(step.id, "variants", next.variants);
+    queueSave(step.id, "variants_off", next.off);
   };
 
-  const updateVariantField = async (step: any, idx: number, field: "subject" | "body", value: string) => {
-    const variants: Variant[] = [...(step.variants || [])];
-    variants[idx] = { ...variants[idx], [field]: value };
-    await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
+  /** Añade una versión nueva (B, C…) y devuelve su hueco. */
+  const addVariant = async (step: any): Promise<number> => {
+    const { state, slot } = addVariantTo(readState(step), {});
+    applyVariantState(step, state);
+    toast.success(`Variante ${String.fromCharCode(65 + slot)} añadida`);
+    return slot;
   };
+
+
 
   // Per-variant tag filter: only accounts with this tag send this variant. null = sin filtro.
-  const updateVariantTag = async (step: any, idx: number, tag: string | null) => {
-    const variants: Variant[] = [...(step.variants || [])];
-    variants[idx] = { ...variants[idx], tag_filter: tag || undefined };
-    const { error } = await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
-    if (error) { toast.error(`No se pudo guardar el filtro: ${error.message}`); return; }
-    load();
+  const setSlotTag = (step: any, slot: number, tag: string | null) => {
+    applyVariantState(step, writeSlot(readState(step), slot, { tag_filter: tag || undefined }));
   };
 
-  const removeVariant = async (step: any, idx: number) => {
-    const variants: Variant[] = [...(step.variants || [])];
-    variants.splice(idx, 1);
-    await supabase.from("campaign_steps").update({ variants: variants as any }).eq("id", step.id);
+  /** La papelera de una versión: esto SÍ borra lo escrito (apagarla no). */
+  const removeVersion = async (step: any, slot: number) => {
+    const ok = await confirm({
+      title: `¿Eliminar la versión ${String.fromCharCode(65 + slot)}?`,
+      description: "Se borra su texto. Si sólo quieres que deje de enviarse, apágala con el interruptor.",
+      confirmText: "Eliminar",
+      destructive: true,
+    });
+    if (!ok) return;
+    applyVariantState(step, removeSlot(readState(step), slot));
     setActiveVariantIndex(0);
-    load();
+    toast.success("Versión eliminada");
   };
 
   const updateStepField = async (id: string, field: string, value: any) => {
@@ -602,6 +622,15 @@ export default function CampaignSequences({ campaignId }: Props) {
     saveTimers.current[key] = setTimeout(() => runSave(key), SAVE_DELAY_MS);
   };
   const flushSaves = () => Promise.all(Object.keys(pendingSaves.current).map(runSave));
+  /** Lo que estuviera esperando para guardarse de un paso que ya no existe. */
+  const cancelSaves = (id: string) => {
+    for (const key of Object.keys(pendingSaves.current)) {
+      if (!key.startsWith(`${id}:`)) continue;
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+      delete pendingSaves.current[key];
+    }
+  };
 
   useEffect(() => { void flushSaves(); }, [selectedStepId]);
   useEffect(() => {
@@ -697,7 +726,10 @@ export default function CampaignSequences({ campaignId }: Props) {
       for (const step of steps) {
         const subj = correctVarsInText(step.subject || "", valid);
         const body = correctVarsInText(step.body || "", valid);
-        const variants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
+        const variants: Variant[] = [
+          ...(Array.isArray(step.variants) ? step.variants : []),
+          ...(Array.isArray(step.variants_off) ? step.variants_off : []),
+        ];
         const newVariants = variants.map((vr) => {
           const s = correctVarsInText(vr.subject || "", valid);
           const b = correctVarsInText(vr.body || "", valid);
@@ -747,11 +779,7 @@ export default function CampaignSequences({ campaignId }: Props) {
         updateStepField(selectedStep.id, "body", newVal);
         setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, body: newVal } : s));
       } else {
-        const vi = activeVariantIndex - 1;
-        updateVariantField(selectedStep, vi, "body", newVal);
-        const newVariants = [...(selectedStep.variants || [])];
-        newVariants[vi] = { ...newVariants[vi], body: newVal };
-        setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, variants: newVariants } : s));
+        applyVariantState(selectedStep, writeSlot(readState(selectedStep), activeVariantIndex, { body: newVal }));
       }
       setTimeout(() => { el.focus(); el.setSelectionRange(start + tag.length, start + tag.length); }, 0);
     }
@@ -787,19 +815,22 @@ export default function CampaignSequences({ campaignId }: Props) {
     return result;
   };
 
-  const variants: Variant[] = selectedStep ? (Array.isArray(selectedStep.variants) ? selectedStep.variants : []) : [];
+  // Estado de versiones del paso abierto: lo que se envia + lo apagado, y la lista A, B, C...
+  const vstate: VariantState = selectedStep ? readState(selectedStep) : { variants: [], off: [] };
+  const versions = versionsOf(vstate);
+  const activeVersion = versions.find((v) => v.slot === activeVariantIndex) || versions[0];
 
   // Get current subject/body based on active variant
   const getCurrentSubject = () => {
     if (!selectedStep) return "";
     if (activeVariantIndex === 0) return selectedStep.subject;
-    return variants[activeVariantIndex - 1]?.subject || "";
+    return activeVersion?.variant?.subject || "";
   };
 
   const getCurrentBody = () => {
     if (!selectedStep) return "";
     if (activeVariantIndex === 0) return selectedStep.body;
-    return variants[activeVariantIndex - 1]?.body || "";
+    return activeVersion?.variant?.body || "";
   };
 
   const setCurrentSubject = (val: string) => {
@@ -808,11 +839,7 @@ export default function CampaignSequences({ campaignId }: Props) {
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, subject: val } : s));
       queueSave(selectedStep.id, "subject", val);
     } else {
-      const vi = activeVariantIndex - 1;
-      const newVariants = [...variants];
-      newVariants[vi] = { ...newVariants[vi], subject: val };
-      setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, variants: newVariants } : s));
-      queueSave(selectedStep.id, "variants", newVariants);
+      applyVariantState(selectedStep, writeSlot(vstate, activeVariantIndex, { subject: val }));
     }
   };
 
@@ -822,16 +849,11 @@ export default function CampaignSequences({ campaignId }: Props) {
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, body: val } : s));
       queueSave(selectedStep.id, "body", val);
     } else {
-      const vi = activeVariantIndex - 1;
-      const newVariants = [...variants];
-      newVariants[vi] = { ...newVariants[vi], body: val };
-      setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, variants: newVariants } : s));
-      queueSave(selectedStep.id, "variants", newVariants);
+      applyVariantState(selectedStep, writeSlot(vstate, activeVariantIndex, { body: val }));
     }
   };
 
-  // All variant labels: A, B, C...
-  const variantLabels = ["A", ...variants.map((_, i) => String.fromCharCode(66 + i))];
+
 
   /* ── Formato del cuerpo ──────────────────────────────────────────────────────────────
      El cuerpo es texto con etiquetas HTML sencillas (así lo envía el motor), de modo que
@@ -915,23 +937,45 @@ export default function CampaignSequences({ campaignId }: Props) {
     }
   };
 
-  /** El interruptor A/B de un correo: encendido = tiene variantes. Al encenderlo crea la B; al
-   *  apagarlo se quitan las variantes, y eso borra lo escrito en ellas, asi que se pregunta. */
-  const toggleAbTest = async (step: any) => {
+  /** El interruptor de la tarjeta. NO borra nada:
+   *   · en la versión A gobierna toda la prueba A/B (apaga o enciende B, C… de golpe);
+   *   · en una variante, la apaga o la enciende sólo a ella.
+   *  Una versión apagada se queda escrita pero NO se envía (sale de `variants`, que es lo
+   *  único que lee el motor). Para borrarla de verdad está la papelera. */
+  const toggleVersion = async (step: any, slot: number) => {
     setSelectedStepId(step.id);
-    const vs: Variant[] = Array.isArray(step.variants) ? step.variants : [];
-    if (vs.length === 0) { await addVariant(step); setActiveVariantIndex(1); return; }
+    const state = readState(step);
+    const versions = versionsOf(state);
+    if (versions.length === 1) {                      // sólo existe la A: se crea la B
+      const created = await addVariant(step);
+      setActiveVariantIndex(created);
+      return;
+    }
+    if (slot === 0) {
+      const live = hasLiveVariants(state);
+      applyVariantState(step, live ? disableAll(state) : enableAll(state));
+      toast.success(live ? "Prueba A/B apagada: sólo se envía la A" : "Prueba A/B encendida");
+      return;
+    }
+    const target = versions.find((v) => v.slot === slot);
+    if (!target) return;
+    applyVariantState(step, target.enabled ? disableSlot(state, slot) : enableSlot(state, slot));
+    toast.success(target.enabled
+      ? `Versión ${target.label} apagada: deja de enviarse`
+      : `Versión ${target.label} encendida`);
+  };
+
+  /** Eliminar un correo de la secuencia: se pregunta, porque se lleva por delante lo escrito. */
+  const askDeleteStep = async (step: any, index: number) => {
     const ok = await confirm({
-      title: "¿Quitar la prueba A/B?",
-      description: `Se borrarán ${vs.length} variante(s) de este correo y lo que hayas escrito en ellas. La versión A se queda igual.`,
-      confirmText: "Quitar",
+      title: `¿Eliminar el paso ${index + 1}?`,
+      description: "Se borra este correo y lo que hayas escrito en él, también sus variantes. Los pasos que queden se renumeran solos y la campaña sigue funcionando.",
+      confirmText: "Eliminar",
       destructive: true,
     });
     if (!ok) return;
-    setActiveVariantIndex(0);
-    setSteps((prev) => prev.map((x) => (x.id === step.id ? { ...x, variants: [] } : x)));
-    await updateStepField(step.id, "variants", [] as any);
-    toast.success("Prueba A/B quitada");
+    cancelSaves(step.id);
+    await deleteStep(step.id);
   };
 
   /** La espera de un paso en número + unidad, como en el diseño (2 días / 1 semana). */
@@ -986,7 +1030,12 @@ export default function CampaignSequences({ campaignId }: Props) {
         <div>
           {steps.map((step, i) => {
             const isSel = step.id === selectedStepId;
-            const stepVariants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
+            const stepState = readState(step);
+            const stepVersions = versionsOf(stepState);
+            const stepLive = hasLiveVariants(stepState);
+            // El interruptor enseña el estado de LO QUE TIENES DELANTE: la versión abierta,
+            // o la prueba A/B entera cuando estás en la A.
+            const switchOn = isSel && activeVariantIndex > 0 ? !!activeVersion?.enabled : stepLive;
             const isDragging = dragStepId === step.id;
             const isDragOver = dragOverStepId === step.id && dragStepId !== step.id;
             const body = isSel ? getCurrentBody() : (step.body || "");
@@ -1053,7 +1102,15 @@ export default function CampaignSequences({ campaignId }: Props) {
                   onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
                   className={`grid gap-[30px] md:grid-cols-[130px_1fr] ${isDragging ? "opacity-40" : ""} ${isDragOver ? "pt-2" : ""}`}
                 >
-                  <SeqRail Icon={Mail} title={`Paso ${i + 1}`} sub={i === 0 ? "Email inicial" : "Seguimiento"} last={i === steps.length - 1} active={isSel} grip />
+                  <SeqRail
+                    Icon={Mail}
+                    title={`Paso ${i + 1}`}
+                    sub={i === 0 ? "Email inicial" : "Seguimiento"}
+                    last={i === steps.length - 1}
+                    active={isSel}
+                    grip
+                    onDelete={() => { void askDeleteStep(step, i); }}
+                  />
 
                   <div
                     onClick={() => { if (!isSel) setSelectedStepId(step.id); }}
@@ -1104,50 +1161,76 @@ export default function CampaignSequences({ campaignId }: Props) {
 
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); toggleAbTest(step); }}
-                        title={stepVariants.length === 0 ? "Probar dos versiones de este correo (A/B)" : "Quitar la prueba A/B de este correo"}
+                        onClick={(e) => { e.stopPropagation(); void toggleVersion(step, isSel ? activeVariantIndex : 0); }}
+                        title={
+                          stepVersions.length === 1
+                            ? "Probar otra versión de este correo (A/B)"
+                            : isSel && activeVariantIndex > 0
+                              ? (activeVersion?.enabled ? `Apagar la versión ${activeVersion.label}: dejará de enviarse` : `Encender la versión ${activeVersion?.label}`)
+                              : (stepLive ? "Apagar la prueba A/B: sólo se enviará la A" : "Encender la prueba A/B")
+                        }
                         className="soft-ab hidden h-[56px] items-center justify-center gap-[13px] font-semibold md:flex"
                       >
-                        <span className="font-display text-[15px]">{isSel ? variantLabels[activeVariantIndex] : "A"}</span>
-                        <span className={`soft-switch ${stepVariants.length > 0 ? "soft-switch-on" : ""}`}><span /></span>
+                        <span className="font-display text-[15px]">{isSel ? (activeVersion?.label || "A") : "A"}</span>
+                        <span className={`soft-switch ${switchOn ? "soft-switch-on" : ""}`}><span /></span>
                       </button>
                     </div>
 
-                    {/* Variantes del correo abierto */}
-                    {isSel && variantLabels.length > 1 && (
+                    {/* Versiones del correo abierto: A, B, C… Las apagadas siguen aquí, sin enviarse. */}
+                    {isSel && versions.length > 1 && (
                       <div className="mb-[18px] flex flex-wrap items-center gap-2">
-                        {variantLabels.map((label, vi) => {
-                          const vTag = vi > 0 ? variants[vi - 1]?.tag_filter : undefined;
+                        {versions.map((v) => {
+                          const vTag = v.variant?.tag_filter;
+                          const active = activeVariantIndex === v.slot;
                           return (
                             <button
-                              key={label}
-                              onClick={() => setActiveVariantIndex(vi)}
-                              title={vTag ? `Solo cuentas con la etiqueta "${vTag}"` : undefined}
-                              className={`rounded-[11px] px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                                activeVariantIndex === vi ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
-                              }`}
+                              key={v.slot}
+                              onClick={() => setActiveVariantIndex(v.slot)}
+                              title={!v.enabled ? `Versión ${v.label} apagada: no se envía` : vTag ? `Solo cuentas con la etiqueta "${vTag}"` : undefined}
+                              className={`inline-flex items-center gap-1.5 rounded-[11px] px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                                active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                              } ${v.enabled ? "" : "opacity-60 line-through decoration-1"}`}
                             >
-                              {label}{vTag ? <span className="ml-1 opacity-80">· {vTag}</span> : ""}
+                              {!v.enabled && <PowerOff className="h-3 w-3" />}
+                              {v.label}{vTag ? <span className="ml-1 opacity-80">· {vTag}</span> : ""}
                             </button>
                           );
                         })}
                         <button
-                          onClick={async () => { const idx = variants.length + 1; await addVariant(step); setActiveVariantIndex(idx); }}
-                          title="Añadir otra variante"
-                          aria-label="Añadir variante"
+                          onClick={async () => { const created = await addVariant(step); setActiveVariantIndex(created); }}
+                          title="Añadir otra versión"
+                          aria-label="Añadir versión"
                           className="grid h-[30px] w-[30px] place-items-center rounded-[11px] border border-dashed border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary"
                         >
                           <Plus className="h-3.5 w-3.5" />
                         </button>
                         {activeVariantIndex > 0 && (
                           <button
-                            onClick={() => removeVariant(selectedStep, activeVariantIndex - 1)}
+                            onClick={() => { void removeVersion(selectedStep, activeVariantIndex); }}
                             className="inline-flex items-center gap-1 rounded-[11px] border border-destructive/40 px-3 py-1.5 text-[13px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
                           >
                             <Trash2 className="h-3 w-3" /> Eliminar variante
                           </button>
                         )}
-                        <span className="ml-auto hidden text-[12.5px] text-muted-foreground sm:inline">Las variantes se rotan solas al enviar</span>
+                        <span className="ml-auto hidden text-[12.5px] text-muted-foreground sm:inline">
+                          {hasLiveVariants(vstate)
+                            ? "Las versiones encendidas se rotan solas al enviar"
+                            : "Todas las variantes están apagadas: sólo se envía la A"}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Aviso de la versión que se está mirando y no se envía */}
+                    {isSel && activeVariantIndex > 0 && activeVersion && !activeVersion.enabled && (
+                      <div className="mb-[18px] flex flex-wrap items-center gap-2 rounded-[14px] bg-muted/50 px-4 py-3 text-[13px] text-muted-foreground">
+                        <PowerOff className="h-3.5 w-3.5" />
+                        Esta versión está apagada: se guarda lo que escribas, pero no se envía.
+                        <button
+                          onClick={() => { void toggleVersion(step, activeVariantIndex); }}
+                          className="ml-1 rounded-[9px] border border-border bg-card px-2.5 py-1 text-[12.5px] font-semibold text-primary transition-colors hover:border-primary"
+                        >
+                          Encender
+                        </button>
                       </div>
                     )}
 
@@ -1156,8 +1239,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                       <div className="mb-[18px] flex flex-wrap items-center gap-2 rounded-[14px] bg-muted/40 px-4 py-3">
                         <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground"><Tag className="h-3 w-3" /> Filtro por cuenta:</span>
                         <Select
-                          value={variants[activeVariantIndex - 1]?.tag_filter || "__none__"}
-                          onValueChange={(v) => updateVariantTag(selectedStep, activeVariantIndex - 1, v === "__none__" ? null : v)}
+                          value={activeVersion?.variant?.tag_filter || "__none__"}
+                          onValueChange={(v) => setSlotTag(selectedStep, activeVariantIndex, v === "__none__" ? null : v)}
                         >
                           <SelectTrigger className="h-9 w-64 rounded-[11px] text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -1166,8 +1249,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                             {availableTags.map((t) => <SelectItem key={t} value={t}>Solo cuentas con la etiqueta «{t}»</SelectItem>)}
                           </SelectContent>
                         </Select>
-                        {variants[activeVariantIndex - 1]?.tag_filter
-                          ? <span className="text-[12px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
+                        {activeVersion?.variant?.tag_filter
+                          ? <span className="text-[12px] text-primary">→ esta versión SOLO la envían las cuentas con «{activeVersion.variant.tag_filter}»</span>
                           : <span className="text-[12px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
                       </div>
                     )}
@@ -1205,7 +1288,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                       )}
 
                       {isSel && (
-                        <div className="soft-toolbar flex h-[55px] flex-wrap items-center gap-x-[18px] gap-y-2 px-5">
+                        <div className="soft-toolbar flex min-h-[55px] flex-wrap items-center gap-x-[18px] gap-y-2.5 px-5 py-2">
                           <SeqTool Icon={Bold} label="Negrita" onClick={() => wrapSelection("b")} />
                           <SeqTool Icon={Italic} label="Cursiva" onClick={() => wrapSelection("i")} />
                           <SeqTool Icon={Underline} label="Subrayado" onClick={() => wrapSelection("u")} />
@@ -1287,11 +1370,15 @@ export default function CampaignSequences({ campaignId }: Props) {
                           <SeqTool Icon={Save} label="Guardar como plantilla" onClick={() => setShowSaveTemplate(true)} />
                           <SeqTool Icon={FileText} label="Cargar plantilla" onClick={() => { loadTemplates(); setShowLoadTemplate(true); }} />
 
-                          <span className="ml-auto text-[14px] tabular-nums text-[#777fa5] dark:text-muted-foreground">{body.length}</span>
-                          <button type="button" onClick={() => setAiOneOpen(true)} className="soft-ai-btn inline-flex items-center gap-2 text-[14px]">
-                            <Sparkles className="h-4 w-4" /> Escribir con IA
-                          </button>
-                          <SeqTool Icon={Trash2} label="Eliminar este paso" danger onClick={() => deleteStep(step.id)} />
+                          {/* Cuentan y escriben sobre ESTE correo: viajan juntos al plegarse. */}
+                          <div className="ml-auto flex items-center gap-3">
+                            <span className="text-[14px] tabular-nums text-[#777fa5] dark:text-muted-foreground">{body.length}</span>
+                            <button type="button" onClick={() => setAiOneOpen(true)} className="soft-ai-btn inline-flex items-center gap-2 text-[14px]">
+                              <Sparkles className="h-4 w-4" /> Escribir con IA
+                            </button>
+                            <span className="h-5 w-px bg-border" />
+                            <SeqTool Icon={Trash2} label="Eliminar este paso" danger onClick={() => { void askDeleteStep(step, i); }} />
+                          </div>
                         </div>
                       )}
                     </div>
