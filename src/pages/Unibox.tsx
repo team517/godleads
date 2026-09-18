@@ -624,7 +624,14 @@ export function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   let final = clean;
   // Repeat the empty-wrapper removal a few times to fully collapse nested empties
   for (let i = 0; i < 3; i++) {
-    final = final.replace(/<(p|div|span|td|tr|table|tbody|thead|th|blockquote)(\s[^>]*)?>(\s|&nbsp;|<br\s*\/?>)*<\/\1>/gi, "");
+    // Un envoltorio que sólo contenía un ESPACIO deja un espacio en su sitio. Antes se borraba
+    // entero, y en los pies que separan las palabras con <span>&nbsp;</span> (Gmail con
+    // letter-spacing) el texto salía pegado: "Estemensajeysusarchivosadjuntos…" (18-09-2026).
+    final = final.replace(
+      /<(p|div|span|td|tr|table|tbody|thead|th|blockquote)(\s[^>]*)?>((?:\s|&nbsp;|<br\s*\/?>)*)<\/\1>/gi,
+      (_m: string, _tag: string, _attrs: string, inner: string) =>
+        (/(?:\s|&nbsp;)/i.test(String(inner || "").replace(/<br\s*\/?>/gi, "")) ? " " : ""),
+    );
   }
   final = final.replace(/(<br\s*\/?>[\s]*){3,}/gi, "<br><br>");
   // Remove leading/trailing whitespace nodes
@@ -2956,13 +2963,23 @@ export default function Unibox() {
       const origHtml = (selected.body_html && selected.body_html.trim().length > 20)
         ? cleanBodyHtml(selected.body_html, true)
         : `<div style="white-space:pre-wrap">${escFwd(selected.body_text || "")}</div>`;
+      // El original va dentro de un <div>, NUNCA de un <p>: un párrafo no puede contener otros
+      // párrafos, listas ni tablas, y el cliente de correo lo cierra por su cuenta dejando el
+      // correo "todo junto". La cabecera imita la de Gmail (De / Fecha / Asunto / Para).
+      const cabecera = [
+        ["De", (selected.from_name ? selected.from_name + " " : "") + `<${selected.from_email}>`],
+        ["Fecha", when],
+        ["Asunto", origSubject],
+        ["Para", accountEmailMap[selected.account_id] || ""],
+      ].filter(([, v]) => String(v || "").trim())
+       .map(([k, v]) => `<b>${k}:</b> ${escFwd(String(v))}`)
+       .join("<br>");
       const quoted =
-        (forwardNote.trim() ? `<p>${escFwd(forwardNote.trim()).replace(/\n/g, "<br>")}</p>` : "") +
-        `<p>---------- Mensaje reenviado ----------<br>` +
-        `De: ${escFwd((selected.from_name ? selected.from_name + " " : "") + `<${selected.from_email}>`)}<br>` +
-        `Fecha: ${escFwd(when)}<br>` +
-        `Asunto: ${escFwd(origSubject)}</p><hr>` +
-        origHtml;
+        (forwardNote.trim() ? `<div style="white-space:pre-wrap">${escFwd(forwardNote.trim())}</div><br>` : "") +
+        `<div style="border-top:1px solid #d9d9d9;padding-top:12px;margin-top:8px">` +
+        `<div style="font-size:13px;color:#5f6368;margin-bottom:10px">---------- Mensaje reenviado ----------<br>${cabecera}</div>` +
+        `<div>${origHtml}</div>` +
+        `</div>`;
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
@@ -2972,6 +2989,11 @@ export default function Unibox() {
           to_email: to,
           subject: fwdSubject,
           body: quoted,
+          // Se manda el hilo del mensaje original: así el reenvío queda EN LA MISMA conversación
+          // y —sobre todo— el servidor no busca un hilo por su cuenta con el destinatario, que
+          // era lo que cambiaba el asunto por un "Re: <cualquier otra cosa>".
+          in_reply_to: selected.message_id || undefined,
+          references: [selected.ref_chain, selected.message_id].filter(Boolean).join(" ").trim() || undefined,
         }),
       });
       const result = await resp.json();

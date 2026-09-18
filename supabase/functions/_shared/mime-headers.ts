@@ -298,3 +298,57 @@ export function textToHtmlBody(text: string | null | undefined): string {
     })
     .join("");
 }
+
+/**
+ * La versión de TEXTO de un correo HTML.
+ *
+ * Todo correo se envía en dos versiones (texto y HTML) y deben decir lo mismo. La versión de
+ * texto se hacía cortando sólo por <br>, </p> y </div>: una lista o una tabla se quedaban SIN
+ * ningún separador y salían pegadas —"PN LM140K-5.0 — 2 udsP/N CD4049UBF — 5 uds¿Podéis
+ * confirmar…"— que es justo lo que se veía al reenviar un correo (18-09-2026).
+ *
+ * Aquí cada elemento de bloque deja su marca: los puntos de una lista salen con guion, las
+ * filas de una tabla en su línea con las celdas separadas por " | ", los títulos con una línea
+ * en blanco y las separaciones horizontales con una raya.
+ */
+export function htmlToPlainText(html: string): string {
+  let s = String(html || "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, "");
+
+  // Enlaces: el texto y, si aporta algo, la dirección entre paréntesis. Un enlace cuyo texto ES
+  // su propia dirección se imprime UNA vez (si no, sale duplicado y parece hecho por una máquina).
+  s = s.replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => {
+    const label = text.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    const bare = (u: string) => u.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+    if (!label || bare(label) === bare(href)) return href;
+    return `${label} (${href})`;
+  });
+
+  s = s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<hr\s*\/?>/gi, "\n------------------------------\n")
+    .replace(/<\/(p|h[1-6]|blockquote|ul|ol|table)>/gi, "\n\n")
+    .replace(/<\/(div|tr|section|article|header|footer)>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<\/(td|th)>/gi, " | ")
+    .replace(/<[^>]+>/g, "");
+
+  s = s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#3[49];|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_m, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, n: string) => String.fromCodePoint(parseInt(n, 16)));
+
+  return s
+    .replace(/[ \t]*\|[ \t]*\n/g, "\n")     // la última celda de cada fila no lleva separador
+    .replace(/[ \t]+$/gm, "")
+    .replace(/^[ \t]+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

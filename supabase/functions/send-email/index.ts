@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
-import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
+import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, htmlToPlainText, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -119,7 +119,9 @@ function sanitizeHtmlForDelivery(html: string): string {
       const style = tag.match(/\bstyle\s*=\s*("[^"]*"|'[^']*')/i)?.[1];
       return `<a href=${href}${style ? ` style=${style}` : ""}>`;
     })
-    .replace(/<(\/?)div\b/gi, "<$1p")
+    // Los <div> se quedan como <div>. Convertirlos en <p> metía bloques (listas, tablas, otros
+    // párrafos) DENTRO de un párrafo: HTML inválido que el cliente de correo cierra por su cuenta
+    // y deja el correo "todo junto". Se vio reenviando un correo con lista y tabla (18-09-2026).
     .trim();
 }
 
@@ -175,29 +177,6 @@ function normalizeSignatureHtml(sanitized: string): string {
   return s.split("\n").map((l) => l.trim()).filter(Boolean).join("<br>");
 }
 
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, (_m, href, text) => {
-      const label = text.replace(/<[^>]+>/g, "").trim();
-      // A link whose text IS its URL ("https://calendly.com/… (https://calendly.com/…)")
-      // read as a doubled, machine-made line in the plain part. Print it once.
-      const bare = (u: string) => u.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
-      if (!label || bare(label) === bare(href)) return href;
-      return `${label} (${href})`;
-    })
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
 
 function toBase64Utf8(value: string): string {
   const bytes = new TextEncoder().encode(value);

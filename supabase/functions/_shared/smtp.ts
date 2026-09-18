@@ -69,7 +69,7 @@ export function generateMessageId(domain: string, now: Date = new Date()): strin
   return `<${stamp}.${randomToken(10)}.${randomToken(6)}@${domain || "localhost"}>`;
 }
 
-import { threadHeaders } from "./mime-headers.ts";
+import { threadHeaders, htmlToPlainText } from "./mime-headers.ts";
 
 /** Message-IDs go on the wire inside angle brackets, EXACTLY once. Every other code path in
  *  this repo stores them already bracketed; blind `<${id}>` produced `<<id@dom>>`. */
@@ -139,27 +139,6 @@ export function quotedPrintableEncode(input: string): string {
 
 /** Plain-text alternative derived from the HTML. Links keep their URL — "label (href)" —
  *  because a text/plain part that silently drops the link is worse than no part at all. */
-export function htmlToPlainText(html: string): string {
-  return (html || "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/(div|tr|li|h[1-6])>/gi, "\n")
-    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => {
-      const label = text.replace(/<[^>]+>/g, "").trim();
-      return !label || label === href ? href : `${label} (${href})`;
-    })
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
 
 /** Dot-stuffing per RFC 5321 §4.5.2 — a body line starting with "." would end DATA early.
  *  `^\./gm` also covers a "." on the very first line, which /\r\n\./ does not. */
