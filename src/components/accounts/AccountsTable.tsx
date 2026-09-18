@@ -50,10 +50,10 @@ function providerOf(account: any): { name: string; mark: JSX.Element } {
 }
 
 const AUTH_CHIP: Record<string, string> = {
-  pass: "border-success/30 bg-success/10 text-success",
-  warn: "border-warning/30 bg-warning/10 text-warning",
-  fail: "border-destructive/30 bg-destructive/10 text-destructive",
-  none: "border-border bg-muted text-muted-foreground",
+  pass: "soft-auth-good",
+  warn: "soft-auth-off",
+  fail: "soft-auth-bad",
+  none: "soft-auth-off",
 };
 
 /** SPF / DKIM / DMARC en tres pastillas mínimas: el registro y su estado por color. */
@@ -65,7 +65,7 @@ function AuthPills({ auth }: { auth: DomainAuthLike | undefined }) {
         const cls = AUTH_CHIP[st ?? "none"];
         const text = st === "pass" ? "correcto" : st === "warn" ? "a revisar" : st === "fail" ? "no encontrado" : "sin datos";
         return (
-          <span key={k} title={`${k.toUpperCase()}: ${text}`} className={cn("inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase", cls)}>
+          <span key={k} title={`${k.toUpperCase()}: ${text}`} className={cn("soft-auth inline-flex items-center uppercase", cls)}>
             {k}
           </span>
         );
@@ -75,16 +75,16 @@ function AuthPills({ auth }: { auth: DomainAuthLike | undefined }) {
 }
 
 const LEVEL_META: Record<ConfigLevel, { cls: string; Icon: typeof ShieldCheck }> = {
-  ok: { cls: "border-success/30 bg-success/10 text-success", Icon: ShieldCheck },
-  warn: { cls: "border-warning/30 bg-warning/10 text-warning", Icon: ShieldQuestion },
-  bad: { cls: "border-destructive/30 bg-destructive/10 text-destructive", Icon: ShieldAlert },
-  checking: { cls: "border-border bg-muted text-muted-foreground", Icon: Loader2 },
-  unknown: { cls: "border-border bg-muted text-muted-foreground", Icon: ShieldQuestion },
+  ok: { cls: "soft-state-good", Icon: ShieldCheck },
+  warn: { cls: "soft-state-wait", Icon: ShieldQuestion },
+  bad: { cls: "soft-state-bad", Icon: ShieldAlert },
+  checking: { cls: "soft-state-wait", Icon: Loader2 },
+  unknown: { cls: "soft-state-wait", Icon: ShieldQuestion },
 };
 
 function Th({ children, className }: { children?: React.ReactNode; className?: string }) {
   return (
-    <th scope="col" className={cn("whitespace-nowrap px-3 py-2.5 text-left text-[12.5px] font-semibold text-secondary-foreground", className)}>
+    <th scope="col" className={cn("whitespace-nowrap px-3.5 py-4 text-left text-[12px] font-semibold text-[#536188] dark:text-muted-foreground", className)}>
       {children}
     </th>
   );
@@ -101,11 +101,11 @@ export default function AccountsTable(p: Props) {
   }), [p.accounts, p.domainAuth]);
 
   return (
-    <div className="overflow-hidden rounded-[10px] border border-border bg-card shadow-rest">
+    <div className="soft-panel overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[14px]">
+        <table className="w-full border-collapse text-[13px]">
           <thead>
-            <tr className="border-b border-border bg-accent/60 dark:bg-secondary">
+            <tr className="soft-thead">
               <Th className="w-10 pl-4 pr-0">
                 <Checkbox checked={p.allSelected} onCheckedChange={p.onToggleAll} aria-label="Seleccionar todas las cuentas" />
               </Th>
@@ -133,7 +133,7 @@ export default function AccountsTable(p: Props) {
                   key={account.id}
                   data-state={p.selectedIds.has(account.id) ? "selected" : undefined}
                   className={cn(
-                    "border-b border-border/70 transition-colors last:border-0 hover:bg-accent/30 dark:hover:bg-secondary/60",
+                    "soft-row border-b border-[#eceef5] last:border-0 dark:border-border/60",
                     p.selectedIds.has(account.id) && "bg-accent/70 shadow-[inset_3px_0_0_hsl(var(--primary))]",
                     dimmed && "opacity-55",
                   )}

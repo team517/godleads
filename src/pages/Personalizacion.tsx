@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play } from "lucide-react";
+import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -50,6 +50,27 @@ function detectEmailColumn(cols: string[], rows: Array<Record<string, any>>): st
   return bestHits >= Math.max(1, Math.floor(sample.length * 0.3)) ? best : "";
 }
 
+/* Ejemplo de archivo: lo que se ve en pantalla y lo que se descarga son LO MISMO. */
+const SAMPLE_ROWS: string[][] = [
+  ["Ana Gómez", "Acme", "CEO", "Tecnología", "ana@acme.com", "Madrid"],
+  ["Carlos Ruiz", "Globex", "Director comercial", "SaaS", "carlos@globex.com", "Barcelona"],
+  ["Lucía Fernández", "NovaTech", "Marketing", "Software", "lucia@novatech.com", "Valencia"],
+];
+const SAMPLE_HEADERS = ["nombre", "empresa", "cargo", "sector", "email", "ciudad"];
+
+function downloadSampleCsv() {
+  const csv = [SAMPLE_HEADERS.join(","), ...SAMPLE_ROWS.map((r) => r.join(","))].join("\n");
+  // El BOM hace que Excel abra el archivo con los acentos bien.
+  const url = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "plantilla-onepulso.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function Personalizacion() {
   const { user } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -57,6 +78,7 @@ export default function Personalizacion() {
   const [filename, setFilename] = useState("");
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const [emailColumn, setEmailColumn] = useState<string>("");
 
   const [prompt, setPrompt] = useState(
@@ -430,13 +452,42 @@ export default function Personalizacion() {
   const applyPrompt = (p: SavedPrompt) => { setPrompt(p.prompt); setPromptsOpen(false); toast.success(`Cargado "${p.name}"`); };
   const deletePrompt = (id: string) => { const next = savedPrompts.filter((p) => p.id !== id); setSavedPrompts(next); persistPrompts(next); };
 
+  // En qué paso va: sirve para la barra de progreso de arriba.
+  const currentStep = rows.length === 0 ? 1 : (running ? 3 : jobStatus === "completed" ? 4 : prog.total > 0 ? 3 : 2);
+  const STEPS = [
+    { n: 1, title: "Sube tu CSV", sub: "Importa tu lista de leads" },
+    { n: 2, title: "Configura el prompt", sub: "Usa {columnas}" },
+    { n: 3, title: "Genera con IA", sub: "Revisa y ajusta" },
+    { n: 4, title: "Listo", sub: "Descarga o usa en campaña" },
+  ];
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFile(f);
+  };
+
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Personalización con IA</h1>
-        <p className="text-xs sm:text-[15px] text-muted-foreground">
-          Sube un CSV, escribe un prompt con {"{columnas}"} y la IA genera un mensaje por lead. Corre en el servidor: puedes cerrar el PC.
+        <h1 className="font-display text-[clamp(27px,3vw,34px)] font-semibold leading-[1.1] tracking-[-1.2px] text-[#090b45] dark:text-foreground">Personalización con IA</h1>
+        <p className="mt-2 max-w-[640px] text-[15px] leading-[1.5] text-[#6876ad] dark:text-muted-foreground">
+          Sube un CSV, escribe un prompt con {"{columnas}"} y la IA genera un mensaje por lead.<br className="hidden sm:block" />
+          Corre en el servidor: puedes cerrar el PC.
         </p>
+      </div>
+
+      {/* Los cuatro pasos, para saber siempre por dónde vas. */}
+      <div className="soft-panel grid gap-4 px-6 py-4 sm:grid-cols-4">
+        {STEPS.map((st, i) => (
+          <div key={st.n} className="relative text-center">
+            {i < STEPS.length - 1 && <span aria-hidden className="soft-step-line absolute left-[57%] top-[14px] hidden w-[86%] sm:block" />}
+            <span className={`soft-step-num relative z-[2] mx-auto mb-2 ${currentStep === st.n ? "soft-step-on" : ""}`}>{st.n}</span>
+            <span className="block text-[13px] font-semibold text-[#16215a] dark:text-foreground">{st.title}</span>
+            <span className="block text-[12px] text-[#7682af] dark:text-muted-foreground">{st.sub}</span>
+          </div>
+        ))}
       </div>
 
       {/* Prominent progress banner — appears the moment you enter while a job is generating,
@@ -486,23 +537,71 @@ export default function Personalizacion() {
         </Card>
       )}
 
-      {/* Step 1 — CSV */}
+      {/* Paso 1 — el archivo, y al lado cómo funciona todo esto */}
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_.95fr]">
       <Card>
-        <CardContent className="p-4 sm:p-5 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold"><Upload className="h-4 w-4 text-primary" /> 1 · Sube tu CSV de leads</div>
+        <CardContent className="space-y-4 p-5 sm:p-6">
+          <div className="flex items-center gap-3.5">
+            <span className="soft-card-icon"><Upload className="h-5 w-5" /></span>
+            <span>
+              <span className="block font-display text-[17px] font-semibold text-foreground">1. Sube tu CSV de leads</span>
+              <span className="block text-[12.5px] text-muted-foreground">El archivo debe contener las columnas que usarás en tu mensaje.</span>
+            </span>
+          </div>
           <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => fileRef.current?.click()}>
-              <FileText className="h-4 w-4" /> {filename ? "Cambiar CSV" : "Elegir CSV"}
-            </Button>
-            {filename && (
-              <span className="text-xs text-muted-foreground">
-                {filename} · <b>{rows.length}</b> filas · <b className="text-foreground">{emailStats.valid}</b> emails válidos
-                {emailStats.dupes > 0 ? <span className="text-warning"> · {emailStats.dupes} duplicados</span> : null}
-                {emailStats.invalid > 0 ? <span className="text-destructive"> · {emailStats.invalid} sin email</span> : null}
-                {" · "}{columns.length} columnas
-              </span>
-            )}
+
+          <div
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileRef.current?.click(); }}
+            className={`soft-drop p-6 ${dragOver ? "soft-drop-over" : ""}`}
+          >
+            <span className="soft-drop-icon mb-3.5"><UploadCloud className="h-8 w-8" strokeWidth={1.7} /></span>
+            <span className="block font-display text-[16px] font-semibold text-foreground">
+              {filename || "Arrastra tu archivo aquí"}
+            </span>
+            <span className="mt-1 block text-[13px] text-muted-foreground">
+              {filename
+                ? `${rows.length} filas · ${emailStats.valid} emails válidos · ${columns.length} columnas`
+                : "o haz clic para seleccionar"}
+            </span>
+            <span className="mt-3 block text-[12.5px] leading-[1.6] text-muted-foreground">
+              Formato admitido: CSV<br />Tamaño máximo: 10 MB
+            </span>
+            <span className="soft-primary mt-4 inline-flex items-center gap-2 !h-11 !rounded-[9px] !px-7 !text-[14px]">
+              <Upload className="h-4 w-4" /> {filename ? "Cambiar CSV" : "Elegir CSV"}
+            </span>
+          </div>
+
+          {filename && (emailStats.dupes > 0 || emailStats.invalid > 0) && (
+            <p className="text-[12.5px] text-muted-foreground">
+              {emailStats.dupes > 0 ? <span className="text-warning">{emailStats.dupes} duplicados</span> : null}
+              {emailStats.dupes > 0 && emailStats.invalid > 0 ? " · " : null}
+              {emailStats.invalid > 0 ? <span className="text-destructive">{emailStats.invalid} sin email</span> : null}
+            </p>
+          )}
+
+          {/* Columnas detectadas */}
+          <div className="flex items-center gap-4 rounded-[11px] border border-border bg-[linear-gradient(90deg,#fafbff,#fdfcff)] p-4 dark:bg-muted/20">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#e9f1ff] text-[#4977ff] dark:bg-primary/15 dark:text-primary">
+              <FileText className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[13px] font-semibold text-foreground">Columnas detectadas</span>
+              {columns.length === 0
+                ? <span className="block text-[12px] text-muted-foreground">Aquí aparecerán las columnas de tu archivo una vez lo subas.</span>
+                : (
+                  <span className="mt-1 flex flex-wrap gap-1.5">
+                    {columns.map((c) => (
+                      <span key={c} className="rounded-[6px] bg-[#f1edff] px-2 py-1 text-[11px] font-medium text-[#6843f5] dark:bg-primary/15 dark:text-primary">{c}</span>
+                    ))}
+                  </span>
+                )}
+            </span>
           </div>
           {columns.length > 0 && (
             <div className="space-y-1.5">
@@ -515,6 +614,80 @@ export default function Personalizacion() {
           )}
         </CardContent>
       </Card>
+
+      {/* Cómo funciona */}
+      <Card className="bg-[radial-gradient(circle_at_90%_0,rgba(87,203,255,.12),transparent_35%),radial-gradient(circle_at_20%_90%,rgba(179,64,255,.08),transparent_40%),rgba(255,255,255,.83)] dark:bg-card/80">
+        <CardContent className="p-5 sm:p-6">
+          <div className="mb-5 flex items-center gap-3.5">
+            <span className="soft-card-icon"><Sparkles className="h-5 w-5" /></span>
+            <span className="font-display text-[17px] font-semibold text-foreground">¿Cómo funciona?</span>
+          </div>
+          {[
+            { Icon: Upload, t: "1. Sube tu lista", d: "Importa un archivo CSV con tus leads." },
+            { Icon: Pencil, t: "2. Escribe un prompt", d: "Usa {columnas} para personalizar el mensaje." },
+            { Icon: Sparkles, t: "3. La IA genera mensajes", d: "Se genera un mensaje único por cada lead." },
+            { Icon: Download, t: "4. Descarga o usa en campaña", d: "Exporta el resultado o mándalo a una campaña." },
+          ].map(({ Icon, t, d }) => (
+            <div key={t} className="mb-4 flex gap-3.5">
+              <span className="grid h-[43px] w-[43px] shrink-0 place-items-center rounded-[10px] bg-[linear-gradient(135deg,#f0ecff,#f6f4ff)] text-[#7444ff] dark:bg-primary/15 dark:text-primary">
+                <Icon className="h-5 w-5" strokeWidth={1.8} />
+              </span>
+              <span>
+                <span className="block text-[13px] font-semibold text-foreground">{t}</span>
+                <span className="block text-[12.5px] leading-[1.5] text-muted-foreground">{d}</span>
+              </span>
+            </div>
+          ))}
+          <div className="soft-tip">
+            <span className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-full bg-[#fff4d9] text-[20px] dark:bg-amber-500/20">💡</span>
+            <span>
+              <span className="block text-[13px] font-semibold text-foreground">Consejo</span>
+              <span className="block text-[12.5px] leading-[1.5] text-muted-foreground">
+                Cuantas más columnas lleve el archivo (nombre, empresa, cargo, sector…), más personalizados salen los mensajes.
+              </span>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+      </div>
+
+      {/* Ejemplo de CSV */}
+      {rows.length === 0 && (
+        <Card>
+          <CardContent className="p-5 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <span className="soft-card-icon"><FileText className="h-5 w-5" /></span>
+                <span>
+                  <span className="block font-display text-[17px] font-semibold text-foreground">Ejemplo de CSV</span>
+                  <span className="block text-[12.5px] text-muted-foreground">Tu archivo puede tener columnas como estas:</span>
+                </span>
+              </div>
+              <button type="button" onClick={downloadSampleCsv} className="soft-control inline-flex h-10 items-center gap-2 px-4 text-[13px]">
+                <Download className="h-4 w-4" /> Descargar plantilla
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-[10px] border border-border">
+              <table className="w-full min-w-[720px] border-collapse text-[12px]">
+                <thead>
+                  <tr className="soft-thead">
+                    {SAMPLE_HEADERS.map((h) => (
+                      <th key={h} className="border-b border-border px-4 py-2.5 text-left font-medium text-[#4c5b8d] dark:text-muted-foreground">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="text-[#60709f] dark:text-muted-foreground">
+                  {SAMPLE_ROWS.map((r) => (
+                    <tr key={r[4]} className="soft-row">
+                      {r.map((cell, i) => <td key={i} className="border-b border-border/70 px-4 py-2.5 last:border-r-0">{cell}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Step 2 — Prompt */}
       {columns.length > 0 && (

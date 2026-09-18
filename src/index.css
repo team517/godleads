@@ -733,6 +733,8 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
   transition: transform .2s ease, box-shadow .2s ease;
 }
 .soft-primary:hover { transform: translateY(-2px); box-shadow: 0 17px 34px rgba(91,70,255,.30); }
+/* El mismo botón, en barra de acciones (40px). */
+.soft-primary-sm { height: 40px; padding: 0 15px; border-radius: 9px; font-size: 13px; }
 
 /* La ola y los puntos del fondo del panel. */
 .soft-wave-fixed {
@@ -872,6 +874,108 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 }
 .soft-nav-section:hover .soft-nav-arrow { background: #f3f4fb; }
 .dark .soft-nav-section:hover .soft-nav-arrow { background: hsl(var(--sidebar-accent)); }
+
+
+/* ── Piezas de Cuentas de Email y Personalización (HTML del propietario) ────────────────── */
+
+/* Tarjeta de resumen con su baldosa de icono. */
+.soft-stat {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--soft-border, #e1e5f2);
+  border-radius: 15px;
+  background: rgba(255,255,255,.82);
+  box-shadow: 0 10px 30px rgba(61,60,140,.04);
+  backdrop-filter: blur(14px);
+}
+.dark .soft-stat { background: hsl(var(--card) / .75); border-color: hsl(var(--border)); box-shadow: 0 10px 30px rgba(0,0,0,.30); }
+.soft-stat-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 12px; }
+
+/* Barra de etiquetas. */
+.soft-tagpill {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #60709b;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color .2s ease, color .2s ease;
+}
+.soft-tagpill:hover { background: #f6f4ff; color: #6946ff; }
+.soft-tagpill-on { color: #fff; background: linear-gradient(90deg,#6350ff,#8a40ff); box-shadow: 0 5px 12px rgba(105,71,255,.17); }
+.dark .soft-tagpill { color: hsl(var(--muted-foreground)); }
+.dark .soft-tagpill:hover { background: hsl(var(--accent)); color: hsl(var(--primary)); }
+.dark .soft-tagpill-on { color: #fff; }
+
+/* SPF / DKIM / DMARC. */
+.soft-auth { padding: 4px 7px; border-radius: 6px; font-size: 10px; font-weight: 650; }
+.soft-auth-good { color: #008a5d; background: #e8faf3; border: 1px solid #aee8d1; }
+.soft-auth-bad  { color: #e63e4e; background: #fff0f2; border: 1px solid #ffc0c7; }
+.soft-auth-off  { color: #71809f; background: #f0f2f7; border: 1px solid #e2e5ee; }
+.dark .soft-auth-good { color: #45d6a6; background: rgba(8,167,108,.15); border-color: rgba(8,167,108,.35); }
+.dark .soft-auth-bad  { color: #ff8a95; background: rgba(239,64,85,.14); border-color: rgba(239,64,85,.33); }
+.dark .soft-auth-off  { color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); border-color: hsl(var(--border)); }
+
+/* Estado de la configuración DNS. */
+.soft-state { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 15px; font-size: 11px; font-weight: 650; }
+.soft-state-good { color: #079164; background: #e9fbf4; border: 1px solid #afe9d2; }
+.soft-state-bad  { color: #e83e50; background: #fff0f2; border: 1px solid #ffbdc6; }
+.soft-state-wait { color: #6d7898; background: #f0f2f7; border: 1px solid transparent; }
+.dark .soft-state-good { color: #45d6a6; background: rgba(8,167,108,.15); border-color: rgba(8,167,108,.35); }
+.dark .soft-state-bad  { color: #ff8a95; background: rgba(239,64,85,.14); border-color: rgba(239,64,85,.33); }
+.dark .soft-state-wait { color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); }
+
+/* Límite diario. */
+.soft-meter { height: 4px; border-radius: 10px; background: #edf0f6; overflow: hidden; }
+.soft-meter > span { display: block; height: 100%; background: linear-gradient(90deg,#3d9cff,#7845ff); }
+.dark .soft-meter { background: hsl(var(--muted)); }
+.soft-ramp { display: inline-block; padding: 4px 7px; border-radius: 12px; font-size: 10px; color: #6f50f4; background: #f2efff; border: 1px solid #ddd5ff; }
+.dark .soft-ramp { color: #b9a8ff; background: rgba(111,80,244,.16); border-color: rgba(111,80,244,.35); }
+
+/* Etiquetas de una cuenta. */
+.soft-chip { padding: 5px 9px; border-radius: 12px; background: #f1f2f7; color: #64708f; font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+.dark .soft-chip { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+.soft-chip-add { border: 1px dashed #dce0eb; background: #fff; color: #7a87a7; }
+.dark .soft-chip-add { background: transparent; border-color: hsl(var(--border)); }
+
+/* Pasos numerados de una pantalla guiada (Personalización). */
+.soft-step-num { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: #e8ebf7; color: #6473a4; font-weight: 700; }
+.dark .soft-step-num { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+.soft-step-on { color: #fff; background: linear-gradient(135deg,#427cff,#7b3cff); box-shadow: 0 0 0 5px rgba(105,73,255,.10); }
+.soft-step-line { height: 2px; background: #dce1f6; }
+.dark .soft-step-line { background: hsl(var(--border)); }
+
+/* Baldosa de icono de una tarjeta. */
+.soft-card-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; color: #7044ff; background: linear-gradient(135deg,#f1ecff,#f6f8ff); }
+.dark .soft-card-icon { color: #bda8ff; background: linear-gradient(135deg, hsl(262 45% 22%), hsl(215 40% 20%)); }
+
+/* Zona de soltar archivos. */
+.soft-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+  border: 1.5px dashed #c8d0f1;
+  border-radius: 13px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .25s ease, background-color .25s ease;
+  background: radial-gradient(circle at center, rgba(113,71,255,.035), transparent 60%);
+}
+.soft-drop:hover, .soft-drop-over { border-color: #7650ff; background: #faf9ff; }
+.dark .soft-drop { border-color: hsl(var(--border)); }
+.dark .soft-drop:hover, .dark .soft-drop-over { border-color: hsl(var(--primary)); background: hsl(var(--accent) / .4); }
+.soft-drop-icon { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; color: #7042ff; background: linear-gradient(135deg,#f0eaff,#e9f3ff); }
+.dark .soft-drop-icon { color: #bda8ff; background: linear-gradient(135deg, hsl(262 45% 22%), hsl(205 45% 20%)); }
+
+/* Consejo. */
+.soft-tip { display: flex; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid #e4defc; background: linear-gradient(135deg,#faf8ff,#fff8fd); }
+.dark .soft-tip { border-color: hsl(var(--border)); background: linear-gradient(135deg, hsl(262 30% 18%), hsl(320 25% 17%)); }
 
 /* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
 @keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }

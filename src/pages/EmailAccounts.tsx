@@ -1215,27 +1215,11 @@ export default function EmailAccounts() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-display text-xl sm:text-2xl font-semibold tracking-[-0.03em]">Cuentas de Email</h1>
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-[15px] text-muted-foreground">
-            <span>{accounts.length > 0 ? `${accounts.length} ${accounts.length === 1 ? "cuenta conectada" : "cuentas conectadas"}` : "Gestiona tus cuentas SMTP/IMAP"}</span>
-            {/* Resumen del DNS del dominio (SPF · DKIM · DMARC), no del warm-up. */}
-            {authSummary.ok > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[11.5px] font-semibold text-success">
-                <ShieldCheck className="h-3 w-3" /> {authSummary.ok} bien configuradas
-              </span>
-            )}
-            {authSummary.bad > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[11.5px] font-semibold text-destructive">
-                <ShieldAlert className="h-3 w-3" /> {authSummary.bad} con registros que faltan
-              </span>
-            )}
-            {authSummary.warn > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11.5px] font-semibold text-warning">
-                <ShieldQuestion className="h-3 w-3" /> {authSummary.warn} a revisar
-              </span>
-            )}
+          <h1 className="font-display text-[clamp(26px,2.8vw,31px)] font-semibold leading-[1.1] tracking-[-1px] text-[#0b0d42] dark:text-foreground">Cuentas de Email</h1>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-[#6f7da7] dark:text-muted-foreground">
+            <span>{accounts.length > 0 ? "Gestiona todas tus cuentas conectadas" : "Gestiona tus cuentas SMTP/IMAP"}</span>
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1271,9 +1255,13 @@ export default function EmailAccounts() {
           </Button>
             </>
           )}
-          <Button size="sm" className="gap-2" onClick={() => { setAddMode("single"); setShowAdd(true); }}>
+          <button
+            type="button"
+            className="soft-primary soft-primary-sm inline-flex items-center gap-2"
+            onClick={() => { setAddMode("single"); setShowAdd(true); }}
+          >
             <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Añadir cuenta</span><span className="sm:hidden">Añadir</span>
-          </Button>
+          </button>
           <AddAccountDialog
             open={showAdd}
             onOpenChange={(o) => { setShowAdd(o); if (!o) { draftAccountId.current = null; setAddError(null); } }}
@@ -1294,12 +1282,46 @@ export default function EmailAccounts() {
         </div>
       </div>
 
+      {/* Resumen: cuántas hay y cómo está su DNS. Es lo primero que se mira al entrar. */}
+      {accounts.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="soft-stat">
+            <span className="soft-stat-icon bg-[#eef0ff] text-[#6146ff] dark:bg-primary/15 dark:text-primary"><Mail className="h-5 w-5" /></span>
+            <span>
+              <span className="block font-display text-[24px] font-semibold leading-none text-foreground">{accounts.length}</span>
+              <span className="block text-[13px] text-muted-foreground">Cuentas totales</span>
+            </span>
+          </div>
+          <div className="soft-stat">
+            <span className="soft-stat-icon bg-[#e9fbf4] text-[#08a76c] dark:bg-[#08a76c]/15"><ShieldCheck className="h-5 w-5" /></span>
+            <span>
+              <span className="block font-display text-[24px] font-semibold leading-none text-foreground">{authSummary.ok}</span>
+              <span className="block text-[13px] text-muted-foreground">Bien configuradas</span>
+            </span>
+          </div>
+          <div className="soft-stat">
+            <span className="soft-stat-icon bg-[#fff0f2] text-[#ef4055] dark:bg-[#ef4055]/15"><ShieldAlert className="h-5 w-5" /></span>
+            <span>
+              <span className="block font-display text-[24px] font-semibold leading-none text-foreground">{authSummary.bad}</span>
+              <span className="block text-[13px] text-muted-foreground">Con registros que faltan</span>
+            </span>
+          </div>
+          <div className="soft-stat">
+            <span className="soft-stat-icon bg-[#f0f2f7] text-[#6d7898] dark:bg-muted"><ShieldQuestion className="h-5 w-5" /></span>
+            <span>
+              <span className="block font-display text-[24px] font-semibold leading-none text-foreground">{authSummary.warn + authSummary.unknown + authSummary.checking}</span>
+              <span className="block text-[13px] text-muted-foreground">Requieren configuración</span>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Tag filter bar - always visible */}
-      <div className="flex items-center gap-2 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
-        <Tag className="h-4 w-4 text-muted-foreground" />
+      <div className="soft-panel flex items-center gap-2 overflow-x-auto px-4 py-3">
+        <Tag className="h-4 w-4 shrink-0 text-[#7b55ff]" />
         <button
           onClick={() => setFilterTag(null)}
-          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${!filterTag ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+          className={`soft-tagpill ${!filterTag ? "soft-tagpill-on" : ""}`}
         >
           Todas ({accounts.length})
         </button>
@@ -1309,7 +1331,7 @@ export default function EmailAccounts() {
             <div key={tag} className="flex items-center gap-0.5 group">
               <button
                 onClick={() => setFilterTag(filterTag === tag ? null : tag)}
-                className={`px-2.5 py-1 rounded-l-full text-xs font-medium transition-colors ${filterTag === tag ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+                className={`soft-tagpill rounded-r-none ${filterTag === tag ? "soft-tagpill-on" : ""}`}
               >
                 {tag} ({count})
               </button>
@@ -1323,14 +1345,21 @@ export default function EmailAccounts() {
             </div>
           );
         })}
-        <div className="h-4 w-px bg-border" />
-        <Button size="sm" className="h-7 text-xs gap-1" onClick={() => openCreateTag(selectedIds.size > 0 ? "selected" : "none")}>
-          <Plus className="h-3 w-3" /> Crear tag
-        </Button>
-        <div className="h-4 w-px bg-border" />
-        <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowTagManager(true)}>
-          <Tag className="h-3 w-3" /> Ver todos los tags
-        </Button>
+        <span className="mx-1.5 h-6 w-px shrink-0 bg-border" />
+        <button
+          type="button"
+          onClick={() => openCreateTag(selectedIds.size > 0 ? "selected" : "none")}
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[9px] bg-[linear-gradient(90deg,#6650ff,#8b3dff)] px-3.5 text-[13px] font-semibold text-white transition-transform hover:-translate-y-[1px]"
+        >
+          <Plus className="h-3.5 w-3.5" /> Crear tag
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowTagManager(true)}
+          className="soft-control inline-flex h-9 shrink-0 items-center gap-1.5 px-3.5 text-[13px]"
+        >
+          <Tag className="h-3.5 w-3.5" /> Ver todos los tags
+        </button>
       </div>
 
       {/* Crear tag — nombre + a qué cuentas aplicarlo. Nunca aparece apagado. */}
@@ -1609,16 +1638,16 @@ export default function EmailAccounts() {
 
 
       {accounts.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-lg border bg-muted/30 px-3 sm:px-4 py-2.5">
+        <div className="soft-panel flex flex-wrap items-center gap-3 px-4 py-3.5">
           {/* Search — filters the list; "seleccionar todas" and every bulk action then act on
               exactly what is shown, so "eric" + select-all = only Eric's mailboxes. */}
-          <div className="relative w-full sm:w-64 order-first">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
+          <div className="relative order-first w-full sm:w-[290px]">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8090b4]" />
+            <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar cuenta, nombre, host o tag…"
-              className="h-8 pl-8 pr-8 text-sm"
+              className="soft-control w-full pl-11 pr-9 font-normal"
             />
             {search && (
               <button
@@ -1640,9 +1669,13 @@ export default function EmailAccounts() {
               {filteredAccounts.length} de {accounts.length}
             </span>
           )}
-          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setShowSlowRamp(true)}>
+          <button
+            type="button"
+            onClick={() => setShowSlowRamp(true)}
+            className="inline-flex h-9 items-center gap-1.5 rounded-[9px] border border-[#dedaf8] bg-[#faf8ff] px-3.5 text-[12.5px] font-semibold text-[#6249dc] transition-colors hover:border-[#c3b8ff] dark:border-border dark:bg-primary/10 dark:text-primary"
+          >
             <TrendingUp className="h-4 w-4" /> Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : `(${filteredAccounts.length})`}
-          </Button>
+          </button>
           {selectedIds.size > 0 && (
             <>
               <Button size="sm" variant="destructive" className="h-7 text-xs gap-1" onClick={handleBulkDelete}>

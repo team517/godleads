@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { SparkMark } from "@/components/SparkMark";
 import { useLocation } from "react-router-dom";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
@@ -646,13 +647,14 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
             exit={{ scale: 0, opacity: 0 }}
             className="fixed bottom-6 right-6 z-50"
           >
-            <Button
+            <button
+              type="button"
               onClick={() => setOpen(true)}
-              size="lg"
-              className="h-14 w-14 rounded-full shadow-2xl shadow-primary/30 hover:shadow-primary/50 transition-shadow"
+              aria-label="Preguntar a la IA de OnePulso"
+              className="grid h-14 w-14 place-items-center rounded-full border border-white/70 bg-[linear-gradient(135deg,rgba(255,255,255,.96),rgba(243,246,255,.9))] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(255,255,255,.14),rgba(255,255,255,.06))]"
             >
-              <Sparkles className="h-6 w-6" />
-            </Button>
+              <SparkMark size={30} bare />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

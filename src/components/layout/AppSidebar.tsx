@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import {
   type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
+import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
@@ -235,7 +236,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
         <div className="topbar-surface flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between px-4 pt-[env(safe-area-inset-top)]">
           {profileData.logo_url
             ? <span className="flex h-8 items-center rounded-md bg-white px-2"><img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[130px] object-contain" /></span>
-            : <Wordmark className="h-[22px]" colorClassName="text-white" />}
+            : <span className="flex items-center gap-2.5"><SparkMark size={28} /><Wordmark className="h-[20px]" colorClassName="text-white" /></span>}
           <button onClick={onClose} aria-label="Cerrar menú" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white">
             <X className="h-5 w-5" />
           </button>

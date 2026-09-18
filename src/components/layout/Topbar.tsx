@@ -12,6 +12,7 @@ import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushState } f
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { Wordmark } from "@/components/Wordmark";
+import { SparkMark } from "@/components/SparkMark";
 import { clearKeepSession } from "@/components/KeepSessionBanner";
 import { prefetchRoute } from "@/lib/route-prefetch";
 import { useTheme } from "@/hooks/use-theme";
@@ -216,7 +217,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             </span>
           ) : (
             <>
-              <span className="brand-mark block h-[26px] w-[26px] rounded-[7px]" />
+              <SparkMark size={30} />
               <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-white" />
             </>
           )}
