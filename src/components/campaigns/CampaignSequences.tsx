@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Smile, Braces, Info, Mail, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
 
@@ -70,29 +71,22 @@ const PAPER =
   "rounded-lg border border-zinc-200 bg-white text-zinc-900 shadow-sm [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline";
 
 /* ── Piezas de la secuencia ───────────────────────────────────────────────────────────
-   El raíl de la izquierda (Paso 1 · Esperar · Paso 2…) con su línea de tiempo, y los
-   botones de la barra de formato. Son sólo pintura: no saben nada de los datos. */
+   El raíl de la izquierda (Paso 1 · Esperar · Paso 2…) con su línea de tiempo, los botones
+   de la barra de formato y los de la barra de arriba. Sólo pintura: no saben nada de los
+   datos. Los tamaños y colores salen de la capa "suave" de index.css. */
 
 function SeqRail({ Icon, title, sub, last, active, grip, tone = "step" }: {
-  Icon: typeof Mail; title: string; sub: string; last?: boolean; active?: boolean; grip?: boolean; tone?: "step" | "wait" | "add";
+  Icon: typeof Mail; title: string; sub: string; last?: boolean; active?: boolean; grip?: boolean; tone?: "step" | "add";
 }) {
   return (
-    <div className="relative hidden w-[136px] shrink-0 pt-1 md:block">
-      <span
-        className={`grid h-12 w-12 place-items-center rounded-full border transition-colors ${
-          tone === "add"
-            ? "border-dashed border-border bg-card text-muted-foreground"
-            : active
-              ? "border-primary/30 bg-primary text-primary-foreground"
-              : "border-transparent bg-accent text-primary"
-        }`}
-      >
-        <Icon className="h-5 w-5" strokeWidth={1.9} />
-      </span>
-      {title && <p className="mt-2.5 font-display text-[15px] font-semibold leading-tight tracking-[-0.02em] text-foreground">{title}</p>}
-      {sub && <p className="mt-0.5 text-[12.5px] leading-[1.35] text-muted-foreground">{sub}</p>}
-      {grip && <GripVertical className="absolute -left-4 top-4 h-4 w-4 cursor-grab text-muted-foreground opacity-0 transition-opacity hover:opacity-100 active:cursor-grabbing" />}
-      {!last && <span aria-hidden className="absolute left-6 top-[56px] w-px -translate-x-1/2 bg-border" style={{ bottom: -28 }} />}
+    <div className="relative hidden pt-3 md:block">
+      <div className={`soft-rail-icon ${active ? "soft-rail-icon-active" : ""} ${tone === "add" ? "opacity-60" : ""}`}>
+        <Icon className="h-7 w-7" strokeWidth={1.8} />
+      </div>
+      {title && <h3 className="mb-[5px] mt-[18px] font-display text-[19px] font-semibold tracking-[-0.02em] text-foreground">{title}</h3>}
+      {sub && <p className="text-[14px] leading-[1.35] text-[#727aa7] dark:text-muted-foreground">{sub}</p>}
+      {grip && <GripVertical className="absolute -left-4 top-6 h-4 w-4 cursor-grab text-muted-foreground opacity-0 transition-opacity hover:opacity-100 active:cursor-grabbing" />}
+      {!last && <span aria-hidden className="soft-rail-line absolute left-[31px] top-[62px] w-px" style={{ bottom: -75 }} />}
     </div>
   );
 }
@@ -107,18 +101,36 @@ function SeqTool({ Icon, label, onClick, disabled, spin, badge, danger }: {
       disabled={disabled}
       title={label}
       aria-label={label}
-      className={`relative grid h-8 w-8 place-items-center rounded-[8px] transition-colors disabled:pointer-events-none disabled:opacity-45 ${
-        danger ? "text-muted-foreground hover:bg-destructive/10 hover:text-destructive" : "text-muted-foreground hover:bg-accent hover:text-primary"
+      className={`relative text-[#131938] transition-colors disabled:pointer-events-none disabled:opacity-40 dark:text-foreground ${
+        danger ? "hover:text-destructive" : "hover:text-primary"
       }`}
     >
-      <Icon className={`h-4 w-4 ${spin ? "animate-spin" : ""}`} />
-      {badge ? <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-[14px] place-items-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">{badge}</span> : null}
+      <Icon className={`h-[18px] w-[18px] ${spin ? "animate-spin" : ""}`} />
+      {badge ? <span className="absolute -right-2 -top-1.5 grid h-3.5 min-w-[14px] place-items-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">{badge}</span> : null}
+    </button>
+  );
+}
+
+function SeqAction({ Icon, label, onClick, disabled, spin, on }: {
+  Icon: typeof Eye; label: string; onClick: () => void; disabled?: boolean; spin?: boolean; on?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-9 items-center gap-1.5 rounded-[12px] border px-3.5 text-[13.5px] font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+        on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-secondary-foreground hover:border-primary hover:text-primary"
+      }`}
+    >
+      <Icon className={`h-4 w-4 ${spin ? "animate-spin" : ""}`} /> {label}
     </button>
   );
 }
 
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [steps, setSteps] = useState<any[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -860,6 +872,25 @@ export default function CampaignSequences({ campaignId }: Props) {
     }
   };
 
+  /** El interruptor A/B de un correo: encendido = tiene variantes. Al encenderlo crea la B; al
+   *  apagarlo se quitan las variantes, y eso borra lo escrito en ellas, asi que se pregunta. */
+  const toggleAbTest = async (step: any) => {
+    setSelectedStepId(step.id);
+    const vs: Variant[] = Array.isArray(step.variants) ? step.variants : [];
+    if (vs.length === 0) { await addVariant(step); setActiveVariantIndex(1); return; }
+    const ok = await confirm({
+      title: "¿Quitar la prueba A/B?",
+      description: `Se borrarán ${vs.length} variante(s) de este correo y lo que hayas escrito en ellas. La versión A se queda igual.`,
+      confirmText: "Quitar",
+      destructive: true,
+    });
+    if (!ok) return;
+    setActiveVariantIndex(0);
+    setSteps((prev) => prev.map((x) => (x.id === step.id ? { ...x, variants: [] } : x)));
+    await updateStepField(step.id, "variants", [] as any);
+    toast.success("Prueba A/B quitada");
+  };
+
   /** La espera de un paso en número + unidad, como en el diseño (2 días / 1 semana). */
   const delayParts = (days: number) => (days > 0 && days % 7 === 0 ? { n: days / 7, unit: "weeks" as const } : { n: days, unit: "days" as const });
   const setDelay = (step: any, n: number, unit: "days" | "weeks") => {
@@ -870,50 +901,42 @@ export default function CampaignSequences({ campaignId }: Props) {
 
   return (
     <>
-    <div className="space-y-4">
-      {/* Barra de la secuencia: lo que afecta a TODA la secuencia, no a un paso suelto. */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border bg-card px-3.5 py-2.5 shadow-rest">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="font-display text-[15px] font-semibold text-foreground">Secuencia</span>
-          <span className="rounded-full bg-accent px-2 py-0.5 text-[11.5px] font-semibold text-primary">
+    <div className="soft-surface rounded-[25px] px-4 py-7 sm:px-8 sm:py-10">
+      <div className="mx-auto max-w-[1450px]">
+      {/* Lo que afecta a TODA la secuencia, no a un correo suelto. */}
+      <div className="soft-card mb-7 flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="font-display text-[17px] font-semibold text-foreground">Secuencia</span>
+          <span className="rounded-full bg-accent px-2.5 py-0.5 text-[12px] font-semibold text-primary">
             {steps.length} {steps.length === 1 ? "paso" : "pasos"}
           </span>
-          <span className="hidden truncate text-[12.5px] text-muted-foreground lg:inline">· se envían en orden y se paran en cuanto el lead contesta</span>
+          <span className="hidden truncate text-[13.5px] text-muted-foreground lg:inline">· se envían en orden y se paran en cuanto el lead contesta</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button type="button" onClick={undo} disabled={!canUndo} title="Deshacer" aria-label="Deshacer"
-            className="grid h-8 w-8 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
-            <Undo2 className="h-3.5 w-3.5" />
+            className="grid h-9 w-9 place-items-center rounded-[12px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
+            <Undo2 className="h-4 w-4" />
           </button>
           <button type="button" onClick={redo} disabled={!canRedo} title="Rehacer" aria-label="Rehacer"
-            className="grid h-8 w-8 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
-            <Redo2 className="h-3.5 w-3.5" />
+            className="grid h-9 w-9 place-items-center rounded-[12px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
+            <Redo2 className="h-4 w-4" />
           </button>
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={correctAllVariables} disabled={correcting}
-            title="Revisa y corrige las variables mal escritas para que coincidan con los campos de tus leads">
-            {correcting ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />} Corregir variables
-          </Button>
-          <Button variant={showPreview ? "default" : "outline"} size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setShowPreview(!showPreview)}>
-            <Eye className="h-3 w-3" /> Vista previa
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" disabled={!selectedStep}
-            onClick={() => { if (!testTo || campaignLeadEmails.includes(testTo)) setTestTo(user?.email || "team@onepulso.online"); setShowTestEmail(true); }}>
-            <SendHorizonal className="h-3 w-3" /> Enviar prueba
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setShowAiGenerate(true)}>
-            <Sparkles className="h-3 w-3 text-primary" /> Generar secuencia
-          </Button>
+          <SeqAction Icon={correcting ? Loader2 : WandSparkles} spin={correcting} label="Corregir variables" onClick={correctAllVariables} disabled={correcting} />
+          <SeqAction Icon={Eye} label="Vista previa" onClick={() => setShowPreview(!showPreview)} on={showPreview} />
+          <SeqAction Icon={SendHorizonal} label="Enviar prueba" disabled={!selectedStep}
+            onClick={() => { if (!testTo || campaignLeadEmails.includes(testTo)) setTestTo(user?.email || "team@onepulso.online"); setShowTestEmail(true); }} />
+          <SeqAction Icon={Sparkles} label="Generar secuencia" onClick={() => setShowAiGenerate(true)} />
         </div>
       </div>
 
       {steps.length === 0 ? (
-        <div className="rounded-[14px] border border-dashed border-border bg-card px-6 py-14 text-center">
-          <span className="mx-auto grid h-14 w-14 place-items-center rounded-[16px] bg-accent text-primary"><GitBranch className="h-6 w-6" /></span>
-          <p className="mt-4 font-display text-[17px] font-semibold text-foreground">Todavía no hay ningún correo</p>
-          <p className="mt-1 text-[14px] text-muted-foreground">Empieza por el primer email y añade los seguimientos que quieras.</p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <Button size="sm" className="gap-1.5" onClick={addStep}><Plus className="h-3.5 w-3.5" /> Crear primer paso</Button>
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAiGenerate(true)}><Sparkles className="h-3.5 w-3.5 text-primary" /> Generar con IA</Button>
+        <div className="soft-card px-6 py-16 text-center">
+          <span className="soft-rail-icon mx-auto"><GitBranch className="h-7 w-7" /></span>
+          <p className="mt-5 font-display text-[19px] font-semibold text-foreground">Todavía no hay ningún correo</p>
+          <p className="mt-1.5 text-[14.5px] text-muted-foreground">Empieza por el primer email y añade los seguimientos que quieras.</p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+            <button onClick={addStep} className="soft-ai-btn inline-flex items-center gap-2 text-[15px]"><Plus className="h-4 w-4" /> Crear primer paso</button>
+            <button onClick={() => setShowAiGenerate(true)} className="soft-square inline-flex h-[46px] items-center gap-2 px-5 text-[15px] font-semibold"><Sparkles className="h-4 w-4 text-primary" /> Generar con IA</button>
           </div>
         </div>
       ) : (
@@ -929,37 +952,34 @@ export default function CampaignSequences({ campaignId }: Props) {
 
             return (
               <div key={step.id}>
-                {/* Espera entre este paso y el anterior */}
+                {/* La espera entre este correo y el anterior */}
                 {i > 0 && (
-                  <div className="flex gap-5 pb-5">
-                    <SeqRail Icon={Clock} title="Esperar" sub="Tiempo entre correos" tone="wait" />
-                    <div className="min-w-0 flex-1 rounded-[12px] border border-border bg-card px-4 py-3.5 shadow-rest">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span className="text-[14.5px] font-semibold text-foreground">Esperar</span>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={180}
-                          value={String(parts.n)}
-                          onChange={(e) => setDelay(step, Number(e.target.value || 0), parts.unit)}
-                          className="h-10 w-[86px] text-[14px]"
-                          aria-label="Cuánto esperar"
-                        />
-                        <Select value={parts.unit} onValueChange={(u) => setDelay(step, parts.n, u as "days" | "weeks")}>
-                          <SelectTrigger className="h-10 w-[128px] text-[14px]"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="days">Días</SelectItem>
-                            <SelectItem value="weeks">Semanas</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <span className="ml-auto hidden items-center gap-2 rounded-[10px] bg-accent/60 px-3 py-2 text-[12.5px] leading-[1.35] text-muted-foreground md:flex">
-                          <Info className="h-4 w-4 shrink-0 text-primary" />
-                          Deja un respiro entre correos: se responde más y se marca menos como spam.
-                        </span>
-                      </div>
-                      {parts.n === 0 && (
-                        <p className="mt-2 text-[12.5px] text-muted-foreground">Sin espera: saldrá el mismo día que el paso anterior.</p>
-                      )}
+                  <div className="my-9 grid gap-[30px] md:grid-cols-[130px_1fr]">
+                    <SeqRail Icon={Clock} title="Esperar" sub="Tiempo entre correos" />
+                    <div className="soft-card flex flex-wrap items-center gap-x-4 gap-y-3 px-6 py-6 sm:px-10">
+                      <span className="text-[17px] font-semibold text-foreground">Esperar</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={180}
+                        value={String(parts.n)}
+                        onChange={(e) => setDelay(step, Number(e.target.value || 0), parts.unit)}
+                        aria-label="Cuánto esperar"
+                        className="soft-input-sm w-[75px] px-2 text-center outline-none focus:border-[#765cff]"
+                      />
+                      <Select value={parts.unit} onValueChange={(u) => setDelay(step, parts.n, u as "days" | "weeks")}>
+                        <SelectTrigger className="soft-input-sm w-[145px] px-4"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="days">Días</SelectItem>
+                          <SelectItem value="weeks">Semanas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="soft-info ml-auto hidden items-center gap-2 px-5 py-4 text-[14px] leading-[1.35] md:flex">
+                        <Info className="h-4 w-4 shrink-0" />
+                        {parts.n === 0
+                          ? "Sin espera: saldrá el mismo día que el correo anterior."
+                          : "Deja un respiro entre correos: se responde más y se marca menos como spam."}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -988,92 +1008,70 @@ export default function CampaignSequences({ campaignId }: Props) {
                     load();
                   }}
                   onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
-                  className={`flex gap-5 pb-6 ${isDragging ? "opacity-40" : ""} ${isDragOver ? "pt-2 [&>*:last-child]:ring-2 [&>*:last-child]:ring-primary/40" : ""}`}
+                  className={`grid gap-[30px] md:grid-cols-[130px_1fr] ${isDragging ? "opacity-40" : ""} ${isDragOver ? "pt-2" : ""}`}
                 >
                   <SeqRail Icon={Mail} title={`Paso ${i + 1}`} sub={i === 0 ? "Email inicial" : "Seguimiento"} last={i === steps.length - 1} active={isSel} grip />
 
                   <div
                     onClick={() => { if (!isSel) setSelectedStepId(step.id); }}
-                    className={`min-w-0 flex-1 rounded-[14px] border bg-card p-3.5 transition-all duration-200 ${
-                      isSel ? "border-[#C9BFFA] shadow-[0_10px_28px_rgba(110,88,241,.10)] dark:border-primary/40" : "cursor-pointer border-border shadow-rest hover:border-[#C9BFFA]"
-                    }`}
+                    className={`soft-card min-w-0 p-[22px] transition-all duration-200 ${isSel ? "soft-card-active" : "cursor-pointer"}`}
                   >
-                    {/* Asunto + variantes */}
-                    <div className="flex items-start gap-2">
-                      <div className="relative min-w-0 flex-1">
-                        {isSel ? (
-                          <>
-                            <input
-                              id="seq-subject-editor"
-                              value={subject || ""}
-                              onChange={e => setCurrentSubject(e.target.value)}
-                              placeholder={i === 0 ? "Asunto del correo" : "Déjalo vacío para usar el asunto del paso anterior"}
-                              className="h-[46px] w-full rounded-[10px] border border-border bg-background px-4 pr-12 text-[14.5px] font-medium text-foreground outline-none transition-colors placeholder:font-normal placeholder:text-muted-foreground focus:border-primary"
-                            />
-                            <button
-                              type="button"
-                              title="Generar el asunto con IA"
-                              aria-label="Generar el asunto con IA"
-                              disabled={generatingSubject || !body.trim()}
-                              onClick={async () => {
-                                if (!body.trim()) { toast.error("Escribe el cuerpo del email primero"); return; }
-                                setGeneratingSubject(true);
-                                try {
-                                  const vars = dynamicVars.map(v => v.label);
-                                  const { data, error } = await supabase.functions.invoke("generate-subject", { body: { body, variables: vars } });
-                                  if (error) throw error;
-                                  if (data?.error) throw new Error(data.error);
-                                  if (data?.subject) { setCurrentSubject(data.subject); toast.success("Asunto generado con IA"); }
-                                } catch (e: any) {
-                                  toast.error(e.message || "Error al generar asunto");
-                                } finally {
-                                  setGeneratingSubject(false);
-                                }
-                              }}
-                              className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-[8px] bg-accent text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-accent disabled:hover:text-primary"
-                            >
-                              {generatingSubject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                            </button>
-                          </>
-                        ) : (
-                          <div className="flex h-[46px] items-center truncate rounded-[10px] border border-border bg-muted/40 px-4 text-[14.5px] font-medium text-foreground">
-                            {subject || <span className="font-normal text-muted-foreground">{i === 0 ? "Sin asunto" : "Mismo asunto del paso anterior"}</span>}
-                          </div>
-                        )}
-                      </div>
+                    {/* Asunto · IA · A/B */}
+                    <div className="mb-[18px] grid grid-cols-[1fr_60px] gap-[14px] md:grid-cols-[1fr_60px_120px]">
+                      {isSel ? (
+                        <input
+                          id="seq-subject-editor"
+                          value={subject || ""}
+                          onChange={e => setCurrentSubject(e.target.value)}
+                          placeholder={i === 0 ? "Asunto del correo" : "Déjalo vacío para usar el asunto del paso anterior"}
+                          className="soft-field"
+                        />
+                      ) : (
+                        <div className="soft-field flex items-center truncate">
+                          {subject || <span className="text-[#9299bc] dark:text-muted-foreground">{i === 0 ? "Asunto del correo" : "Mismo asunto del paso anterior"}</span>}
+                        </div>
+                      )}
 
                       <button
                         type="button"
-                        onClick={async (e) => { e.stopPropagation(); setSelectedStepId(step.id); const idx = stepVariants.length + 1; await addVariant(step); setActiveVariantIndex(idx); }}
-                        title="Añadir una variante de este correo (prueba A/B)"
-                        aria-label="Añadir variante"
-                        className="grid h-[46px] w-[46px] shrink-0 place-items-center rounded-[10px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-
-                      {/* Estado A/B del paso: la letra activa y si el paso tiene variantes */}
-                      <button
-                        type="button"
+                        title="Generar el asunto con IA"
+                        aria-label="Generar el asunto con IA"
+                        disabled={!isSel || generatingSubject || !body.trim()}
                         onClick={async (e) => {
                           e.stopPropagation();
-                          setSelectedStepId(step.id);
-                          if (stepVariants.length === 0) { await addVariant(step); setActiveVariantIndex(1); }
-                          else setActiveVariantIndex((idx) => (idx + 1) % (stepVariants.length + 1));
+                          if (!body.trim()) { toast.error("Escribe el cuerpo del email primero"); return; }
+                          setGeneratingSubject(true);
+                          try {
+                            const vars = dynamicVars.map(v => v.label);
+                            const { data, error } = await supabase.functions.invoke("generate-subject", { body: { body, variables: vars } });
+                            if (error) throw error;
+                            if (data?.error) throw new Error(data.error);
+                            if (data?.subject) { setCurrentSubject(data.subject); toast.success("Asunto generado con IA"); }
+                          } catch (err: any) {
+                            toast.error(err.message || "Error al generar asunto");
+                          } finally {
+                            setGeneratingSubject(false);
+                          }
                         }}
-                        title={stepVariants.length === 0 ? "Crear una variante B para este correo" : "Cambiar de variante"}
-                        className="flex h-[46px] shrink-0 items-center gap-2.5 rounded-[10px] bg-[#0F172B] px-3 text-white transition-colors hover:bg-[#1D293D] dark:bg-[#1D293D] dark:hover:bg-[#28374f]"
+                        className="soft-square soft-ai-tile grid place-items-center disabled:opacity-60"
                       >
-                        <span className="font-display text-[14px] font-semibold">{isSel ? variantLabels[activeVariantIndex] : "A"}</span>
-                        <span className={`relative h-[22px] w-[40px] rounded-full transition-colors ${stepVariants.length > 0 ? "bg-[#12B76A]" : "bg-white/25"}`}>
-                          <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white transition-all ${stepVariants.length > 0 ? "left-[21px]" : "left-[3px]"}`} />
-                        </span>
+                        {generatingSubject && isSel ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleAbTest(step); }}
+                        title={stepVariants.length === 0 ? "Probar dos versiones de este correo (A/B)" : "Quitar la prueba A/B de este correo"}
+                        className="soft-ab hidden h-[56px] items-center justify-center gap-[13px] font-semibold md:flex"
+                      >
+                        <span className="font-display text-[15px]">{isSel ? variantLabels[activeVariantIndex] : "A"}</span>
+                        <span className={`soft-switch ${stepVariants.length > 0 ? "soft-switch-on" : ""}`}><span /></span>
                       </button>
                     </div>
 
-                    {/* Pestañas de variantes del paso abierto */}
+                    {/* Variantes del correo abierto */}
                     {isSel && variantLabels.length > 1 && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                      <div className="mb-[18px] flex flex-wrap items-center gap-2">
                         {variantLabels.map((label, vi) => {
                           const vTag = vi > 0 ? variants[vi - 1]?.tag_filter : undefined;
                           return (
@@ -1081,7 +1079,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                               key={label}
                               onClick={() => setActiveVariantIndex(vi)}
                               title={vTag ? `Solo cuentas con la etiqueta "${vTag}"` : undefined}
-                              className={`rounded-[8px] px-3 py-1 text-[12.5px] font-semibold transition-colors ${
+                              className={`rounded-[11px] px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
                                 activeVariantIndex === vi ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
                               }`}
                             >
@@ -1089,27 +1087,35 @@ export default function CampaignSequences({ campaignId }: Props) {
                             </button>
                           );
                         })}
+                        <button
+                          onClick={async () => { const idx = variants.length + 1; await addVariant(step); setActiveVariantIndex(idx); }}
+                          title="Añadir otra variante"
+                          aria-label="Añadir variante"
+                          className="grid h-[30px] w-[30px] place-items-center rounded-[11px] border border-dashed border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
                         {activeVariantIndex > 0 && (
                           <button
                             onClick={() => removeVariant(selectedStep, activeVariantIndex - 1)}
-                            className="ml-1 inline-flex items-center gap-1 rounded-[8px] border border-destructive/40 px-2.5 py-1 text-[12.5px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                            className="inline-flex items-center gap-1 rounded-[11px] border border-destructive/40 px-3 py-1.5 text-[13px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
                           >
                             <Trash2 className="h-3 w-3" /> Eliminar variante
                           </button>
                         )}
-                        <span className="ml-auto hidden text-[11.5px] text-muted-foreground sm:inline">Las variantes se rotan solas al enviar</span>
+                        <span className="ml-auto hidden text-[12.5px] text-muted-foreground sm:inline">Las variantes se rotan solas al enviar</span>
                       </div>
                     )}
 
-                    {/* Filtro por etiqueta de cuenta — sólo con una variante distinta de la A */}
+                    {/* Filtro por etiqueta de cuenta */}
                     {isSel && activeVariantIndex > 0 && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-[10px] bg-muted/40 px-3 py-2">
-                        <span className="inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground"><Tag className="h-3 w-3" /> Filtro por cuenta:</span>
+                      <div className="mb-[18px] flex flex-wrap items-center gap-2 rounded-[14px] bg-muted/40 px-4 py-3">
+                        <span className="inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground"><Tag className="h-3 w-3" /> Filtro por cuenta:</span>
                         <Select
                           value={variants[activeVariantIndex - 1]?.tag_filter || "__none__"}
                           onValueChange={(v) => updateVariantTag(selectedStep, activeVariantIndex - 1, v === "__none__" ? null : v)}
                         >
-                          <SelectTrigger className="h-8 w-64 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-9 w-64 rounded-[11px] text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Sin filtro (cualquier cuenta)</SelectItem>
                             {availableTags.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">No hay etiquetas en tus cuentas de email.</div>}
@@ -1117,49 +1123,47 @@ export default function CampaignSequences({ campaignId }: Props) {
                           </SelectContent>
                         </Select>
                         {variants[activeVariantIndex - 1]?.tag_filter
-                          ? <span className="text-[11.5px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
-                          : <span className="text-[11.5px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
+                          ? <span className="text-[12px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
+                          : <span className="text-[12px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
                       </div>
                     )}
 
-                    {/* Cuerpo del correo */}
-                    <div className="mt-2.5 overflow-hidden rounded-[10px] border border-border bg-background">
+                    {/* Cuerpo */}
+                    <div className="soft-editor">
                       {isSel && showPreview ? (
-                        <div className="p-4">
+                        <div className="p-[22px]">
                           <div className="mb-3 flex items-center justify-between">
-                            <p className="text-[12px] text-muted-foreground">Vista previa con datos de ejemplo:</p>
+                            <p className="text-[12.5px] text-muted-foreground">Vista previa con datos de ejemplo:</p>
                             <button type="button" onClick={() => setExpandOpen(true)} title="Ver el email completo"
-                              className="inline-flex items-center gap-1.5 rounded-[8px] border border-border px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                              className="inline-flex items-center gap-1.5 rounded-[11px] border border-border px-2.5 py-1 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
                               <Maximize2 className="h-3.5 w-3.5" /> Ampliar
                             </button>
                           </div>
                           <div className={PAPER + " whitespace-pre-wrap p-4 text-sm leading-relaxed"} dangerouslySetInnerHTML={{ __html: previewText(body) }} />
                         </div>
                       ) : isSel ? (
-                        <Textarea
+                        <textarea
                           id="seq-body-editor"
                           value={body}
                           onChange={e => setCurrentBody(e.target.value)}
                           placeholder={`Escribe tu email aquí...\n\nVariables de tus leads: ${dynamicVars.map(v => v.tag).join(", ") || "importa leads para ver las variables disponibles"}`}
-                          className="min-h-[210px] resize-y rounded-none border-0 bg-transparent p-4 text-[14px] leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0"
+                          className="h-[195px] w-full resize-y border-0 bg-transparent p-[22px] text-[16px] leading-relaxed text-foreground outline-none placeholder:text-[#9299bc] dark:placeholder:text-muted-foreground"
                         />
                       ) : (
-                        <div className="min-h-[120px] whitespace-pre-wrap p-4 text-[14px] leading-relaxed text-muted-foreground">
-                          {body ? (body.length > 320 ? `${body.slice(0, 320)}…` : body) : "Escribe tu email aquí..."}
+                        <div className="h-[195px] overflow-hidden whitespace-pre-wrap p-[22px] text-[16px] leading-relaxed text-muted-foreground">
+                          {body || "Escribe tu email aquí..."}
                         </div>
                       )}
 
-                      {/* Barra de herramientas del correo abierto */}
                       {isSel && (
-                        <div className="flex flex-wrap items-center gap-1 border-t border-border bg-muted/30 px-2 py-1.5">
+                        <div className="soft-toolbar flex h-[55px] flex-wrap items-center gap-x-[18px] gap-y-2 px-5">
                           <SeqTool Icon={Bold} label="Negrita" onClick={() => wrapSelection("b")} />
                           <SeqTool Icon={Italic} label="Cursiva" onClick={() => wrapSelection("i")} />
                           <SeqTool Icon={Underline} label="Subrayado" onClick={() => wrapSelection("u")} />
-                          <span className="mx-1 h-5 w-px bg-border" />
                           <Popover open={showLinkPopover} onOpenChange={setShowLinkPopover}>
                             <PopoverTrigger asChild>
-                              <button type="button" title="Insertar enlace" aria-label="Insertar enlace" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
-                                <Link2 className="h-4 w-4" />
+                              <button type="button" title="Insertar enlace" aria-label="Insertar enlace" className="text-[#131938] transition-colors hover:text-primary dark:text-foreground">
+                                <Link2 className="h-[18px] w-[18px]" />
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="w-64 space-y-3 p-3" align="start">
@@ -1178,8 +1182,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                           <SeqTool Icon={ListOrdered} label="Lista numerada" onClick={() => insertList(true)} />
                           <Popover>
                             <PopoverTrigger asChild>
-                              <button type="button" title="Emoji" aria-label="Emoji" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
-                                <Smile className="h-4 w-4" />
+                              <button type="button" title="Emoji" aria-label="Emoji" className="text-[#131938] transition-colors hover:text-primary dark:text-foreground">
+                                <Smile className="h-[18px] w-[18px]" />
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="w-[232px] p-2" align="start">
@@ -1194,8 +1198,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                           </Popover>
                           <Popover>
                             <PopoverTrigger asChild>
-                              <button type="button" title="Insertar variable del lead" aria-label="Insertar variable" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
-                                <Braces className="h-4 w-4" />
+                              <button type="button" title="Insertar variable del lead" aria-label="Insertar variable" className="text-[#131938] transition-colors hover:text-primary dark:text-foreground">
+                                <Braces className="h-[18px] w-[18px]" />
                               </button>
                             </PopoverTrigger>
                             <PopoverContent className="w-52 p-1" align="start">
@@ -1209,7 +1213,6 @@ export default function CampaignSequences({ campaignId }: Props) {
                               ))}
                             </PopoverContent>
                           </Popover>
-                          <span className="mx-1 h-5 w-px bg-border" />
                           <SeqTool
                             Icon={autoBolding ? Loader2 : WandSparkles}
                             spin={autoBolding}
@@ -1223,8 +1226,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                                 if (error) throw error;
                                 if (data?.error) throw new Error(data.error);
                                 if (data?.body) { setCurrentBody(data.body.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')); toast.success("Negritas aplicadas"); }
-                              } catch (e: any) {
-                                toast.error(e.message || "Error al aplicar negritas");
+                              } catch (err: any) {
+                                toast.error(err.message || "Error al aplicar negritas");
                               } finally {
                                 setAutoBolding(false);
                               }
@@ -1235,27 +1238,21 @@ export default function CampaignSequences({ campaignId }: Props) {
                           <SeqTool Icon={Save} label="Guardar como plantilla" onClick={() => setShowSaveTemplate(true)} />
                           <SeqTool Icon={FileText} label="Cargar plantilla" onClick={() => { loadTemplates(); setShowLoadTemplate(true); }} />
 
-                          <div className="ml-auto flex items-center gap-2">
-                            <span className="text-[12px] tabular-nums text-muted-foreground">{body.length}</span>
-                            <button
-                              type="button"
-                              onClick={() => setAiOneOpen(true)}
-                              className="inline-flex items-center gap-1.5 rounded-[8px] bg-accent px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
-                            >
-                              <Sparkles className="h-3.5 w-3.5" /> Escribir con IA
-                            </button>
-                            <SeqTool Icon={Trash2} label="Eliminar este paso" danger onClick={() => deleteStep(step.id)} />
-                          </div>
+                          <span className="ml-auto text-[14px] tabular-nums text-[#777fa5] dark:text-muted-foreground">{body.length}</span>
+                          <button type="button" onClick={() => setAiOneOpen(true)} className="soft-ai-btn inline-flex items-center gap-2 text-[14px]">
+                            <Sparkles className="h-4 w-4" /> Escribir con IA
+                          </button>
+                          <SeqTool Icon={Trash2} label="Eliminar este paso" danger onClick={() => deleteStep(step.id)} />
                         </div>
                       )}
                     </div>
 
-                    {/* Adjuntos del paso */}
+                    {/* Adjuntos */}
                     {isSel && stepAttachments.length > 0 && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos:</span>
+                      <div className="mt-[18px] flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos:</span>
                         {stepAttachments.map((a, ai) => (
-                          <span key={a.path || ai} className="inline-flex items-center gap-1 rounded-[8px] border border-border bg-card px-2 py-1 text-[11.5px]">
+                          <span key={a.path || ai} className="inline-flex items-center gap-1 rounded-[11px] border border-border bg-card px-2.5 py-1 text-[12px]">
                             <FileText className="h-3 w-3 text-muted-foreground" />
                             <span className="max-w-[160px] truncate" title={a.name}>{a.name}</span>
                             <span className="text-muted-foreground">· {fmtBytes(a.size || 0)}</span>
@@ -1273,17 +1270,18 @@ export default function CampaignSequences({ campaignId }: Props) {
           })}
 
           {/* Añadir otro correo */}
-          <div className="flex gap-5">
+          <div className="mt-9 grid gap-[30px] md:grid-cols-[130px_1fr]">
             <SeqRail Icon={Plus} title="" sub="" last tone="add" />
             <button
               onClick={addStep}
-              className="min-w-0 flex-1 rounded-[14px] border border-dashed border-border bg-card/60 py-4 text-[14.5px] font-semibold text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+              className="soft-card min-w-0 border-dashed py-6 text-[16px] font-semibold text-muted-foreground transition-colors hover:text-primary"
             >
-              <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4" /> Añadir paso</span>
+              <span className="inline-flex items-center gap-2"><Plus className="h-5 w-5" /> Añadir paso</span>
             </button>
           </div>
         </div>
       )}
+      </div>
     </div>
 
     {/* Escribir ESTE correo con IA */}

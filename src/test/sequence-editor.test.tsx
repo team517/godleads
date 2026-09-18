@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CampaignSequences from "@/components/campaigns/CampaignSequences";
+import { ConfirmProvider } from "@/hooks/useConfirm";
 
 /* El editor de la secuencia con el diseño nuevo: el raíl (Paso 1 · Esperar · Paso 2), la tarjeta
  * de cada correo y la barra de formato. Lo que se comprueba aquí es que lo que se toca en la
@@ -47,7 +48,7 @@ beforeEach(() => {
 });
 
 const renderEditor = async () => {
-  render(<CampaignSequences campaignId="c1" />);
+  render(<ConfirmProvider><CampaignSequences campaignId="c1" /></ConfirmProvider>);
   await waitFor(() => expect(screen.getByText("Paso 1")).toBeInTheDocument());
 };
 
@@ -111,7 +112,7 @@ describe("Editor de secuencia", () => {
 
   it("sin pasos, invita a crear el primero", async () => {
     tables.campaign_steps = [];
-    render(<CampaignSequences campaignId="c1" />);
+    render(<ConfirmProvider><CampaignSequences campaignId="c1" /></ConfirmProvider>);
     await waitFor(() => expect(screen.getByText("Todavía no hay ningún correo")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Crear primer paso/ })).toBeInTheDocument();
   });

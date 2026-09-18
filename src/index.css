@@ -405,6 +405,243 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 *::-webkit-scrollbar-thumb:hover { background: hsl(254 30% 76%); border: 3px solid transparent; background-clip: content-box; }
 .dark *::-webkit-scrollbar-thumb { background: hsl(223 22% 30%); border: 3px solid transparent; background-clip: content-box; }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   CAPA "SUAVE" — el estilo que pasó el propietario (su HTML del editor de secuencia):
+   fondo con tres luces de color, tarjetas de cristal de 25px, campos de 14px y el raíl
+   con baldosas degradadas. Vive aquí como clases para que TODA pantalla se haga igual,
+   en vez de repetir los colores a mano en cada archivo.
+   Medidas y colores copiados tal cual de su diseño; la versión oscura es la traducción.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.soft-surface {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(131,103,255,.10), transparent 28%),
+    radial-gradient(circle at 85% 15%, rgba(65,198,255,.12), transparent 30%),
+    radial-gradient(circle at 70% 90%, rgba(203,99,255,.08), transparent 30%),
+    #fbfcff;
+}
+.dark .soft-surface {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(131,103,255,.14), transparent 28%),
+    radial-gradient(circle at 85% 15%, rgba(65,198,255,.10), transparent 30%),
+    radial-gradient(circle at 70% 90%, rgba(203,99,255,.08), transparent 30%),
+    hsl(var(--background));
+}
+
+.soft-card {
+  background: rgba(255,255,255,.82);
+  border: 1px solid rgba(132,145,220,.23);
+  border-radius: 25px;
+  box-shadow: 0 18px 50px rgba(82,94,170,.055);
+  backdrop-filter: blur(20px);
+}
+.dark .soft-card {
+  background: hsl(var(--card) / .80);
+  border-color: hsl(var(--border));
+  box-shadow: 0 18px 50px rgba(0,0,0,.35);
+}
+/* La tarjeta en la que se está escribiendo. */
+.soft-card-active { border-color: rgba(118,92,255,.42); box-shadow: 0 18px 50px rgba(99,77,255,.13); }
+
+/* Campo de una línea (asunto). */
+.soft-field {
+  width: 100%;
+  height: 56px;
+  padding: 0 20px;
+  border: 1px solid #dce1f2;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 16px;
+  color: #172044;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.soft-field::placeholder { color: #9299bc; }
+.soft-field:focus { border-color: #765cff; box-shadow: 0 0 0 4px rgba(118,92,255,.08); }
+.dark .soft-field { background: hsl(var(--background)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+.dark .soft-field::placeholder { color: hsl(var(--muted-foreground)); }
+
+/* Botón cuadrado junto al asunto. */
+.soft-square {
+  height: 56px;
+  border-radius: 14px;
+  border: 1px solid #dce1f2;
+  background: #fff;
+  color: #5d668f;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background-color .15s ease;
+}
+.soft-square:hover { border-color: #765cff; color: #654dff; }
+.dark .soft-square { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+
+/* El mismo botón, pero con el degradado de la IA. */
+.soft-ai-tile {
+  border: 0;
+  background: linear-gradient(135deg,#edf7ff,#f3e7ff);
+  color: #654dff;
+}
+.soft-ai-tile:hover { filter: brightness(.97); color: #4f37e8; }
+.dark .soft-ai-tile { background: linear-gradient(135deg, hsl(200 60% 20%), hsl(265 55% 24%)); color: #c9bfff; }
+
+/* Pastilla oscura de la prueba A/B. */
+.soft-ab { background: #10162e; border-radius: 14px; color: #fff; }
+.soft-ab:hover { background: #19203d; }
+.dark .soft-ab { background: #0c1122; }
+.soft-switch { position: relative; width: 43px; height: 24px; border-radius: 30px; background: rgba(255,255,255,.22); transition: background-color .2s ease; }
+.soft-switch-on { background: #12d79a; }
+.soft-switch > span { position: absolute; top: 2.5px; left: 3px; width: 19px; height: 19px; border-radius: 50%; background: #fff; transition: left .2s ease; }
+.soft-switch-on > span { left: 21px; }
+
+/* Caja del cuerpo del correo, con su barra de herramientas debajo. */
+.soft-editor { border: 1px solid #dce1f2; border-radius: 17px; background: #fff; overflow: hidden; }
+.dark .soft-editor { border-color: hsl(var(--border)); background: hsl(var(--background)); }
+.soft-toolbar { border-top: 1px solid #edf0f7; }
+.dark .soft-toolbar { border-top-color: hsl(var(--border)); }
+
+/* Botón "Escribir con IA". */
+.soft-ai-btn {
+  border: 0;
+  border-radius: 13px;
+  padding: 11px 20px;
+  font-weight: 600;
+  color: #6245ff;
+  background: linear-gradient(135deg,#f2efff,#f8eaff);
+  cursor: pointer;
+  transition: filter .15s ease;
+}
+.soft-ai-btn:hover { filter: brightness(.97); }
+.dark .soft-ai-btn { background: linear-gradient(135deg, hsl(255 45% 24%), hsl(285 40% 24%)); color: #cfc2ff; }
+
+/* Baldosa del raíl (Paso 1 · Esperar · …). */
+.soft-rail-icon {
+  width: 64px; height: 64px;
+  border-radius: 22px;
+  display: flex; align-items: center; justify-content: center;
+  color: #655cff;
+  background: linear-gradient(135deg,#e4f7ff,#f3e7ff);
+  box-shadow: 0 12px 35px rgba(91,94,255,.15);
+}
+.dark .soft-rail-icon { background: linear-gradient(135deg, hsl(200 55% 18%), hsl(265 50% 22%)); color: #bcb0ff; box-shadow: 0 12px 35px rgba(0,0,0,.35); }
+.soft-rail-icon-active { background: linear-gradient(135deg,#7a67ff,#9a63ff); color: #fff; box-shadow: 0 12px 35px rgba(91,94,255,.30); }
+.dark .soft-rail-icon-active { background: linear-gradient(135deg,#6a55ff,#8f52ff); color: #fff; }
+.soft-rail-line { background: #d8ddff; }
+.dark .soft-rail-line { background: hsl(var(--border)); }
+
+/* Nota de ayuda a la derecha de una tarjeta. */
+.soft-info { background: linear-gradient(135deg,#f3f1ff,#edf8ff); border-radius: 14px; color: #6670a2; }
+.dark .soft-info { background: linear-gradient(135deg, hsl(255 30% 18%), hsl(205 35% 18%)); color: hsl(var(--muted-foreground)); }
+
+/* Campo pequeño: número de días, desplegables de una tarjeta suave. */
+.soft-input-sm { height: 50px; border: 1px solid #d9def0; border-radius: 13px; background: #fff; font-size: 16px; color: #172044; }
+.dark .soft-input-sm { background: hsl(var(--background)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+
+
+/* ── La misma capa, en grande: la bienvenida del primer acceso ──────────────────────────
+   Medidas del segundo HTML del propietario (onboarding): opciones de 80px, baldosa de
+   icono de 55px, botón de 420×76, barra de 11px con su bolita, piezas flotantes de 75px. */
+
+.soft-hero {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(167,124,255,.12), transparent 30%),
+    radial-gradient(circle at 82% 12%, rgba(74,200,255,.15), transparent 30%),
+    radial-gradient(circle at 72% 82%, rgba(183,99,255,.10), transparent 34%),
+    linear-gradient(135deg, #fbfbff 0%, #f4f8ff 50%, #fbf7ff 100%);
+}
+.soft-wave {
+  background: linear-gradient(110deg, rgba(123,110,255,.09), rgba(76,199,255,.06), rgba(193,92,255,.07));
+  border-radius: 50%;
+}
+.soft-dots-grid { background-image: radial-gradient(circle, #8e83ff 3px, transparent 3.5px); background-size: 20px 20px; opacity: .25; }
+
+.soft-glass {
+  background: rgba(255,255,255,.56);
+  border: 1px solid rgba(255,255,255,.85);
+  box-shadow: 0 15px 35px rgba(82,78,200,.10), inset 0 0 30px rgba(141,174,255,.08);
+  backdrop-filter: blur(16px);
+}
+
+/* La chispa de la marca, recortada del degradado. */
+.soft-spark {
+  background: linear-gradient(135deg, #25c8f5 5%, #5269ff 42%, #b82cff 88%);
+  clip-path: polygon(50% 0%, 61% 34%, 100% 50%, 62% 63%, 50% 100%, 38% 63%, 0% 50%, 38% 36%);
+  filter: drop-shadow(0 5px 9px rgba(91,81,255,.15));
+}
+
+.soft-option {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  min-width: 250px;
+  height: 80px;
+  padding: 0 24px;
+  border: 1px solid rgba(160,171,222,.23);
+  border-radius: 19px;
+  background: rgba(255,255,255,.78);
+  color: #101640;
+  font-size: 18px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(71,82,160,.06);
+  backdrop-filter: blur(15px);
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.soft-option:hover { transform: translateY(-3px); border-color: rgba(104,84,255,.40); box-shadow: 0 15px 35px rgba(85,76,190,.12); }
+.soft-option-on {
+  background: linear-gradient(135deg, rgba(228,245,255,.95), rgba(245,232,255,.95));
+  border-color: #7657ff;
+  box-shadow: 0 12px 35px rgba(107,81,255,.16), inset 0 0 0 1px rgba(118,87,255,.08);
+}
+/* Misma pieza, más pequeña: la lista larga de "¿cómo nos has encontrado?". */
+.soft-option-sm { min-width: 0; height: 64px; gap: 12px; padding: 0 18px; font-size: 16px; border-radius: 16px; }
+
+.soft-option-icon {
+  flex: 0 0 55px;
+  width: 55px; height: 55px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 15px;
+  color: #5b55ff;
+  background: linear-gradient(135deg, rgba(215,242,255,.9), rgba(239,226,255,.9));
+}
+.soft-option-sm .soft-option-icon { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 12px; }
+
+.soft-cta {
+  height: 76px;
+  padding: 0 34px;
+  border: 0;
+  border-radius: 18px;
+  font-size: 21px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(100deg, #2eaefb 0%, #5262ff 47%, #9d32f5 100%);
+  box-shadow: 0 17px 40px rgba(91,76,255,.22);
+  cursor: pointer;
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.soft-cta:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 21px 45px rgba(91,76,255,.30); }
+.soft-cta:disabled { opacity: .42; box-shadow: none; cursor: default; }
+
+.soft-float {
+  display: flex; align-items: center; justify-content: center;
+  width: 75px; height: 75px;
+  border-radius: 20px;
+  background: rgba(255,255,255,.58);
+  border: 1px solid rgba(255,255,255,.8);
+  box-shadow: 0 15px 35px rgba(91,82,180,.08);
+  color: #755cff;
+  backdrop-filter: blur(12px);
+}
+
+.soft-progress { height: 11px; border-radius: 20px; background: #dce4ff; }
+.soft-progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #3caaff, #515cff, #862fff); transition: width .5s ease; }
+.soft-progress-dot {
+  width: 21px; height: 21px;
+  border-radius: 50%;
+  background: #155cff;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 10px rgba(70,77,255,.3);
+  transition: left .5s ease;
+}
+
 /* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
 @keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
 @keyframes wvDash { to { stroke-dashoffset: -220; } }
