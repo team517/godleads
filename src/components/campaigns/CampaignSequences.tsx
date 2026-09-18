@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Smile, Braces, Info, Mail, Save, FileText, Link2, Sparkles, WandSparkles, GripVertical, ShieldCheck, Tag, Maximize2, Undo2, Redo2, Paperclip } from "lucide-react";
 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
@@ -68,6 +68,54 @@ const renderVariables = (text: string, fields: Record<string, string>) => replac
  *  `dark:` variants; `[color-scheme:light]` also keeps form controls light. */
 const PAPER =
   "rounded-lg border border-zinc-200 bg-white text-zinc-900 shadow-sm [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline";
+
+/* ── Piezas de la secuencia ───────────────────────────────────────────────────────────
+   El raíl de la izquierda (Paso 1 · Esperar · Paso 2…) con su línea de tiempo, y los
+   botones de la barra de formato. Son sólo pintura: no saben nada de los datos. */
+
+function SeqRail({ Icon, title, sub, last, active, grip, tone = "step" }: {
+  Icon: typeof Mail; title: string; sub: string; last?: boolean; active?: boolean; grip?: boolean; tone?: "step" | "wait" | "add";
+}) {
+  return (
+    <div className="relative hidden w-[136px] shrink-0 pt-1 md:block">
+      <span
+        className={`grid h-12 w-12 place-items-center rounded-full border transition-colors ${
+          tone === "add"
+            ? "border-dashed border-border bg-card text-muted-foreground"
+            : active
+              ? "border-primary/30 bg-primary text-primary-foreground"
+              : "border-transparent bg-accent text-primary"
+        }`}
+      >
+        <Icon className="h-5 w-5" strokeWidth={1.9} />
+      </span>
+      {title && <p className="mt-2.5 font-display text-[15px] font-semibold leading-tight tracking-[-0.02em] text-foreground">{title}</p>}
+      {sub && <p className="mt-0.5 text-[12.5px] leading-[1.35] text-muted-foreground">{sub}</p>}
+      {grip && <GripVertical className="absolute -left-4 top-4 h-4 w-4 cursor-grab text-muted-foreground opacity-0 transition-opacity hover:opacity-100 active:cursor-grabbing" />}
+      {!last && <span aria-hidden className="absolute left-6 top-[56px] w-px -translate-x-1/2 bg-border" style={{ bottom: -28 }} />}
+    </div>
+  );
+}
+
+function SeqTool({ Icon, label, onClick, disabled, spin, badge, danger }: {
+  Icon: typeof Bold; label: string; onClick: () => void; disabled?: boolean; spin?: boolean; badge?: number; danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={`relative grid h-8 w-8 place-items-center rounded-[8px] transition-colors disabled:pointer-events-none disabled:opacity-45 ${
+        danger ? "text-muted-foreground hover:bg-destructive/10 hover:text-destructive" : "text-muted-foreground hover:bg-accent hover:text-primary"
+      }`}
+    >
+      <Icon className={`h-4 w-4 ${spin ? "animate-spin" : ""}`} />
+      {badge ? <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-[14px] place-items-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">{badge}</span> : null}
+    </button>
+  );
+}
 
 export default function CampaignSequences({ campaignId }: Props) {
   const { user } = useAuth();
@@ -340,28 +388,6 @@ export default function CampaignSequences({ campaignId }: Props) {
     setPlacChecking(false);
     if (error || data?.error) { toast.error(data?.error || error?.message || "Error al comprobar"); return; }
     setPlacResults(data.results); setPlacPct(data.inbox_pct);
-  };
-
-  const toggleBold = () => {
-    const el = document.getElementById("seq-body-editor") as HTMLTextAreaElement | null;
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const val = el.value;
-    const selected = val.substring(start, end);
-    let newVal: string;
-    let newCursorEnd: number;
-    if (selected.startsWith("<b>") && selected.endsWith("</b>")) {
-      const unwrapped = selected.slice(3, -4);
-      newVal = val.substring(0, start) + unwrapped + val.substring(end);
-      newCursorEnd = start + unwrapped.length;
-    } else {
-      const wrapped = `<b>${selected}</b>`;
-      newVal = val.substring(0, start) + wrapped + val.substring(end);
-      newCursorEnd = start + wrapped.length;
-    }
-    setCurrentBody(newVal);
-    setTimeout(() => { el.focus(); el.setSelectionRange(start, newCursorEnd); }, 0);
   };
 
   // Link insertion state
@@ -752,523 +778,537 @@ export default function CampaignSequences({ campaignId }: Props) {
   // All variant labels: A, B, C...
   const variantLabels = ["A", ...variants.map((_, i) => String.fromCharCode(66 + i))];
 
+  /* ── Formato del cuerpo ──────────────────────────────────────────────────────────────
+     El cuerpo es texto con etiquetas HTML sencillas (así lo envía el motor), de modo que
+     negrita, cursiva y subrayado son envolver la selección, y las listas, prefijar líneas. */
+  const bodyEl = () => document.getElementById("seq-body-editor") as HTMLTextAreaElement | null;
+
+  const wrapSelection = (tag: "b" | "i" | "u") => {
+    const el = bodyEl();
+    if (!el) return;
+    const start = el.selectionStart, end = el.selectionEnd, val = el.value;
+    const sel = val.substring(start, end);
+    const open = `<${tag}>`, close = `</${tag}>`;
+    const already = sel.startsWith(open) && sel.endsWith(close);
+    const replacement = already ? sel.slice(open.length, -close.length) : `${open}${sel}${close}`;
+    const newVal = val.substring(0, start) + replacement + val.substring(end);
+    setCurrentBody(newVal);
+    setTimeout(() => { el.focus(); el.setSelectionRange(start, start + replacement.length); }, 0);
+  };
+
+  const insertAtCursor = (text: string) => {
+    const el = bodyEl();
+    if (!el) { setCurrentBody((getCurrentBody() || "") + text); return; }
+    const start = el.selectionStart, end = el.selectionEnd, val = el.value;
+    const newVal = val.substring(0, start) + text + val.substring(end);
+    setCurrentBody(newVal);
+    setTimeout(() => { el.focus(); el.setSelectionRange(start + text.length, start + text.length); }, 0);
+  };
+
+  /** Convierte en lista las líneas seleccionadas (o empieza una donde esté el cursor). */
+  const insertList = (ordered: boolean) => {
+    const el = bodyEl();
+    if (!el) return;
+    const val = el.value;
+    const start = el.selectionStart, end = el.selectionEnd;
+    const from = val.lastIndexOf("\n", start - 1) + 1;
+    const toRaw = val.indexOf("\n", end);
+    const to = toRaw === -1 ? val.length : toRaw;
+    const block = val.substring(from, to);
+    const lines = (block || "").split("\n");
+    const marked = lines.map((l, i) => {
+      const clean = l.replace(/^\s*(?:[•\-*]\s+|\d+[.)]\s+)/, "");
+      return `${ordered ? `${i + 1}. ` : "• "}${clean}`;
+    }).join("\n");
+    const newVal = val.substring(0, from) + marked + val.substring(to);
+    setCurrentBody(newVal);
+    setTimeout(() => { el.focus(); el.setSelectionRange(from, from + marked.length); }, 0);
+  };
+
+  const EMOJIS = ["👋", "🙂", "🙌", "🚀", "✅", "📈", "💡", "🔧", "📩", "📞", "⏱️", "🎯", "🤝", "👀", "🔥", "⭐"];
+
+  /* ── "Escribir con IA" de UN paso ────────────────────────────────────────────────────
+     Rellena SOLO este correo (asunto + cuerpo) con el mismo generador de la secuencia,
+     pidiéndole un único email. No toca los demás pasos. */
+  const [aiOneOpen, setAiOneOpen] = useState(false);
+  const [aiOneContext, setAiOneContext] = useState("");
+  const [aiOneRunning, setAiOneRunning] = useState(false);
+
+  const writeStepWithAI = async () => {
+    if (!selectedStep) return;
+    if (!aiOneContext.trim()) { toast.error("Cuéntale de qué va el correo"); return; }
+    setAiOneRunning(true);
+    try {
+      const position = (steps.findIndex((s) => s.id === selectedStep.id) || 0) + 1;
+      const role = position === 1 ? "primer email en frío" : `seguimiento número ${position - 1} (el prospecto no ha contestado)`;
+      const { data, error } = await supabase.functions.invoke("generate-sequence", {
+        body: { context: `${aiOneContext.trim()}\n\nEscribe SOLO el ${role}.`, variables: dynamicVars.map((v) => v.label), numSteps: 1 },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const one = Array.isArray(data?.steps) ? data.steps[0] : null;
+      if (!one) throw new Error("La IA no ha devuelto ningún correo");
+      if (one.subject) setCurrentSubject(one.subject);
+      if (one.body) setCurrentBody(one.body);
+      setAiOneOpen(false);
+      setAiOneContext("");
+      toast.success("Correo escrito con IA");
+    } catch (e: any) {
+      toast.error(e.message || "No se ha podido escribir el correo");
+    } finally {
+      setAiOneRunning(false);
+    }
+  };
+
+  /** La espera de un paso en número + unidad, como en el diseño (2 días / 1 semana). */
+  const delayParts = (days: number) => (days > 0 && days % 7 === 0 ? { n: days / 7, unit: "weeks" as const } : { n: days, unit: "days" as const });
+  const setDelay = (step: any, n: number, unit: "days" | "weeks") => {
+    const days = Math.max(0, Math.min(180, Math.round(n))) * (unit === "weeks" ? 7 : 1);
+    setSteps((prev) => prev.map((s) => (s.id === step.id ? { ...s, delay_days: days } : s)));
+    updateStepField(step.id, "delay_days", days);
+  };
+
   return (
     <>
-    <div className="flex flex-col sm:flex-row gap-0 sm:h-[calc(100vh-280px)] sm:min-h-[500px]">
-      {/* Left sidebar - Steps list */}
-      <div className="w-full sm:w-72 shrink-0 border rounded-t-lg sm:rounded-t-none sm:rounded-l-lg bg-card overflow-y-auto max-h-48 sm:max-h-none">
-        <div className="border-b px-3 py-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">Secuencia</span>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{steps.length} {steps.length === 1 ? "paso" : "pasos"}</span>
-          </div>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Flujo de emails automáticos · arrastra para reordenar</p>
+    <div className="space-y-4">
+      {/* Barra de la secuencia: lo que afecta a TODA la secuencia, no a un paso suelto. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border bg-card px-3.5 py-2.5 shadow-rest">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="font-display text-[15px] font-semibold text-foreground">Secuencia</span>
+          <span className="rounded-full bg-accent px-2 py-0.5 text-[11.5px] font-semibold text-primary">
+            {steps.length} {steps.length === 1 ? "paso" : "pasos"}
+          </span>
+          <span className="hidden truncate text-[12.5px] text-muted-foreground lg:inline">· se envían en orden y se paran en cuanto el lead contesta</span>
         </div>
-        {steps.map((step, i) => {
-          const isSelected = step.id === selectedStepId;
-          const stepVariants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
-          const isDragging = dragStepId === step.id;
-          const isDragOver = dragOverStepId === step.id && dragStepId !== step.id;
-          return (
-            <div
-              key={step.id}
-              draggable
-              onDragStart={(e) => {
-                setDragStepId(step.id);
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setDragOverStepId(step.id);
-              }}
-              onDragLeave={() => {
-                if (dragOverStepId === step.id) setDragOverStepId(null);
-              }}
-              onDrop={async (e) => {
-                e.preventDefault();
-                if (!dragStepId || dragStepId === step.id) { setDragStepId(null); setDragOverStepId(null); return; }
-                const fromIdx = steps.findIndex(s => s.id === dragStepId);
-                const toIdx = steps.findIndex(s => s.id === step.id);
-                if (fromIdx === -1 || toIdx === -1) { setDragStepId(null); setDragOverStepId(null); return; }
-                const reordered = [...steps];
-                const [moved] = reordered.splice(fromIdx, 1);
-                reordered.splice(toIdx, 0, moved);
-                setSteps(reordered);
-                setDragStepId(null);
-                setDragOverStepId(null);
-                // Update step_order in DB
-                for (let j = 0; j < reordered.length; j++) {
-                  await supabase.from("campaign_steps").update({ step_order: j + 1 }).eq("id", reordered[j].id);
-                }
-                load();
-              }}
-              onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
-              className={`${isDragging ? "opacity-40" : ""} ${isDragOver ? "border-t-2 border-t-primary" : ""}`}
-            >
-              {i > 0 && step.delay_days > 0 && (
-                <div className="flex items-center justify-center gap-1.5 py-1.5 text-[10px] text-muted-foreground bg-muted/30 border-y">
-                  <Clock className="h-3 w-3" /> Esperar {step.delay_days >= 7 ? `${Math.floor(step.delay_days / 7)} semana${Math.floor(step.delay_days / 7) !== 1 ? "s" : ""}${step.delay_days % 7 ? ` y ${step.delay_days % 7} día${step.delay_days % 7 !== 1 ? "s" : ""}` : ""}` : `${step.delay_days} día${step.delay_days !== 1 ? "s" : ""}`} si no responde
-                </div>
-              )}
-              <button
-                onClick={() => setSelectedStepId(step.id)}
-                className={`w-full text-left p-3 transition-colors border-b ${isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/50"}`}
-              >
-                <div className="flex items-start gap-2.5">
-                  <GripVertical className="mt-1 h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing" />
-                  <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${isSelected ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{i === 0 ? "Email inicial" : `Follow-up ${i}`}</span>
-                      <div className="flex items-center gap-1">
-                        {stepVariants.length > 0 && (
-                          <Badge variant="outline" className="h-4 px-1 text-[10.5px] font-semibold">{stepVariants.length + 1} var</Badge>
-                        )}
-                        <ChevronRight className={`h-3 w-3 text-muted-foreground transition-transform ${isSelected ? "rotate-90" : ""}`} />
-                      </div>
-                    </div>
-                    <p className="mt-0.5 truncate text-[13px] font-medium text-foreground">{step.subject || "Sin asunto"}</p>
-                  </div>
-                </div>
-              </button>
-            </div>
-          );
-        })}
-
-        <button
-          onClick={addStep}
-          className="w-full p-3 text-left text-sm text-foreground hover:bg-muted/50 transition-colors flex items-center justify-between gap-2 border-b"
-        >
-          <span className="flex items-center gap-2"><Plus className="h-3.5 w-3.5" /> Añadir paso</span>
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">+ Email</span>
-        </button>
-
-        <button
-          onClick={() => setShowAiGenerate(true)}
-          className="w-full p-3 text-left text-sm text-muted-foreground hover:bg-muted/50 transition-colors flex items-center gap-2 border-b"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-primary" /> Generar secuencia con IA
-        </button>
-
-        {selectedStep && (
-          <button
-            onClick={() => addVariant(selectedStep)}
-            className="w-full p-3 text-left text-sm text-muted-foreground hover:bg-muted/50 transition-colors flex items-center gap-2"
-          >
-            <GitBranch className="h-3.5 w-3.5" /> Añadir variante
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button type="button" onClick={undo} disabled={!canUndo} title="Deshacer" aria-label="Deshacer"
+            className="grid h-8 w-8 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
+            <Undo2 className="h-3.5 w-3.5" />
           </button>
-        )}
+          <button type="button" onClick={redo} disabled={!canRedo} title="Rehacer" aria-label="Rehacer"
+            className="grid h-8 w-8 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50">
+            <Redo2 className="h-3.5 w-3.5" />
+          </button>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={correctAllVariables} disabled={correcting}
+            title="Revisa y corrige las variables mal escritas para que coincidan con los campos de tus leads">
+            {correcting ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />} Corregir variables
+          </Button>
+          <Button variant={showPreview ? "default" : "outline"} size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setShowPreview(!showPreview)}>
+            <Eye className="h-3 w-3" /> Vista previa
+          </Button>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" disabled={!selectedStep}
+            onClick={() => { if (!testTo || campaignLeadEmails.includes(testTo)) setTestTo(user?.email || "team@onepulso.online"); setShowTestEmail(true); }}>
+            <SendHorizonal className="h-3 w-3" /> Enviar prueba
+          </Button>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setShowAiGenerate(true)}>
+            <Sparkles className="h-3 w-3 text-primary" /> Generar secuencia
+          </Button>
+        </div>
       </div>
 
-      {/* Right panel - Editor */}
-      {selectedStep ? (
-        <div className="flex-1 border sm:border-l-0 border-t-0 sm:border-t rounded-b-lg sm:rounded-b-none sm:rounded-r-lg bg-card flex flex-col min-h-[400px]">
-          {/* Variant tabs + actions */}
-          <div className="border-b px-4 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              {variantLabels.map((label, i) => {
-                const vTag = i > 0 ? variants[i - 1]?.tag_filter : undefined;
-                return (
-                  <button
-                    key={label}
-                    onClick={() => setActiveVariantIndex(i)}
-                    title={vTag ? `Solo cuentas con tag "${vTag}"` : undefined}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
-                      activeVariantIndex === i
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground hover:bg-muted/80"
-                    }`}
-                  >
-                    {label}{vTag ? <span className="ml-1 opacity-80">· {vTag}</span> : ""}
-                  </button>
-                );
-              })}
-              {variantLabels.length < 8 && (
-                <button
-                  onClick={async () => {
-                    const newIndex = variants.length + 1;
-                    await addVariant(selectedStep);
-                    setActiveVariantIndex(newIndex);
-                  }}
-                  title="Añadir variante"
-                  aria-label="Añadir variante"
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={undo}
-                disabled={!canUndo}
-                title="Deshacer — recupera lo que borraste o cambiaste sin querer"
-                aria-label="Deshacer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:bg-muted disabled:opacity-70 disabled:pointer-events-none"
-              >
-                <Undo2 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={redo}
-                disabled={!canRedo}
-                title="Rehacer"
-                aria-label="Rehacer"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:bg-muted disabled:opacity-70 disabled:pointer-events-none"
-              >
-                <Redo2 className="h-3.5 w-3.5" />
-              </button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={correctAllVariables}
-                disabled={correcting}
-                title="Revisa y corrige las variables mal escritas para que coincidan con los campos de tus leads"
-              >
-                {correcting ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />} Corregir variables
-              </Button>
-              <Button
-                variant={showPreview ? "default" : "outline"}
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={() => setShowPreview(!showPreview)}
-              >
-                <Eye className="h-3 w-3" /> Preview
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={() => { if (!testTo || campaignLeadEmails.includes(testTo)) setTestTo(user?.email || "team@onepulso.online"); setShowTestEmail(true); }}
-              >
-                <SendHorizonal className="h-3 w-3" /> Test Email
-              </Button>
-              {activeVariantIndex > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 h-7 text-xs border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => removeVariant(selectedStep, activeVariantIndex - 1)}
-                >
-                  <Trash2 className="h-3 w-3" /> Eliminar variante
-                </Button>
-              )}
-              <Button
-                variant="destructive"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={() => deleteStep(selectedStep.id)}
-              >
-                <Trash2 className="h-3 w-3" /> Eliminar step
-              </Button>
-            </div>
-          </div>
-
-          {/* Variant TAG FILTER — only when a variant (not the base A) is active */}
-          {activeVariantIndex > 0 && (
-            <div className="border-b bg-muted/20 px-4 py-2 flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-                <Tag className="h-3 w-3" /> Filtro por cuenta:
-              </span>
-              <Select
-                value={variants[activeVariantIndex - 1]?.tag_filter || "__none__"}
-                onValueChange={(v) => updateVariantTag(selectedStep, activeVariantIndex - 1, v === "__none__" ? null : v)}
-              >
-                <SelectTrigger className="h-7 w-64 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Sin filtro (cualquier cuenta)</SelectItem>
-                  {availableTags.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">No hay tags en tus cuentas de email.</div>}
-                  {availableTags.map((t) => <SelectItem key={t} value={t}>Solo cuentas con tag «{t}»</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {variants[activeVariantIndex - 1]?.tag_filter
-                ? <span className="text-[11px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
-                : <span className="text-[11px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
-            </div>
-          )}
-
-          {/* Subject */}
-          <div className="border-b p-4 space-y-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              Subject — Variante {variantLabels[activeVariantIndex]}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <Input
-                id="seq-subject-editor"
-                value={getCurrentSubject()}
-                onChange={e => setCurrentSubject(e.target.value)}
-                placeholder="Tu asunto aquí... Usa {{first_name}} etc."
-                className="text-sm flex-1"
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                disabled={generatingSubject || !getCurrentBody().trim()}
-                title="Generar asunto con IA"
-                onClick={async () => {
-                  const body = getCurrentBody();
-                  if (!body.trim()) { toast.error("Escribe el cuerpo del email primero"); return; }
-                  setGeneratingSubject(true);
-                  try {
-                    const vars = dynamicVars.map(v => v.label);
-                    const { data, error } = await supabase.functions.invoke("generate-subject", {
-                      body: { body, variables: vars },
-                    });
-                    if (error) throw error;
-                    if (data?.error) throw new Error(data.error);
-                    if (data?.subject) {
-                      setCurrentSubject(data.subject);
-                      toast.success("Asunto generado con IA");
-                    }
-                  } catch (e: any) {
-                    toast.error(e.message || "Error al generar asunto");
-                  } finally {
-                    setGeneratingSubject(false);
-                  }
-                }}
-              >
-                {generatingSubject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-primary" />}
-              </Button>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-                    <Zap className="h-3.5 w-3.5 text-primary" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-48 p-1" align="end">
-                  {dynamicVars.map(v => (
-                    <button
-                      key={v.tag}
-                      onClick={() => insertVariable(v.tag, "subject")}
-                      className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-muted transition-colors flex items-center justify-between"
-                    >
-                      <span>{v.label}</span>
-                      <code className="text-[10px] text-muted-foreground">{v.tag}</code>
-                    </button>
-                  ))}
-                </PopoverContent>
-              </Popover>
-            </div>
-          </div>
-
-          {/* Body editor / Preview */}
-          <div className="flex-1 overflow-y-auto">
-            {showPreview ? (
-              <div className="p-6 prose prose-sm max-w-none">
-                <div className="mb-3 flex items-center justify-between not-prose">
-                  <p className="text-xs text-muted-foreground">Vista previa con datos de ejemplo:</p>
-                  <button
-                    type="button"
-                    onClick={() => setExpandOpen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    title="Ver el email completo"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" /> Ampliar
-                  </button>
-                </div>
-                <div
-                  className={PAPER + " whitespace-pre-wrap p-4 text-sm leading-relaxed"}
-                  dangerouslySetInnerHTML={{ __html: previewText(getCurrentBody()) }}
-                />
-              </div>
-            ) : (
-              <Textarea
-                id="seq-body-editor"
-                value={getCurrentBody()}
-                onChange={e => setCurrentBody(e.target.value)}
-                placeholder={`Escribe tu email aquí...\n\nUsa variables del CSV: ${dynamicVars.map(v => v.tag).join(", ") || "importa leads para ver las variables disponibles"}`}
-                className="border-0 rounded-none resize-none h-full min-h-[300px] focus-visible:ring-0 focus-visible:ring-offset-0 text-sm leading-relaxed p-6"
-              />
-            )}
-          </div>
-
-          {/* Attached files for this step — shown ONLY when there are any. The "Adjuntar archivo"
-              button lives in the bottom toolbar. Each file rides with EVERY email of the step. */}
-          {stepAttachments.length > 0 && (
-            <div className="border-t border-border px-4 py-2 bg-muted/40">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos de este paso:</span>
-                {stepAttachments.map((a, i) => (
-                  <span key={a.path || i} className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-[11px]">
-                    <FileText className="h-3 w-3 text-muted-foreground" />
-                    <span className="max-w-[160px] truncate" title={a.name}>{a.name}</span>
-                    <span className="text-muted-foreground">· {fmtBytes(a.size || 0)}</span>
-                    <button type="button" onClick={() => removeAttachment(i)} className="ml-0.5 text-muted-foreground hover:text-destructive" title="Quitar adjunto">
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Bottom toolbar */}
-          <div className="border-t px-4 py-2 flex flex-wrap items-center gap-1 bg-muted/30">
-            <div className="flex items-center gap-1.5 mr-3 pr-3 border-r">
-              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Follow-up tras</span>
-              <Select
-                value={String(selectedStep.delay_days)}
-                onValueChange={(val) => {
-                  const days = parseInt(val);
-                  setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, delay_days: days } : s));
-                  updateStepField(selectedStep.id, "delay_days", days);
-                }}
-              >
-                <SelectTrigger className="w-[140px] h-7 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">Inmediato</SelectItem>
-                  <SelectItem value="1">1 día</SelectItem>
-                  <SelectItem value="2">2 días</SelectItem>
-                  <SelectItem value="3">3 días</SelectItem>
-                  <SelectItem value="4">4 días</SelectItem>
-                  <SelectItem value="5">5 días</SelectItem>
-                  <SelectItem value="7">1 semana</SelectItem>
-                  <SelectItem value="10">10 días</SelectItem>
-                  <SelectItem value="14">2 semanas</SelectItem>
-                  <SelectItem value="21">3 semanas</SelectItem>
-                  <SelectItem value="30">1 mes</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
-                  <Zap className="h-3 w-3" /> Insertar variable
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-48 p-1" align="start">
-                {dynamicVars.map(v => (
-                  <button
-                    key={v.tag}
-                    onClick={() => insertVariable(v.tag, "body")}
-                    className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-muted transition-colors flex items-center justify-between"
-                  >
-                    <span>{v.label}</span>
-                    <code className="text-[10px] text-muted-foreground">{v.tag}</code>
-                  </button>
-                ))}
-              </PopoverContent>
-            </Popover>
-
-            <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={toggleBold}>
-              <Bold className="h-3 w-3" /> Negrita
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 h-7 text-xs"
-              disabled={autoBolding || !getCurrentBody().trim()}
-              onClick={async () => {
-                const body = getCurrentBody();
-                if (!body.trim()) return;
-                setAutoBolding(true);
-                try {
-                  const { data, error } = await supabase.functions.invoke("auto-bold", {
-                    body: { body },
-                  });
-                  if (error) throw error;
-                  if (data?.error) throw new Error(data.error);
-                  if (data?.body) {
-                    // Ensure all bold is <b> tags, never markdown **
-                    const cleaned = data.body.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-                    setCurrentBody(cleaned);
-                    toast.success("Negritas aplicadas automáticamente");
-                  }
-                } catch (e: any) {
-                  toast.error(e.message || "Error al aplicar negritas");
-                } finally {
-                  setAutoBolding(false);
-                }
-              }}
-            >
-              {autoBolding ? <Loader2 className="h-3 w-3 animate-spin" /> : <WandSparkles className="h-3 w-3" />}
-              Auto Negrita
-            </Button>
-
-            <Popover open={showLinkPopover} onOpenChange={setShowLinkPopover}>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
-                  <Link2 className="h-3 w-3" /> Link
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 space-y-3 p-3" align="start">
-                <div className="space-y-1">
-                  <Label className="text-xs">URL</Label>
-                  <Input
-                    value={linkUrl}
-                    onChange={e => setLinkUrl(e.target.value)}
-                    placeholder="https://ejemplo.com"
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Texto (opcional)</Label>
-                  <Input
-                    value={linkText}
-                    onChange={e => setLinkText(e.target.value)}
-                    placeholder="Haz clic aquí"
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <Button size="sm" className="w-full h-7 text-xs" onClick={insertLink}>
-                  Insertar link
-                </Button>
-              </PopoverContent>
-            </Popover>
-
-            <div className="border-l pl-1 ml-1 flex items-center gap-1">
-              <input ref={attachInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAttachment(f); }} />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                disabled={uploadingAttach}
-                onClick={() => attachInputRef.current?.click()}
-                title="Adjuntar un archivo que se enviará con cada email de este paso (máx. 5 MB)"
-              >
-                {uploadingAttach ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />} Adjuntar archivo
-                {stepAttachments.length > 0 && <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10.5px] font-semibold">{stepAttachments.length}</Badge>}
-              </Button>
-            </div>
-
-            <div className="border-l pl-1 ml-1 flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => { setShowSaveTemplate(true); }}>
-                <Save className="h-3 w-3" /> Guardar plantilla
-              </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => { loadTemplates(); setShowLoadTemplate(true); }}>
-                <FileText className="h-3 w-3" /> Cargar plantilla
-              </Button>
-            </div>
-
-            <div className="ml-auto text-[10px] text-muted-foreground">
-              Las variantes se rotan automáticamente al enviar
-            </div>
+      {steps.length === 0 ? (
+        <div className="rounded-[14px] border border-dashed border-border bg-card px-6 py-14 text-center">
+          <span className="mx-auto grid h-14 w-14 place-items-center rounded-[16px] bg-accent text-primary"><GitBranch className="h-6 w-6" /></span>
+          <p className="mt-4 font-display text-[17px] font-semibold text-foreground">Todavía no hay ningún correo</p>
+          <p className="mt-1 text-[14px] text-muted-foreground">Empieza por el primer email y añade los seguimientos que quieras.</p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Button size="sm" className="gap-1.5" onClick={addStep}><Plus className="h-3.5 w-3.5" /> Crear primer paso</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAiGenerate(true)}><Sparkles className="h-3.5 w-3.5 text-primary" /> Generar con IA</Button>
           </div>
         </div>
       ) : (
-        <div className="flex-1 border border-l-0 rounded-r-lg bg-card flex items-center justify-center">
-          <div className="text-center text-muted-foreground">
-            <GitBranch className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-70" />
-            <p className="text-sm font-medium">Selecciona un paso o crea uno nuevo</p>
-            <p className="text-xs mt-1">Crea tu secuencia de follow-ups</p>
-            <Button size="sm" className="mt-4 gap-1.5" onClick={addStep}>
-              <Plus className="h-3.5 w-3.5" /> Crear primer paso
-            </Button>
+        <div>
+          {steps.map((step, i) => {
+            const isSel = step.id === selectedStepId;
+            const stepVariants: Variant[] = Array.isArray(step.variants) ? step.variants : [];
+            const isDragging = dragStepId === step.id;
+            const isDragOver = dragOverStepId === step.id && dragStepId !== step.id;
+            const body = isSel ? getCurrentBody() : (step.body || "");
+            const subject = isSel ? getCurrentSubject() : (step.subject || "");
+            const parts = delayParts(step.delay_days ?? 0);
+
+            return (
+              <div key={step.id}>
+                {/* Espera entre este paso y el anterior */}
+                {i > 0 && (
+                  <div className="flex gap-5 pb-5">
+                    <SeqRail Icon={Clock} title="Esperar" sub="Tiempo entre correos" tone="wait" />
+                    <div className="min-w-0 flex-1 rounded-[12px] border border-border bg-card px-4 py-3.5 shadow-rest">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="text-[14.5px] font-semibold text-foreground">Esperar</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={180}
+                          value={String(parts.n)}
+                          onChange={(e) => setDelay(step, Number(e.target.value || 0), parts.unit)}
+                          className="h-10 w-[86px] text-[14px]"
+                          aria-label="Cuánto esperar"
+                        />
+                        <Select value={parts.unit} onValueChange={(u) => setDelay(step, parts.n, u as "days" | "weeks")}>
+                          <SelectTrigger className="h-10 w-[128px] text-[14px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="days">Días</SelectItem>
+                            <SelectItem value="weeks">Semanas</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <span className="ml-auto hidden items-center gap-2 rounded-[10px] bg-accent/60 px-3 py-2 text-[12.5px] leading-[1.35] text-muted-foreground md:flex">
+                          <Info className="h-4 w-4 shrink-0 text-primary" />
+                          Deja un respiro entre correos: se responde más y se marca menos como spam.
+                        </span>
+                      </div>
+                      {parts.n === 0 && (
+                        <p className="mt-2 text-[12.5px] text-muted-foreground">Sin espera: saldrá el mismo día que el paso anterior.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* El correo */}
+                <div
+                  draggable
+                  onDragStart={(e) => { setDragStepId(step.id); e.dataTransfer.effectAllowed = "move"; }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverStepId(step.id); }}
+                  onDragLeave={() => { if (dragOverStepId === step.id) setDragOverStepId(null); }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    if (!dragStepId || dragStepId === step.id) { setDragStepId(null); setDragOverStepId(null); return; }
+                    const fromIdx = steps.findIndex(s => s.id === dragStepId);
+                    const toIdx = steps.findIndex(s => s.id === step.id);
+                    if (fromIdx === -1 || toIdx === -1) { setDragStepId(null); setDragOverStepId(null); return; }
+                    const reordered = [...steps];
+                    const [moved] = reordered.splice(fromIdx, 1);
+                    reordered.splice(toIdx, 0, moved);
+                    setSteps(reordered);
+                    setDragStepId(null);
+                    setDragOverStepId(null);
+                    for (let j = 0; j < reordered.length; j++) {
+                      await supabase.from("campaign_steps").update({ step_order: j + 1 }).eq("id", reordered[j].id);
+                    }
+                    load();
+                  }}
+                  onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
+                  className={`flex gap-5 pb-6 ${isDragging ? "opacity-40" : ""} ${isDragOver ? "pt-2 [&>*:last-child]:ring-2 [&>*:last-child]:ring-primary/40" : ""}`}
+                >
+                  <SeqRail Icon={Mail} title={`Paso ${i + 1}`} sub={i === 0 ? "Email inicial" : "Seguimiento"} last={i === steps.length - 1} active={isSel} grip />
+
+                  <div
+                    onClick={() => { if (!isSel) setSelectedStepId(step.id); }}
+                    className={`min-w-0 flex-1 rounded-[14px] border bg-card p-3.5 transition-all duration-200 ${
+                      isSel ? "border-[#C9BFFA] shadow-[0_10px_28px_rgba(110,88,241,.10)] dark:border-primary/40" : "cursor-pointer border-border shadow-rest hover:border-[#C9BFFA]"
+                    }`}
+                  >
+                    {/* Asunto + variantes */}
+                    <div className="flex items-start gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        {isSel ? (
+                          <>
+                            <input
+                              id="seq-subject-editor"
+                              value={subject || ""}
+                              onChange={e => setCurrentSubject(e.target.value)}
+                              placeholder={i === 0 ? "Asunto del correo" : "Déjalo vacío para usar el asunto del paso anterior"}
+                              className="h-[46px] w-full rounded-[10px] border border-border bg-background px-4 pr-12 text-[14.5px] font-medium text-foreground outline-none transition-colors placeholder:font-normal placeholder:text-muted-foreground focus:border-primary"
+                            />
+                            <button
+                              type="button"
+                              title="Generar el asunto con IA"
+                              aria-label="Generar el asunto con IA"
+                              disabled={generatingSubject || !body.trim()}
+                              onClick={async () => {
+                                if (!body.trim()) { toast.error("Escribe el cuerpo del email primero"); return; }
+                                setGeneratingSubject(true);
+                                try {
+                                  const vars = dynamicVars.map(v => v.label);
+                                  const { data, error } = await supabase.functions.invoke("generate-subject", { body: { body, variables: vars } });
+                                  if (error) throw error;
+                                  if (data?.error) throw new Error(data.error);
+                                  if (data?.subject) { setCurrentSubject(data.subject); toast.success("Asunto generado con IA"); }
+                                } catch (e: any) {
+                                  toast.error(e.message || "Error al generar asunto");
+                                } finally {
+                                  setGeneratingSubject(false);
+                                }
+                              }}
+                              className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-[8px] bg-accent text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50 disabled:hover:bg-accent disabled:hover:text-primary"
+                            >
+                              {generatingSubject ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            </button>
+                          </>
+                        ) : (
+                          <div className="flex h-[46px] items-center truncate rounded-[10px] border border-border bg-muted/40 px-4 text-[14.5px] font-medium text-foreground">
+                            {subject || <span className="font-normal text-muted-foreground">{i === 0 ? "Sin asunto" : "Mismo asunto del paso anterior"}</span>}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={async (e) => { e.stopPropagation(); setSelectedStepId(step.id); const idx = stepVariants.length + 1; await addVariant(step); setActiveVariantIndex(idx); }}
+                        title="Añadir una variante de este correo (prueba A/B)"
+                        aria-label="Añadir variante"
+                        className="grid h-[46px] w-[46px] shrink-0 place-items-center rounded-[10px] border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+
+                      {/* Estado A/B del paso: la letra activa y si el paso tiene variantes */}
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          setSelectedStepId(step.id);
+                          if (stepVariants.length === 0) { await addVariant(step); setActiveVariantIndex(1); }
+                          else setActiveVariantIndex((idx) => (idx + 1) % (stepVariants.length + 1));
+                        }}
+                        title={stepVariants.length === 0 ? "Crear una variante B para este correo" : "Cambiar de variante"}
+                        className="flex h-[46px] shrink-0 items-center gap-2.5 rounded-[10px] bg-[#0F172B] px-3 text-white transition-colors hover:bg-[#1D293D] dark:bg-[#1D293D] dark:hover:bg-[#28374f]"
+                      >
+                        <span className="font-display text-[14px] font-semibold">{isSel ? variantLabels[activeVariantIndex] : "A"}</span>
+                        <span className={`relative h-[22px] w-[40px] rounded-full transition-colors ${stepVariants.length > 0 ? "bg-[#12B76A]" : "bg-white/25"}`}>
+                          <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white transition-all ${stepVariants.length > 0 ? "left-[21px]" : "left-[3px]"}`} />
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Pestañas de variantes del paso abierto */}
+                    {isSel && variantLabels.length > 1 && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        {variantLabels.map((label, vi) => {
+                          const vTag = vi > 0 ? variants[vi - 1]?.tag_filter : undefined;
+                          return (
+                            <button
+                              key={label}
+                              onClick={() => setActiveVariantIndex(vi)}
+                              title={vTag ? `Solo cuentas con la etiqueta "${vTag}"` : undefined}
+                              className={`rounded-[8px] px-3 py-1 text-[12.5px] font-semibold transition-colors ${
+                                activeVariantIndex === vi ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                              }`}
+                            >
+                              {label}{vTag ? <span className="ml-1 opacity-80">· {vTag}</span> : ""}
+                            </button>
+                          );
+                        })}
+                        {activeVariantIndex > 0 && (
+                          <button
+                            onClick={() => removeVariant(selectedStep, activeVariantIndex - 1)}
+                            className="ml-1 inline-flex items-center gap-1 rounded-[8px] border border-destructive/40 px-2.5 py-1 text-[12.5px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-3 w-3" /> Eliminar variante
+                          </button>
+                        )}
+                        <span className="ml-auto hidden text-[11.5px] text-muted-foreground sm:inline">Las variantes se rotan solas al enviar</span>
+                      </div>
+                    )}
+
+                    {/* Filtro por etiqueta de cuenta — sólo con una variante distinta de la A */}
+                    {isSel && activeVariantIndex > 0 && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-[10px] bg-muted/40 px-3 py-2">
+                        <span className="inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground"><Tag className="h-3 w-3" /> Filtro por cuenta:</span>
+                        <Select
+                          value={variants[activeVariantIndex - 1]?.tag_filter || "__none__"}
+                          onValueChange={(v) => updateVariantTag(selectedStep, activeVariantIndex - 1, v === "__none__" ? null : v)}
+                        >
+                          <SelectTrigger className="h-8 w-64 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Sin filtro (cualquier cuenta)</SelectItem>
+                            {availableTags.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">No hay etiquetas en tus cuentas de email.</div>}
+                            {availableTags.map((t) => <SelectItem key={t} value={t}>Solo cuentas con la etiqueta «{t}»</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        {variants[activeVariantIndex - 1]?.tag_filter
+                          ? <span className="text-[11.5px] text-primary">→ esta variante SOLO la envían las cuentas con «{variants[activeVariantIndex - 1]?.tag_filter}»</span>
+                          : <span className="text-[11.5px] text-muted-foreground">→ la envían todas las cuentas (rotación normal)</span>}
+                      </div>
+                    )}
+
+                    {/* Cuerpo del correo */}
+                    <div className="mt-2.5 overflow-hidden rounded-[10px] border border-border bg-background">
+                      {isSel && showPreview ? (
+                        <div className="p-4">
+                          <div className="mb-3 flex items-center justify-between">
+                            <p className="text-[12px] text-muted-foreground">Vista previa con datos de ejemplo:</p>
+                            <button type="button" onClick={() => setExpandOpen(true)} title="Ver el email completo"
+                              className="inline-flex items-center gap-1.5 rounded-[8px] border border-border px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                              <Maximize2 className="h-3.5 w-3.5" /> Ampliar
+                            </button>
+                          </div>
+                          <div className={PAPER + " whitespace-pre-wrap p-4 text-sm leading-relaxed"} dangerouslySetInnerHTML={{ __html: previewText(body) }} />
+                        </div>
+                      ) : isSel ? (
+                        <Textarea
+                          id="seq-body-editor"
+                          value={body}
+                          onChange={e => setCurrentBody(e.target.value)}
+                          placeholder={`Escribe tu email aquí...\n\nVariables de tus leads: ${dynamicVars.map(v => v.tag).join(", ") || "importa leads para ver las variables disponibles"}`}
+                          className="min-h-[210px] resize-y rounded-none border-0 bg-transparent p-4 text-[14px] leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0"
+                        />
+                      ) : (
+                        <div className="min-h-[120px] whitespace-pre-wrap p-4 text-[14px] leading-relaxed text-muted-foreground">
+                          {body ? (body.length > 320 ? `${body.slice(0, 320)}…` : body) : "Escribe tu email aquí..."}
+                        </div>
+                      )}
+
+                      {/* Barra de herramientas del correo abierto */}
+                      {isSel && (
+                        <div className="flex flex-wrap items-center gap-1 border-t border-border bg-muted/30 px-2 py-1.5">
+                          <SeqTool Icon={Bold} label="Negrita" onClick={() => wrapSelection("b")} />
+                          <SeqTool Icon={Italic} label="Cursiva" onClick={() => wrapSelection("i")} />
+                          <SeqTool Icon={Underline} label="Subrayado" onClick={() => wrapSelection("u")} />
+                          <span className="mx-1 h-5 w-px bg-border" />
+                          <Popover open={showLinkPopover} onOpenChange={setShowLinkPopover}>
+                            <PopoverTrigger asChild>
+                              <button type="button" title="Insertar enlace" aria-label="Insertar enlace" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
+                                <Link2 className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-64 space-y-3 p-3" align="start">
+                              <div className="space-y-1">
+                                <Label className="text-xs">URL</Label>
+                                <Input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder="https://ejemplo.com" className="h-8 text-xs" />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Texto (opcional)</Label>
+                                <Input value={linkText} onChange={e => setLinkText(e.target.value)} placeholder="Haz clic aquí" className="h-8 text-xs" />
+                              </div>
+                              <Button size="sm" className="h-7 w-full text-xs" onClick={insertLink}>Insertar enlace</Button>
+                            </PopoverContent>
+                          </Popover>
+                          <SeqTool Icon={List} label="Lista" onClick={() => insertList(false)} />
+                          <SeqTool Icon={ListOrdered} label="Lista numerada" onClick={() => insertList(true)} />
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" title="Emoji" aria-label="Emoji" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
+                                <Smile className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[232px] p-2" align="start">
+                              <div className="grid grid-cols-8 gap-1">
+                                {EMOJIS.map((em) => (
+                                  <button key={em} type="button" onClick={() => insertAtCursor(em)} className="grid h-7 w-7 place-items-center rounded-[6px] text-[16px] transition-colors hover:bg-accent">
+                                    {em}
+                                  </button>
+                                ))}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" title="Insertar variable del lead" aria-label="Insertar variable" className="grid h-8 w-8 place-items-center rounded-[8px] text-muted-foreground transition-colors hover:bg-accent hover:text-primary">
+                                <Braces className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-52 p-1" align="start">
+                              {dynamicVars.length === 0 && <p className="px-3 py-2 text-[12px] text-muted-foreground">Importa leads para ver sus variables.</p>}
+                              {dynamicVars.map(v => (
+                                <button key={v.tag} onClick={() => insertVariable(v.tag, "body")}
+                                  className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
+                                  <span>{v.label}</span>
+                                  <code className="text-[10px] text-muted-foreground">{v.tag}</code>
+                                </button>
+                              ))}
+                            </PopoverContent>
+                          </Popover>
+                          <span className="mx-1 h-5 w-px bg-border" />
+                          <SeqTool
+                            Icon={autoBolding ? Loader2 : WandSparkles}
+                            spin={autoBolding}
+                            label="Negritas automáticas"
+                            disabled={autoBolding || !body.trim()}
+                            onClick={async () => {
+                              if (!body.trim()) return;
+                              setAutoBolding(true);
+                              try {
+                                const { data, error } = await supabase.functions.invoke("auto-bold", { body: { body } });
+                                if (error) throw error;
+                                if (data?.error) throw new Error(data.error);
+                                if (data?.body) { setCurrentBody(data.body.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')); toast.success("Negritas aplicadas"); }
+                              } catch (e: any) {
+                                toast.error(e.message || "Error al aplicar negritas");
+                              } finally {
+                                setAutoBolding(false);
+                              }
+                            }}
+                          />
+                          <input ref={attachInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAttachment(f); }} />
+                          <SeqTool Icon={uploadingAttach ? Loader2 : Paperclip} spin={uploadingAttach} label="Adjuntar archivo (máx. 5 MB)" disabled={uploadingAttach} onClick={() => attachInputRef.current?.click()} badge={stepAttachments.length || undefined} />
+                          <SeqTool Icon={Save} label="Guardar como plantilla" onClick={() => setShowSaveTemplate(true)} />
+                          <SeqTool Icon={FileText} label="Cargar plantilla" onClick={() => { loadTemplates(); setShowLoadTemplate(true); }} />
+
+                          <div className="ml-auto flex items-center gap-2">
+                            <span className="text-[12px] tabular-nums text-muted-foreground">{body.length}</span>
+                            <button
+                              type="button"
+                              onClick={() => setAiOneOpen(true)}
+                              className="inline-flex items-center gap-1.5 rounded-[8px] bg-accent px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
+                            >
+                              <Sparkles className="h-3.5 w-3.5" /> Escribir con IA
+                            </button>
+                            <SeqTool Icon={Trash2} label="Eliminar este paso" danger onClick={() => deleteStep(step.id)} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Adjuntos del paso */}
+                    {isSel && stepAttachments.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-muted-foreground"><Paperclip className="h-3 w-3" /> Adjuntos:</span>
+                        {stepAttachments.map((a, ai) => (
+                          <span key={a.path || ai} className="inline-flex items-center gap-1 rounded-[8px] border border-border bg-card px-2 py-1 text-[11.5px]">
+                            <FileText className="h-3 w-3 text-muted-foreground" />
+                            <span className="max-w-[160px] truncate" title={a.name}>{a.name}</span>
+                            <span className="text-muted-foreground">· {fmtBytes(a.size || 0)}</span>
+                            <button type="button" onClick={() => removeAttachment(ai)} className="ml-0.5 text-muted-foreground transition-colors hover:text-destructive" title="Quitar adjunto">
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Añadir otro correo */}
+          <div className="flex gap-5">
+            <SeqRail Icon={Plus} title="" sub="" last tone="add" />
+            <button
+              onClick={addStep}
+              className="min-w-0 flex-1 rounded-[14px] border border-dashed border-border bg-card/60 py-4 text-[14.5px] font-semibold text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+            >
+              <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4" /> Añadir paso</span>
+            </button>
           </div>
         </div>
       )}
     </div>
+
+    {/* Escribir ESTE correo con IA */}
+    <Dialog open={aiOneOpen} onOpenChange={setAiOneOpen}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Escribir este correo con IA</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-[13px] text-muted-foreground">
+            Cuéntale de qué va: qué vendes, a quién y qué quieres que haga el lead. Sólo se cambia ESTE paso, los demás se quedan como están.
+          </p>
+          <Textarea
+            value={aiOneContext}
+            onChange={(e) => setAiOneContext(e.target.value)}
+            rows={5}
+            placeholder="Ej.: vendemos mantenimiento informático a talleres de Valencia; el objetivo es una llamada de 10 minutos."
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setAiOneOpen(false)}>Cancelar</Button>
+          <Button onClick={writeStepWithAI} disabled={aiOneRunning} className="gap-1.5">
+            {aiOneRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Escribir
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     {/* Test Email Dialog */}
     <Dialog open={showTestEmail} onOpenChange={setShowTestEmail}>

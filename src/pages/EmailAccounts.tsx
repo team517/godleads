@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { filterAccounts } from "@/lib/account-filter";
 import AddAccountDialog, { type AddAccountMode } from "@/components/accounts/AddAccountDialog";
 import AccountsTable from "@/components/accounts/AccountsTable";
+import AccountsEmptyState from "@/components/accounts/AccountsEmptyState";
 import { configSummary } from "@/lib/account-health";
 import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
 import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
@@ -1906,13 +1907,10 @@ export default function EmailAccounts() {
 
 
       {accounts.length === 0 ? (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <Mail className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-display font-semibold mb-2">No tienes cuentas de email</h3>
-            <p className="text-[15px] text-muted-foreground">Añade tu primera cuenta o importa varias con CSV.</p>
-          </CardContent>
-        </Card>
+        <AccountsEmptyState
+          onAdd={() => { setAddMode("single"); setShowAdd(true); }}
+          onBulk={isAgency ? () => { setAddMode("bulk"); setShowAdd(true); } : undefined}
+        />
       ) : (
         <>
         {/* Escritorio: tabla de cuentas conectadas (estilo Smartlead, con la autenticación del
