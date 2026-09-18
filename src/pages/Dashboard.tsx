@@ -44,6 +44,10 @@ export default function Dashboard() {
           leads: leadsRes.count || 0,
           accounts: accountsRes.count || 0,
         };
+        // PostgREST no "lanza": devuelve { error }. Sin esta comprobación, un token caducado
+        // guardaba ceros y una lista vacía en el caché de disco y el panel seguía en blanco.
+        const failed = !!(statsRes?.error || accountsRes.error || leadsRes.error || campaignsRes.error);
+        if (failed) return;
         setStats(newStats);
         setCampaigns(campaignsRes.data || []);
         cacheSet("dash:stats", newStats);

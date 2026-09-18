@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, Pencil, Check, X, Shuffle, Loader2 } from "lucide-react";
+import { Plus, Copy, Play, Pause, Trash2, Send, ChevronLeft, Pencil, Check, X, Shuffle, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
@@ -90,10 +90,21 @@ export default function Campaigns() {
   const [remixDest, setRemixDest] = useState<any | null>(null);
   const [remixRunning, setRemixRunning] = useState(false);
   const [remixProgress, setRemixProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = async () => {
     if (!user) return;
-    const { data } = await supabase.from("campaigns").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    const { data, error: listError } = await supabase.from("campaigns").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    // Un fallo de la consulta (token caducado, red, base ocupada) NO es "no tienes campañas":
+    // se conserva lo que hubiera en pantalla, se dice lo que pasa y se ofrece reintentar. Antes
+    // se guardaba la lista VACÍA en el caché de disco, así que la pantalla seguía mintiendo en
+    // las siguientes visitas aunque la conexión ya estuviera bien.
+    if (listError) {
+      setLoadError(listError.message || "No se pudieron cargar las campañas.");
+      setLoading(false);
+      return;
+    }
+    setLoadError(null);
     // Responsables ("quién se encarga") — para el badge de cada tarjeta.
     (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id)
       .then(({ data: mgrs }: any) => setManagers(mgrs || []));
@@ -442,7 +453,21 @@ export default function Campaigns() {
         </Dialog>
       </div>
 
-      {campaigns.length === 0 ? (
+      {loadError && (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <p className="flex items-center gap-2 text-[14px] font-medium text-destructive">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              No se pudieron cargar tus campañas. Tus datos siguen ahí; ha fallado la consulta.
+            </p>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setLoadError(null); load(); }}>
+              <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {campaigns.length === 0 && !loadError ? (
         <Card>
           <CardContent className="p-12 text-center">
             <Send className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -450,7 +475,7 @@ export default function Campaigns() {
             <p className="text-[15px] text-muted-foreground">Crea tu primera campaña de cold email.</p>
           </CardContent>
         </Card>
-      ) : (
+      ) : campaigns.length === 0 ? null : (
         <>
         {/* Desktop (≥ md): Smartlead-style table. Mobile keeps the cards below. */}
         <div className="hidden md:block">

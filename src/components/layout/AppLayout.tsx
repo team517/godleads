@@ -5,6 +5,7 @@ import { MobileBottomNav } from "./MobileBottomNav";
 import { useEffect, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { KeepSessionBanner } from "@/components/KeepSessionBanner";
+import { SessionExpiredBanner } from "@/components/SessionExpiredBanner";
 import { useProfile } from "@/contexts/ProfileContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
@@ -117,6 +118,8 @@ export function AppLayout() {
       {isMobile && <MobileBottomNav />}
 
       <KeepSessionBanner />
+      {/* Token caducado: se dice en vez de enseñar listas vacías. */}
+      <SessionExpiredBanner />
       <PushPrompt />
     </div>
   );

@@ -145,9 +145,12 @@ export default function Leads() {
       query,
       supabase.from("lead_lists").select("*, leads(count)").eq("user_id", user.id),
     ]);
+    // Si la consulta falla (token caducado, red), se conserva lo que hay: vaciar la lista y
+    // cachearla vacía hacía creer al usuario que había perdido sus leads.
+    if (leadsRes.error) { setLoading(false); return; }
     setLeads(leadsRes.data || []);
     setTotalCount(leadsRes.count || 0);
-    setLists(listsRes.data || []);
+    if (!listsRes.error) setLists(listsRes.data || []);
     // Cache only the default entry view (first page, all lists) for instant re-entry.
     if (page === 0 && !activeList) cacheSet("leads:first", { leads: leadsRes.data || [], lists: listsRes.data || [] });
     setLoading(false);
