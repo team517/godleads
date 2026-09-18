@@ -32,6 +32,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { classifyMessage, authorText, isPoliteFileAway } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
+import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 
 const corsHeaders = {
@@ -100,8 +101,8 @@ Deno.serve(async (req) => {
     // Ventana hacia atrás para repasar el histórico por tramos: created_at < before.
     const before = typeof body?.before === "string" && !Number.isNaN(Date.parse(body.before)) ? body.before : null;
     // Un repaso manual puede pedir más llamadas por tanda; el cron normal no cambia.
-    const maxAiCalls = Math.min(Math.max(Number(body?.max_ai) || MAX_AI_CALLS_PER_RUN, 1), 150);
-    const concurrency = Math.min(Math.max(Number(body?.concurrency) || AI_CONCURRENCY, 1), 8);
+    const maxAiCalls = Math.min(Math.max(Number(body?.max_ai) || MAX_AI_CALLS_PER_RUN, 1), 120);
+    const concurrency = Math.min(Math.max(Number(body?.concurrency) || AI_CONCURRENCY, 1), 6);
 
     // Only REAL prospect replies: a reply inside a real thread (In-Reply-To / References) or tied
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
@@ -191,12 +192,30 @@ Deno.serve(async (req) => {
 
     // ── Phase 2: the model, for what rules cannot settle — bounded in calls, time and failures ─
     const needAi = useAi ? pending.filter((p) => !RULES_ARE_FINAL.has(p.ruleVerdict)) : [];
-    const aiQueue = needAi.slice(0, maxAiCalls);
-    const deferred = new Set<string>(needAi.slice(maxAiCalls).map((p) => p.m.id));
+
+    // ── Ritmo: cuántas llamadas caben AHORA ──────────────────────────────────────────────────
+    // El control se recuerda entre ejecuciones (una fila en ai_throttle_state): tope por minuto,
+    // y enfriamiento si la API devolvió 429. En enfriamiento NO se llama al modelo y las filas se
+    // dejan para el próximo tick (dos minutos después) en vez de etiquetarlas peor con reglas.
+    const { data: throttleRow } = await admin
+      .from("ai_throttle_state")
+      .select("window_started_at, calls_in_window, cooldown_until, consecutive_limits")
+      .eq("id", 1)
+      .maybeSingle();
+    const plan = planCalls((throttleRow as ThrottleState) || null, Math.min(needAi.length, maxAiCalls), Date.now());
+    const enfriando = plan.cooldownMs;
+
+    const aiQueue = needAi.slice(0, plan.allowed);
+    const deferred = new Set<string>(needAi.slice(plan.allowed).map((p) => p.m.id));
+    const gapMs = pacingGapMs(concurrency);
     let aiCalls = 0, aiFailures = 0, consecutiveTransient = 0, breakerTripped = false, outOfTime = false, unsupported = 0;
+    let rateLimited = false, retryAfterMs = 0;
     for (let i = 0; i < aiQueue.length; i += concurrency) {
       if (breakerTripped) { for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
       if (Date.now() - startedAt > RUN_TIME_BUDGET_MS) { outOfTime = true; for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
+      // Reparte las llamadas dentro del minuto en vez de soltarlas de golpe: así ni la API ni
+      // esta función ven picos.
+      if (i > 0 && gapMs > 0) await new Promise((r) => setTimeout(r, gapMs));
       const batch = aiQueue.slice(i, i + concurrency);
       // The model reads ONLY the author's words (quote + legal footers cut), exactly what the
       // prompt promises. It used to get the whole text and judged our own quoted pitch and the
@@ -238,9 +257,26 @@ Deno.serve(async (req) => {
           // A transient failure leaves the row UNMARKED (next tick retries); a malformed answer
           // keeps the rule verdict — asking again at temperature 0 would not change it.
           if (r.transient) { deferred.add(batch[k].m.id); consecutiveTransient++; }
+          // Un 429 no es un fallo cualquiera: es la API pidiendo que paremos. Se anota para
+          // enfriar y no se insiste en esta tanda.
+          if (r.rateLimited) { rateLimited = true; retryAfterMs = Math.max(retryAfterMs, r.retryAfterMs || 0); breakerTripped = true; }
           if (consecutiveTransient >= AI_BREAKER_FAILURES) breakerTripped = true;
         }
       }
+    }
+
+    // Guardar el ritmo para la próxima ejecución: lo gastado en esta ventana y, si la API pidió
+    // parar, hasta cuándo no se la vuelve a llamar.
+    if (useAi && !dryRun) {
+      const consecutive = rateLimited ? ((throttleRow as ThrottleState)?.consecutive_limits || 0) + 1 : 0;
+      await admin.from("ai_throttle_state").upsert({
+        id: 1,
+        window_started_at: plan.windowStart,
+        calls_in_window: plan.callsInWindow + aiCalls,
+        cooldown_until: rateLimited ? new Date(Date.now() + cooldownAfterLimit(consecutive, retryAfterMs)).toISOString() : null,
+        consecutive_limits: consecutive,
+        updated_at: new Date().toISOString(),
+      });
     }
 
     // ── Phase 3: write labels, notify ────────────────────────────────────────────────────────
@@ -298,7 +334,8 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       dry_run: dryRun, revisados: scanned, ya_clasificados: skipped, clasificados: classified,
       por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, fallos_ia: aiFailures,
-      aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, interes_sin_cita: unsupported, ms: Date.now() - startedAt,
+      aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, interes_sin_cita: unsupported,
+      limite_api: rateLimited, enfriando_ms: enfriando, cupo_tanda: plan.allowed, ms: Date.now() - startedAt,
       notificados: notified, hasta: oldestSeen, muestra: sample,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {

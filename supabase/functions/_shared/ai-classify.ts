@@ -12,6 +12,8 @@
 // nor the sending engine. The only resource it spends is the function's wall time, which the
 // caller bounds (parallel batches + a per-run time budget).
 
+import { parseRetryAfter } from "./ai-throttle.ts";
+
 export type AiCategory = "interested" | "question" | "not_interested" | "no_contactar" | "derivado" | "out_of_office" | "neutral";
 
 const CATEGORIES: AiCategory[] = ["interested", "question", "not_interested", "no_contactar", "derivado", "out_of_office", "neutral"];
@@ -117,7 +119,14 @@ export function evidenceSupported(evidence: string | null | undefined, authorTex
 }
 
 export interface AiVerdict { category: AiCategory; confidence: number; reason: string; evidence: string }
-export interface AiResult { verdict: AiVerdict | null; transient: boolean }
+export interface AiResult {
+  verdict: AiVerdict | null;
+  transient: boolean;
+  /** La API pidió que paremos (429): el que llama enfría, no insiste. */
+  rateLimited?: boolean;
+  /** Lo que pide esperar la cabecera Retry-After, en milisegundos. */
+  retryAfterMs?: number;
+}
 
 /** Ask DeepSeek. Never throws. `transient` tells the caller whether the failure was the kind that
  *  a retry — or a circuit breaker — should care about (429 / 5xx / timeout / network), as opposed
@@ -143,7 +152,10 @@ export async function aiClassifyOnce(apiKey: string, subject: string | null, aut
       }),
       signal: ctrl.signal,
     });
-    if (!r.ok) return { verdict: null, transient: r.status === 429 || r.status >= 500 };
+    if (!r.ok) {
+      const limited = r.status === 429;
+      return { verdict: null, transient: limited || r.status >= 500, rateLimited: limited, retryAfterMs: limited ? parseRetryAfter(r.headers.get("retry-after")) : 0 };
+    }
     const j = await r.json();
     const raw = String(j?.choices?.[0]?.message?.content || "").trim();
     const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ""));
