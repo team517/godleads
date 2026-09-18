@@ -113,6 +113,8 @@ const SIG = `<table><tr><td><img src="https://onepulso.online/logo.png" width="1
 const ORIG_HTML = `<div dir="ltr"><p>Buenos días Oliver,</p><p>Gracias por tu mensaje. Os paso las referencias que necesitamos:</p><ul><li>PN LM140K-5.0 — 2 uds</li><li>P/N CD4049UBF — 5 uds</li></ul><p>¿Podéis confirmar plazo y certificados?</p><p>Un saludo,<br>Giovanni Cetrone<br>Procurement</p><table><tr><td>LEAT S.p.A.</td><td>+39 011 248 3711</td></tr></table></div>`;
 const FWD_BODY = `<div style="white-space:pre-wrap">Te paso esto, mira a ver.</div><br><div style="border-top:1px solid #d9d9d9;padding-top:12px;margin-top:8px"><div style="font-size:13px;color:#5f6368;margin-bottom:10px">---------- Mensaje reenviado ----------<br><b>De:</b> Giovanni Cetrone &lt;g.cetrone@leat.it&gt;<br><b>Fecha:</b> 17/9/2026, 16:54:00<br><b>Asunto:</b> Request for quote TCX MICRO<br><b>Para:</b> oliver@tcxmicro.com</div><div>${ORIG_HTML}</div></div>`;
 
+const SIG_REAL = await Deno.readTextFile(`${OUT_DIR}/sig_real.html`).catch(() => "");
+
 const cases: Array<{ name: string; subject: string; body: string; opts: Record<string, unknown> }> = [
   { name: "1) respuesta corta de prueba (la tuya de hoy)", subject: "Re: Maria - chipsfinder", body: BODY_TEST,
     opts: { inReplyTo: "<CAJxyz123abc@mail.gmail.com>", references: "<20260915.101010.abcdefghij.klmnop@onnepulssofunnels.org> <CAJxyz123abc@mail.gmail.com>", fromName: "Maria Lopez" } },
@@ -127,6 +129,9 @@ const cases: Array<{ name: string; subject: string; body: string; opts: Record<s
       quoteHtml: `<div dir="ltr">Hola María, sí me interesa, ¿cuándo podemos hablar?<script>alert(1)</script></div><br><div class="gmail_quote"><div class="gmail_attr">El jue, 17 sept 2026 a las 9:12, Maria Lopez escribió:</div><blockquote class="gmail_quote">Buenas Xavi, estuvimos viendo chipsfinder y… ¿te va bien verlo 10 minutos?</blockquote></div>` } },
   { name: "5) REENVÍO desde el Unibox (nota + original completo)", subject: "Fwd: Request for quote TCX MICRO", body: FWD_BODY,
     opts: { fromName: "Oliver Lopez", inReplyTo: "<AM0PR04MB5793@eurprd04.prod.outlook.com>", references: "<20260917.071226.5r5o9y8usr.bxko8m@onnepulssofunnels.org> <AM0PR04MB5793@eurprd04.prod.outlook.com>" } },
+  { name: "6) firma REAL de producción (tabla + logo en base64)", subject: "Re: Maria - chipsfinder", body: BODY_TEST,
+    opts: { fromName: "John Lopez", signatureHtml: SIG_REAL,
+      inReplyTo: "<CAJxyz123abc@mail.gmail.com>", references: "<20260915.101010.abcdefghij.klmnop@onnepulssofunnels.org> <CAJxyz123abc@mail.gmail.com>" } },
 ];
 
 let failed = 0;

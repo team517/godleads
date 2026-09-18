@@ -19,6 +19,7 @@ import AccountsTable from "@/components/accounts/AccountsTable";
 import { configSummary } from "@/lib/account-health";
 import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
 import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
+import { findDataImages, replaceDataImages, decodeBase64Image, isWorthHosting } from "@/lib/signature-images";
 import { accountsCsvTemplate, accountsToCsv, downloadCsv } from "@/lib/accounts-csv";
 import { isAgencyAccount } from "@/lib/access";
 import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search, Globe, TrendingUp } from "lucide-react";
@@ -988,12 +989,35 @@ export default function EmailAccounts() {
     return filteredAccounts.map(a => a.id); // "all" = everything currently visible
   }, [sigScope, sigTag, accounts, filteredAccounts, selectedIds]);
 
+  /** Sube las imágenes que vengan INCRUSTADAS en la firma (una firma pegada desde fuera suele
+   *  traer el logo en base64) y deja su enlace. Incrustadas funcionan en las respuestas manuales
+   *  pero NO en los envíos de campaña: Gmail las bloquea y el logo sale roto. */
+  const hostSignatureImages = async (html: string): Promise<string> => {
+    const imgs = findDataImages(html);
+    if (imgs.length === 0) return html;
+    const urls = new Map<string, string>();
+    for (const img of imgs) {
+      if (urls.has(img.whole)) continue;
+      const bytes = decodeBase64Image(img.base64);
+      if (!bytes || !isWorthHosting(bytes.length)) continue;
+      const ext = (img.mime.split("/")[1] || "png").replace(/[^a-z0-9]/g, "") || "png";
+      const path = `signatures/${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from("godtube-media")
+        .upload(path, new Blob([bytes as unknown as BlobPart], { type: img.mime }), { contentType: img.mime, upsert: false });
+      if (error) continue;   // si falla la subida, se deja la imagen tal cual: nunca se pierde
+      urls.set(img.whole, supabase.storage.from("godtube-media").getPublicUrl(path).data.publicUrl);
+    }
+    return urls.size > 0 ? replaceDataImages(html, (img) => urls.get(img.whole) || null) : html;
+  };
+
   const applySignature = async () => {
     const ids = signatureTargetIds;
     if (ids.length === 0) { toast.error("No hay cuentas en el alcance elegido"); return; }
     setSigSaving(true);
+    const htmlToSave = await hostSignatureImages(sigHtml);
+    if (htmlToSave !== sigHtml) { setSigHtml(htmlToSave); toast.info("El logo de la firma se ha subido para que se vea también en las campañas"); }
     // One query for the whole scope (up to all 84 accounts).
-    const { error } = await supabase.from("email_accounts").update({ signature_html: sigHtml } as any).in("id", ids);
+    const { error } = await supabase.from("email_accounts").update({ signature_html: htmlToSave } as any).in("id", ids);
     setSigSaving(false);
     if (error) { toast.error(`No se pudo aplicar la firma: ${error.message}`); return; }
     toast.success(sigHtml.trim()

@@ -320,8 +320,11 @@ export function htmlToPlainText(html: string): string {
   // su propia dirección se imprime UNA vez (si no, sale duplicado y parece hecho por una máquina).
   s = s.replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => {
     const label = text.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    const bare = (u: string) => u.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
-    if (!label || bare(label) === bare(href)) return href;
+    const bare = (u: string) => u.replace(/^(?:https?:\/\/|mailto:|tel:)/i, "").replace(/\/+$/, "").toLowerCase();
+    // Si el texto del enlace ya ES la dirección, se escribe ESE texto (sin el "mailto:", que no
+    // se le dice a una persona). Si no hay texto, la dirección desnuda.
+    if (!label) return href.replace(/^mailto:/i, "");
+    if (bare(label) === bare(href)) return label;
     return `${label} (${href})`;
   });
 
@@ -349,6 +352,9 @@ export function htmlToPlainText(html: string): string {
     .replace(/[ \t]*\|[ \t]*\n/g, "\n")     // la última celda de cada fila no lleva separador
     .replace(/[ \t]+$/gm, "")
     .replace(/^[ \t]+/gm, "")
+    // Una celda vacía —la del logo en las firmas— dejaba una raya suelta en su propia línea.
+    .replace(/^\|(?:[ \t]*\|)*$/gm, "")
+    .replace(/\|[ \t]*(\||$)/gm, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

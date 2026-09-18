@@ -14,6 +14,8 @@ OUT="$(mktemp -d)"
 if command -v cygpath >/dev/null 2>&1; then ROOT="$(cygpath -m "$ROOT")"; OUT="$(cygpath -m "$OUT")"; fi
 MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$OUT/wire_key.pem" -out "$OUT/wire_cert.pem" \
   -days 2 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+SIG_SRC="C:/Users/USUARIO/AppData/Local/Temp/claude/C--Users-USUARIO-Nueva-carpeta/33901d8d-376b-4db2-b2d7-33cb91d35c5e/scratchpad/sig_real.html"
+[ -f "$SIG_SRC" ] && cp "$SIG_SRC" "$OUT/sig_real.html"
 python - "$ROOT" <<'PY'
 import io, re, sys
 root = sys.argv[1]
