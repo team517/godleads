@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Bot, User, Sparkles, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3 } from "lucide-react";
+import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
@@ -442,11 +442,9 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-primary/5 shrink-0">
         <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary shadow-sm">
-            <Bot className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <SparkMark size={36} className="rounded-xl shadow-sm" />
           <div>
-            <p className="text-sm font-bold">GodBot</p>
+            <p className="text-sm font-bold">PulseBot</p>
             <p className="text-xs text-muted-foreground">Experto en Cold Email & Outreach</p>
           </div>
         </div>
@@ -474,11 +472,9 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         {messages.length === 0 && (
           <div className="space-y-4">
             <div className="flex items-start gap-2.5">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                <Bot className="h-4 w-4 text-primary" />
-              </div>
+              <SparkMark size={32} className="shrink-0 rounded-[10px]" />
               <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3 text-sm leading-relaxed max-w-[90%]">
-                ¡Hola! 👋 Soy <strong>GodBot</strong>, tu consultor experto en cold email y outreach B2B.
+                ¡Hola! 👋 Soy <strong>PulseBot</strong>, tu consultor experto en cold email y outreach B2B.
                 <br /><br />
                 Tengo acceso a <strong>tus analíticas reales</strong>. Puedo generar gráficos 📊 de tus campañas,
                 analizar tu rendimiento y darte recomendaciones concretas para <strong>conseguir más reuniones</strong>.
@@ -528,11 +524,9 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
           return (
             <div key={i} className={`flex items-start gap-2.5 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${msg.role === "user" ? "bg-primary" : "bg-primary/10"}`}>
-                {msg.role === "user"
-                  ? <User className="h-4 w-4 text-primary-foreground" />
-                  : <Bot className="h-4 w-4 text-primary" />}
-              </div>
+              {msg.role === "user"
+                ? <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary"><User className="h-4 w-4 text-primary-foreground" /></div>
+                : <SparkMark size={32} className="shrink-0 rounded-[10px]" />}
               <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${isFullscreen ? "max-w-[75%]" : "max-w-[85%]"} ${msg.role === "user" ? "rounded-tr-none bg-primary text-primary-foreground" : "rounded-tl-none bg-muted"}`}>
                 {msg.images && msg.images.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-2">
@@ -555,9 +549,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
         {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex items-start gap-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-              <Bot className="h-4 w-4 text-primary" />
-            </div>
+            <SparkMark size={32} className="shrink-0 rounded-[10px]" />
             <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3">
               <div className="flex items-center gap-1.5">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
