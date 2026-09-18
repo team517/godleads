@@ -29,9 +29,9 @@
 // label itself, but the Unibox labels a message the moment somebody opens it, so whoever
 // looked first silently stole the alert.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { classifyMessage, authorText } from "../_shared/classify.ts";
+import { classifyMessage, authorText, isPoliteFileAway } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { aiClassifyOnce } from "../_shared/ai-classify.ts";
+import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 
 const corsHeaders = {
@@ -62,7 +62,7 @@ type Row = {
   body_text: string | null; body_html: string | null; labels: string[] | null; lead_id: unknown; campaign_id: unknown;
   in_reply_to: string | null; ref_chain: string | null;
 };
-type Pending = { m: Row; text: string; ruleVerdict: string; verdict: string; via: "reglas" | "ia" };
+type Pending = { m: Row; text: string; ruleVerdict: string; verdict: string; via: "reglas" | "ia"; evidence?: string; reason?: string };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -81,23 +81,37 @@ Deno.serve(async (req) => {
     }
 
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, svc);
-    const minutes = Math.min(Number(body?.minutes) || 30, 1440);
+    // El cron normal mira como mucho un día atrás. Un repaso manual del histórico (force +
+    // notify:false) puede pedir más, hasta 30 días, para corregir etiquetas ya escritas.
+    const repaso = body?.force === true && body?.notify === false;
+    const minutes = Math.min(Number(body?.minutes) || 30, repaso ? 43200 : 1440);
     const since = new Date(Date.now() - minutes * 60_000).toISOString();
     const dryRun = body?.dry_run === true;
     const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY") || "";
     const useAi = !!deepseekKey && body?.ai !== false;
     // Backfill mode: relabel history without buzzing the phone for replies that are days old.
     const notify = body?.notify !== false;
-    // Dry-run only: re-evaluate rows already marked, to measure the model path on real data.
-    const force = dryRun && body?.force === true;
+    // Re-evaluar filas YA marcadas. En dry-run sirve para medir el modelo sobre datos reales;
+    // fuera del dry-run es el repaso del histórico, y entonces se exige notify:false — nadie
+    // quiere que le suene el teléfono por respuestas de hace días. Las categorías sólo las pone
+    // este clasificador (a mano únicamente se marca "Importante"), así que un repaso no puede
+    // pisar la decisión de una persona.
+    const force = body?.force === true && (dryRun || body?.notify === false);
+    // Ventana hacia atrás para repasar el histórico por tramos: created_at < before.
+    const before = typeof body?.before === "string" && !Number.isNaN(Date.parse(body.before)) ? body.before : null;
+    // Un repaso manual puede pedir más llamadas por tanda; el cron normal no cambia.
+    const maxAiCalls = Math.min(Math.max(Number(body?.max_ai) || MAX_AI_CALLS_PER_RUN, 1), 150);
+    const concurrency = Math.min(Math.max(Number(body?.concurrency) || AI_CONCURRENCY, 1), 8);
 
     // Only REAL prospect replies: a reply inside a real thread (In-Reply-To / References) or tied
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
-    const COLS = "id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain";
-    const { data: msgs, error } = await admin
+    const COLS = "id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain, created_at";
+    let windowQuery = admin
       .from("inbox_messages")
       .select(COLS)
-      .gte("created_at", since)
+      .gte("created_at", since);
+    if (before) windowQuery = windowQuery.lt("created_at", before);
+    const { data: msgs, error } = await windowQuery
       .eq("is_warmup", false)
       .eq("is_archived", false)
       .or("lead_id.not.is.null,campaign_id.not.is.null,in_reply_to.not.is.null,ref_chain.not.is.null")
@@ -150,9 +164,13 @@ Deno.serve(async (req) => {
 
     // ── Phase 1: rules (pure CPU, microseconds each) ─────────────────────────────────────────
     let scanned = 0, skipped = 0, warmupFlagged = 0;
+    // El mensaje más antiguo de esta tanda: el repaso encadena tramos pasándolo como `before`.
+    let oldestSeen: string | null = null;
     const pending: Pending[] = [];
     for (const m of (msgs || []) as Row[]) {
       scanned++;
+      const created = (m as unknown as { created_at?: string }).created_at || null;
+      if (created && (!oldestSeen || created < oldestSeen)) oldestSeen = created;
       if (!isRealReply(m)) continue;
       // Warm-up pool threads carry References (our seed mailbox started them) and generic English
       // office subjects the sync detector used to miss; the model then read "let's confirm the
@@ -173,17 +191,18 @@ Deno.serve(async (req) => {
 
     // ── Phase 2: the model, for what rules cannot settle — bounded in calls, time and failures ─
     const needAi = useAi ? pending.filter((p) => !RULES_ARE_FINAL.has(p.ruleVerdict)) : [];
-    const aiQueue = needAi.slice(0, MAX_AI_CALLS_PER_RUN);
-    const deferred = new Set<string>(needAi.slice(MAX_AI_CALLS_PER_RUN).map((p) => p.m.id));
-    let aiCalls = 0, aiFailures = 0, consecutiveTransient = 0, breakerTripped = false, outOfTime = false;
-    for (let i = 0; i < aiQueue.length; i += AI_CONCURRENCY) {
+    const aiQueue = needAi.slice(0, maxAiCalls);
+    const deferred = new Set<string>(needAi.slice(maxAiCalls).map((p) => p.m.id));
+    let aiCalls = 0, aiFailures = 0, consecutiveTransient = 0, breakerTripped = false, outOfTime = false, unsupported = 0;
+    for (let i = 0; i < aiQueue.length; i += concurrency) {
       if (breakerTripped) { for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
       if (Date.now() - startedAt > RUN_TIME_BUDGET_MS) { outOfTime = true; for (const p of aiQueue.slice(i)) deferred.add(p.m.id); break; }
-      const batch = aiQueue.slice(i, i + AI_CONCURRENCY);
+      const batch = aiQueue.slice(i, i + concurrency);
       // The model reads ONLY the author's words (quote + legal footers cut), exactly what the
       // prompt promises. It used to get the whole text and judged our own quoted pitch and the
       // sender's RGPD footer ("lo veo con el equipo" → No contactar, 2026-09-15).
-      const results = await Promise.all(batch.map((p) => aiClassifyOnce(deepseekKey, p.m.subject, authorText(p.text))));
+      const texts = batch.map((p) => authorText(p.text));
+      const results = await Promise.all(batch.map((p, k) => aiClassifyOnce(deepseekKey, p.m.subject, texts[k])));
       for (let k = 0; k < batch.length; k++) {
         aiCalls++;
         const r = results[k];
@@ -199,7 +218,21 @@ Deno.serve(async (req) => {
           // datos — those make the rules say no_contactar themselves), the model's stricter reading
           // ("Gracias, no estoy interesado" → no_contactar, GISMA 2026-09-15) is downgraded.
           if (cat === "no_contactar" && batch[k].ruleVerdict === "not_interested") cat = "not_interested";
+          // "Interesado" es la única categoría que hace sonar un teléfono, y era la que más se
+          // inflaba: el modelo leía una cortesía ("os tenemos en cuenta", "podría ser interesante")
+          // como una puerta abierta. Ahora debe CITAR la frase del autor que lo justifica; si esa
+          // cita no está de verdad en el texto, su lectura no se sostiene y no se da por interesado
+          // (se queda con lo que digan las reglas, o sin etiqueta).
+          // "Tenemos cubierta esa necesidad, pero mándame info y os tenemos en cuenta para el
+          // futuro": el modelo sigue leyéndolo como interés porque el tono es amable. La frase
+          // manda sobre el tono, y aquí las reglas lo tienen claro.
+          if (cat === "interested" && isPoliteFileAway(texts[k])) cat = "not_interested";
+          if (cat === "interested" && !evidenceSupported(r.verdict.evidence, texts[k])) {
+            cat = batch[k].ruleVerdict === "interested" ? "interested" : "neutral";
+            unsupported++;
+          }
           batch[k].verdict = cat; batch[k].via = "ia";
+          batch[k].evidence = r.verdict.evidence; batch[k].reason = r.verdict.reason;
         } else {
           aiFailures++;
           // A transient failure leaves the row UNMARKED (next tick retries); a malformed answer
@@ -212,13 +245,17 @@ Deno.serve(async (req) => {
 
     // ── Phase 3: write labels, notify ────────────────────────────────────────────────────────
     let classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0;
-    const sample: { tipo: string; via: string; from: string | null; subject: string; reglas?: string }[] = [];
+    const sample: { tipo: string; via: string; from: string | null; subject: string; reglas?: string; cita?: string; motivo?: string; texto?: string }[] = [];
     for (const p of pending) {
       if (deferred.has(p.m.id)) continue;
       const labels = p.m.labels || [];
       const etiqueta = LABEL_OF[p.verdict] || "";   // neutral → no category label
       const others = labels.filter((l) => !CATEGORY_LABELS.includes(l));
-      const newLabels = etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, AI_MARKER];
+      // Un veredicto "neutral" NO borra la categoría que ya tenía el mensaje. Importa en los
+      // repasos: si el modelo está caído y deciden sólo las reglas, un mensaje bien etiquetado se
+      // quedaba SIN categoría y, con la marca "IA" puesta, ya nadie volvía a mirarlo.
+      const previousCats = labels.filter((l) => CATEGORY_LABELS.includes(l));
+      const newLabels = etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, ...previousCats, AI_MARKER];
       // staleIds = rows pulled in by the catch-up sweep: label them, never buzz the phone for them.
       const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
@@ -251,14 +288,18 @@ Deno.serve(async (req) => {
         }
         notified++;
       }
-      if (sample.length < 12) sample.push({ tipo: etiqueta || "(sin etiqueta)", via: p.via, from: p.m.from_email, subject: String(p.m.subject || "").slice(0, 50), ...(p.via === "ia" && p.verdict !== p.ruleVerdict ? { reglas: LABEL_OF[p.ruleVerdict] || "(sin etiqueta)" } : {}) });
+      if (sample.length < (dryRun ? 60 : 12)) sample.push({
+        tipo: etiqueta || "(sin etiqueta)", via: p.via, from: p.m.from_email, subject: String(p.m.subject || "").slice(0, 50),
+        ...(p.via === "ia" && p.verdict !== p.ruleVerdict ? { reglas: LABEL_OF[p.ruleVerdict] || "(sin etiqueta)" } : {}),
+        ...(dryRun ? { cita: p.evidence, motivo: p.reason, texto: authorText(p.text).replace(/\s+/g, " ").slice(0, 220) } : {}),
+      });
     }
 
     return new Response(JSON.stringify({
       dry_run: dryRun, revisados: scanned, ya_clasificados: skipped, clasificados: classified,
       por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, fallos_ia: aiFailures,
-      aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, ms: Date.now() - startedAt,
-      notificados: notified, muestra: sample,
+      aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, interes_sin_cita: unsupported, ms: Date.now() - startedAt,
+      notificados: notified, hasta: oldestSeen, muestra: sample,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message }), {

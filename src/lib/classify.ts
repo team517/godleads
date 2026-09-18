@@ -356,6 +356,27 @@ const DO_NOT_CONTACT = [
   /\bspam\b/i, /correo (no deseado|basura)/i, /junk mail/i, /unsolicited/i,
 ];
 
+// ── 2b-bis) SIN ENCAJE — un "no" razonado y educado. Es un RECHAZO, no una duda: el prospecto
+// explica por qué su negocio no es para esto ("somos un forwarder, no le veo mucho encaje"). Vive
+// en NOT_INTERESTED, así que la invariante §5.3 sigue mandando: "no le veo encaje, pero podemos
+// hablar" sigue siendo Interesado.
+const NO_FIT = [
+  /\bno\s+(le\s+|lo\s+)?(veo|vemos|acabo\s+de\s+ver)\s+(mucho\s+|demasiado\s+|el\s+|un\s+)?(encaje|sentido|fit)\b/i,
+  /\bno\s+(creo\s+que\s+)?(tenga|tiene|tendr[íi]a)\s+(mucho\s+|demasiado\s+)?sentido\s+(para\s+nosotros|en\s+nuestro|vuestro)/i,
+  /\bno\s+(encaja|encajar[íi]a|casa)\s+(con|en)\s+(nuestr|lo\s+que|el\s+tipo)/i,
+  /\bno\s+(es|ser[íi]a)\s+(nuestro|vuestro|el\s+nuestro)\s+perfil\b/i,
+  /\bno\s+es\s+(una\s+)?prioridad\b/i, /\bno\s+es\s+prioritario\b/i,
+  /\bnot\s+(a\s+)?(good\s+)?fit\s+for\s+us\b/i,
+];
+
+// ── 2b-ter) EL ARCHIVADO EDUCADO — "ahora lo tenemos cubierto, pero mándame info y os tenemos en
+// cuenta para el futuro". Pedir información aquí NO es abrir la puerta: es cerrar con buenas
+// formas, y como "mándame info" es una apertura para §5.3, estos mensajes salían como Interesado
+// (casos reales de 2026-09-17: Grupo Ricardo Fuentes, Helios). Sólo cuenta cuando NO hay una
+// reunión/llamada aceptada de verdad, que sigue ganando.
+const COVERED_NOW = /\b((ya\s+)?(lo\s+)?(tenemos|tengo|ten[íi]amos)\s+(cubiert[oa]|resuelt[oa]|montad[oa]|internalizad[oa])|tenemos\s+cubierta\s+esa\s+necesidad|(ya\s+)?trabajamos\s+(ya\s+)?con\s+(un|otro|otra|nuestro)|no\s+es\s+(una\s+)?prioridad|no\s+es\s+prioritario|no\s+es\s+el\s+momento)\b/i;
+const KEEP_FOR_FUTURE = /\b((para|de\s+cara\s+a)\s+(futur\w+|pr[óo]xim\w+\s+(oportunidad|ocasi[óo]n|proyect\w+)|m[áa]s\s+adelante)|(os|te|lo|le|los)\s+(tenemos|tendremos|tendr[ée]|tengo|tendremos)\s+(muy\s+)?(en\s+cuenta|presente)|(me\s+)?guard[oa]\s+(tu|vuestro|su)\s+(contacto|correo|email|datos)|si\s+(en\s+)?(el\s+)?futuro\s+(lo\s+)?(necesit|surge)|cuando\s+(lo\s+)?(necesitemos|surja|tengamos\s+necesidad))\b/i;
+
 // ── 2c) DERIVADO — hands you off to another person/team. Conservative patterns so a
 // plain "contáctanos" (themselves) doesn't count. Checked after DO_NOT_CONTACT.
 const REFERRAL = [
@@ -515,6 +536,14 @@ const MEETING_OPENING: RegExp[] = [
   // every Spanish business signature and read as "let's meet". The verb+noun rule still catches
   // "quedamos para una reunión"; these bare forms are unambiguous.
   /\b(agendamos|agendemos|agendam[oa]s|reservemos)\b/i,
+  // Preguntar CUÁNDO o CÓMO tienes la agenda es aceptar la reunión, no una duda: "¿cuándo te
+  // iría bien que concretáramos una llamada?", "¿cómo tienes esta semana para hacer un teams?",
+  // "¿qué día te viene bien?". Faltaba, y por eso un mensaje que además citaba un reenvío interno
+  // se quedaba en Derivado aunque la persona nueva estuviera proponiendo hablar.
+  /\b(cu[áa]ndo|qu[ée]\s+d[íi]a|qu[ée]\s+hora|c[óo]mo|qu[ée]\s+tal)\b[^.;!?]{0,45}\b(te|os|le|les)\s+(ir[íi]a|va|viene|vendr[íi]a|iba)\s+(bien|mejor)\b/i,
+  /\b(c[óo]mo|qu[ée]\s+tal)\s+(tienes|ten[ée]is|tiene|llevas|and[áa]is|andas)\b[^.;!?]{0,45}\b(esta|la\s+que\s+viene|pr[óo]xima|semana|agenda|ma[ñn]ana|lunes|martes|mi[ée]rcoles|jueves|viernes)\b/i,
+  /\b(qu[ée]|cu[áa]ndo)\s+(huecos?|disponibilidad|d[íi]as?)\s+(tienes|ten[ée]is|tendr[íi]as)\b/i,
+  /\bdime\s+qu[ée]\s+huecos?\b/i,
   /\b(os|te|le|les)\s+escucho\b/i, /\bpuedo\s+escuchar\w*/i,
 
   /\bp[áa]sa(me|nos)\b[^.;!?]{0,25}\b(calendly|calendario|agenda|enlace|link|disponibilidad)\b/i,
@@ -631,6 +660,19 @@ export function looksBinary(raw: string | null): boolean {
   return rare / t.length > 0.12;
 }
 
+/** El ARCHIVADO EDUCADO: "ahora lo tenemos cubierto, pero mándame info y os tenemos en cuenta para
+ *  el futuro". Pedir información aquí no abre ninguna puerta: es cerrar con buenas formas. Se
+ *  exporta porque el cron la usa para no dejar que el modelo lo lea como interés — en estos casos
+ *  la frase manda más que el tono (casos reales Grupo Ricardo Fuentes y Helios, 17-09-2026).
+ *  Una reunión o llamada aceptada DE VERDAD sigue ganando. */
+export function isPoliteFileAway(raw: string | null | undefined): boolean {
+  const text = prep(raw || "");
+  if (!text) return false;
+  if (hasAffirmedOpening(text, MEETING_OPENING)) return false;
+  if (!KEEP_FOR_FUTURE.test(text)) return false;
+  return COVERED_NOW.test(text) || any(NOT_INTERESTED, text) || any(SOFT_REJECTION, text);
+}
+
 export function classifyMessage(subject: string | null, body: string | null): MessageCategory {
   const subjectText = prep(subject);
   // A binary body is dropped, not read: the subject alone can still carry a real reply.
@@ -690,6 +732,11 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   // price/proposal/info request) is INTERESADO even alongside objections — "ya tenemos proveedor
   // pero podemos conoceros", "no tengo presupuesto ahora, pero hagamos una reunión". Runs before
   // referral and rejection so an objection can never bury a genuine opening.
+  // ── §5.2-bis EL ARCHIVADO EDUCADO, antes de la invariante §5.3: "lo tenemos cubierto, pero
+  // mándame info y os tenemos en cuenta" pide información para GUARDARLA, no para valorarla. Una
+  // reunión o llamada aceptada de verdad sigue ganando (por eso se exige !meetingAccepted).
+  if (isPoliteFileAway(text)) return "not_interested";
+
   if (opening) return "interested";
 
   // ── §7 "No soy la persona adecuada" with NO named target or address → REVIEW. Never invent a
@@ -714,7 +761,7 @@ export function classifyMessage(subject: string | null, body: string | null): Me
   }
 
   // ── §5.6 Clearly not interested (unless they still asked for info / a call).
-  if (!hasEngagement && any(NOT_INTERESTED, text)) return "not_interested";
+  if (!hasEngagement && (any(NOT_INTERESTED, text) || any(NO_FIT, text))) return "not_interested";
 
   // 3b) SOFT rejection ("we have our own team / not looking to add …") — only when there is NO
   // interest OR engagement signal at all, so a genuine warm reply is never misread as a no.
