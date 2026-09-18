@@ -60,8 +60,9 @@ export function ColdEmailChatbot() {
   const { user } = useAuth();
   const location = useLocation();
   // The Unibox reader lives bottom-right too — hide this floating bubble there
-  // so it never covers the "Responder" button.
-  const hideHere = location.pathname.startsWith("/unibox");
+  // so it never covers the "Responder" button. Y en la bienvenida del primer acceso tampoco
+  // pinta nada: esa pantalla es sólo cuatro preguntas.
+  const hideHere = location.pathname.startsWith("/unibox") || location.pathname.startsWith("/bienvenida");
 
   useEffect(() => {
     if (scrollRef.current) {

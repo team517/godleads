@@ -47,6 +47,7 @@ const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
 const GodTube = lazyWithRetry(() => import("./pages/GodTube"));
 const Partners = lazyWithRetry(() => import("./pages/Partners"));
 const Metrics = lazyWithRetry(() => import("./pages/Metrics"));
+const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
 
 const queryClient = new QueryClient();
 
@@ -81,6 +82,8 @@ const App = () => (
                   puede mandar tal cual. Dentro usa la aplicación normal, acotada
                   por sus allowed_routes. */}
               <Route path="/acceso-cliente" element={<Auth />} />
+              {/* Bienvenida del primer acceso: ocupa toda la pantalla, sin menú ni barra. */}
+              <Route path="/bienvenida" element={<ProtectedRoute><Welcome /></ProtectedRoute>} />
               <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/email-accounts" element={<EmailAccounts />} />

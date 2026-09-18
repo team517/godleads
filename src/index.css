@@ -405,7 +405,13 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 *::-webkit-scrollbar-thumb:hover { background: hsl(254 30% 76%); border: 3px solid transparent; background-clip: content-box; }
 .dark *::-webkit-scrollbar-thumb { background: hsl(223 22% 30%); border: 3px solid transparent; background-clip: content-box; }
 
+/* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
+@keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@keyframes wvDash { to { stroke-dashoffset: -220; } }
+.wv-float { animation: wvFloat 7s ease-in-out infinite; }
+.wv-dash { stroke-dasharray: 3 8; stroke-linecap: round; animation: wvDash 16s linear infinite; }
+
 @media (prefers-reduced-motion: reduce) {
-  .page-enter, .stagger > *, tbody.rows-in > tr, main table > tbody > tr, .live-dot, .chip-pop, .skeleton-shimmer, .topbar-sheen::after { animation: none !important; }
+  .page-enter, .stagger > *, tbody.rows-in > tr, main table > tbody > tr, .live-dot, .chip-pop, .skeleton-shimmer, .topbar-sheen::after, .wv-float, .wv-dash { animation: none !important; }
   .lift, .collapse-grid { transition: none !important; }
 }
