@@ -171,11 +171,11 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
   // En escritorio el menú vive DEBAJO de la barra superior (que va a todo el ancho). En móvil
   // es un cajón que la tapa, con su propia cabecera para cerrarlo.
   const sidebarClasses = cn(
-    "fixed left-0 z-40 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[transform,width] duration-200",
+    "soft-sidebar fixed left-0 z-40 flex flex-col text-sidebar-foreground transition-[transform,width] duration-200",
     isMobile
       ? "top-0 z-[60] h-[100dvh] w-[272px] shadow-modal"
       : "top-[calc(3.5rem+env(safe-area-inset-top))] h-[calc(100dvh-3.5rem-env(safe-area-inset-top))]",
-    !isMobile && (collapsed ? "w-16" : "w-60"),
+    !isMobile && (collapsed ? "w-16" : "w-[270px]"),
     isMobile && !isOpen && "-translate-x-full",
     isMobile && isOpen && "translate-x-0"
   );
@@ -191,26 +191,20 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
         title={collapsed ? item.label : undefined}
         aria-current={isActive ? "page" : undefined}
         className={cn(
-          "group relative flex h-9 items-center gap-2.5 rounded-md text-[14.5px] transition-[color,background-color,box-shadow] duration-150",
-          collapsed ? "mx-auto w-10 justify-center px-0" : "px-2.5",
-          isActive
-            ? "is-selected font-semibold text-[hsl(var(--primary-glow))] dark:text-sidebar-accent-foreground"
-            : "font-medium text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-foreground"
+          "soft-nav-item group",
+          collapsed && "mx-auto w-10 justify-center px-0",
+          isActive && "soft-nav-item-on",
         )}
       >
-        <item.icon
-          strokeWidth={isActive ? 2 : 1.75}
-          className={cn(
-            "h-[18px] w-[18px] shrink-0 transition-colors",
-            isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
-          )}
-        />
+        <span className={cn("soft-nav-icon shrink-0", collapsed && "mr-0")}>
+          <item.icon strokeWidth={1.8} className="h-[19px] w-[19px]" />
+        </span>
         {!collapsed && <span className="truncate">{item.label}</span>}
         {item.path === "/unibox" && unreadCount > 0 && (
           collapsed ? (
             <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-sidebar" />
           ) : (
-            <span className="chip-pop ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+            <span className="chip-pop soft-nav-badge ml-auto">
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )
@@ -248,26 +242,23 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
         </div>
       )}
 
-      <nav className={cn("flex-1 overflow-y-auto overflow-x-hidden py-3", collapsed ? "px-2" : "px-3")}>
+      <nav className={cn("relative z-[1] flex-1 overflow-y-auto overflow-x-hidden py-[18px]", collapsed ? "px-2" : "px-3.5")}>
         {groups.map((group, gi) => {
           // Una sección plegada no esconde la pantalla en la que estás.
           const hasActive = group.items.some(isActivePath);
           const open = collapsed || !group.title || !closedGroups[group.id] || hasActive;
           return (
-            <div key={group.id} className={cn(gi > 0 && "mt-2 border-t border-sidebar-border/70 pt-2")}>
+            <div key={group.id} className={cn(gi > 0 && "mt-3.5 border-t border-[rgba(116,128,180,.12)] pt-3.5 dark:border-sidebar-border/70")}>
               {group.title && !collapsed && (
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.id)}
-                  aria-expanded={open}
-                  className="flex h-8 w-full items-center justify-between rounded-md px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {group.title}
-                  <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", !open && "-rotate-90")} />
+                <button type="button" onClick={() => toggleGroup(group.id)} aria-expanded={open} className="soft-nav-section">
+                  <span>{group.title}</span>
+                  <span className="soft-nav-arrow">
+                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform duration-200", !open && "-rotate-90")} />
+                  </span>
                 </button>
               )}
               <div className="collapse-grid" data-open={open}>
-                <div className="space-y-0.5">
+                <div className="flex flex-col gap-1">
                   {group.items.map((item) => <NavItem key={item.path} item={item} />)}
                 </div>
               </div>

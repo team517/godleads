@@ -747,6 +747,132 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 }
 .dark .soft-wave-fixed { background: linear-gradient(120deg, rgba(116,110,255,.10), rgba(68,196,255,.06), rgba(195,91,255,.08)); }
 
+
+/* ── El menú lateral, con el HTML del propietario ───────────────────────────────────────
+   270px, superficie casi blanca con dos luces de color, piezas de 47px con su baldosa de
+   icono, la activa con su barra violeta a la izquierda, y sus secciones en mayúsculas. */
+
+.soft-sidebar {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(115,78,255,.08), transparent 28%),
+    radial-gradient(circle at 100% 30%, rgba(46,184,255,.07), transparent 30%),
+    rgba(255,255,255,.94);
+  border-right: 1px solid rgba(108,120,180,.13);
+  box-shadow: 10px 0 35px rgba(61,73,130,.035);
+}
+.dark .soft-sidebar {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(115,78,255,.16), transparent 28%),
+    radial-gradient(circle at 100% 30%, rgba(46,184,255,.10), transparent 30%),
+    hsl(var(--sidebar-background));
+  border-right-color: hsl(var(--sidebar-border));
+  box-shadow: 10px 0 35px rgba(0,0,0,.30);
+}
+/* El resplandor de la esquina de abajo. */
+.soft-sidebar::after {
+  content: "";
+  position: fixed;
+  left: -70px;
+  bottom: -70px;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(89,177,255,.10), transparent 68%);
+  pointer-events: none;
+}
+
+.soft-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 47px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: #34416d;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background-color .18s ease, color .18s ease, box-shadow .18s ease;
+}
+.soft-nav-item:hover { background: rgba(242,244,255,.85); color: #5d43ef; }
+.soft-nav-item-on {
+  color: #653cff;
+  font-weight: 650;
+  background: linear-gradient(100deg, rgba(239,247,255,.95), rgba(244,238,255,.98));
+  border-color: rgba(116,81,255,.16);
+  box-shadow: 0 7px 20px rgba(92,73,190,.08), inset 3px 0 0 #7450ff;
+}
+.dark .soft-nav-item { color: hsl(var(--sidebar-foreground)); }
+.dark .soft-nav-item:hover { background: hsl(var(--sidebar-accent) / .7); color: hsl(var(--foreground)); }
+.dark .soft-nav-item-on {
+  color: hsl(var(--sidebar-accent-foreground));
+  background: linear-gradient(100deg, hsl(205 40% 20% / .8), hsl(262 45% 24% / .9));
+  border-color: hsl(var(--primary) / .30);
+  box-shadow: 0 7px 20px rgba(0,0,0,.35), inset 3px 0 0 hsl(var(--primary));
+}
+
+/* Baldosa del icono. */
+.soft-nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 8px;
+  border-radius: 9px;
+  color: #7180a6;
+  transition: background .18s ease, color .18s ease;
+}
+.soft-nav-item:hover .soft-nav-icon { color: #6646f5; background: linear-gradient(135deg, rgba(49,172,255,.09), rgba(160,63,255,.09)); }
+.soft-nav-item-on .soft-nav-icon { color: #6543ff; background: linear-gradient(135deg, rgba(38,174,255,.13), rgba(164,54,255,.13)); }
+.dark .soft-nav-icon { color: hsl(var(--muted-foreground)); }
+.dark .soft-nav-item:hover .soft-nav-icon,
+.dark .soft-nav-item-on .soft-nav-icon { color: hsl(var(--primary)); background: linear-gradient(135deg, rgba(38,174,255,.18), rgba(164,54,255,.18)); }
+
+/* Contador de sin leer. */
+.soft-nav-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 50px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff4057, #e71935);
+  box-shadow: 0 4px 10px rgba(232,31,61,.20);
+}
+
+/* Cabecera de sección. */
+.soft-nav-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  color: #7b84a8;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+.dark .soft-nav-section { color: hsl(var(--muted-foreground)); }
+.soft-nav-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: #8993b4;
+  transition: background-color .2s ease, transform .2s ease;
+}
+.soft-nav-section:hover .soft-nav-arrow { background: #f3f4fb; }
+.dark .soft-nav-section:hover .soft-nav-arrow { background: hsl(var(--sidebar-accent)); }
+
 /* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
 @keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
 @keyframes wvDash { to { stroke-dashoffset: -220; } }

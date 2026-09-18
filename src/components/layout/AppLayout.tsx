@@ -111,7 +111,7 @@ export function AppLayout() {
 
       <div
         className={`flex min-h-screen flex-col pt-[calc(3.5rem+env(safe-area-inset-top))] transition-[margin] duration-200 ${
-          isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-60"
+          isMobile ? "ml-0" : isCollapsed ? "ml-16" : "ml-[270px]"
         }`}
       >
         <main className={`relative z-[1] flex-1 ${isMobile ? "p-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]" : "p-6"}`}>
