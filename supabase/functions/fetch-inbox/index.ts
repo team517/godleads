@@ -4,6 +4,7 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
 import { extractPermanentBounceRecipients, isAutomatedSender } from "../_shared/bounce.ts";
 import { repairMojibakeBytes } from "../_shared/reply-text.ts";
+import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,52 +28,16 @@ interface ImapMessage {
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // store the binary up to 25 MB; bigger → name-only chip
 const MAX_ATTACHMENTS_PER_MSG = 10;
 
-/** Decode an RFC2231/2047 attachment filename best-effort. */
-function decodeAttachmentName(raw: string): string {
-  let v = (raw || "").trim().replace(/^"+|"+$/g, "").trim();
-  const r2231 = v.match(/^[\w-]+''(.+)$/);
-  if (r2231) { try { return decodeURIComponent(r2231[1]).replace(/^"+|"+$/g, "").trim(); } catch { /* keep */ } }
-  // Join adjacent encoded-words split by folding, then decode RFC2047 (=?..?=)
-  v = v.replace(/\?=\s*=\?/g, "?==?");
-  return decodeMimeWords(v).replace(/^"+|"+$/g, "").trim();
-}
+
 
 /** Pull downloadable attachment parts (name + mime + base64) out of the raw MIME
  *  body. Same idea as the frontend parser but runs in the sync so the binary is
  *  captured before it's discarded. */
-function extractAttachments(raw: string): ParsedAttachment[] {
-  if (!raw || raw.length < 64) return [];
-  const out: ParsedAttachment[] = [];
-  const bMatch = raw.match(/boundary\s*=\s*"?([^";\r\n]+)"?/i);
-  let parts: string[];
-  if (bMatch) {
-    const esc = bMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    parts = raw.split(new RegExp("--" + esc + "(?:--)?[ \\t]*\\r?\\n", "g"));
-  } else {
-    parts = raw.split(/\r?\n--[A-Za-z0-9'()+_,\-./:=?]{6,}(?:--)?[ \t]*\r?\n/);
-  }
-  for (const part of parts) {
-    if (out.length >= MAX_ATTACHMENTS_PER_MSG) break;
-    if (!/Content-Transfer-Encoding:\s*base64/i.test(part)) continue;
-    const sp = part.split(/\r?\n\r?\n/);
-    if (sp.length < 2) continue;
-    // Unfold the header so a folded/QP filename is captured whole before decoding.
-    const header = (sp[0] || "").replace(/=\r?\n[ \t]*/g, "").replace(/\r?\n[ \t]+/g, "");
-    const nameM = header.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
-    if (!nameM) continue;
-    const name = decodeAttachmentName(nameM[1] || nameM[2] || "adjunto").slice(0, 200);
-    const typeM = header.match(/Content-Type:\s*([^;\r\n]+)/i);
-    const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
-    const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
-    if (b64.length < 40) continue;
-    const size = Math.floor(b64.length * 0.75);
-    // Too big to store → still record the NAME + SIZE so the Unibox shows a chip ("un vídeo llegó"),
-    // instead of the file silently vanishing. The binary just isn't downloadable from here.
-    if (size > MAX_ATTACHMENT_BYTES) { out.push({ name, mime, base64: "", size, oversized: true }); continue; }
-    out.push({ name, mime, base64: b64, size });
-  }
-  return out;
-}
+/* El lector de adjuntos vive en _shared/mail-attachments.ts: el de aqui cortaba el MIME por la
+   PRIMERA frontera que encontraba, y en un correo anidado (mixed → alternative → archivo) esa es
+   la de dentro, asi que el archivo se quedaba fuera y el mensaje se guardaba sin nada.
+   El compartido corta por cualquier linea de frontera. */
+
 
 // ── Attachment infra bootstrap ────────────────────────────────────────────
 // Mirrors migration 20260704120000_inbox_attachments.sql. Runs the DDL from
@@ -931,7 +896,9 @@ async function fetchImapMessages(
             message_id: msgId,
             date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
             ref_chain: sanitizeForPostgres(refChain),
-            attachments: extractAttachments(rawBody),
+            // Los logos de la firma NO son archivos adjuntos: colgarlos como tales llenaba
+            // el Unibox de iconos de 38x38 (facebook.png, instagram.png...) en cada correo.
+            attachments: extractAttachments(rawBody).filter((a) => !looksInline(a)),
           });
         }
       }

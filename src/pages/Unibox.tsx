@@ -1204,11 +1204,20 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
 /** Shows attachments (e.g. a PDF) under a message. When the base64 payload is
  *  present it renders rich cards (Ver/Descargar + image previews); otherwise a
  *  name-only chip. */
-function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | null; bodyHtml?: string | null; stored?: StoredAttachment[] | null }) {
+/** Mensajes a los que ya se les ha preguntado por sus adjuntos en esta sesión. */
+const attachmentsAsked = new Set<string>();
+
+function AttachmentChips({ bodyText, bodyHtml, stored, messageId }: { bodyText?: string | null; bodyHtml?: string | null; stored?: StoredAttachment[] | null; messageId?: string | null }) {
+  // La sincronización sólo baja los primeros 256 KB de cada correo, así que un PDF grande puede
+  // no estar guardado. Si el correo habla de adjuntos y no hay ninguno, se van a buscar al buzón.
+  const [pulled, setPulled] = useState<StoredAttachment[] | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [pullDone, setPullDone] = useState(false);
+  const effective = pulled ?? stored;
   // Prefer attachments stored in Storage by the sync (real binary → view/download).
-  const storedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.path && !a.oversized) : []), [stored]);
+  const storedAtts = useMemo(() => (Array.isArray(effective) ? effective.filter((a) => a && a.path && !a.oversized) : []), [effective]);
   // Too big to store (e.g. a large video) — shown as a name/size chip so it's never invisible.
-  const oversizedAtts = useMemo(() => (Array.isArray(stored) ? stored.filter((a) => a && a.oversized) : []), [stored]);
+  const oversizedAtts = useMemo(() => (Array.isArray(effective) ? effective.filter((a) => a && a.oversized) : []), [effective]);
 
   const atts = useMemo(() => {
     if (storedAtts.length > 0 || oversizedAtts.length > 0) return [];
@@ -1217,6 +1226,40 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
     for (const a of found) if (!byKey.has(a.name)) byKey.set(a.name, a);
     return Array.from(byKey.values());
   }, [bodyText, bodyHtml, storedAtts, oversizedAtts]);
+
+  const pull = useCallback(async (manual: boolean) => {
+    if (!messageId || pulling) return;
+    setPulling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("inbox-attachments", { body: { message_id: messageId } });
+      if (error) throw error;
+      const list = Array.isArray(data?.attachments) ? (data.attachments as StoredAttachment[]) : [];
+      setPulled(list);
+      if (manual) {
+        if (list.length > 0) toast.success(`${list.length} archivo(s) recuperado(s) del buzón`);
+        else toast.info("Ese correo no llevaba ningún archivo adjunto");
+      }
+    } catch (e: any) {
+      if (manual) toast.error(e?.message || "No se han podido leer los adjuntos del buzón");
+    } finally {
+      setPulling(false);
+      setPullDone(true);
+    }
+  }, [messageId, pulling]);
+
+  // Si el correo DICE que adjunta algo y no hay nada guardado, se busca solo (una vez por mensaje).
+  const mentionsAttachment = useMemo(
+    () => /adjunt|attach|anexo|se acompaña/i.test(`${bodyText || ""} ${String(bodyHtml || "").slice(0, 6000)}`),
+    [bodyText, bodyHtml],
+  );
+  const nothingStored = storedAtts.length === 0 && oversizedAtts.length === 0 && atts.length === 0;
+  useEffect(() => {
+    if (!messageId || !nothingStored || !mentionsAttachment || pullDone) return;
+    if (attachmentsAsked.has(messageId)) return;
+    attachmentsAsked.add(messageId);
+    void pull(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageId, nothingStored, mentionsAttachment]);
 
   // Fallback: names only (no stored binary and none decodable from the body).
   const nameOnly = useMemo(() => {
@@ -1227,7 +1270,25 @@ function AttachmentChips({ bodyText, bodyHtml, stored }: { bodyText?: string | n
     return Array.from(set);
   }, [storedAtts, atts, oversizedAtts, bodyText, bodyHtml]);
 
-  if (storedAtts.length === 0 && atts.length === 0 && oversizedAtts.length === 0 && nameOnly.length === 0) return null;
+  if (storedAtts.length === 0 && atts.length === 0 && oversizedAtts.length === 0 && nameOnly.length === 0) {
+    // Nada guardado. Si el correo habla de adjuntos, o simplemente por si acaso, se puede mirar
+    // en el buzón: la sincronización no se trae los archivos grandes.
+    if (!messageId) return null;
+    return (
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => void pull(true)}
+          disabled={pulling}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          title="Va al buzón, busca este correo y se trae sus archivos"
+        >
+          {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+          {pulling ? "Buscando adjuntos…" : pullDone ? "Buscar adjuntos otra vez" : "Buscar adjuntos"}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="mt-3 flex flex-wrap gap-2.5">
       {storedAtts.map((att) => <StoredAttachmentCard key={att.path} att={att} />)}
@@ -3743,7 +3804,7 @@ export default function Unibox() {
                                   {cleanBodyText(tm.body_text, true)}
                                 </div>
                               )}
-                              {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} stored={tm.attachments} />}
+                              {tm._type !== "sent" && <AttachmentChips bodyText={tm.body_text} bodyHtml={tm.body_html} stored={tm.attachments} messageId={tm.id} />}
                             </div>
                           </div>
                         );
@@ -3778,7 +3839,7 @@ export default function Unibox() {
                               {cleanBodyText(selected.body_text, true)}
                             </div>
                           )}
-                          <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} stored={selected.attachments} />
+                          <AttachmentChips bodyText={selected.body_text} bodyHtml={selected.body_html} stored={selected.attachments} messageId={selected.id} />
                         </div>
                       </div>
                     )}
