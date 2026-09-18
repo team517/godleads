@@ -74,9 +74,11 @@ describe("Editor de secuencia", () => {
   it("escribir el asunto y el cuerpo se guarda", async () => {
     await renderEditor();
     fireEvent.change(screen.getByDisplayValue("Una idea para {{company_name}}"), { target: { value: "Pregunta rápida" } });
-    expect(lastFor("campaign_steps", "subject")).toBe("Pregunta rápida");
     fireEvent.change(screen.getByDisplayValue("Hola, ¿hablamos?"), { target: { value: "Hola Marta," } });
-    expect(lastFor("campaign_steps", "body")).toBe("Hola Marta,");
+    // El guardado espera medio segundo: escribir no manda una peticion por tecla.
+    expect(lastFor("campaign_steps", "subject")).toBeUndefined();
+    await waitFor(() => expect(lastFor("campaign_steps", "subject")).toBe("Pregunta rápida"));
+    await waitFor(() => expect(lastFor("campaign_steps", "body")).toBe("Hola Marta,"));
   });
 
   it("la negrita envuelve lo seleccionado y se puede quitar", async () => {

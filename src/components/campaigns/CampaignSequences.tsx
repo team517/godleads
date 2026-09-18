@@ -171,6 +171,8 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [dragOverStepId, setDragOverStepId] = useState<string | null>(null);
 
   const load = async () => {
+    // Primero se guarda lo que estuviera pendiente: si no, releer pisaria lo recien escrito.
+    await flushSaves();
     const { data } = await supabase.from("campaign_steps").select("*").eq("campaign_id", campaignId).order("step_order");
     setSteps(data || []);
     if (data?.length && !selectedStepId) setSelectedStepId(data[0].id);
@@ -576,6 +578,46 @@ export default function CampaignSequences({ campaignId }: Props) {
     if (error) toast.error(`No se pudo guardar el cambio: ${error.message}`);
   };
 
+  /* ── Guardado con respiro ─────────────────────────────────────────────────────────────
+     Antes se mandaba un guardado a la base de datos POR CADA TECLA: escribir un correo de 1.400
+     caracteres eran 1.400 peticiones. Ahora se espera medio segundo sin escribir y se fuerza el
+     guardado al salir del campo, al cambiar de paso y al cerrar la pantalla, asi que no se pierde
+     nada y la escritura va suelta. */
+  const SAVE_DELAY_MS = 500;
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingSaves = useRef<Record<string, { id: string; field: string; value: any }>>({});
+
+  const runSave = (key: string) => {
+    const job = pendingSaves.current[key];
+    if (!job) return Promise.resolve();
+    delete pendingSaves.current[key];
+    clearTimeout(saveTimers.current[key]);
+    delete saveTimers.current[key];
+    return updateStepField(job.id, job.field, job.value);
+  };
+  const queueSave = (id: string, field: string, value: any) => {
+    const key = `${id}:${field}`;
+    pendingSaves.current[key] = { id, field, value };
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => runSave(key), SAVE_DELAY_MS);
+  };
+  const flushSaves = () => Promise.all(Object.keys(pendingSaves.current).map(runSave));
+
+  useEffect(() => { void flushSaves(); }, [selectedStepId]);
+  useEffect(() => {
+    const onLeave = () => { void flushSaves(); };
+    window.addEventListener("beforeunload", onLeave);
+    return () => { window.removeEventListener("beforeunload", onLeave); void flushSaves(); };
+  }, []);
+
+  /** El cuadro del correo crece con el texto: se lee el mensaje ENTERO, sin barra interior. */
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const growBody = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(195, el.scrollHeight + 2)}px`;
+  };
+
   // ── Attachments (per step): uploaded to Storage, referenced from campaign_steps.attachments.
   // The engine (process-campaign-queue) downloads each file and sends it with EVERY email of
   // the step. Files live in the shared `godtube-media` bucket under a per-campaign/step path. ──
@@ -689,6 +731,7 @@ export default function CampaignSequences({ campaignId }: Props) {
 
   const insertVariable = (tag: string, target: "body" | "subject" = "body") => {
     if (!selectedStep) return;
+    void flushSaves();
     const elId = target === "subject" ? "seq-subject-editor" : "seq-body-editor";
     const el = document.getElementById(elId) as HTMLTextAreaElement | HTMLInputElement | null;
     if (el) {
@@ -763,13 +806,13 @@ export default function CampaignSequences({ campaignId }: Props) {
     if (!selectedStep) return;
     if (activeVariantIndex === 0) {
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, subject: val } : s));
-      updateStepField(selectedStep.id, "subject", val);
+      queueSave(selectedStep.id, "subject", val);
     } else {
       const vi = activeVariantIndex - 1;
       const newVariants = [...variants];
       newVariants[vi] = { ...newVariants[vi], subject: val };
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, variants: newVariants } : s));
-      updateVariantField(selectedStep, vi, "subject", val);
+      queueSave(selectedStep.id, "variants", newVariants);
     }
   };
 
@@ -777,13 +820,13 @@ export default function CampaignSequences({ campaignId }: Props) {
     if (!selectedStep) return;
     if (activeVariantIndex === 0) {
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, body: val } : s));
-      updateStepField(selectedStep.id, "body", val);
+      queueSave(selectedStep.id, "body", val);
     } else {
       const vi = activeVariantIndex - 1;
       const newVariants = [...variants];
       newVariants[vi] = { ...newVariants[vi], body: val };
       setSteps(prev => prev.map(s => s.id === selectedStep.id ? { ...s, variants: newVariants } : s));
-      updateVariantField(selectedStep, vi, "body", val);
+      queueSave(selectedStep.id, "variants", newVariants);
     }
   };
 
@@ -1023,6 +1066,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                           id="seq-subject-editor"
                           value={subject || ""}
                           onChange={e => setCurrentSubject(e.target.value)}
+                          onBlur={flushSaves}
                           placeholder={i === 0 ? "Asunto del correo" : "Déjalo vacío para usar el asunto del paso anterior"}
                           className="soft-field"
                         />
@@ -1144,13 +1188,18 @@ export default function CampaignSequences({ campaignId }: Props) {
                       ) : isSel ? (
                         <textarea
                           id="seq-body-editor"
+                          ref={(el) => { bodyRef.current = el; growBody(el); }}
                           value={body}
-                          onChange={e => setCurrentBody(e.target.value)}
+                          onBlur={flushSaves}
+                          onChange={e => { setCurrentBody(e.target.value); growBody(e.target); }}
                           placeholder={`Escribe tu email aquí...\n\nVariables de tus leads: ${dynamicVars.map(v => v.tag).join(", ") || "importa leads para ver las variables disponibles"}`}
-                          className="h-[195px] w-full resize-y border-0 bg-transparent p-[22px] text-[16px] leading-relaxed text-foreground outline-none placeholder:text-[#9299bc] dark:placeholder:text-muted-foreground"
+                          className="min-h-[195px] w-full resize-none overflow-hidden border-0 bg-transparent p-[22px] text-[16px] leading-relaxed text-foreground outline-none placeholder:text-[#9299bc] dark:placeholder:text-muted-foreground"
                         />
                       ) : (
-                        <div className="h-[195px] overflow-hidden whitespace-pre-wrap p-[22px] text-[16px] leading-relaxed text-muted-foreground">
+                        <div
+                          className="max-h-[195px] overflow-hidden whitespace-pre-wrap p-[22px] text-[16px] leading-relaxed text-muted-foreground"
+                          style={body.length > 260 ? { maskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)", WebkitMaskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)" } : undefined}
+                        >
                           {body || "Escribe tu email aquí..."}
                         </div>
                       )}
