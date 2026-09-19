@@ -238,15 +238,43 @@ export default function EmailAccounts() {
 
   const domainOf = (email: string) => (email || "").split("@")[1]?.trim().toLowerCase() || "";
 
-  // Auto-check each unique domain once (de-duplicated, sequential to avoid bursts).
+  // Configuración DNS: primero se ENSEÑA lo ya guardado (instantáneo, sin "comprobando"), y sólo
+  // se vuelve a mirar el DNS de los dominios que faltan o que están viejos, y en segundo plano.
   useEffect(() => {
     const domains = Array.from(new Set(accounts.map(a => domainOf(a.email)).filter(Boolean)));
-    const toCheck = domains.filter(d => !requestedDomainsRef.current.has(d));
-    if (toCheck.length === 0) return;
-    toCheck.forEach(d => requestedDomainsRef.current.add(d));
+    const pending = domains.filter(d => !requestedDomainsRef.current.has(d));
+    if (pending.length === 0) return;
+    pending.forEach(d => requestedDomainsRef.current.add(d));
     let cancelled = false;
+    const STALE_MS = 24 * 60 * 60 * 1000; // un veredicto de más de un día se reconfirma por detrás
+
     (async () => {
-      const CONC = 3; // olas pequeñas: comprobar 43 dominios sin saturar el resolver DNS
+      // 1) Leer de una vez lo guardado y pintarlo ya. El DNS es público → una sola consulta.
+      let cached: Record<string, { spf?: string; dkim?: string; dmarc?: string; checked_at?: string }> = {};
+      try {
+        const { data } = await (supabase as any).from("domain_auth").select("domain, spf, dkim, dmarc, checked_at").in("domain", pending);
+        for (const r of (data || []) as any[]) cached[r.domain] = r;
+      } catch { /* si la caché no responde, se comprueba todo en vivo como antes */ }
+      if (cancelled) return;
+      if (Object.keys(cached).length) {
+        setDomainAuth(prev => {
+          const next = { ...prev };
+          for (const [d, r] of Object.entries(cached)) {
+            next[d] = { loading: false, spf: r.spf as any, dkim: r.dkim as any, dmarc: r.dmarc as any };
+          }
+          return next;
+        });
+      }
+
+      // 2) Sólo se vuelve a mirar el DNS de lo que falta o está viejo (en segundo plano).
+      const now = Date.now();
+      const toCheck = pending.filter(d => {
+        const c = cached[d];
+        if (!c) return true;
+        const age = c.checked_at ? now - new Date(c.checked_at).getTime() : Infinity;
+        return age > STALE_MS;
+      });
+      const CONC = 3; // olas pequeñas: no saturar el resolver DNS
       for (let i = 0; i < toCheck.length && !cancelled; i += CONC) {
         await Promise.all(toCheck.slice(i, i + CONC).map(d => checkDomainAuth(d)));
         if (i + CONC < toCheck.length) await new Promise(r => setTimeout(r, 150));

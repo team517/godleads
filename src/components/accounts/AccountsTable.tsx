@@ -213,23 +213,36 @@ export default function AccountsTable(p: Props) {
                     </div>
                   </td>
 
-                  {/* Conexión real del buzón (prueba de login IMAP) */}
+                  {/* Conexión del buzón. Se ENSEÑA el estado guardado al momento (una cuenta que
+                      la plataforma tiene por conectada sale "Conectada" ya); la prueba de login en
+                      vivo sólo lo confirma por detrás. Nunca se queda en "Comprobando…" en balde. */}
                   <td className="px-3 py-2.5 align-middle">
-                    {!ic || ic.loading ? (
-                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Comprobando…</span>
-                    ) : ic.ok ? (
-                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-success"><CheckCircle className="h-3.5 w-3.5" /> Conectada</span>
-                    ) : ic.unverified ? (
-                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] text-muted-foreground" title={ic.error || "No se pudo comprobar ahora mismo"}>
-                        <ShieldQuestion className="h-3.5 w-3.5" /> Sin comprobar
-                        <button onClick={() => p.onRecheckImap(account.id)} className="underline decoration-dotted">reintentar</button>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-destructive" title={ic.error || "Fallo de conexión IMAP"}>
-                        <XCircle className="h-3.5 w-3.5" /> Sin conexión
-                        <button onClick={() => p.onRecheckImap(account.id)} className="underline decoration-dotted">reintentar</button>
-                      </span>
-                    )}
+                    {(() => {
+                      // Verdad conocida: primero el chequeo en vivo si ya respondió, si no el estado guardado.
+                      const live = ic && !ic.loading ? ic : null;
+                      const connected = live ? live.ok === true : account.status === "connected";
+                      const failed = live ? (live.ok === false && !live.unverified) : account.status === "error";
+                      if (connected) {
+                        return <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-success"><CheckCircle className="h-3.5 w-3.5" /> Conectada</span>;
+                      }
+                      if (failed) {
+                        return (
+                          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-destructive" title={(live && live.error) || "Fallo de conexión IMAP"}>
+                            <XCircle className="h-3.5 w-3.5" /> Sin conexión
+                            <button onClick={() => p.onRecheckImap(account.id)} className="underline decoration-dotted">reintentar</button>
+                          </span>
+                        );
+                      }
+                      if (ic && ic.loading && !account.status) {
+                        return <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Comprobando…</span>;
+                      }
+                      return (
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] text-muted-foreground" title={(live && live.error) || "Aún sin verificar"}>
+                          <ShieldQuestion className="h-3.5 w-3.5" /> Sin comprobar
+                          <button onClick={() => p.onRecheckImap(account.id)} className="underline decoration-dotted">reintentar</button>
+                        </span>
+                      );
+                    })()}
                   </td>
 
                   <td className="max-w-[200px] px-3 py-2.5 align-middle">

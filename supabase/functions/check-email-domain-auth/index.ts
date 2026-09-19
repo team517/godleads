@@ -219,6 +219,21 @@ Deno.serve(async (req) => {
     const spf = buildSpf(rootTxtRecords);
     const dkim = buildDkim(uniqueSelectors, dkimLookups as { selector: string; records: string[] }[]);
     const dmarc = buildDmarc(dmarcRecords);
+    const ok = spf.status === "pass" && dkim.status === "pass" && dmarc.status === "pass";
+
+    // Se guarda el veredicto para que la próxima carga lo enseñe YA PUESTO, sin volver a mirar el
+    // DNS. El DNS es público, así que no hay nada sensible que proteger aquí.
+    try {
+      const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      await admin.from("domain_auth").upsert({
+        domain,
+        spf: spf.status,
+        dkim: dkim.status,
+        dmarc: dmarc.status,
+        ok,
+        checked_at: new Date().toISOString(),
+      }, { onConflict: "domain" });
+    } catch (_e) { /* la caché es un extra: si falla, la respuesta sigue siendo válida */ }
 
     return jsonResponse({
       domain,
