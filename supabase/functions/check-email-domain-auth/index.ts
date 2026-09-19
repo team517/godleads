@@ -21,6 +21,7 @@ type CheckItem = {
 };
 
 const GOOGLE_DNS_ENDPOINT = "https://dns.google/resolve";
+const CLOUDFLARE_DNS_ENDPOINT = "https://cloudflare-dns.com/dns-query";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -33,23 +34,37 @@ function normalizeDomain(value: string) {
   return value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "");
 }
 
-async function resolveTxt(name: string) {
-  const url = `${GOOGLE_DNS_ENDPOINT}?name=${encodeURIComponent(name)}&type=TXT`;
-  const response = await fetch(url, {
-    headers: { Accept: "application/dns-json, application/json" },
-  });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  if (!response.ok) {
-    throw new Error(`DNS lookup failed for ${name} [${response.status}]`);
-  }
-
+/** Una consulta TXT a un resolver DNS-over-HTTPS (Google o Cloudflare). Lanza si el resolver
+ *  responde mal (p. ej. 429 por exceso de peticiones), para poder reintentar en otro. */
+async function resolveTxtOnce(name: string, endpoint: string): Promise<string[]> {
+  const url = `${endpoint}?name=${encodeURIComponent(name)}&type=TXT`;
+  const response = await fetch(url, { headers: { Accept: "application/dns-json" } });
+  if (!response.ok) throw new Error(`DNS ${response.status} para ${name}`);
   const data = await response.json();
   const answers = Array.isArray(data?.Answer) ? (data.Answer as DnsAnswer[]) : [];
-
   return answers
     .map((answer) => String(answer.data ?? ""))
     .map((entry) => entry.replace(/^"|"$/g, "").replace(/"\s+"/g, ""))
     .filter(Boolean);
+}
+
+/** TXT con red de seguridad: si Google devuelve 429/5xx (pasa al comprobar muchos dominios a la
+ *  vez), reintenta y luego prueba Cloudflare. Así un dominio BIEN configurado no aparece como
+ *  "sin verificar" sólo porque el resolver estaba saturado en ese instante. */
+async function resolveTxt(name: string): Promise<string[]> {
+  const endpoints = [GOOGLE_DNS_ENDPOINT, GOOGLE_DNS_ENDPOINT, CLOUDFLARE_DNS_ENDPOINT];
+  let lastErr: unknown = null;
+  for (let i = 0; i < endpoints.length; i++) {
+    try {
+      return await resolveTxtOnce(name, endpoints[i]);
+    } catch (e) {
+      lastErr = e;
+      if (i < endpoints.length - 1) await sleep(120 * (i + 1));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`DNS lookup failed for ${name}`);
 }
 
 function getOverallStatus(items: CheckItem[]): CheckStatus {

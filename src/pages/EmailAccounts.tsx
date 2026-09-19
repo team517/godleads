@@ -213,12 +213,26 @@ export default function EmailAccounts() {
       });
       const r = data as any;
       if (error || !r || r.error) {
-        setDomainAuth(prev => ({ ...prev, [d]: { loading: false, error: true } }));
+        // Un fallo transitorio del resolver NO debe borrar un resultado bueno anterior: un dominio
+        // BIEN configurado no puede pasar a "sin verificar" porque el DNS estuviera saturado.
+        setDomainAuth(prev => {
+          const had = prev[d];
+          if (had && !had.error && (had.spf || had.dkim || had.dmarc)) {
+            return { ...prev, [d]: { ...had, loading: false, reverifying: false } };
+          }
+          return { ...prev, [d]: { loading: false, error: true } };
+        });
         return;
       }
       setDomainAuth(prev => ({ ...prev, [d]: { loading: false, spf: r.spf?.status, dkim: r.dkim?.status, dmarc: r.dmarc?.status } }));
     } catch {
-      setDomainAuth(prev => ({ ...prev, [d]: { loading: false, error: true } }));
+      setDomainAuth(prev => {
+        const had = prev[d];
+        if (had && !had.error && (had.spf || had.dkim || had.dmarc)) {
+          return { ...prev, [d]: { ...had, loading: false, reverifying: false } };
+        }
+        return { ...prev, [d]: { loading: false, error: true } };
+      });
     }
   }, []);
 
@@ -232,9 +246,10 @@ export default function EmailAccounts() {
     toCheck.forEach(d => requestedDomainsRef.current.add(d));
     let cancelled = false;
     (async () => {
-      const CONC = 4; // check domains in parallel waves → much faster first load
+      const CONC = 3; // olas pequeñas: comprobar 43 dominios sin saturar el resolver DNS
       for (let i = 0; i < toCheck.length && !cancelled; i += CONC) {
         await Promise.all(toCheck.slice(i, i + CONC).map(d => checkDomainAuth(d)));
+        if (i + CONC < toCheck.length) await new Promise(r => setTimeout(r, 150));
       }
     })();
     return () => { cancelled = true; };
