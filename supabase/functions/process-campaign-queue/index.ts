@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables } from "../_shared/personalize.ts";
+import { chunkIds, perTickCampaignCap, sortBySentToday } from "../_shared/engine-scale.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -1060,7 +1061,12 @@ serve(async (req) => {
     // and an overrunning tick makes the NEXT cron fire hit the job lock and skip —
     // silently halving throughput for every tenant. Past the deadline we exit
     // cleanly; the next tick (≤2 min) continues where the rotation left off.
-    const TICK_DEADLINE_MS = 90_000;
+    // 90 s → 55 s (2026-09-21). El cron es de 1 minuto: una pasada de 85 s hacía que la
+    // siguiente chocara con el candado y se saltara, así que a plena carga el motor trabajaba
+    // 85 s de cada 120 (medido: 70 envíos en 81 s y luego un minuto en blanco). Cortando a 55 s
+    // hay pasada TODOS los minutos: más correos por hora con el mismo ritmo por buzón. Las
+    // pasadas normales (media 30 s, p90 39 s) ni se enteran.
+    const TICK_DEADLINE_MS = 55_000;
     const tickStartMs = Date.now();
     const tickExpired = () => (Date.now() - tickStartMs) > TICK_DEADLINE_MS;
     // FAIRNESS: hard cap per campaign per tick, so one behind-pace campaign (just
@@ -1072,7 +1078,12 @@ serve(async (req) => {
     // timing). The extra capacity from parallelism comes purely from serving MORE
     // campaigns per tick (bigger MAX_SENDS_PER_INVOCATION total), never from any one
     // campaign — or any one mailbox — sending faster.
-    const MAX_SENDS_PER_CAMPAIGN_PER_TICK = 4;
+    // 2026-09-21: el tope ya NO es un 4 fijo. Con 4, una campaña no pasaba de ~2.160/día
+    // tuviera 40 buzones o 400 (una de 100k leads habría tardado meses). Ahora se calcula por
+    // campaña con perTickCampaignCap(capacidad diaria, ventana): 4 como suelo —todas las
+    // campañas de hoy siguen en 4— y hasta 24 (un tercio de la pasada) para las grandes. Lo de
+    // arriba sigue siendo verdad: ningún BUZÓN envía más rápido (1 por pasada, 6–9 min, 30/día);
+    // sólo pueden coincidir más buzones distintos de la misma campaña en un mismo minuto.
     // After this many TRANSIENT send failures to the SAME recipient on the SAME
     // step, the lead is parked as undeliverable instead of retried forever.
     const MAX_SEND_ATTEMPTS_PER_STEP = 5;
@@ -1162,6 +1173,9 @@ serve(async (req) => {
       }
     };
 
+    // Blocklist ya cargada en esta pasada, por usuario (ver más abajo).
+    const blocklistByUser = new Map<string, { emails: Set<string>; domains: Set<string> }>();
+
     for (const campaign of campaigns) {
       if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
       // ISOLATION: any unexpected throw while processing ONE campaign must never
@@ -1206,34 +1220,60 @@ serve(async (req) => {
       const stopOnReply = (campaign as any).stop_on_reply ?? true;
 
       // Get campaign accounts
-      const { data: campaignAccounts } = await adminClient
-        .from("campaign_accounts")
-        .select("account_id")
-        .eq("campaign_id", campaign.id);
+      // Paginado: un select sin rango se corta en 1.000 filas sin avisar.
+      const campaignAccounts: any[] = [];
+      for (let off = 0; ; off += 1000) {
+        const { data: caPage } = await adminClient
+          .from("campaign_accounts")
+          .select("account_id")
+          .eq("campaign_id", campaign.id)
+          .order("account_id")
+          .range(off, off + 999);
+        campaignAccounts.push(...(caPage || []));
+        if (!caPage || caPage.length < 1000) break;
+      }
 
-      const directAccountIds = (campaignAccounts || []).map(ca => ca.account_id);
+      const directAccountIds = campaignAccounts.map(ca => ca.account_id);
 
       const accountTags: string[] = (campaign as any).account_tags || [];
       let tagAccountIds: string[] = [];
       if (accountTags.length > 0) {
-        const { data: tagAccounts } = await adminClient
-          .from("email_accounts")
-          .select("id")
-          .eq("user_id", campaign.user_id)
-          .eq("status", "connected")
-          .overlaps("tags", accountTags);
-        tagAccountIds = (tagAccounts || []).map(a => a.id);
+        for (let off = 0; ; off += 1000) {
+          const { data: tagPage } = await adminClient
+            .from("email_accounts")
+            .select("id")
+            .eq("user_id", campaign.user_id)
+            .eq("status", "connected")
+            .overlaps("tags", accountTags)
+            .order("id")
+            .range(off, off + 999);
+          tagAccountIds.push(...(tagPage || []).map(a => a.id));
+          if (!tagPage || tagPage.length < 1000) break;
+        }
       }
 
       const allAccountIds = [...new Set([...directAccountIds, ...tagAccountIds])];
       if (!allAccountIds.length) continue;
 
-      const { data: accounts } = await adminClient
-        .from("email_accounts")
-        .select("*")
-        .in("id", allAccountIds)
-        .eq("status", "connected")
-        .order("sent_today", { ascending: true });
+      // TROCEADO: con ~900 ids en un solo `.in()` la URL pasa del límite de la API (medido:
+      // 600 → 200, 900 → HTTP 400), `accounts` llegaba vacío y la campaña NO ENVIABA NADA sin
+      // dar error. De 200 en 200 y se reordena como antes (menos enviados hoy, primero). Una
+      // campaña normal (<200 buzones) sigue siendo una sola petición, idéntica a la de siempre.
+      let accounts: any[] = [];
+      let accountsFetchFailed = false;
+      for (const idChunk of chunkIds(allAccountIds)) {
+        const { data: accPage, error: accErr } = await adminClient
+          .from("email_accounts")
+          .select("*")
+          .in("id", idChunk)
+          .eq("status", "connected")
+          .order("sent_today", { ascending: true });
+        if (accErr) { accountsFetchFailed = true; console.error(`Campaign "${campaign.name}": accounts fetch failed:`, accErr.message); break; }
+        accounts.push(...(accPage || []));
+      }
+      // Con media lista no se envía: el reparto entre buzones saldría torcido. La pasada siguiente reintenta.
+      if (accountsFetchFailed) continue;
+      accounts = sortBySentToday(accounts);
 
       if (!accounts?.length) continue;
 
@@ -1251,7 +1291,9 @@ serve(async (req) => {
         if (lastStr !== todayStr) { acc.sent_today = 0; staleAccountIds.push(acc.id); }
       }
       if (staleAccountIds.length) {
-        await adminClient.from("email_accounts").update({ sent_today: 0 }).in("id", staleAccountIds);
+        for (const staleChunk of chunkIds(staleAccountIds)) {
+          await adminClient.from("email_accounts").update({ sent_today: 0 }).in("id", staleChunk);
+        }
         console.log(`Daily self-reset: zeroed sent_today for ${staleAccountIds.length} account(s) (new day, cron backup).`);
       }
 
@@ -1405,13 +1447,21 @@ serve(async (req) => {
       } catch {
         todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       }
-      const { data: sentToday } = await adminClient
+      // head:true → sólo el recuento. Antes se contaban las FILAS devueltas, que la API corta en
+      // 1.000: a partir de 1.000 envíos/día el contador se quedaba clavado y ni el ritmo por horas
+      // ni el límite diario de la campaña frenaban nada (sólo lo hacían los topes por buzón).
+      const { count: sentTodayCount, error: sentTodayErr } = await adminClient
         .from("sent_emails")
-        .select("id", { count: "exact" })
+        .select("id", { count: "exact", head: true })
         .eq("campaign_id", campaign.id)
         .gte("sent_at", todayStart);
+      // Sin recuento fiable no se envía a ciegas: esta campaña espera a la pasada siguiente.
+      if (sentTodayErr || sentTodayCount === null) {
+        console.error(`Campaign "${campaign.name}": sent-today count failed:`, sentTodayErr?.message);
+        continue;
+      }
 
-      const campaignSentToday = sentToday?.length || 0;
+      const campaignSentToday = sentTodayCount || 0;
       // HARD CEILING = the LOWER of the campaign's configured daily_limit and what its
       // accounts can safely support today (autoAccountCapTotal, slow-ramp aware). The
       // old code used max(), so a campaign with daily_limit=50 whose accounts could do
@@ -1433,31 +1483,43 @@ serve(async (req) => {
       // A small floor keeps things moving right after the window opens.
       const totalWindowMinutes = Math.max(1, (endHour - startHour) * 60);
       const elapsedWindowMinutes = Math.max(0, totalWindowMinutes - remainingWindowMinutes);
-      const paceFraction = Math.min(1, elapsedWindowMinutes / totalWindowMinutes);
+      // +1: lo que "toca" al ACABAR este minuto. Sin él, en la última pasada de la ventana (17:59)
+      // tocaba el 99,8 % y el día cerraba 2–20 correos por debajo de su capacidad. Hasta ahora no
+      // se notaba porque el recuento de enviados se clavaba en 1.000 y el ritmo dejaba de frenar.
+      const paceFraction = Math.min(1, (elapsedWindowMinutes + 1) / totalWindowMinutes);
       const expectedByNow = Math.max(4, Math.ceil(campaignDailyLimit * paceFraction));
       const paceBudgetThisRun = Math.max(0, expectedByNow - campaignSentToday);
       if (paceBudgetThisRun <= 0) continue; // on pace for this hour — nothing due yet
+      // Huecos de ESTA campaña en esta pasada, según lo que sus buzones pueden enviar hoy.
+      const campaignTickCap = perTickCampaignCap(campaignDailyLimit, totalWindowMinutes);
 
       // ═══ Blocklist check (load once per campaign) ═══
       // Paged: an unpaged select is silently capped at PostgREST's 1000 rows, and every hard
       // bounce + unsubscribe adds a row, so a busy tenant crosses 1000 within weeks — after which
       // an arbitrary subset of suppressed/unsubscribed addresses was NOT blocked and kept
       // receiving follow-ups (the async-bounce path is protected ONLY by this list).
-      const blockedEmails = new Set<string>();
-      const blockedDomains = new Set<string>();
-      for (let off = 0; ; off += 1000) {
-        const { data: blPage } = await adminClient
-          .from("blocklist")
-          .select("value, entry_type")
-          .eq("user_id", campaign.user_id)
-          .order("id")
-          .range(off, off + 999);
-        for (const b of blPage || []) {
-          if (b.entry_type === "domain") blockedDomains.add(b.value.toLowerCase());
-          else blockedEmails.add(b.value.toLowerCase());
+      // Una sola carga por USUARIO y pasada: varias campañas del mismo usuario comparten lista
+      // (hay quien tiene 14.000 entradas = 15 peticiones, antes repetidas por cada campaña).
+      let blockSets = blocklistByUser.get(campaign.user_id);
+      if (!blockSets) {
+        blockSets = { emails: new Set<string>(), domains: new Set<string>() };
+        for (let off = 0; ; off += 1000) {
+          const { data: blPage } = await adminClient
+            .from("blocklist")
+            .select("value, entry_type")
+            .eq("user_id", campaign.user_id)
+            .order("id")
+            .range(off, off + 999);
+          for (const b of blPage || []) {
+            if (b.entry_type === "domain") blockSets.domains.add(b.value.toLowerCase());
+            else blockSets.emails.add(b.value.toLowerCase());
+          }
+          if (!blPage || blPage.length < 1000) break;
         }
-        if (!blPage || blPage.length < 1000) break;
+        blocklistByUser.set(campaign.user_id, blockSets);
       }
+      const blockedEmails = blockSets.emails;
+      const blockedDomains = blockSets.domains;
 
       // ═══ Domain daily limit tracking ═══
       const domainLimitEnabled = (campaign as any).domain_limit_enabled ?? false;
@@ -1466,16 +1528,20 @@ serve(async (req) => {
 
       if (domainLimitEnabled) {
         // Count how many emails were sent to each recipient domain today
-        const { data: sentTodayAll } = await adminClient
-          .from("sent_emails")
-          .select("to_email")
-          .eq("campaign_id", campaign.id)
-          .eq("status", "sent")
-          .gte("sent_at", todayStart);
-
-        for (const s of sentTodayAll || []) {
-          const d = s.to_email.split("@")[1]?.toLowerCase();
-          if (d) domainSentCounts[d] = (domainSentCounts[d] || 0) + 1;
+        for (let off = 0; ; off += 1000) {
+          const { data: sentPage } = await adminClient
+            .from("sent_emails")
+            .select("to_email")
+            .eq("campaign_id", campaign.id)
+            .eq("status", "sent")
+            .gte("sent_at", todayStart)
+            .order("id")
+            .range(off, off + 999);
+          for (const s of sentPage || []) {
+            const d = s.to_email.split("@")[1]?.toLowerCase();
+            if (d) domainSentCounts[d] = (domainSentCounts[d] || 0) + 1;
+          }
+          if (!sentPage || sentPage.length < 1000) break;
         }
       }
 
@@ -1533,7 +1599,7 @@ serve(async (req) => {
         if (campaignSentToday + sentThisCampaign + sendBatch.length >= campaignDailyLimit) break;
         if (sentThisCampaign + sendBatch.length >= paceBudgetThisRun) break; // stay on the hourly pace
         // Per-tick fairness cap: leave slots for the OTHER campaigns in this tick.
-        if (sentThisCampaign + sendBatch.length >= MAX_SENDS_PER_CAMPAIGN_PER_TICK) break;
+        if (sentThisCampaign + sendBatch.length >= campaignTickCap) break;
         if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
         // Per-lane scan cap — continue past an exhausted lane so the other is reached.
         if ((cl.current_step || 0) === 0) { if (++newLeadsScanned > MAX_NEW_LEAD_SCAN) continue; }
