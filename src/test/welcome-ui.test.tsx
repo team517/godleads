@@ -37,6 +37,8 @@ beforeEach(() => {
 });
 
 describe("Bienvenida (primer acceso)", () => {
+  // Con la suite entera en paralelo el asistente completo pasa de los 5 s por defecto (falso rojo).
+  vi.setConfig({ testTimeout: 30_000 });
   it("empieza preguntando cómo nos ha encontrado, y no deja seguir sin respuesta", () => {
     renderPage();
     expect(screen.getByText("¿Cómo nos has encontrado?")).toBeInTheDocument();

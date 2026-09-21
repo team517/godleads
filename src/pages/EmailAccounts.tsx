@@ -27,6 +27,7 @@ import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, 
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { applyInChunks, type BulkProgress } from "@/lib/bulk-apply";
 import { toast } from "sonner";
 
 const PROVIDER_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string; label: string; help: string }> = {
@@ -162,6 +163,8 @@ export default function EmailAccounts() {
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
   const [showSlowRamp, setShowSlowRamp] = useState(false);
   const [slowRampForm, setSlowRampForm] = useState({ start: "", increment: "2", target: "30" });
+  // Barra de progreso al activar/desactivar el slow ramp en muchas cuentas (como la de importar leads).
+  const [rampProgress, setRampProgress] = useState<(BulkProgress & { label: string }) | null>(null);
   // ── Signature manager (apply an HTML signature to all / by tag / selected accounts) ──
   const [showSignature, setShowSignature] = useState(false);
   const [sigHtml, setSigHtml] = useState("");
@@ -1116,13 +1119,29 @@ export default function EmailAccounts() {
       warmup_day: start,           // repurposed: starting daily limit (día 1)
       warmup_started_at: new Date().toISOString(),
     };
-    for (const id of ids) {
-      await supabase.from("email_accounts").update(payload).eq("id", id);
+    await applyRampChange(ids, payload, "Activando slow ramp", "activado");
+  };
+
+  // El mismo cambio para todas: va por tandas de 25 cuentas, 5 a la vez, y la barra avanza con
+  // cada tanda. Antes era un UPDATE por cuenta en fila: con 400 buzones, ~40 s sin ver nada.
+  const applyRampChange = async (ids: string[], payload: Record<string, unknown>, label: string, done: string) => {
+    if (!user || rampProgress) return;
+    setRampProgress({ done: 0, total: ids.length, failed: 0, label });
+    const result = await applyInChunks(
+      ids,
+      async (batch) => await supabase.from("email_accounts").update(payload as any).eq("user_id", user.id).in("id", batch),
+      (pr) => setRampProgress({ ...pr, label }),
+    );
+    // La lista se pone al día YA (sin esperar a recargar 900 cuentas) y luego se confirma con la BD.
+    if (result.failed < result.total) {
+      const touched = new Set(ids);
+      setAccounts((prev) => prev.map((a) => (touched.has(a.id) ? { ...a, ...(payload as any) } : a)));
     }
-    toast.success(`Slow ramp activado en ${ids.length} cuenta(s)`);
-    setShowSlowRamp(false);
-    setSelectedIds(new Set());
-    loadAccounts();
+    if (result.failed > 0) toast.error(`No se pudo aplicar en ${result.failed} de ${result.total} cuenta(s). Vuelve a intentarlo.`);
+    else toast.success(`Slow ramp ${done} en ${result.total} cuenta(s)`);
+    setRampProgress(null);
+    if (result.failed === 0) { setShowSlowRamp(false); setSelectedIds(new Set()); }
+    void loadAccounts();
   };
 
   const handleDisableSlowRamp = async () => {
@@ -1131,13 +1150,7 @@ export default function EmailAccounts() {
     // 292 mailboxes while the list is filtered to "eric" would be a nasty surprise.
     const ids = selectedIds.size > 0 ? [...selectedIds] : filteredAccounts.map((a) => a.id);
     if (ids.length === 0) return;
-    for (const id of ids) {
-      await supabase.from("email_accounts").update({ warmup_enabled: false } as any).eq("id", id);
-    }
-    toast.success(`Slow ramp desactivado en ${ids.length} cuenta(s)`);
-    setShowSlowRamp(false);
-    setSelectedIds(new Set());
-    loadAccounts();
+    await applyRampChange(ids, { warmup_enabled: false }, "Desactivando slow ramp", "desactivado");
   };
 
   const handleBulkEdit = async () => {
@@ -1798,7 +1811,7 @@ export default function EmailAccounts() {
       </Dialog>
 
       {/* Slow Ramp Dialog */}
-      <Dialog open={showSlowRamp} onOpenChange={setShowSlowRamp}>
+      <Dialog open={showSlowRamp} onOpenChange={(o) => { if (!rampProgress) setShowSlowRamp(o); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">Slow ramp (calentamiento)</DialogTitle>
@@ -1842,9 +1855,28 @@ export default function EmailAccounts() {
               );
             })()}
           </div>
+          {rampProgress && (
+            <div className="rounded-xl border border-[rgba(126,139,198,.18)] bg-white/70 p-3 dark:border-border dark:bg-muted/40" role="status" aria-live="polite">
+              <div className="flex items-center justify-between text-[13px]">
+                <span className="flex items-center gap-2 font-semibold"><Loader2 className="h-4 w-4 animate-spin text-primary" /> {rampProgress.label}…</span>
+                <span className="font-semibold tabular-nums">{rampProgress.done.toLocaleString("es-ES")} / {rampProgress.total.toLocaleString("es-ES")} cuentas</span>
+              </div>
+              <div
+                className="soft-progress mt-2"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={rampProgress.total}
+                aria-valuenow={rampProgress.done}
+              >
+                <div className="soft-progress-fill" style={{ width: `${rampProgress.total ? Math.round((rampProgress.done / rampProgress.total) * 100) : 0}%`, transition: "width .25s ease" }} />
+              </div>
+            </div>
+          )}
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={handleDisableSlowRamp}>Desactivar</Button>
-            <Button onClick={handleApplySlowRamp}>Activar slow ramp</Button>
+            <Button variant="outline" onClick={handleDisableSlowRamp} disabled={!!rampProgress}>Desactivar</Button>
+            <Button onClick={handleApplySlowRamp} disabled={!!rampProgress}>
+              {rampProgress ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Aplicando…</> : "Activar slow ramp"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

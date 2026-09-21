@@ -28,7 +28,7 @@ const renderTable = (accounts: any[]) => render(
     onToggleAll={noop}
     imapChecks={{}}
     domainAuth={{}}
-    dnsConfiguring={new Set()}
+    dnsConfiguring={{}}
     verifying={null}
     onConfigureDns={noop}
     onRecheckDomain={noop}
