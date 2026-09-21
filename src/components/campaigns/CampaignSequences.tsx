@@ -1116,8 +1116,8 @@ export default function CampaignSequences({ campaignId }: Props) {
                     onClick={() => { if (!isSel) setSelectedStepId(step.id); }}
                     className={`soft-card min-w-0 p-[22px] transition-all duration-200 ${isSel ? "soft-card-active" : "cursor-pointer"}`}
                   >
-                    {/* Asunto · IA · A/B */}
-                    <div className="mb-[18px] grid grid-cols-[1fr_60px] gap-[14px] md:grid-cols-[1fr_60px_120px]">
+                    {/* Asunto · variable · IA · A/B */}
+                    <div className="mb-[18px] grid grid-cols-[1fr_60px_60px] gap-[14px] md:grid-cols-[1fr_60px_60px_120px]">
                       {isSel ? (
                         <input
                           id="seq-subject-editor"
@@ -1132,6 +1132,33 @@ export default function CampaignSequences({ campaignId }: Props) {
                           {subject || <span className="text-[#9299bc] dark:text-muted-foreground">{i === 0 ? "Asunto del correo" : "Mismo asunto del paso anterior"}</span>}
                         </div>
                       )}
+
+                      {/* Variable en el ASUNTO: entra donde esté el cursor (o al final si no se ha tocado). */}
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            title="Insertar una variable en el asunto"
+                            aria-label="Insertar variable en el asunto"
+                            disabled={!isSel}
+                            onClick={(e) => e.stopPropagation()}
+                            className="soft-square grid place-items-center disabled:opacity-60"
+                          >
+                            <Braces className="h-5 w-5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-56 p-1" align="end" onClick={(e) => e.stopPropagation()}>
+                          <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variable en el asunto</p>
+                          {dynamicVars.length === 0 && <p className="px-3 py-2 text-[12px] text-muted-foreground">Importa leads para ver sus variables.</p>}
+                          {dynamicVars.map(v => (
+                            <button key={v.tag} type="button" onClick={() => insertVariable(v.tag, "subject")}
+                              className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
+                              <span>{v.label}</span>
+                              <code className="text-[10px] text-muted-foreground">{v.tag}</code>
+                            </button>
+                          ))}
+                        </PopoverContent>
+                      </Popover>
 
                       <button
                         type="button"

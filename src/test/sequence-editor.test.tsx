@@ -82,6 +82,22 @@ describe("Editor de secuencia", () => {
     await waitFor(() => expect(lastFor("campaign_steps", "body")).toBe("Hola Marta,"));
   });
 
+  it("el botón {} del asunto mete la variable donde está el cursor, y se guarda", async () => {
+    await renderEditor();
+    const subject = screen.getByDisplayValue("Una idea para {{company_name}}") as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: "Hola , una idea" } });
+    subject.setSelectionRange(5, 5); // justo después de "Hola "
+    // Cada paso pinta su botón; sólo el del paso abierto (el primero) está activo.
+    const varButtons = screen.getAllByRole("button", { name: "Insertar variable en el asunto" });
+    expect(varButtons[0]).not.toBeDisabled();
+    expect(varButtons[1]).toBeDisabled();
+    fireEvent.click(varButtons[0]);
+    const option = await screen.findAllByText("{{first_name}}");
+    fireEvent.click(option[0].closest("button")!);
+    expect(subject.value).toBe("Hola {{first_name}}, una idea");
+    await waitFor(() => expect(lastFor("campaign_steps", "subject")).toBe("Hola {{first_name}}, una idea"));
+  });
+
   it("la negrita envuelve lo seleccionado y se puede quitar", async () => {
     await renderEditor();
     const body = screen.getByDisplayValue("Hola, ¿hablamos?") as HTMLTextAreaElement;
