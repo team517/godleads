@@ -1,15 +1,19 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 /**
  * Cuadro de respuesta del Unibox que PINTA los enlaces (azul, clicables) en vez de
  * enseñar el código `<a href="…">…</a>`.
  *
- * Por debajo el valor sigue siendo el mismo "texto fuente" de siempre: texto plano
- * con saltos de línea y, como único marcado, etiquetas `<a href="…">texto</a>`.
- * Así todo lo que ya trabaja con ese texto (IA, plantillas, traducción, firma y
- * el envío, que conserva las etiquetas en línea) sigue igual; sólo cambia lo que ve
- * quien escribe.
+ * Escribir es NÍTIDO: el editor es "no controlado" — el texto vive en su propio DOM y NO se sube
+ * a React en cada tecla. Antes cada pulsación guardaba el texto en el estado del Unibox y volvía a
+ * dibujar TODA la pantalla (la bandeja de la izquierda, el hilo abierto…), y por eso se notaba
+ * lento. Ahora el Unibox sólo se entera de si el cuadro está vacío o no (para el botón de enviar),
+ * y lee el texto de verdad cuando hace falta (al enviar o traducir).
+ *
+ * Por debajo el valor sigue siendo el mismo "texto fuente" de siempre: texto plano con saltos de
+ * línea y, como único marcado, etiquetas `<a href="…">texto</a>`. Así todo lo que ya trabaja con
+ * ese texto (IA, plantillas, traducción, firma y el envío) sigue igual.
  */
 export type RichReplyHandle = {
   focus(): void;
@@ -17,11 +21,19 @@ export type RichReplyHandle = {
   insertLink(url: string, text?: string): void;
   /** Inserta texto fuente (puede llevar <a>) donde estaba el cursor (o al final). */
   insertText(source: string): void;
+  /** Reemplaza TODO el contenido (IA, plantilla, traducción, limpiar). */
+  setSource(source: string): void;
+  /** El texto fuente actual, leído del DOM (para enviar / traducir). */
+  getSource(): string;
+  /** ¿Está vacío? */
+  isEmpty(): boolean;
 };
 
 interface Props {
-  value: string;
-  onChange: (source: string) => void;
+  /** Contenido inicial (sólo se aplica al montar). Los cambios en vivo van por setSource(). */
+  defaultValue?: string;
+  /** Avisa SÓLO cuando cambia el estar-vacío (no en cada tecla): para el botón de enviar. */
+  onEmptyChange?: (empty: boolean) => void;
   placeholder?: string;
   className?: string;
   id?: string;
@@ -71,11 +83,12 @@ export function domToSource(root: Node): string {
 }
 
 const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEditor(
-  { value, onChange, placeholder, className, id },
+  { defaultValue, onEmptyChange, placeholder, className, id },
   ref,
 ) {
   const elRef = useRef<HTMLDivElement>(null);
   const lastRange = useRef<Range | null>(null);
+  const wasEmpty = useRef<boolean>(true);
 
   // Guarda dónde estaba el cursor: al pulsar el botón de enlace el foco se va al popover
   // y el editor pierde la selección; con esto insertamos en el sitio correcto.
@@ -87,24 +100,24 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
     if (el.contains(r.commonAncestorContainer)) lastRange.current = r.cloneRange();
   }, []);
 
-  const emit = useCallback(() => {
+  /** Sólo avisa a React cuando cambia el estar-vacío (nunca en cada tecla). */
+  const notifyEmpty = useCallback(() => {
     const el = elRef.current;
     if (!el) return;
     // Un editor "vacío" en Chrome se queda con un <br> suelto: lo limpiamos para que el
     // placeholder (:empty) vuelva a salir.
     if (el.innerHTML === "<br>" || el.innerHTML === "<div><br></div>") el.innerHTML = "";
-    onChange(domToSource(el));
-  }, [onChange]);
+    const empty = domToSource(el).trim() === "";
+    if (empty !== wasEmpty.current) { wasEmpty.current = empty; onEmptyChange?.(empty); }
+  }, [onEmptyChange]);
 
-  // Cambio EXTERNO del valor (IA, plantilla, traducción, limpiar): repintar. Si lo que hay
-  // en el DOM ya equivale al valor (el usuario está escribiendo), no se toca el cursor.
-  useLayoutEffect(() => {
+  // Contenido inicial: se pone UNA vez al montar. Los cambios posteriores van por setSource().
+  useEffect(() => {
     const el = elRef.current;
     if (!el) return;
-    if (domToSource(el) === (value || "")) return;
-    el.innerHTML = sourceToHtml(value || "");
-    if (document.activeElement === el) placeCaretAtEnd(el);
-  }, [value]);
+    if (defaultValue) { el.innerHTML = sourceToHtml(defaultValue); wasEmpty.current = false; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const insertNodes = useCallback((nodes: Node[]) => {
     const el = elRef.current;
@@ -118,8 +131,8 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
     for (const n of nodes) { range.insertNode(n); range.setStartAfter(n); range.collapse(true); last = n; }
     if (sel && last) { sel.removeAllRanges(); sel.addRange(range); }
     lastRange.current = range.cloneRange();
-    emit();
-  }, [emit]);
+    notifyEmpty();
+  }, [notifyEmpty]);
 
   useImperativeHandle(ref, () => ({
     focus: () => elRef.current?.focus(),
@@ -135,7 +148,22 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
       tpl.innerHTML = sourceToHtml(source);
       insertNodes(Array.from(tpl.content.childNodes));
     },
-  }), [insertNodes]);
+    setSource: (source) => {
+      const el = elRef.current;
+      if (!el) return;
+      el.innerHTML = sourceToHtml(source || "");
+      if (document.activeElement === el) placeCaretAtEnd(el);
+      notifyEmpty();
+    },
+    getSource: () => {
+      const el = elRef.current;
+      return el ? domToSource(el) : "";
+    },
+    isEmpty: () => {
+      const el = elRef.current;
+      return el ? domToSource(el).trim() === "" : true;
+    },
+  }), [insertNodes, notifyEmpty]);
 
   // Pegar: sólo texto plano (nada de HTML ajeno). Si lo pegado trae un <a href> escrito,
   // se repinta como enlace.
@@ -174,7 +202,7 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
       contentEditable
       suppressContentEditableWarning
       data-placeholder={placeholder}
-      onInput={emit}
+      onInput={notifyEmpty}
       onPaste={onPaste}
       onClick={onClick}
       onKeyUp={saveRange}

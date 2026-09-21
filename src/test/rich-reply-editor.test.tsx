@@ -23,26 +23,42 @@ describe("RichReplyEditor — fuente ↔ pintado", () => {
   });
 });
 
-describe("RichReplyEditor — componente", () => {
-  it("insertLink añade un enlace azul y entrega el texto fuente con <a>", () => {
+describe("RichReplyEditor — componente (no controlado)", () => {
+  it("insertLink añade un enlace azul; getSource entrega el texto fuente con <a>", () => {
     const ref = createRef<RichReplyHandle>();
-    const onChange = vi.fn();
-    render(<RichReplyEditor ref={ref} value="aquí tienes mi enlace " onChange={onChange} placeholder="Escribe tu respuesta…" />);
+    render(<RichReplyEditor ref={ref} defaultValue="aquí tienes mi enlace " placeholder="Escribe tu respuesta…" />);
     act(() => ref.current!.insertLink("https://calendly.com/onepulso/30min", ""));
     const a = screen.getByRole("link", { name: "https://calendly.com/onepulso/30min" });
     expect(a.getAttribute("href")).toBe("https://calendly.com/onepulso/30min");
-    expect(onChange).toHaveBeenLastCalledWith('aquí tienes mi enlace <a href="https://calendly.com/onepulso/30min">https://calendly.com/onepulso/30min</a> ');
+    expect(ref.current!.getSource()).toBe('aquí tienes mi enlace <a href="https://calendly.com/onepulso/30min">https://calendly.com/onepulso/30min</a> ');
   });
 
-  it("un valor externo (plantilla/IA) se repinta con sus enlaces", () => {
-    const { rerender } = render(<RichReplyEditor value="" onChange={() => {}} placeholder="p" />);
-    rerender(<RichReplyEditor value={'Hola\n<a href="https://onepulso.online">web</a>'} onChange={() => {}} placeholder="p" />);
+  it("setSource (plantilla/IA) reemplaza el contenido y pinta sus enlaces", () => {
+    const ref = createRef<RichReplyHandle>();
+    render(<RichReplyEditor ref={ref} placeholder="p" />);
+    act(() => ref.current!.setSource('Hola\n<a href="https://onepulso.online">web</a>'));
     expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
+    expect(ref.current!.getSource()).toBe('Hola\n<a href="https://onepulso.online">web</a>');
+    expect(ref.current!.isEmpty()).toBe(false);
+  });
+
+  it("avisa a onEmptyChange sólo al cambiar de vacío a con-texto, no en cada tecla", () => {
+    const ref = createRef<RichReplyHandle>();
+    const onEmptyChange = vi.fn();
+    render(<RichReplyEditor ref={ref} onEmptyChange={onEmptyChange} placeholder="p" />);
+    act(() => ref.current!.setSource("hola"));
+    expect(onEmptyChange).toHaveBeenLastCalledWith(false);
+    act(() => ref.current!.setSource("hola mundo"));   // sigue con texto → no vuelve a avisar
+    expect(onEmptyChange).toHaveBeenCalledTimes(1);
+    act(() => ref.current!.setSource(""));             // se vacía → avisa
+    expect(onEmptyChange).toHaveBeenLastCalledWith(true);
+    expect(onEmptyChange).toHaveBeenCalledTimes(2);
   });
 
   it("clic en el enlace lo abre en otra pestaña", () => {
+    const ref = createRef<RichReplyHandle>();
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
-    render(<RichReplyEditor value='<a href="https://onepulso.online">web</a>' onChange={() => {}} />);
+    render(<RichReplyEditor ref={ref} defaultValue='<a href="https://onepulso.online">web</a>' />);
     fireEvent.click(screen.getByRole("link", { name: "web" }));
     expect(open).toHaveBeenCalledWith("https://onepulso.online", "_blank", "noopener,noreferrer");
     open.mockRestore();

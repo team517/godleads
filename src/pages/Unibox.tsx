@@ -1388,7 +1388,10 @@ export default function Unibox() {
   const [langNonce, setLangNonce] = useState(0);
   const [tcxAccounts, setTcxAccounts] = useState<Set<string>>(new Set());
   const langCacheRef = useRef<Map<string, "es" | "en" | "fr" | "it" | "other" | "unknown">>(new Map());
-  const [reply, setReply] = useState("");
+  // El texto del cuadro de respuesta vive en el propio editor (no controlado), para que
+  // escribir sea nítido: sólo se sube a React si el cuadro pasa de vacío a con-texto. El
+  // texto de verdad se lee con getReply() al enviar/traducir, y se cambia con setReplySource().
+  const [replyEmpty, setReplyEmpty] = useState(true);
   const [sending, setSending] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<FilterType>("all");
   const [showTodayOnly, setShowTodayOnly] = useState(false);
@@ -1405,6 +1408,18 @@ export default function Unibox() {
   const backgroundSyncOffsetRef = useRef(0);
   const lastAutoSyncAttemptRef = useRef(0);
   const replyRef = useRef<RichReplyHandle>(null);
+  const replyDraftSaved = useRef("");  // guarda el borrador si se cierra el lector, para restaurarlo
+  const getReply = useCallback(() => replyRef.current?.getSource() ?? replyDraftSaved.current, []);
+  const setReplySource = useCallback((sourceText: string) => {
+    replyDraftSaved.current = sourceText;
+    replyDraftRef.current = sourceText;
+    replyRef.current?.setSource(sourceText);
+    setReplyEmpty(!sourceText || sourceText.trim() === "");
+  }, []);
+  const onReplyEmptyChange = useCallback((empty: boolean) => {
+    setReplyEmpty(empty);
+    replyDraftRef.current = empty ? "" : "x";  // sólo importa "hay algo escrito o no"
+  }, []);
   // Reading pane: on desktop the reader is portalled INTO this box so it fills
   // the "Tu bandeja unificada" area exactly (inline, no popup/overlay).
   const readingPaneRef = useRef<HTMLDivElement>(null);
@@ -1463,15 +1478,11 @@ export default function Unibox() {
   const [tplOpen, setTplOpen] = useState(false);
   const loadTemplates = async () => { try { const { data } = await (supabase as any).from("reply_templates").select("id, name, body").order("created_at", { ascending: false }); setTemplates((data as any[]) || []); } catch { /* */ } };
   const applyTemplate = (t: any) => {
-    if (replyRef.current) {
-      replyRef.current.insertText(t.body || "");
-    } else {
-      setReply((prev) => prev ? `${prev}\n${t.body || ""}` : (t.body || ""));
-    }
+    replyRef.current?.insertText(t.body || "");
     setTplOpen(false);
   };
   const saveTemplate = async () => {
-    const text = (reply || "").trim();
+    const text = getReply().trim();
     if (!text) { toast.error("Escribe la respuesta primero, luego guárdala como plantilla"); return; }
     const name = window.prompt("Nombre de la plantilla:", "");
     if (!name || !name.trim()) return;
@@ -2050,7 +2061,6 @@ export default function Unibox() {
 
   // Keep a ref of the reply draft so the debounced reload can tell if the user is
   // mid-compose without re-creating the callback on every keystroke.
-  useEffect(() => { replyDraftRef.current = reply; }, [reply]);
   useEffect(() => {
     const wasReading = readingThreadRef.current;
     readingThreadRef.current = selectedId;
@@ -2596,7 +2606,7 @@ export default function Unibox() {
       delete next[id];
       return next;
     });
-    setReply("");
+    setReplySource("");
     setAiSuggestion("");
     setTranslatedBody("");
     setDetectedLang(null);
@@ -2805,7 +2815,7 @@ export default function Unibox() {
   // place, so they SEE exactly what will be sent (WYSIWYG) and then hit Responder.
   // Replaces the old invisible auto-translate-on-send.
   const translateReplyToLeadLang = async () => {
-    if (!selected || !reply.trim()) return;
+    if (!selected || getReply().trim() === "") return;
     setAutoTranslating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -2836,11 +2846,11 @@ export default function Unibox() {
       const tResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/translate-message`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ text: reply, target_lang: target, mode: "translate" }),
+        body: JSON.stringify({ text: getReply(), target_lang: target, mode: "translate" }),
       });
       const t = await tResp.json();
       if (t.translated) {
-        setReply(t.translated);
+        setReplySource(t.translated);
         setReplyLang(target);
         toast.success(`Traducido al ${langLabels[target] || target}. Revísalo y pulsa Responder.`);
       } else {
@@ -2879,7 +2889,7 @@ export default function Unibox() {
    */
   const handleReply = async (bodyOverride?: string): Promise<boolean> => {
     const usingOverride = typeof bodyOverride === "string";
-    const bodyToSend = usingOverride ? bodyOverride : reply;
+    const bodyToSend = usingOverride ? bodyOverride : getReply();
     if (!selected || (!bodyToSend.trim() && (usingOverride || replyFiles.length === 0)) || !user) return false;
     if (containsProfanity(bodyToSend)) {
       toast.error("Tu respuesta contiene lenguaje inapropiado. Por favor, modifícala antes de enviar.");
@@ -2978,7 +2988,7 @@ export default function Unibox() {
       }
 
       toast.success(ccList.length ? `Respuesta enviada a ${ccList.length + 1} personas (mismo hilo)` : "Respuesta enviada");
-      setReply("");
+      setReplySource("");
       setReplyFiles([]);
       setReplyLang(null);
       // Keep ccList — the added people STAY on this conversation (persisted), so
@@ -3561,7 +3571,7 @@ export default function Unibox() {
       {/* ── Conversation reader — on desktop it is portalled INTO the reading
           pane box (fills it exactly, inline, no overlay); on mobile it is a
           normal fullscreen modal with backdrop. ── */}
-      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); setShowFullEmail(false); } }}>
+      <Dialog open={!!selected} onOpenChange={(open) => { if (!open) { replyDraftSaved.current = replyRef.current?.getSource() ?? replyDraftSaved.current; setSelectedId(null); setReaderExpanded(false); setReplyFiles([]); setShowFullEmail(false); } }}>
         <DialogContent
           className={`p-0 gap-0 flex flex-col overflow-hidden bg-card border-border/60 shadow-modal outline-none focus:outline-none focus-visible:outline-none [&>button.absolute]:hidden ${
             readerExpanded
@@ -3891,7 +3901,7 @@ export default function Unibox() {
                     messageId={selected.id}
                     onSendDraft={(body) => handleReply(body)}
                     onEditDraft={(body) => {
-                      setReply(body);
+                      setReplySource(body);
                       setReplyLang(null);
                       setTimeout(() => replyRef.current?.focus(), 0);
                     }}
@@ -3913,7 +3923,7 @@ export default function Unibox() {
                         size="sm"
                         variant="secondary"
                         className="gap-1.5 text-xs h-7"
-                        onClick={() => { setReply(aiSuggestion); setAiSuggestion(""); }}
+                        onClick={() => { setReplySource(aiSuggestion); setAiSuggestion(""); }}
                       >
                         Usar respuesta
                       </Button>
@@ -3927,8 +3937,8 @@ export default function Unibox() {
                     id="unibox-reply-textarea"
                     placeholder="Escribe tu respuesta…"
                     className={`mb-2.5 min-h-[92px] overflow-y-auto rounded-md border border-border/70 bg-card px-3.5 py-3 text-sm leading-relaxed shadow-rest focus:border-primary/40 focus:ring-2 focus:ring-primary/25 ${readerExpanded ? "max-h-[58dvh]" : "max-h-[42dvh]"}`}
-                    value={reply}
-                    onChange={setReply}
+                    defaultValue={replyDraftSaved.current}
+                    onEmptyChange={onReplyEmptyChange}
                   />
                   {replyFiles.length > 0 && (
                     <div className="mb-2.5 flex flex-wrap gap-2">
@@ -3985,11 +3995,7 @@ export default function Unibox() {
                           <Button size="sm" className="w-full" disabled={!linkUrl.trim()} onClick={() => {
                             const url = linkUrl.trim();
                             const text = linkText.trim() || url;
-                            if (replyRef.current) {
-                              replyRef.current.insertLink(url, text);
-                            } else {
-                              setReply(prev => prev + `<a href="${url}">${text}</a>`);
-                            }
+                            replyRef.current?.insertLink(url, text);
                             setLinkUrl("");
                             setLinkText("");
                             setLinkPopoverOpen(false);
@@ -4004,7 +4010,7 @@ export default function Unibox() {
                         variant="outline" size="sm"
                         className="h-8 gap-1.5 text-xs"
                         onClick={translateReplyToLeadLang}
-                        disabled={autoTranslating || sending || !reply.trim()}
+                        disabled={autoTranslating || sending || replyEmpty}
                         title="Traduce tu respuesta al idioma en el que te escribió el lead"
                       >
                         <Languages className="h-3.5 w-3.5" />
@@ -4041,7 +4047,7 @@ export default function Unibox() {
                         </PopoverContent>
                       </Popover>
                     </div>
-                    <Button size="sm" className="gap-2" onClick={() => { void handleReply(); }} disabled={sending || autoTranslating || (!reply.trim() && replyFiles.length === 0)}>
+                    <Button size="sm" className="gap-2" onClick={() => { void handleReply(); }} disabled={sending || autoTranslating || (replyEmpty && replyFiles.length === 0)}>
                       <Send className="h-3.5 w-3.5" /> {sending ? "Enviando…" : "Responder"}
                     </Button>
                   </div>
