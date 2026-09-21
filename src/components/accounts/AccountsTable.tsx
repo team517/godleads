@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle, XCircle, Loader2, Pencil, RefreshCw, Trash2, Wand2, ShieldCheck, ShieldAlert, ShieldQuestion,
   Server, X, Plus, TrendingUp,
@@ -95,10 +95,23 @@ function Th({ children, className }: { children?: React.ReactNode; className?: s
 export default function AccountsTable(p: Props) {
   const [tagFor, setTagFor] = useState<string | null>(null);
 
-  const rows = useMemo(() => p.accounts.map((a) => {
+  // 50 por página: con 900 buzones, montar 900 filas de golpe era lo que hacía que la pantalla
+  // tardara en aparecer. La selección "todas" sigue siendo sobre TODO lo filtrado (la decide el
+  // padre); aquí sólo se pinta la página.
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(p.accounts.length / PAGE_SIZE));
+  useEffect(() => { setPage(1); }, [p.accounts.length, p.filterTag]);
+  const safePage = Math.min(page, pageCount);
+  const pageAccounts = useMemo(
+    () => p.accounts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [p.accounts, safePage],
+  );
+
+  const rows = useMemo(() => pageAccounts.map((a) => {
     const domain = domainOf(a.email);
     return { account: a, domain, auth: p.domainAuth[domain], verdict: configVerdict(domain, p.domainAuth[domain]) };
-  }), [p.accounts, p.domainAuth]);
+  }), [pageAccounts, p.domainAuth]);
 
   return (
     <div className="soft-panel overflow-hidden">
@@ -303,6 +316,42 @@ export default function AccountsTable(p: Props) {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Pie: cuántas se ven y, si hacen falta, las páginas. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[rgba(126,139,198,.12)] px-4 py-3 text-[13px] text-[#6975a6] dark:border-border/60 dark:text-muted-foreground">
+        <span>
+          {p.accounts.length === 0
+            ? "Sin cuentas"
+            : `Mostrando ${(safePage - 1) * PAGE_SIZE + 1} - ${Math.min(safePage * PAGE_SIZE, p.accounts.length)} de ${p.accounts.length} ${p.accounts.length === 1 ? "cuenta" : "cuentas"}`}
+        </span>
+        {pageCount > 1 && (
+          <div className="flex items-center gap-2">
+            <button type="button" className="soft-page-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)} aria-label="Página anterior">‹</button>
+            {Array.from({ length: pageCount }).map((_, i) => i + 1)
+              .filter((n) => n === 1 || n === pageCount || Math.abs(n - safePage) <= 2)
+              .reduce<(number | "…")[]>((acc, n) => {
+                const prev = acc[acc.length - 1];
+                if (typeof prev === "number" && n - prev > 1) acc.push("…");
+                acc.push(n);
+                return acc;
+              }, [])
+              .map((n, i) => n === "…"
+                ? <span key={`gap-${i}`} className="px-1">…</span>
+                : (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setPage(n)}
+                    className={cn("soft-page-btn font-semibold", safePage === n && "soft-page-btn-on")}
+                    aria-current={safePage === n ? "page" : undefined}
+                  >
+                    {n}
+                  </button>
+                ))}
+            <button type="button" className="soft-page-btn" disabled={safePage >= pageCount} onClick={() => setPage(safePage + 1)} aria-label="Página siguiente">›</button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -45,6 +45,14 @@ function shrinkForDisk(key: string, value: unknown): unknown {
       body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 600) : m.body_text,
     }));
   }
+  // Cuentas: la firma HTML de cada buzón (varios KB × cientos de buzones) no hace falta para
+  // pintar la lista y reventaba el límite del localStorage. La carga en vivo la trae en un segundo.
+  if (key === "accounts:list" && Array.isArray(value)) {
+    return value.map((a: any) => {
+      const { signature_html, notes, last_error, ...rest } = a || {};
+      return rest;
+    });
+  }
   return value;
 }
 

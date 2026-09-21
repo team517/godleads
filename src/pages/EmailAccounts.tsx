@@ -26,6 +26,7 @@ import { isAgencyAccount } from "@/lib/access";
 import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, Wifi, Pencil, Tag, X, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Wand2, Search, Globe, TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "sonner";
 
 const PROVIDER_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string; label: string; help: string }> = {
@@ -470,6 +471,13 @@ export default function EmailAccounts() {
 
   const allSelected = filteredAccounts.length > 0 && filteredAccounts.every(a => selectedIds.has(a.id));
 
+  // Escritorio o móvil: sólo se monta UNA de las dos vistas (antes las dos, ocultando una por CSS,
+  // y con cientos de buzones eso doblaba el DOM). En móvil las tarjetas salen de 40 en 40.
+  const isMobile = useIsMobile();
+  const MOBILE_CHUNK = 40;
+  const [mobileShown, setMobileShown] = useState(MOBILE_CHUNK);
+  useEffect(() => { setMobileShown(MOBILE_CHUNK); }, [search, filterTag]);
+
   const loadAccounts = async () => {
     if (!user) return;
     try {
@@ -479,11 +487,12 @@ export default function EmailAccounts() {
       if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
       const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
       setAccounts(normalized);
-      try {
-        const { data: sd } = await (supabase as any).rpc("my_account_sending_days");
-        setSendDaysByAccount(sendDaysMap(sd));
-      } catch { /* si falla, effectiveDailyLimit asume 0 días: el escalón inicial, nunca de más */ }
+      setLoading(false); // la lista ya está: se pinta YA, sin esperar a nada más
       cacheSet("accounts:list", normalized); // instant paint on next visit
+      // Los días de envío (para el escalón del slow-ramp) llegan aparte y no retrasan la pantalla.
+      void (supabase as any).rpc("my_account_sending_days")
+        .then(({ data: sd }: any) => setSendDaysByAccount(sendDaysMap(sd)))
+        .catch(() => { /* si falla, effectiveDailyLimit asume 0 días: el escalón inicial, nunca de más */ });
     } catch (e: any) {
       console.warn("loadAccounts threw, keeping current list:", e?.message || e);
     } finally {
@@ -1991,7 +2000,7 @@ export default function EmailAccounts() {
         <>
         {/* Escritorio: tabla de cuentas conectadas (estilo Smartlead, con la autenticación del
             dominio en lugar de sus columnas de warm-up). Móvil conserva las tarjetas. */}
-        <div className="hidden md:block">
+        {!isMobile && (
           <AccountsTable
             accounts={filteredAccounts}
             selectedIds={selectedIds}
@@ -2014,9 +2023,10 @@ export default function EmailAccounts() {
             filterTag={filterTag}
             rampOf={rampInfo}
           />
-        </div>
-        <div className="grid gap-3 grid-cols-1 md:hidden">
-          {filteredAccounts.map((account) => (
+        )}
+        {isMobile && (
+        <div className="grid gap-3 grid-cols-1">
+          {filteredAccounts.slice(0, mobileShown).map((account) => (
             <Card key={account.id} className={`hover:shadow-raised transition-shadow ${selectedIds.has(account.id) ? "ring-2 ring-primary/40" : ""} ${filterTag && !(account.tags || []).includes(filterTag) ? "opacity-60 border-dashed" : ""}`}>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-start justify-between">
@@ -2204,7 +2214,17 @@ export default function EmailAccounts() {
               </CardContent>
             </Card>
           ))}
+          {filteredAccounts.length > mobileShown && (
+            <button
+              type="button"
+              className="soft-cta w-full justify-center"
+              onClick={() => setMobileShown((n) => n + MOBILE_CHUNK)}
+            >
+              Ver {Math.min(MOBILE_CHUNK, filteredAccounts.length - mobileShown)} más ({filteredAccounts.length - mobileShown} restantes)
+            </button>
+          )}
         </div>
+        )}
         </>
       )}
     </div>
