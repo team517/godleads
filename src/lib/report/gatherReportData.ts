@@ -5,6 +5,7 @@
 // or a client sub-user for their own report. The scheduled server path (Phase 3) builds
 // the same shape with the service role instead.
 
+import { fetchCampaignMetrics } from "@/lib/campaign-metrics";
 import { supabase } from "@/integrations/supabase/client";
 import type { ReportData, ReportKind, CampaignReportBlock } from "./types";
 
@@ -35,7 +36,7 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
   // 1) Campaign list (id + name), lifetime metrics, and window metrics — in parallel.
   const [campRes, metricsRes, periodRes] = await Promise.all([
     supabase.from("campaigns").select("id, name, status").order("created_at", { ascending: false }),
-    (supabase as any).rpc("campaign_metrics_for_user", { p_user_id: "00000000-0000-0000-0000-000000000000" }),
+    fetchCampaignMetrics(supabase as any, "00000000-0000-0000-0000-000000000000"),
     (supabase as any).rpc("campaign_report_period", { p_days: periodDays }),
   ]);
 

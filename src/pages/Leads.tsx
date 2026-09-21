@@ -20,6 +20,7 @@ import { parseCSVToObjects } from "@/lib/csv-parser";
 import { useVerification } from "@/contexts/VerificationContext";
 import { useSearchParams } from "react-router-dom";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+import { normalizeLeadQuery } from "@/lib/campaign-metrics";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DOMAIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
@@ -51,6 +52,14 @@ export default function Leads() {
   const [loading, setLoading] = useState(() => !cacheGet<any>("leads:first"));
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get("q") || "");
+  // Búsqueda en el SERVIDOR, en toda la cuenta: también los leads que sólo viven dentro de una
+  // campaña (is_campaign_only), que esta pantalla no lista. null = no se está buscando.
+  const SEARCH_LIMIT = 100;
+  const [serverResults, setServerResults] = useState<any[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [searchTick, setSearchTick] = useState(0);
+  const searchSeq = useRef(0);
   const [showAdd, setShowAdd] = useState(false);
   const [showList, setShowList] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
@@ -130,6 +139,7 @@ export default function Leads() {
 
   const load = async () => {
     if (!user) return;
+    setSearchTick((t) => t + 1);
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
@@ -157,6 +167,24 @@ export default function Leads() {
   };
 
   useEffect(() => { load(); }, [user, page, activeList]);
+
+  useEffect(() => {
+    const q = normalizeLeadQuery(search);
+    if (!user || !q) { searchSeq.current++; setServerResults(null); setSearching(false); return; }
+    const mine = ++searchSeq.current;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const { data, error } = await (supabase as any).rpc("search_my_leads", { p_q: q, p_limit: SEARCH_LIMIT, p_offset: 0 });
+      if (mine !== searchSeq.current) return; // llegó tarde: ya se está buscando otra cosa
+      setSearching(false);
+      // Si el servidor falla se cae al filtro local de siempre, nunca a una lista vacía engañosa.
+      if (error || !Array.isArray(data)) { setServerResults(null); return; }
+      setSearchTotal(Number(data[0]?.total || 0));
+      setServerResults(data.map((r: any) => ({ ...r, lead_lists: r.list_name ? { name: r.list_name } : null })));
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, user, searchTick]);
 
   const fetchUnverifiedCount = useCallback(async () => {
     if (!user) return 0;
@@ -367,10 +395,18 @@ export default function Leads() {
     setImportProgress({ current: 0, total: 0, active: false });
   };
 
+  // Quita al instante de los resultados de búsqueda lo que se acaba de borrar (la búsqueda se
+  // repite después contra el servidor y trae las siguientes coincidencias).
+  const dropFromSearch = (ids: string[]) => {
+    const gone = new Set(ids);
+    setServerResults((prev) => (prev ? prev.filter((l) => !gone.has(l.id)) : prev));
+    setSearchTotal((t) => Math.max(0, t - ids.length));
+  };
+
   const handleDelete = async (id: string, email?: string) => {
     const ok = await confirm({
       title: "Eliminar lead",
-      description: `¿Eliminar el lead ${email || id}? Se borrará de todas sus campañas. No se puede deshacer.`,
+      description: `¿Eliminar el lead ${email || id}? Se borrará de todas sus campañas, junto con su historial de envíos y sus respuestas. No se puede deshacer.`,
       confirmText: "Eliminar",
       destructive: true,
     });
@@ -378,6 +414,7 @@ export default function Leads() {
     const { error } = await supabase.rpc("bulk_delete_leads", { lead_ids: [id] });
     if (error) { toast.error(`Error: ${error.message}`); return; }
     toast.success("Lead eliminado");
+    dropFromSearch([id]);
     setSelectedLeads(prev => { const n = new Set(prev); n.delete(id); return n; });
     load();
   };
@@ -397,7 +434,7 @@ export default function Leads() {
     const count = selectedLeads.size;
     const ok = await confirm({
       title: "Eliminar leads seleccionados",
-      description: `¿Eliminar ${count} lead(s)? Se borrarán de todas sus campañas. No se puede deshacer.`,
+      description: `¿Eliminar ${count} lead(s)? Se borrarán de todas sus campañas, junto con su historial de envíos y sus respuestas. No se puede deshacer.`,
       confirmText: "Eliminar",
       destructive: true,
     });
@@ -416,6 +453,7 @@ export default function Leads() {
     setDeleting(false);
 
     toast.success(`${count} leads eliminados`);
+    dropFromSearch(ids);
     setSelectedLeads(new Set());
     load();
   };
@@ -470,7 +508,8 @@ export default function Leads() {
     load();
   };
 
-  const filtered = leads.filter(l => {
+  const inServerSearch = serverResults !== null;
+  const filtered = serverResults ?? leads.filter(l => {
     if (!search) return true;
     return l.email.toLowerCase().includes(search.toLowerCase()) || JSON.stringify(l.custom_fields).toLowerCase().includes(search.toLowerCase());
   });
@@ -668,7 +707,8 @@ export default function Leads() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="relative flex-1 sm:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Buscar leads..." className="pl-10" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input placeholder="Buscar por email, empresa o campaña…" className="pl-10 pr-9" value={search} onChange={e => { setSearch(e.target.value); setSelectedLeads(new Set()); }} />
+          {searching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
         </div>
         {selectedLeads.size > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -682,7 +722,7 @@ export default function Leads() {
             </Button>
           </div>
         )}
-        {totalCount > 0 && (
+        {totalCount > 0 && !inServerSearch && (
           <Button
             variant="destructive"
             size="sm"
@@ -863,12 +903,18 @@ export default function Leads() {
         </div>
       )}
 
+      {inServerSearch && (
+        <p className="text-[13px] text-muted-foreground" role="status">
+          <b className="text-foreground">{searchTotal.toLocaleString("es-ES")}</b> {searchTotal === 1 ? "coincidencia" : "coincidencias"} en toda tu cuenta, incluidos los leads que están dentro de campañas
+          {searchTotal > filtered.length ? ` · se muestran las ${filtered.length} más recientes (al eliminar, aparecen las siguientes)` : ""}.
+        </p>
+      )}
       {filtered.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
             <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-display font-semibold mb-2">{search ? "Sin resultados" : "No tienes leads"}</h3>
-            <p className="text-[15px] text-muted-foreground">{search ? "Prueba con otra búsqueda" : "Importa leads desde un CSV o añádelos manualmente."}</p>
+            <p className="text-[15px] text-muted-foreground">{search ? (searching ? "Buscando…" : "Prueba con un email, una empresa o el nombre de una campaña.") : "Importa leads desde un CSV o añádelos manualmente."}</p>
           </CardContent>
         </Card>
       ) : (
@@ -900,6 +946,7 @@ export default function Leads() {
                             {col.replace(/_/g, " ")}
                           </th>
                         ))}
+                        {inServerSearch && <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Campaña</th>}
                         <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Estado</th>
                         <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Verificación</th>
                         <th className="px-4 py-3 text-left text-[13px] font-semibold text-muted-foreground tracking-[-0.01em]">Carpeta</th>
@@ -921,13 +968,28 @@ export default function Leads() {
                               }}
                             />
                           </td>
-                          <td className="px-3 py-3 text-xs text-muted-foreground">{page * PAGE_SIZE + idx + 1}</td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{inServerSearch ? idx + 1 : page * PAGE_SIZE + idx + 1}</td>
                           <td className="px-4 py-3 text-sm font-medium">{lead.email}</td>
                           {fieldCols.map(col => (
                             <td key={col} className="px-4 py-3 text-sm text-muted-foreground truncate max-w-[200px]">
                               {(lead.custom_fields || {})[col] || "—"}
                             </td>
                           ))}
+                          {inServerSearch && (
+                            <td className="px-4 py-3">
+                              {(lead.campaigns || []).length === 0 ? (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              ) : (
+                                <div className="flex max-w-[260px] flex-wrap gap-1">
+                                  {(lead.campaigns as any[]).map((c) => (
+                                    <Badge key={c.id} variant="outline" className="max-w-[240px] truncate text-[10px] font-medium" title={`${c.name} · paso ${(c.step ?? 0) + 1} · ${c.status}`}>
+                                      {c.name}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          )}
                           <td className="px-4 py-3">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                               lead.status === "replied" ? "bg-success/10 text-success" :
@@ -963,7 +1025,7 @@ export default function Leads() {
       )}
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {totalPages > 1 && !inServerSearch && (
         <div className="flex items-center justify-between">
           <p className="text-[15px] text-muted-foreground">
             Mostrando {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} de {totalCount} leads

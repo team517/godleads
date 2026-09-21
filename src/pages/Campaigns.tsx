@@ -1,3 +1,4 @@
+import { fetchCampaignMetrics } from "@/lib/campaign-metrics";
 import { useState, useEffect } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { Button } from "@/components/ui/button";
@@ -114,7 +115,7 @@ export default function Campaigns() {
     cacheSet("campaigns:list", data || []);
     setLoading(false);
     // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer).
-    const { data: rows, error } = await supabase.rpc("campaign_metrics_for_user" as any, { p_user_id: user.id });
+    const { data: rows, error } = await fetchCampaignMetrics(supabase as any, user.id);
     if (!error && Array.isArray(rows)) {
       const map: Record<string, any> = {};
       for (const r of rows as any[]) {

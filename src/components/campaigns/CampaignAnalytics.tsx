@@ -6,7 +6,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
-import { BarChart3, Send, MessageSquare, Download, Share2, Loader2, Check, Palette, X } from "lucide-react";
+import { BarChart3, Send, MessageSquare, Download, Share2, Loader2, Check, Palette, X, RotateCcw, History } from "lucide-react";
+import { useConfirm } from "@/hooks/useConfirm";
+import { fetchCampaignMetrics, formatResetAt } from "@/lib/campaign-metrics";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
@@ -64,6 +66,11 @@ export default function CampaignAnalytics({ campaignId }: Props) {
     return { logo: null, color: "#7A5AF8", company: "" };
   });
   const [brandOpen, setBrandOpen] = useState(false);
+  // "Reiniciar analíticas": desde cuándo cuentan los contadores (null = histórico completo).
+  const [resetAt, setResetAt] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const confirm = useConfirm();
   // Once the user edits branding by hand, stop auto-overwriting it from the profile.
   const brandManualRef = useRef(false);
   const saveBranding = (b: Branding) => { brandManualRef.current = true; setBranding(b); try { localStorage.setItem(BRAND_KEY, JSON.stringify(b)); } catch { /* quota */ } };
@@ -104,11 +111,11 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       // the caller's campaigns in one call — accurate and NOT capped at 1000.
       const [stepsRes, campaignRes, metricsRes, dailyRes] = await Promise.all([
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
-        supabase.from("campaigns").select("name").eq("id", campaignId).single(),
+        (supabase as any).from("campaigns").select("name, analytics_reset_at").eq("id", campaignId).single(),
         // RPC is created at runtime (fetch-inbox bootstrap) so the generated types don't
         // know it — same `(supabase as any).rpc` pattern as campaign_daily_sends below.
         user
-          ? (supabase as any).rpc("campaign_metrics_for_user", { p_user_id: user.id })
+          ? fetchCampaignMetrics(supabase as any, user.id)
           : Promise.resolve({ data: [] as any[] }),
         // Per-day sends + replies, counted server-side (exact, not capped) — same
         // RPC the CampaignSendsChart uses. Powers the Estadísticas-style area chart.
@@ -116,6 +123,8 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       ]);
       const steps = stepsRes.data || [];
       setCampaignName(campaignRes.data?.name || "Campaña");
+      const since: string | null = campaignRes.data?.analytics_reset_at || null;
+      setResetAt(since);
 
       setDaily(
         ((dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>).map((r) => {
@@ -152,9 +161,12 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           const base = () =>
             supabase.from("sent_emails").select("id", { count: "exact", head: true })
               .eq("campaign_id", campaignId).eq("campaign_step_id", s.id);
+          // Tras un "Reiniciar", cada contador mira SU fecha, igual que el RPC.
+          const sentQ = base().or("sent_at.not.is.null,status.eq.sent");
+          const repliedQ = base().not("replied_at", "is", null);
           const [sSent, sReplied] = await Promise.all([
-            base().or("sent_at.not.is.null,status.eq.sent"),
-            base().not("replied_at", "is", null),
+            since ? sentQ.gte("sent_at", since) : sentQ,
+            since ? repliedQ.gte("replied_at", since) : repliedQ,
           ]);
           return { ...s, sent: sSent.count || 0, replied: sReplied.count || 0 };
         })
@@ -171,7 +183,27 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       setStepStats(perStep);
     };
     load();
-  }, [campaignId, user]);
+  }, [campaignId, user, reloadKey]);
+
+  // Reiniciar = poner una marca de tiempo; NO se borra ningún correo ni respuesta (el motor los
+  // necesita para no repetir pasos y el Unibox para sus hilos). Se puede deshacer cuando se quiera.
+  const setAnalyticsReset = async (value: string | null) => {
+    setResetting(true);
+    const { error } = await (supabase as any).from("campaigns").update({ analytics_reset_at: value }).eq("id", campaignId);
+    setResetting(false);
+    if (error) { toast.error(`No se pudo ${value ? "reiniciar" : "restaurar"}: ${error.message}`); return; }
+    setResetAt(value);
+    setReloadKey((k) => k + 1);
+    toast.success(value ? "Analíticas reiniciadas: los contadores empiezan de cero" : "Histórico completo restaurado");
+  };
+  const handleResetAnalytics = async () => {
+    const ok = await confirm({
+      title: "Reiniciar analíticas",
+      description: "Los contadores de esta campaña (enviados, contactados, respuestas, gráfica y pasos) empezarán de cero desde ahora. No se borra ningún correo ni respuesta y el envío sigue exactamente igual. Podrás volver a ver el histórico completo cuando quieras.",
+      confirmText: "Reiniciar",
+    });
+    if (ok) await setAnalyticsReset(new Date().toISOString());
+  };
 
   const captureAnalytics = async (): Promise<string> => {
     if (!analyticsRef.current) throw new Error("No hay analítica que capturar");
@@ -343,6 +375,17 @@ export default function CampaignAnalytics({ campaignId }: Props) {
 
   return (
     <div className="space-y-6">
+      {resetAt && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[rgba(126,139,198,.18)] bg-white/70 px-3 py-2 text-[13px] dark:border-border dark:bg-muted/40" role="status">
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <History className="h-4 w-4 text-primary" />
+            Analíticas reiniciadas: contando desde el <b className="text-foreground">{formatResetAt(resetAt)}</b>. No se ha borrado nada.
+          </span>
+          <button type="button" className="font-semibold text-primary hover:underline disabled:opacity-50" disabled={resetting} onClick={() => setAnalyticsReset(null)}>
+            Ver histórico completo
+          </button>
+        </div>
+      )}
       {/* Share / Download actions */}
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
@@ -353,7 +396,18 @@ export default function CampaignAnalytics({ campaignId }: Props) {
             {stats.replied} respuestas de {stats.contacted} contactados
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={handleResetAnalytics}
+            disabled={resetting}
+            title="Poner los contadores de esta campaña a cero (no borra nada)"
+          >
+            {resetting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+            Reiniciar
+          </Button>
           <Popover open={brandOpen} onOpenChange={setBrandOpen}>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5 text-xs">
