@@ -628,7 +628,10 @@ serve(async (req) => {
       quote_html,       // the message being answered, quoted under the reply (Unibox)
       quote_header,     // "El 17 sept 2026 a las 9:13, X <x@y> escribió:"
       cc,               // extra people added to the thread (Unibox "Añadir persona")
+      kind,             // "forward" cuando es un reenvío del Unibox
+      forwarded_from,   // id del mensaje del Unibox que se reenvía (para enseñarlo en su hilo)
     } = await req.json();
+    const isForward = kind === "forward";
 
     // Clean the CC list: accept an array or a comma/;-separated string, extract a
     // valid address from each ("Name <a@b.com>" too), dedupe, and drop the main
@@ -735,7 +738,11 @@ serve(async (req) => {
     // thread server-side: point at the LATEST inbound from this contact that actually
     // has a Message-ID, and build References from its stored chain. Only for non-campaign
     // sends, so a genuine first-touch cold email is never wrongly threaded.
-    if (!campaign_id && !resolvedInReplyTo && cleanTo) {
+    // Un REENVÍO va a un tercero (un compañero, por ejemplo): recuperar "su" hilo por el
+    // destinatario lo colgaría de otra conversación y le cambiaría el asunto por un
+    // "Re: <cualquier otra cosa>" — es justo lo que pasó con los reenvíos de TCX del 18-09.
+    // El asunto de un reenvío es el que manda el Unibox ("Fwd: …"), siempre.
+    if (!campaign_id && !resolvedInReplyTo && cleanTo && !isForward) {
       const { data: lastInbound } = await adminClient
         .from("inbox_messages")
         .select("message_id, ref_chain, subject")
@@ -856,6 +863,7 @@ serve(async (req) => {
         sent_at: result.ok ? new Date().toISOString() : null,
         error_message: result.error || null,
         smtp_message_id: result.messageId || resolvedMessageId || null,
+        forwarded_from: isForward && forwarded_from ? String(forwarded_from) : null,
       });
 
       if (result.ok && campaign_id) {

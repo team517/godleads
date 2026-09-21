@@ -13,6 +13,7 @@ import { SavedSignatures } from "@/components/SavedSignatures";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import RichReplyEditor, { type RichReplyHandle } from "@/components/unibox/RichReplyEditor";
+import { buildForwardHtml, forwardSubject, plainToForwardHtml } from "@/lib/forward";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil, Star } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1882,8 +1883,27 @@ export default function Unibox() {
         thread.push({ ...m, _type: "received", _date: m.received_at });
       }
 
+      const sentIds = new Set((sentMsgs || []).map((x: any) => x.id));
       for (const s of (sentMsgs || [])) {
         thread.push({ ...s, _type: "sent", _date: s.sent_at });
+      }
+
+      // Lo que se REENVIÓ desde aquí a otra dirección (un compañero, por ejemplo) también es parte
+      // de esta conversación: se busca por el mensaje del que salió, no por el destinatario.
+      const inboxIds = (inboxMsgs || []).map((m: any) => m.id).filter(Boolean);
+      if (inboxIds.length > 0) {
+        // `forwarded_from` es una columna nueva que el tipo generado aún no conoce → cast.
+        const { data: forwards } = await (supabase as any)
+          .from("sent_emails")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("status", "sent")
+          .in("forwarded_from", inboxIds)
+          .order("sent_at", { ascending: true });
+        for (const f of (forwards || []) as any[]) {
+          if (sentIds.has(f.id)) continue;
+          thread.push({ ...f, _type: "sent", _forward: true, _date: f.sent_at });
+        }
       }
 
       thread.sort((a, b) => new Date(a._date).getTime() - new Date(b._date).getTime());
@@ -1903,7 +1923,7 @@ export default function Unibox() {
     if (!user) return;
     const { data } = await supabase
       .from("sent_emails")
-      .select("id, account_id, to_email, subject, body, sent_at, campaign_id, lead_id, smtp_message_id")
+      .select("id, account_id, to_email, subject, body, sent_at, campaign_id, lead_id, smtp_message_id, forwarded_from")
       .eq("user_id", user.id)
       .is("campaign_id", null)
       .eq("status", "sent")
@@ -1924,6 +1944,7 @@ export default function Unibox() {
       campaign_id: s.campaign_id,
       lead_id: s.lead_id,
       message_id: s.smtp_message_id,
+      forwarded_from: s.forwarded_from || null,
       _sent: true,
     })));
   }, [user]);
@@ -3024,33 +3045,20 @@ export default function Unibox() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const origSubject = decodeSubject(selected.subject) || "";
-      const fwdSubject = /^fwd?:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
-      const when = new Date(selected.received_at).toLocaleString("es");
-      // Forward the FULL original message exactly as it's shown in the detail view. Prefer the HTML
-      // body (keepQuote=true) so NOTHING is lost — references, part numbers, tables, layout; only
-      // fall back to plain text for text-only mails. (The old forward ran cleanBodyText on body_text,
-      // which is empty for HTML-only emails and strips content → the references disappeared.)
-      const escFwd = (s: string) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const fwdSubject = forwardSubject(origSubject);
+      // El original ENTERO tal cual se ve en el detalle: mejor su HTML (referencias, tablas,
+      // enlaces, la cita de abajo) y, si es un correo de solo texto, ese texto con sus saltos.
       const origHtml = (selected.body_html && selected.body_html.trim().length > 20)
         ? cleanBodyHtml(selected.body_html, true)
-        : `<div style="white-space:pre-wrap">${escFwd(selected.body_text || "")}</div>`;
-      // El original va dentro de un <div>, NUNCA de un <p>: un párrafo no puede contener otros
-      // párrafos, listas ni tablas, y el cliente de correo lo cierra por su cuenta dejando el
-      // correo "todo junto". La cabecera imita la de Gmail (De / Fecha / Asunto / Para).
-      const cabecera = [
-        ["De", (selected.from_name ? selected.from_name + " " : "") + `<${selected.from_email}>`],
-        ["Fecha", when],
-        ["Asunto", origSubject],
-        ["Para", accountEmailMap[selected.account_id] || ""],
-      ].filter(([, v]) => String(v || "").trim())
-       .map(([k, v]) => `<b>${k}:</b> ${escFwd(String(v))}`)
-       .join("<br>");
-      const quoted =
-        (forwardNote.trim() ? `<div style="white-space:pre-wrap">${escFwd(forwardNote.trim())}</div><br>` : "") +
-        `<div style="border-top:1px solid #d9d9d9;padding-top:12px;margin-top:8px">` +
-        `<div style="font-size:13px;color:#5f6368;margin-bottom:10px">---------- Mensaje reenviado ----------<br>${cabecera}</div>` +
-        `<div>${origHtml}</div>` +
-        `</div>`;
+        : plainToForwardHtml(selected.body_text || "");
+      const quoted = buildForwardHtml({
+        fromName: selected.from_name,
+        fromEmail: selected.from_email,
+        when: new Date(selected.received_at).toLocaleString("es"),
+        subject: origSubject,
+        toAccountEmail: accountEmailMap[selected.account_id] || "",
+        originalHtml: origHtml,
+      }, forwardNote);
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
         method: "POST",
@@ -3065,6 +3073,10 @@ export default function Unibox() {
           // era lo que cambiaba el asunto por un "Re: <cualquier otra cosa>".
           in_reply_to: selected.message_id || undefined,
           references: [selected.ref_chain, selected.message_id].filter(Boolean).join(" ").trim() || undefined,
+          // Es un REENVÍO: el servidor no le busca otro hilo ni le toca el asunto, y apunta de qué
+          // mensaje sale para que se vea en esta misma conversación.
+          kind: "forward",
+          forwarded_from: selected.id,
         }),
       });
       const result = await resp.json();
@@ -3074,6 +3086,8 @@ export default function Unibox() {
         setForwardOpen(false);
         setForwardTo("");
         setForwardNote("");
+        void loadThread(selected);
+        void loadSent();
       }
     } catch (e: any) { toast.error(`Error: ${e.message}`); }
     setForwarding(false);
@@ -3780,8 +3794,13 @@ export default function Unibox() {
                                   <span className="font-semibold text-sm text-foreground">
                                     {isSent ? "Yo" : (tm.from_name || tm.from_email?.split("@")[0])}
                                   </span>
-                                  {isSent && (
+                                  {isSent && !tm.forwarded_from && (
                                     <span className={`${CHIP_MINI} bg-accent text-accent-foreground`}>Enviado</span>
+                                  )}
+                                  {isSent && tm.forwarded_from && (
+                                    <span className={`${CHIP_MINI} bg-accent text-accent-foreground`} title={`Reenviado a ${tm.to_email}`}>
+                                      Reenviado a {tm.to_email}
+                                    </span>
                                   )}
                                   {isSent && accountEmailMap[tm.account_id] && (
                                     <span className="text-xs text-muted-foreground truncate">desde &lt;{accountEmailMap[tm.account_id]}&gt;</span>
