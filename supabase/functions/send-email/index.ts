@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { replaceVariables } from "../_shared/personalize.ts";
+import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, htmlToPlainText, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -791,11 +791,12 @@ serve(async (req) => {
     }
 
     const fields = custom_fields || {};
-    let finalSubject = replaceVariables(subject, fields);
+    const templateLang = detectTemplateLanguage(body);
+    let finalSubject = replaceVariables(subject, fields, templateLang);
     if (forcedThreadSubject) {
-      finalSubject = replaceVariables(forcedThreadSubject, fields);
+      finalSubject = replaceVariables(forcedThreadSubject, fields, templateLang);
     }
-    const finalBody = textToHtml(replaceVariables(body, fields).trim());
+    const finalBody = textToHtml(replaceVariables(body, fields, templateLang).trim());
     const senderName = [account.first_name, account.last_name].filter(Boolean).join(" ") || undefined;
 
     if (campaign_id && lead_id && campaign_step_id) {

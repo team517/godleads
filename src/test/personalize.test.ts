@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { replaceVariables, cleanupGaps, variablesUsed, VARIABLE_FALLBACKS } from "@/lib/personalize";
+import { detectTemplateLanguage } from "@/lib/personalize";
 
 describe("replaceVariables — values present", () => {
   it("substitutes a plain variable", () => {
@@ -90,5 +91,44 @@ describe("VARIABLE_FALLBACKS", () => {
   });
   it("has no fallback for a person's name (it is dropped instead)", () => {
     expect(VARIABLE_FALLBACKS["firstname"]).toBeUndefined();
+  });
+});
+
+describe("respaldos en el idioma de la plantilla (22-09-2026: 93 correos FR/IT/PT con «tu empresa»)", () => {
+  it("detecta el idioma del cuerpo", () => {
+    expect(detectTemplateLanguage("Bonjour Guy, je m’appelle John. En découvrant {{company_name}} et votre activité, j’ai pensé que notre service pourrait être utile à votre équipe.")).toBe("fr");
+    expect(detectTemplateLanguage("Buongiorno Marco, sono John. Guardando {{company_name}} e la vostra attività nel settore, ho pensato che il nostro servizio potrebbe essere utile.")).toBe("it");
+    expect(detectTemplateLanguage("Olá Pedro, sou o John. Ao ver {{company_name}} e a sua atividade, pensei que o nosso serviço poderia ser útil para a sua equipa.")).toBe("pt");
+    expect(detectTemplateLanguage("Hi Mark, I'm John. Looking at {{company_name}} and your work, I thought our service could help your team.")).toBe("en");
+    expect(detectTemplateLanguage("Hola Marta, soy John. Al ver {{company_name}} y vuestra actividad, pensé que os podría ayudar.")).toBe("es");
+    expect(detectTemplateLanguage("john - {{company_name}}")).toBe("es"); // demasiado corto → español, como siempre
+  });
+
+  it("una empresa que falta se rellena en el idioma del correo, no en español", () => {
+    expect(replaceVariables("En découvrant {{company_name}} et votre activité, j’ai pensé que notre service pourrait vous aider.", {}))
+      .toBe("En découvrant votre entreprise et votre activité, j’ai pensé que notre service pourrait vous aider.");
+    expect(replaceVariables("Guardando {{company_name}} e la vostra attività, siamo qui per aiutarvi con i componenti.", {}))
+      .toBe("Guardando la vostra azienda e la vostra attività, siamo qui per aiutarvi con i componenti.");
+    expect(replaceVariables("Ao ver {{company_name}} e a sua atividade, pensei que o nosso serviço poderia ser útil para você.", {}))
+      .toBe("Ao ver a sua empresa e a sua atividade, pensei que o nosso serviço poderia ser útil para você.");
+  });
+
+  it("el asunto usa el idioma que se le pasa (el del cuerpo)", () => {
+    expect(replaceVariables("Disponibilité pour {{company_name}}", {}, "fr")).toBe("Disponibilité pour votre entreprise");
+    expect(replaceVariables("john - {{company_name}}", {}, "it")).toBe("john - la vostra azienda");
+    expect(replaceVariables("john - {{company_name}}", {})).toBe("john - tu empresa"); // sin pista: español, como siempre
+  });
+
+  it("contrae la preposición delante del respaldo en italiano y portugués", () => {
+    expect(replaceVariables("Ho dato un'occhiata a {{company_name}} e alla vostra attività, sono qui per aiutarvi.", {}))
+      .toBe("Ho dato un'occhiata alla vostra azienda e alla vostra attività, sono qui per aiutarvi.");
+    expect(replaceVariables("Podemos ser úteis à {{company_name}} quando surgir uma necessidade, não hesite.", {}))
+      .toBe("Podemos ser úteis à sua empresa quando surgir uma necessidade, não hesite.");
+    expect(replaceVariables("Ao pesquisar sobre a {{company_name}}, vi a vossa atividade e achei que faria sentido.", {}))
+      .toBe("Ao pesquisar sobre a sua empresa, vi a vossa atividade e achei que faria sentido.");
+  });
+
+  it("las plantillas en español siguen exactamente igual", () => {
+    expect(replaceVariables("la idea es que {{company_name}} reciba más oportunidades en {{city}}", {})).toBe("la idea es que tu empresa reciba más oportunidades en tu zona");
   });
 });

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
-import { replaceVariables } from "../_shared/personalize.ts";
+import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { chunkIds, perTickCampaignCap, sortBySentToday } from "../_shared/engine-scale.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -1914,7 +1914,10 @@ serve(async (req) => {
         if (account.last_name) fields["SenderLastName"] = account.last_name;
         if (account.email) fields["SenderEmail"] = account.email;
 
-        const finalSubject = replaceVariables(finalSubjectTemplate, fields).replace(/\s+/g, " ").trim();
+        // El asunto es demasiado corto para deducir su idioma: usa el del cuerpo (un correo en
+        // francés con la empresa vacía decía "Disponibilité pour tu empresa").
+        const templateLang = detectTemplateLanguage(finalBodyTemplate);
+        const finalSubject = replaceVariables(finalSubjectTemplate, fields, templateLang).replace(/\s+/g, " ").trim();
 
         // Determine text-only mode — honors the campaign's own Options toggles
         // ("Enviar emails como solo texto" / "Enviar primer email como solo texto").
@@ -1925,7 +1928,7 @@ serve(async (req) => {
         const textOnlyEmails = (campaign as any).text_only_emails === true;
         const firstEmailTextOnly = (campaign as any).first_email_text_only === true;
 
-        const personalizedBody = replaceVariables(finalBodyTemplate, fields).trim();
+        const personalizedBody = replaceVariables(finalBodyTemplate, fields, templateLang).trim();
         // If the personalized body carries explicit HTML (e.g. a {{personalized_message}}
         // with <p>…</p> markup from the CSV), force HTML delivery so it renders with real
         // paragraph spacing. Sending HTML through the text-only path would leak raw tags.
