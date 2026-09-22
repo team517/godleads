@@ -1239,6 +1239,24 @@ serve(async (req) => {
             const k = (r.to_email || "").toLowerCase();
             if (k && !emailSent.has(k)) emailSent.set(k, { lead_id: r.lead_id, campaign_id: r.campaign_id });
           }
+          // Lo que no escribió ESTE buzón quizá lo escribió OTRO buzón del mismo usuario (el lead
+          // contesta al buzón que tiene a mano): se enlaza igual, con el envío más reciente.
+          const missing = fromEmails.filter((e) => !emailSent.has(e));
+          if (missing.length > 0) {
+            const { data: seUser } = await adminClient
+              .from("sent_emails")
+              .select("to_email, lead_id, campaign_id, sent_at, created_at")
+              .eq("user_id", account.user_id)
+              .not("campaign_id", "is", null)
+              .not("lead_id", "is", null)
+              .in("to_email", missing)
+              .order("sent_at", { ascending: false, nullsFirst: false })
+              .order("created_at", { ascending: false });
+            for (const r of seUser || []) {
+              const k = (r.to_email || "").toLowerCase();
+              if (k && !emailSent.has(k)) emailSent.set(k, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+            }
+          }
         }
         // Warm-up: mail coming from one of OUR OWN mailboxes is warm-up network traffic (agency
         // addresses excluded so a real team@/support@ test still lands normally).
@@ -1327,6 +1345,30 @@ serve(async (req) => {
                 if (se && se[0]?.lead_id) domainSent.set(d, { lead_id: se[0].lead_id, campaign_id: se[0].campaign_id });
               } catch { /* non-fatal */ }
             }
+          }
+        }
+
+        // Compañero de un lead escrito desde OTRO buzón del usuario: mismo dominio, cualquier buzón.
+        const stillUnresolved = unresolvedDomains.filter((d) => !domainSent.has(d));
+        if (stillUnresolved.length > 0) {
+          try {
+            const { data: rows } = await adminClient
+              .rpc("resolve_sent_by_domains_user", { p_user: account.user_id, p_domains: stillUnresolved });
+            for (const r of (rows || []) as { dom: string; lead_id: string; campaign_id: string }[]) {
+              if (r?.dom && r.lead_id && r.campaign_id && !domainSent.has(r.dom)) domainSent.set(r.dom, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+            }
+          } catch { /* non-fatal */ }
+        }
+        // Dominios (no genéricos) con algún lead del usuario: un correo de la empresa de un lead es
+        // una respuesta de un compañero, nunca warm-up, aunque no se pueda atar a un envío.
+        const leadDomainHit = new Set<string>();
+        {
+          const candidates = fromDomains.filter((d) => d && !GENERIC_DOMAINS.test(d));
+          if (candidates.length > 0) {
+            try {
+              const { data: hits } = await adminClient.rpc("lead_domains_hit", { p_user: account.user_id, p_domains: candidates });
+              for (const h of (hits || []) as { dom: string }[]) if (h?.dom) leadDomainHit.add(h.dom);
+            } catch { /* non-fatal */ }
           }
         }
 
@@ -1421,7 +1463,7 @@ serve(async (req) => {
             // NOTE: "References points at our own domain" is NOT a link: warm-up pool threads are
             // started by our own seed mailboxes, so they reference our domain too. Only a real
             // lead/campaign link may exempt a message from the warm-up detector.
-            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) }),
+            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) || leadDomainHit.has(dom) }),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),

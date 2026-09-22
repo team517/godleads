@@ -2,7 +2,7 @@ import { isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { classifyMessage as classifyIntent } from "@/lib/classify";
-import { isCampaignRelevant } from "@/lib/inbox-visibility";
+import { isCampaignRelevant, isOwnBrandDomain } from "@/lib/inbox-visibility";
 import { looksBinaryText, repairMojibake } from "@/lib/reply-text";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
@@ -2295,7 +2295,11 @@ export default function Unibox() {
     //    reads as "campaign relevant" below and the whole warm-up flood shows in the clean
     //    bandeja and inflates every count. A real lead reply is never is_warmup.
     // …but only when it is NOT tied to a real lead/campaign: a linked message is a genuine reply.
-    if (m.is_warmup && !m.lead_id && !m.campaign_id) return true;
+    // …ni cuando viene de la EMPRESA de un lead (un compañero contestando): eso es una respuesta
+    // real aunque el detector de warm-up la marcara al sincronizar.
+    const fromDom = String(m.from_email || "").split("@")[1]?.toLowerCase().trim() || "";
+    const fromLeadCompany = !!fromDom && leadDomains.has(fromDom) && !isOwnBrandDomain(fromDom);
+    if (m.is_warmup && !m.lead_id && !m.campaign_id && !fromLeadCompany) return true;
     // 1) CAMPAIGN-RELEVANT → always show: a lead, a lead's DOMAIN (a colleague at the same company
     //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso
