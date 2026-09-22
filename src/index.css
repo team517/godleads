@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+/* Las fuentes se cargan desde index.html (preconnect + link): un @import aquí encadenaba tres
+   descargas en serie (CSS → CSS de Google → fuentes) antes del primer pintado. */
 
 @tailwind base;
 @tailwind components;
@@ -261,7 +262,9 @@
    chipPop, pulseDot…), aplicadas al panel. Cortas, con una sola curva, y apagadas
    si el sistema pide menos movimiento.
    ───────────────────────────────────────────────────────────────────────────── */
-@keyframes blurFadeIn { from { opacity: 0; filter: blur(8px); transform: translateY(8px); } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+/* Sin `filter: blur`: desenfocar TODA la página durante la entrada costaba frames de 50–65 ms al
+   cambiar de sección (medido); sólo con opacidad y desplazamiento la entrada va a 60 fps. */
+@keyframes blurFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes rowPop { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes chipPop { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }

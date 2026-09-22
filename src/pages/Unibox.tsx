@@ -949,6 +949,30 @@ function classifyMessage(subject: string | null, body: string | null): MessageCa
   return classifyIntent(decodeSubject(subject), cleanBodyText(body));
 }
 
+// Clasificar un mensaje cuesta (descodificar base64/MIME, quitar HTML, decenas de regex) y la
+// lista lo hacía para CADA fila en CADA pintado: con 1.000 mensajes, cada tecla del buscador o
+// cada clic repetía ~1.000 clasificaciones. La categoría de un objeto de mensaje no cambia
+// mientras sea el mismo objeto (al recargar llegan objetos nuevos), así que se recuerda por objeto.
+const categoryCache = new WeakMap<object, MessageCategory>();
+// Lo mismo para el texto en el que busca el cuadro de búsqueda: descodificar y limpiar el cuerpo
+// de 1.000 mensajes en cada tecla costaba ~800 ms por pulsación (medido). Una vez por mensaje.
+const searchTextCache = new WeakMap<object, string>();
+function searchTextOf(m: any): string {
+  const hit = searchTextCache.get(m);
+  if (hit !== undefined) return hit;
+  const text = [m.from_email, m.from_name, decodeSubject(m.subject), cleanBodyText(m.body_text, true)]
+    .filter(Boolean).join(" ").toLowerCase();
+  searchTextCache.set(m, text);
+  return text;
+}
+function categoryOf(m: { subject?: string | null; body_text?: string | null }): MessageCategory {
+  const hit = categoryCache.get(m);
+  if (hit) return hit;
+  const cat = classifyMessage(m.subject ?? null, m.body_text ?? null);
+  categoryCache.set(m, cat);
+  return cat;
+}
+
 /* ── Las DOS formas de chip del diseño "Primary" (DESIGN.md) ──────────────
  * PASTILLA — para filtros INTERACTIVOS: radio 999px, 13px/600, fondo de
  *   tarjeta, borde lavanda de 1px, texto del color propio y `shadow-rest`.
@@ -1636,7 +1660,7 @@ export default function Unibox() {
       // An inline-image body is JPEG bytes, not words — the server reads the HTML instead; a
       // browser guess from the bytes ("?" everywhere → Pregunta) is worse than no label.
       if (looksBinaryText(m.body_text)) continue;
-      const newLabel = labelFor(classifyMessage(m.subject, m.body_text));
+      const newLabel = labelFor(categoryOf(m));
       if (!newLabel) continue;
       const currentCats = current.filter((l) => CATEGORY_LABELS.includes(l));
       if (currentCats.includes(newLabel)) continue; // already right
@@ -2039,7 +2063,7 @@ export default function Unibox() {
   useEffect(() => {
     if (!user) return;
     loadAiReplied();
-    const iv = setInterval(loadAiReplied, 120000);
+    const iv = setInterval(() => { if (!document.hidden) loadAiReplied(); }, 120000);
     return () => clearInterval(iv);
   }, [user, loadAiReplied]);
 
@@ -2122,7 +2146,7 @@ export default function Unibox() {
 
   // Safety net refresh (much less often than before, and coalesced/compose-aware).
   useEffect(() => {
-    intervalRef.current = setInterval(() => { scheduleReload(); }, 120_000);
+    intervalRef.current = setInterval(() => { if (!document.hidden) scheduleReload(); }, 120_000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
@@ -2500,16 +2524,10 @@ export default function Unibox() {
       })
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
-      .filter(m => categoryFilter === "all" || (categoryFilter === "ai_replied" ? aiReplied(m.from_email) : classifyMessage(m.subject, m.body_text) === categoryFilter))
+      .filter(m => categoryFilter === "all" || (categoryFilter === "ai_replied" ? aiReplied(m.from_email) : categoryOf(m) === categoryFilter))
       .filter(m => {
         if (!search) return true;
-        const q = search.toLowerCase();
-        return (
-          m.from_email?.toLowerCase().includes(q) ||
-          m.from_name?.toLowerCase().includes(q) ||
-          decodeSubject(m.subject)?.toLowerCase().includes(q) ||
-          cleanBodyText(m.body_text, true).toLowerCase().includes(q)
-        );
+        return searchTextOf(m).includes(search.toLowerCase());
       });
     // Sort: due reminders first (yellow), then by received_at desc
     return list.sort((a, b) => {
@@ -2527,7 +2545,7 @@ export default function Unibox() {
     const visible = base.filter(m => !showTodayOnly || new Date(m.received_at) >= now24h);
     const counts: Record<string, number> = { all: visible.length };
     for (const m of visible) {
-      const cat = classifyMessage(m.subject, m.body_text);
+      const cat = categoryOf(m);
       counts[cat] = (counts[cat] || 0) + 1;
     }
     return counts;
@@ -2573,6 +2591,24 @@ export default function Unibox() {
   });
   const clearBulk = () => setBulkSelected(new Set());
   const selectAllVisible = () => setBulkSelected(new Set(filtered.map((m: any) => m.id)));
+
+  // Lista por tramos: con 1.000 mensajes se montaban 1.000 filas (cada una con sus chips e
+  // iconos) y cualquier cambio de estado las repintaba todas. Se montan 120 y, al acercarse al
+  // final, 120 más. "Seleccionar todo", los recuentos y la búsqueda siguen sobre `filtered` entero.
+  const LIST_CHUNK = 120;
+  const [listLimit, setListLimit] = useState(LIST_CHUNK);
+  useEffect(() => { setListLimit(LIST_CHUNK); }, [viewTab, categoryFilter, search, folderFilter]);
+  const visibleRows = useMemo(() => (filtered.length > listLimit ? filtered.slice(0, listLimit) : filtered), [filtered, listLimit]);
+  const listEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = listEndRef.current;
+    if (!el || filtered.length <= listLimit) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setListLimit((l) => Math.min(filtered.length, l + LIST_CHUNK));
+    }, { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [filtered.length, listLimit]);
 
   const handleBulkDelete = async () => {
     if (!user || bulkSelected.size === 0) return;
@@ -3159,7 +3195,7 @@ export default function Unibox() {
     { key: "out_of_office", label: "Fuera / Auto" },
   ];
 
-  const selectedCategory = selected ? classifyMessage(selected.subject, selected.body_text) : null;
+  const selectedCategory = selected ? categoryOf(selected) : null;
   const selectedCatConfig = selectedCategory ? categoryConfig[selectedCategory] : null;
 
   return (
@@ -3435,10 +3471,10 @@ export default function Unibox() {
               </div>
             )}
             <ScrollArea className="flex-1">
-              {filtered.map((msg) => {
+              {visibleRows.map((msg) => {
                 const isActive = selectedId === msg.id;
                 const isUnread = !msg.is_read;
-                const category = classifyMessage(msg.subject, msg.body_text);
+                const category = categoryOf(msg);
                 const catCfg = categoryConfig[category];
                 const due = isReminderDue(msg.id);
                 const hasReminder = !!reminders[msg.id];
@@ -3555,6 +3591,11 @@ export default function Unibox() {
                   </div>
                 );
               })}
+              {filtered.length > visibleRows.length && (
+                <div ref={listEndRef} className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground" aria-live="polite">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> {filtered.length - visibleRows.length} mensajes más…
+                </div>
+              )}
               {filtered.length === 0 && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
                   No hay mensajes en esta categoría

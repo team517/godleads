@@ -137,7 +137,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
       if (alive) setPersonalizing(count || 0);
     };
     check();
-    const t = setInterval(check, 15000);
+    // Cada minuto, y sólo con la pestaña a la vista: antes era cada 15 s en TODAS las pantallas,
+    // una petición constante de fondo para un contador que rara vez cambia.
+    const t = setInterval(() => { if (!document.hidden) check(); }, 60_000);
     return () => { alive = false; clearInterval(t); };
   }, [user, allowedRoutes, location.pathname]);
 
