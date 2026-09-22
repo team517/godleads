@@ -33,7 +33,7 @@ import { classifyMessage, authorText, isPoliteFileAway } from "../_shared/classi
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
-import { isWarmupMessage } from "../_shared/inbox-filters.ts";
+import { isWarmupMessage, looksLikeWarmupSubject } from "../_shared/inbox-filters.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,7 +140,9 @@ Deno.serve(async (req) => {
         .eq("is_warmup", false)
         .eq("is_archived", false)
         .or("labels.is.null,labels.eq.{}")   // never judged: NULL or an empty array
-        .or("lead_id.not.is.null,campaign_id.not.is.null,in_reply_to.not.is.null,ref_chain.not.is.null")
+        // Sólo lo ENLAZADO (lo que sin duda sale en Global/Campaigns): los hilos sin enlazar que no
+        // son de campaña nunca se etiquetan y, si entraran aquí, ocuparían el barrido para siempre.
+        .or("lead_id.not.is.null,campaign_id.not.is.null")
         .order("received_at", { ascending: true })
         .limit(room);
       // Re-check both conditions here in JS: the row must really be a thread reply and really
@@ -148,7 +150,7 @@ Deno.serve(async (req) => {
       // separate .or() groups.
       for (const m of (old || []) as Row[]) {
         const unlabelled = !m.labels || m.labels.length === 0;
-        const threadReply = !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
+        const threadReply = !!(m.lead_id || m.campaign_id);
         if (!unlabelled || !threadReply) continue;
         // Menos de 6 h: aún se avisa (la IA estuvo caída o enfriándose). Más viejo: sólo etiqueta.
         if (Date.parse((m as unknown as { created_at: string }).created_at) < Date.now() - 6 * 3600_000) staleIds.add(m.id);
@@ -190,7 +192,35 @@ Deno.serve(async (req) => {
       }
     }
 
-    const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || leadCompany.has(m.id) || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
+    // Mensajes en hilo pero SIN enlazar: sólo cuentan si son de la empresa de un lead o si responden
+    // a un correo NUESTRO (su References cita un Message-ID de uno de los dominios del usuario).
+    // Así un aviso sólo sale por lo que se ve en Global/Campaigns, nunca por algo que sólo está en
+    // "Todos" (hilos de terceros, newsletters con "Re:", warm-up).
+    const replyToOurs = new Set<string>();
+    {
+      const unlinked = ((msgs || []) as Row[]).filter((m) => !m.lead_id && !m.campaign_id && !leadCompany.has(m.id));
+      const byUser = new Map<string, Row[]>();
+      for (const m of unlinked) { if (!byUser.has(m.user_id)) byUser.set(m.user_id, []); byUser.get(m.user_id)!.push(m); }
+      for (const [uid, rows] of byUser) {
+        const { data: accs } = await admin.from("email_accounts").select("email").eq("user_id", uid).limit(5000);
+        const own = new Set(((accs || []) as { email: string }[]).map((a) => String(a.email || "").split("@")[1]?.toLowerCase()).filter(Boolean));
+        const doms = [...new Set(rows.map((m) => String(m.from_email || "").split("@")[1]?.toLowerCase()).filter((d) => d && !GENERIC.test(d)))];
+        const hitSet = new Set<string>();
+        if (doms.length) {
+          const { data: hits } = await admin.rpc("lead_domains_hit", { p_user: uid, p_domains: doms });
+          for (const h of (hits || []) as { dom: string }[]) hitSet.add(h.dom);
+        }
+        for (const m of rows) {
+          const dom = String(m.from_email || "").split("@")[1]?.toLowerCase() || "";
+          if (dom && hitSet.has(dom)) { leadCompany.add(m.id); continue; }
+          if (looksLikeWarmupSubject(m.subject)) continue;
+          const refs = String(m.ref_chain || "").toLowerCase();
+          if (refs.includes("@") && [...own].some((d) => refs.includes("@" + d))) replyToOurs.add(m.id);
+        }
+      }
+    }
+
+    const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || leadCompany.has(m.id) || replyToOurs.has(m.id));
 
     // Already pushed? One indexed lookup for the whole batch.
     const ids = (msgs || []).map((m) => m.id);
