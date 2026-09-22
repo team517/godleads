@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
+import { splitRows } from "@/lib/lead-merge";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 
@@ -491,6 +492,7 @@ export default function CampaignLeads({ campaignId }: Props) {
     try {
       const INSERT_BATCH = 500;
       let totalAdded = 0;
+      let totalUpdated = 0;
       let processedRows = 0;
 
       for (let i = 0; i < selectedRows.length; i += INSERT_BATCH) {
@@ -508,12 +510,36 @@ export default function CampaignLeads({ campaignId }: Props) {
           return { user_id: user.id, email: r.email.toLowerCase(), custom_fields, is_campaign_only: true };
         });
 
-        // Insert leads (ignore conflicts on email for same user)
-        const { data, error } = await supabase.from("leads").insert(batch).select("id");
+        // Los emails que YA están en esta campaña se ACTUALIZAN con las columnas nuevas (así
+        // reimportar un CSV con organization_name rellena los leads) en vez de duplicarse:
+        // `leads` no tiene índice único por email y cada reimportación creaba filas repetidas.
+        const existingByEmail = new Map<string, { id: string; custom_fields: Record<string, string> | null }>();
+        const emails = batch.map(b => b.email);
+        for (let e = 0; e < emails.length; e += 200) {
+          const { data: hits } = await (supabase as any)
+            .from("campaign_leads")
+            .select("lead_id, leads!inner(id, email, custom_fields)")
+            .eq("campaign_id", campaignId)
+            .in("leads.email", emails.slice(e, e + 200));
+          for (const h of (hits || []) as any[]) {
+            const l = h.leads;
+            if (l?.email) existingByEmail.set(String(l.email).toLowerCase(), { id: l.id, custom_fields: l.custom_fields || null });
+          }
+        }
+        const { toInsert, toUpdate } = splitRows(batch, existingByEmail);
+        for (const u of toUpdate) {
+          const { error: updErr } = await supabase.from("leads").update({ custom_fields: u.custom_fields }).eq("id", u.id).eq("user_id", user.id);
+          if (!updErr) totalUpdated++;
+        }
+
+        // Insert the genuinely new leads
+        const { data, error } = toInsert.length
+          ? await supabase.from("leads").insert(toInsert).select("id")
+          : { data: [] as any[], error: null };
         if (error) {
           // If bulk insert fails, try one by one for this batch
           const ids: string[] = [];
-          for (const row of batch) {
+          for (const row of toInsert) {
             const { data: single } = await supabase.from("leads").insert(row).select("id").maybeSingle();
             if (single) ids.push(single.id);
           }
@@ -543,7 +569,9 @@ export default function CampaignLeads({ campaignId }: Props) {
         await yieldToMain();
       }
 
-      toast.success(`${totalAdded} leads añadidos a la campaña`);
+      toast.success(totalUpdated > 0
+        ? `${totalAdded} leads añadidos · ${totalUpdated} ya estaban y se han actualizado con las columnas nuevas`
+        : `${totalAdded} leads añadidos a la campaña`);
       setShowCsv(false);
       setCsvRows([]);
       parsedRowsRef.current = [];
