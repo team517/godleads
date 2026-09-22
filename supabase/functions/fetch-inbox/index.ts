@@ -1280,6 +1280,22 @@ serve(async (req) => {
             .in("email", fromEmails);
           for (const l of leads || []) if (!leadsMap.has(l.email.toLowerCase())) leadsMap.set(l.email.toLowerCase(), l.id);
         }
+        // Un lead conocido al que alguna campaña del usuario YA escribió (aunque la dirección del
+        // envío no coincida letra a letra): su respuesta es de esa campaña, no "un lead suelto".
+        const leadCampaign = new Map<string, string>();
+        {
+          const pendingLeadIds = [...new Set([...leadsMap.entries()].filter(([e]) => !emailSent.has(e)).map(([, id]) => id))];
+          if (pendingLeadIds.length > 0) {
+            const { data: lc } = await adminClient
+              .from("sent_emails")
+              .select("lead_id, campaign_id, sent_at")
+              .eq("user_id", account.user_id)
+              .not("campaign_id", "is", null)
+              .in("lead_id", pendingLeadIds.slice(0, 200))
+              .order("sent_at", { ascending: false, nullsFirst: false });
+            for (const r of lc || []) if (r.lead_id && r.campaign_id && !leadCampaign.has(r.lead_id)) leadCampaign.set(r.lead_id, r.campaign_id);
+          }
+        }
 
         // Blocklist check — import blocked senders' mail but mark is_archived so it never
         // shows in the Unibox (and never inflates reply stats). Only look up THIS batch's
@@ -1438,7 +1454,7 @@ serve(async (req) => {
           const exactLead = leadsMap.get(fe) || null;
           const domHit = (!exactSent && !exactLead && dom) ? (domainSent.get(dom) || null) : null;
           const leadId = exactSent?.lead_id || exactLead || domHit?.lead_id || null;
-          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || null;
+          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null) || null;
           return {
             user_id: account.user_id,
             account_id: account.id,

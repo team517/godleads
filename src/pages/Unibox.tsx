@@ -1541,6 +1541,10 @@ export default function Unibox() {
   const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
   const [importantItems, setImportantItems] = useState<any[]>([]); // messages you starred (label "Importante")
+  // Pestaña Campaigns: sus correos se piden a la BD (los enlazados a una campaña, o a la elegida),
+  // para no depender de la ventana de 500+500 del resto de pestañas.
+  const [campaignItems, setCampaignItems] = useState<any[]>([]);
+  const [campaignItemsLoading, setCampaignItemsLoading] = useState(false);
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
   // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
@@ -2001,6 +2005,24 @@ export default function Unibox() {
   // Load ALL starred messages straight from the DB (not just the ones inside the
   // in-memory 500+500 window), so the "Importantes" tab always shows everything you
   // flagged. Loaded on mount (for the tab badge count) and whenever the tab is opened.
+  const loadCampaignItems = useCallback(async (campaignId: string) => {
+    if (!user) return;
+    setCampaignItemsLoading(true);
+    let q = (supabase as any)
+      .from("inbox_messages")
+      .select(INBOX_LIST_COLS)
+      .eq("user_id", user.id)
+      .eq("is_archived", false)
+      .not("campaign_id", "is", null)
+      .order("received_at", { ascending: false })
+      .limit(1000);
+    if (campaignId !== "all") q = q.eq("campaign_id", campaignId);
+    const { data, error } = await q;
+    setCampaignItemsLoading(false);
+    if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
+    setCampaignItems(data || []);
+  }, [user]);
+
   const loadImportant = useCallback(async () => {
     if (!user) return;
     const { data, error } = await (supabase as any)
@@ -2506,7 +2528,7 @@ export default function Unibox() {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const inTab = (m: any) => {
       if (viewTab === "reminders") return !!reminders[m.id];
-      if (viewTab === "campaigns") return selectedCampaignId === "all" || m.campaign_id === selectedCampaignId;
+      if (viewTab === "campaigns") return !!m.campaign_id && (selectedCampaignId === "all" || m.campaign_id === selectedCampaignId);
       return true;
     };
     // SEARCH (main inbox tabs): when there's a query, show the DB search results — the whole
@@ -2523,7 +2545,14 @@ export default function Unibox() {
     // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
     // English/warmup filter hides is ever unrecoverable from the UI.
     const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
-    return messages
+    let source = messages;
+    if (viewTab === "campaigns") {
+      const byId = new Map<string, any>();
+      for (const m of campaignItems) byId.set(m.id, m);
+      for (const m of messages) if (m.campaign_id) byId.set(m.id, m); // lo más reciente (tiempo real) gana
+      source = Array.from(byId.values());
+    }
+    return source
       // Blocked senders never show — unless it is their reply inside a real thread. Blocking
       // (or a bounce suppression) must not delete an answer the lead already gave us.
       .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
@@ -2532,7 +2561,25 @@ export default function Unibox() {
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
       .filter(m => !search || searchTextOf(m).includes(search.toLowerCase()));
-  }, [messages, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+  }, [messages, campaignItems, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+
+  // Al entrar en Campaigns (o cambiar de campaña) y cada vez que se recarga el Unibox.
+  useEffect(() => {
+    if (viewTab !== "campaigns") return;
+    void loadCampaignItems(selectedCampaignId);
+  }, [viewTab, selectedCampaignId, loadCampaignItems, messages.length]);
+
+  // Respuestas por campaña (para el selector), sin warm-up ni ocultos.
+  const campaignReplyCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const seen = new Set<string>();
+    for (const m of [...campaignItems, ...messages]) {
+      if (!m.campaign_id || seen.has(m.id) || hiddenFromClean(m)) continue;
+      seen.add(m.id);
+      counts[m.campaign_id] = (counts[m.campaign_id] || 0) + 1;
+    }
+    return counts;
+  }, [campaignItems, messages, hiddenFromClean]);
 
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
@@ -3352,9 +3399,13 @@ export default function Unibox() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas las campañas</SelectItem>
-              {campaigns.map(c => (
-                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-              ))}
+              {[...campaigns]
+                .sort((a, b) => (campaignReplyCounts[b.id] || 0) - (campaignReplyCounts[a.id] || 0) || String(a.name).localeCompare(String(b.name)))
+                .map(c => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}{campaignReplyCounts[c.id] ? ` · ${campaignReplyCounts[c.id]}` : ""}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         )}
@@ -3635,7 +3686,11 @@ export default function Unibox() {
               )}
               {filtered.length === 0 && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
-                  No hay mensajes en esta categoría
+                  {viewTab === "campaigns" && campaignItemsLoading
+                    ? "Cargando las respuestas de campaña…"
+                    : viewTab === "campaigns"
+                      ? (selectedCampaignId === "all" ? "Aún no hay respuestas de ninguna campaña" : "Esta campaña aún no tiene respuestas")
+                      : "No hay mensajes en esta categoría"}
                 </div>
               )}
             </ScrollArea>
