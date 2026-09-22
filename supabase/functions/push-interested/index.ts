@@ -150,12 +150,47 @@ Deno.serve(async (req) => {
         const unlabelled = !m.labels || m.labels.length === 0;
         const threadReply = !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
         if (!unlabelled || !threadReply) continue;
-        staleIds.add(m.id);
+        // Menos de 6 h: aún se avisa (la IA estuvo caída o enfriándose). Más viejo: sólo etiqueta.
+        if (Date.parse((m as unknown as { created_at: string }).created_at) < Date.now() - 6 * 3600_000) staleIds.add(m.id);
         (msgs as Row[]).push(m);
       }
     }
 
-    const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
+    // Correos sin hilo ni enlace, pero de la EMPRESA de un lead (mismo dominio, no genérico): un
+    // compañero que escribe de cero es tan "de campaña" como una respuesta. Se buscan aparte y se
+    // confirman con lead_domains_hit (índice leads(user_id, dominio)).
+    const GENERIC = /^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|protonmail|proton|gmx|mail|zoho|yandex|hey|fastmail|tutanota|qq|163|126|web|t-online|orange|wanadoo|free|libero|virgilio|telefonica|movistar|terra|ono)\./i;
+    const leadCompany = new Set<string>(); // ids de mensajes de la empresa de un lead
+    {
+      let q = admin.from("inbox_messages").select(COLS).gte("created_at", since);
+      if (before) q = q.lt("created_at", before);
+      const { data: loose } = await q
+        .eq("is_warmup", false).eq("is_archived", false)
+        .is("lead_id", null).is("campaign_id", null)
+        .is("in_reply_to", null)
+        .order("received_at", { ascending: false })
+        .limit(200);
+      const byUser = new Map<string, Row[]>();
+      for (const m of (loose || []) as Row[]) {
+        if ((m.ref_chain || "").trim()) continue;
+        const dom = String(m.from_email || "").split("@")[1]?.toLowerCase() || "";
+        if (!dom || GENERIC.test(dom)) continue;
+        if (!byUser.has(m.user_id)) byUser.set(m.user_id, []);
+        byUser.get(m.user_id)!.push(m);
+      }
+      for (const [uid, rows] of byUser) {
+        const doms = [...new Set(rows.map((m) => String(m.from_email).split("@")[1].toLowerCase()))];
+        const { data: hits } = await admin.rpc("lead_domains_hit", { p_user: uid, p_domains: doms });
+        const hitSet = new Set(((hits || []) as { dom: string }[]).map((h) => h.dom));
+        for (const m of rows) {
+          if (!hitSet.has(String(m.from_email).split("@")[1].toLowerCase())) continue;
+          leadCompany.add(m.id);
+          if (!(msgs as Row[]).some((x) => x.id === m.id)) (msgs as Row[]).push(m);
+        }
+      }
+    }
+
+    const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || leadCompany.has(m.id) || (m.in_reply_to || "").trim() || (m.ref_chain || "").trim());
 
     // Already pushed? One indexed lookup for the whole batch.
     const ids = (msgs || []).map((m) => m.id);
@@ -179,7 +214,7 @@ Deno.serve(async (req) => {
       // office subjects the sync detector used to miss; the model then read "let's confirm the
       // workshop" as Interesado and 99 phones buzzed in a week (2026-09-15). Flag them here — the
       // same detector as the sync, with the same lead/campaign exemption — and never judge them.
-      if (isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked: !!(m.lead_id || m.campaign_id) })) {
+      if (isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked: !!(m.lead_id || m.campaign_id) || leadCompany.has(m.id) })) {
         warmupFlagged++;
         if (!dryRun) await admin.from("inbox_messages").update({ is_warmup: true }).eq("id", m.id);
         continue;
