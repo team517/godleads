@@ -2305,12 +2305,12 @@ export default function Unibox() {
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso
     //    match immediately and the lead-DOMAIN match kicks in as soon as the set is ready.)
     if (isCampaignRelevant(m, leadDomains, ownDomains)) return false;
-    // 2) Not campaign → hide only the clear WARM-UP / random noise (warm-up codes, or English/foreign
-    //    mail from an unknown sender). Everything else — a legit human email that just isn't from a
-    //    campaign — still shows ("que tenga sentido"). Raw everything stays under "Todos".
-    if (isWarmupHidden(m)) return true;
-    return false;
-  }, [isWarmupHidden, leadDomains, ownDomains]);
+    // 2) Todo lo demás —sin lead, sin campaña, sin dominio de ningún lead y sin responder a un
+    //    correo nuestro— NO es de campaña: va sólo a "Todos". Antes un correo cualquiera en español
+    //    de un remitente desconocido (newsletters, proveedores, spam en castellano) se colaba en
+    //    Global y en Campañas. Nada se pierde: "Todos" sigue enseñando el buzón entero.
+    return true;
+  }, [leadDomains, ownDomains]);
 
   const handleRefilterLanguage = useCallback(() => {
     langCacheRef.current.clear();
