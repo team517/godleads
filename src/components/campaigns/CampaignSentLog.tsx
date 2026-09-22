@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,7 +16,8 @@ interface SentEmail {
   id: string;
   to_email: string;
   subject: string;
-  body: string;
+  /** Sólo se trae al abrir el correo (un HTML por fila hacía la carga de MB). */
+  body?: string | null;
   status: string;
   sent_at: string | null;
   replied_at: string | null;
@@ -36,35 +38,42 @@ interface StepInfo {
   delay_days: number;
 }
 
-type SentEmailQueryResult = Promise<{ data: SentEmail[] | null; error: { message: string } | null }>;
-type SentEmailQueryBuilder = {
-  select: (columns: string) => {
-    eq: (column: string, value: string) => {
-      order: (column: string, options: { ascending: boolean; nullsFirst: boolean }) => SentEmailQueryResult;
-    };
-  };
-};
+// 100 por página. Antes se pedían TODOS los envíos de la campaña con su HTML: la API los
+// cortaba en 1.000 sin avisar (el "N emails enviados" mentía) y eran varios MB por pestaña.
+const PAGE_SIZE = 100;
 
 export default function CampaignSentLog({ campaignId }: Props) {
   const [emails, setEmails] = useState<SentEmail[]>([]);
   const [steps, setSteps] = useState<StepInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [bodies, setBodies] = useState<Record<string, string>>({});
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // El cuerpo se pide al abrir, una vez por correo.
+  const openEmail = async (id: string) => {
+    if (expandedId === id) { setExpandedId(null); return; }
+    setExpandedId(id);
+    if (bodies[id] !== undefined) return;
+    const { data } = await (supabase as any).from("sent_emails").select("body").eq("id", id).maybeSingle();
+    setBodies((prev) => ({ ...prev, [id]: (data?.body as string) || "" }));
+  };
 
   useEffect(() => {
     const load = async () => {
-      const baseEmailSelect = "id, to_email, subject, body, status, sent_at, replied_at, opened_at, bounced_at, error_message, campaign_step_id, lead_id, account_id";
-      const emailsQuery = (select: string) => supabase
+      const baseEmailSelect = "id, to_email, subject, status, sent_at, replied_at, opened_at, bounced_at, error_message, campaign_step_id, lead_id, account_id";
+      const from = (page - 1) * PAGE_SIZE;
+      const emailsQuery = (select: string) => (supabase as any)
         .from("sent_emails")
-        .select(select)
+        .select(select, { count: "exact" })
         .eq("campaign_id", campaignId)
-        .order("sent_at", { ascending: false, nullsFirst: false });
+        .order("sent_at", { ascending: false, nullsFirst: false })
+        .range(from, from + PAGE_SIZE - 1);
 
       const [emailsResWithTransport, stepsRes, accountsRes] = await Promise.all([
-        (supabase.from("sent_emails") as unknown as SentEmailQueryBuilder)
-          .select(`${baseEmailSelect}, transport`)
-          .eq("campaign_id", campaignId)
-          .order("sent_at", { ascending: false, nullsFirst: false }),
+        emailsQuery(`${baseEmailSelect}, transport`),
         supabase
           .from("campaign_steps")
           .select("id, step_order, subject, delay_days")
@@ -81,11 +90,12 @@ export default function CampaignSentLog({ campaignId }: Props) {
         account_email: e.account_id ? accountMap.get(e.account_id) || undefined : undefined,
       }));
       setEmails(enriched);
+      setTotal(Number(emailsRes.count ?? enriched.length));
       setSteps(stepsRes.data || []);
       setLoading(false);
     };
     load();
-  }, [campaignId]);
+  }, [campaignId, page]);
 
   const getStepForEmail = (stepId: string | null) =>
     steps.find((s) => s.id === stepId);
@@ -121,7 +131,8 @@ export default function CampaignSentLog({ campaignId }: Props) {
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground mb-3">
-        {emails.length} email{emails.length !== 1 ? "s" : ""} enviado{emails.length !== 1 ? "s" : ""}
+        {total.toLocaleString("es-ES")} email{total !== 1 ? "s" : ""} enviado{total !== 1 ? "s" : ""}
+        {total > PAGE_SIZE && ` · mostrando ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)}`}
       </p>
 
       {emails.map((email) => {
@@ -133,7 +144,7 @@ export default function CampaignSentLog({ campaignId }: Props) {
           <Card
             key={email.id}
             className="cursor-pointer hover:shadow-raised transition-shadow"
-            onClick={() => setExpandedId(isExpanded ? null : email.id)}
+            onClick={() => { void openEmail(email.id); }}
           >
             <CardContent className="p-4">
               {/* Header row */}
@@ -219,8 +230,11 @@ export default function CampaignSentLog({ campaignId }: Props) {
                     <p className="text-xs font-medium text-muted-foreground mb-1">Mensaje</p>
                     <div
                       className="text-sm rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(email.body) }}
+                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodies[email.id] ?? email.body ?? "") }}
                     />
+                    {bodies[email.id] === undefined && email.body == null && (
+                      <p className="mt-1 text-xs text-muted-foreground">Cargando el mensaje…</p>
+                    )}
                   </div>
 
                   {email.error_message && (
@@ -258,6 +272,21 @@ export default function CampaignSentLog({ campaignId }: Props) {
           </Card>
         );
       })}
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between pt-2 text-[13px] text-muted-foreground">
+          <span>Página {page} de {pageCount}</span>
+          <div className="flex items-center gap-2">
+            <button type="button" className="soft-page-btn" disabled={page <= 1} onClick={() => { setExpandedId(null); setPage(page - 1); }} aria-label="Página anterior">‹</button>
+            {Array.from({ length: pageCount }).map((_, k) => k + 1)
+              .filter((n) => n === 1 || n === pageCount || Math.abs(n - page) <= 2)
+              .reduce<(number | "…")[]>((acc, n) => { const prev = acc[acc.length - 1]; if (typeof prev === "number" && n - prev > 1) acc.push("…"); acc.push(n); return acc; }, [])
+              .map((n, k) => n === "…" ? <span key={`gap-${k}`} className="px-1">…</span> : (
+                <button key={n} type="button" onClick={() => { setExpandedId(null); setPage(n); }} className={cn("soft-page-btn font-semibold", page === n && "soft-page-btn-on")} aria-current={page === n ? "page" : undefined}>{n}</button>
+              ))}
+            <button type="button" className="soft-page-btn" disabled={page >= pageCount} onClick={() => { setExpandedId(null); setPage(page + 1); }} aria-label="Página siguiente">›</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
