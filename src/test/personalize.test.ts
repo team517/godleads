@@ -132,3 +132,17 @@ describe("respaldos en el idioma de la plantilla (22-09-2026: 93 correos FR/IT/P
     expect(replaceVariables("la idea es que {{company_name}} reciba más oportunidades en {{city}}", {})).toBe("la idea es que tu empresa reciba más oportunidades en tu zona");
   });
 });
+
+describe("organization_name y company_name son la misma variable", () => {
+  it("{{organization_name}} toma company_name si el lead sólo trae ése, y al revés", () => {
+    expect(replaceVariables("J’ai regardé {{organization_name}} et votre activité, pour vous aider.", { company_name: "Renault" })).toBe("J’ai regardé Renault et votre activité, pour vous aider.");
+    expect(replaceVariables("Investigando {{company_name}}", { organization_name: "Cellnex" })).toBe("Investigando Cellnex");
+    expect(replaceVariables("{{ Organization Name }}", { organization_name: "Agrati" })).toBe("Agrati");
+  });
+  it("si el lead trae los dos, gana el que pide la plantilla", () => {
+    expect(replaceVariables("{{organization_name}} / {{company_name}}", { organization_name: "A", company_name: "B" })).toBe("A / B");
+  });
+  it("sin ninguno, el respaldo en el idioma del correo", () => {
+    expect(replaceVariables("J’ai regardé {{organization_name}} et votre activité, pour vous aider.", {})).toBe("J’ai regardé votre entreprise et votre activité, pour vous aider.");
+  });
+});

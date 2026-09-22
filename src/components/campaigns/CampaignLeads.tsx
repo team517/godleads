@@ -52,7 +52,8 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   // Template columns — include personalized message columns so a ready-made
   // {{personalized_message}} (often full HTML) is imported entirely, not dropped.
-  const TEMPLATE_COLUMNS = ["first_name", "industry", "city", "company_short_description", "company_name", "website", "personalized_message", "personalized_intro", "icebreaker"];
+  // organization_name es el nombre de empresa de Apollo/LinkedIn: se importa tal cual, además de company_name.
+  const TEMPLATE_COLUMNS = ["first_name", "industry", "city", "company_short_description", "company_name", "organization_name", "website", "personalized_message", "personalized_intro", "icebreaker"];
 
   // CSV review state
   const parsedRowsRef = useRef<Record<string, string>[]>([]);
@@ -439,6 +440,7 @@ export default function CampaignLeads({ campaignId }: Props) {
         const aliasMap: Record<string, string> = {
           firstname: "first_name", first: "first_name", nombre: "first_name",
           company: "company_name", empresa: "company_name", companyname: "company_name",
+          organization: "organization_name", organisation: "organization_name", organizationname: "organization_name", organizacion: "organization_name", org: "organization_name",
           ciudad: "city", town: "city",
           industria: "industry", sector: "industry",
           description: "company_short_description", company_description: "company_short_description",

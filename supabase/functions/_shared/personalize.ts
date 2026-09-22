@@ -108,7 +108,7 @@ type FallbackGroup = "zone" | "sector" | "company" | "web";
 const FALLBACK_GROUP: Record<string, FallbackGroup> = {
   city: "zone", ciudad: "zone", location: "zone", localidad: "zone", region: "zone", province: "zone", provincia: "zone",
   industry: "sector", sector: "sector", vertical: "sector", niche: "sector", nicho: "sector",
-  companyname: "company", company: "company", empresa: "company", organization: "company", organisation: "company", account: "company",
+  companyname: "company", organizationname: "company", organisationname: "company", company: "company", empresa: "company", organization: "company", organisation: "company", organizacion: "company", account: "company",
   website: "web", web: "web", domain: "web",
 };
 const FALLBACKS_BY_LANG: Record<TemplateLang, Record<FallbackGroup, string>> = {
@@ -173,6 +173,31 @@ export function cleanupGaps(text: string): string {
 }
 
 /**
+ * Sinónimos: si la plantilla pide {{organization_name}} y el lead trae company_name (o al revés),
+ * se usa el que haya. Todos normalizados (ver normalizeKey).
+ */
+const SYNONYM_GROUPS: string[][] = [
+  ["companyname", "organizationname", "organisationname", "company", "empresa", "organization", "organisation", "organizacion"],
+  ["website", "web", "url", "domain", "sitioweb"],
+  ["firstname", "nombre", "name", "first"],
+  ["city", "ciudad", "localidad", "town"],
+  ["industry", "industria", "sector"],
+];
+const SYNONYMS: Record<string, string[]> = {};
+for (const g of SYNONYM_GROUPS) for (const k of g) SYNONYMS[k] = g;
+
+/** Valor de una clave normalizada, probando sus sinónimos si la propia está vacía. */
+function lookupNormalized(normalized: Record<string, string>, nk: string): string {
+  const own = normalized[nk] || "";
+  if (own.trim()) return own;
+  for (const alt of SYNONYMS[nk] || []) {
+    const v = normalized[alt] || "";
+    if (v.trim()) return v;
+  }
+  return "";
+}
+
+/**
  * Replace every {{variable}} in `text` using `fields`.
  * Missing/blank values use VARIABLE_FALLBACKS, or are dropped + tidied.
  * The literal placeholder is never returned.
@@ -198,7 +223,7 @@ export function replaceVariables(text: string, fields: Record<string, string>, l
     const direct = fields?.[key];
     const value = (typeof direct === "string" && direct.trim())
       ? direct
-      : (normalized[normalizeKey(key)] || "");
+      : lookupNormalized(normalized, normalizeKey(key));
     if (value.trim()) return value.trim();
     const fallback = fallbackFor(key, useLang);
     if (fallback) { usedFallback = true; return fallback; }
