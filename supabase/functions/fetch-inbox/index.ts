@@ -148,7 +148,8 @@ async function ensureSentResolveRpc(): Promise<boolean> {
           ) s
           order by d, sent_at desc nulls last;
         $fn$;
-        grant execute on function public.resolve_sent_by_domains(uuid, text[]) to service_role, authenticated;
+        revoke all on function public.resolve_sent_by_domains(uuid, text[]) from public, anon, authenticated;
+        grant execute on function public.resolve_sent_by_domains(uuid, text[]) to service_role;
         notify pgrst, 'reload schema';
       `);
     } finally {
@@ -218,7 +219,8 @@ async function ensureSuppressFn(): Promise<boolean> {
         get diagnostics v_flagged = row_count;
         return v_flagged;
       end; $fn$;
-      grant execute on function public.suppress_email_global(uuid, text, text) to authenticated, service_role;
+      revoke all on function public.suppress_email_global(uuid, text, text) from public, anon, authenticated;
+      grant execute on function public.suppress_email_global(uuid, text, text) to service_role;
     `);
     suppressFnReady = true;
     return true;
