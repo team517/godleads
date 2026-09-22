@@ -6,6 +6,7 @@
 #   bash scripts/engine-sim/run.sh                 # motor del repo (el que se desplegaría)
 #   bash scripts/engine-sim/run.sh <ruta/index.ts> # otro index.ts (p. ej. la versión anterior)
 #   SIM_BIG_ACCOUNTS=900 bash scripts/engine-sim/run.sh
+#   SIM_DRIVER=driver-pause.ts bash scripts/engine-sim/run.sh   # pausar → quitar leads → poner → activar
 #
 # Needs: npx (Deno is fetched via `npx deno`) and python.
 set -euo pipefail
@@ -24,7 +25,7 @@ src = src.replace("async function sendSmtpEmail(", "async function __realSendSmt
 # La pausa de 1,5 s entre dos envíos seguidos del mismo dominio es tiempo real: aquí no aporta.
 src = src.replace("await new Promise(r => setTimeout(r, gapMs));", "/* sim: sin espera real */")
 pre = io.open("scripts/engine-sim/prelude.ts", encoding="utf-8").read()
-drv = io.open("scripts/engine-sim/driver.ts", encoding="utf-8").read()
+drv = io.open("scripts/engine-sim/" + os.environ.get("SIM_DRIVER", "driver.ts"), encoding="utf-8").read()
 io.open("scripts/engine-sim/_engine_sim.ts", "w", encoding="utf-8", newline="").write(pre + "\n" + src + "\n" + drv)
 PY
 trap 'rm -f scripts/engine-sim/_engine_sim.ts' EXIT
