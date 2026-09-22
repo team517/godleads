@@ -85,6 +85,7 @@ export default function Campaigns() {
   // Progress per campaign = leads already emailed / total leads (count-only queries).
   const [progressMap, setProgressMap] = useState<Record<string, { sent: number; total: number }>>(() => cacheGet<Record<string, { sent: number; total: number }>>("campaigns:progress") || {});
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "" });
   // Remix: fusionar otra campaña dentro de `remixDest`.
@@ -163,10 +164,13 @@ export default function Campaigns() {
   };
 
   const handleCreate = async () => {
-    if (!user || !form.name) return;
+    // `creating` evita que un doble clic cree dos campañas iguales.
+    if (!user || !form.name || creating) return;
+    setCreating(true);
     const { error } = await supabase.from("campaigns").insert({
       user_id: user.id, name: form.name, status: "draft",
     });
+    setCreating(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Campaña creada");
     setShowCreate(false);
@@ -185,8 +189,10 @@ export default function Campaigns() {
     }).select().single();
     if (error) { toast.error(error.message); return; }
 
-    // Copy steps with variants
-    const { data: stps } = await supabase.from("campaign_steps").select("*").eq("campaign_id", campaign.id);
+    // Copy steps with variants. La LECTURA también se comprueba: si falla, la copia saldría
+    // sin pasos y se anunciaba "duplicada" igualmente.
+    const { data: stps, error: stepsReadErr } = await supabase.from("campaign_steps").select("*").eq("campaign_id", campaign.id);
+    if (stepsReadErr) { toast.error(`No se pudieron leer los pasos: ${stepsReadErr.message}`); load(); return; }
     if (stps?.length) {
       // Abort loudly: a half-copied campaign (no steps / no accounts) used to be
       // reported as "duplicated" and then failed to launch for no visible reason.
@@ -201,7 +207,8 @@ export default function Campaigns() {
     }
 
     // Copy account assignments
-    const { data: accs } = await supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaign.id);
+    const { data: accs, error: accsReadErr } = await supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaign.id);
+    if (accsReadErr) { toast.error(`No se pudieron leer las cuentas: ${accsReadErr.message}`); load(); return; }
     if (accs?.length) {
       const { error: accErr } = await supabase.from("campaign_accounts").insert(
         accs.map((a: any) => ({ campaign_id: newCamp.id, account_id: a.account_id }))
@@ -221,29 +228,37 @@ export default function Campaigns() {
       // sending accounts/tag in the Options tab (that saves to the DB directly),
       // so trusting campaign.account_tags here made a valid tag-only selection
       // fail launch with "Asigna al menos una cuenta…".
-      const [{ data: fresh }, { data: ca }, { data: cl }, { data: st }] = await Promise.all([
+      // Cada comprobación es un COUNT (head:true): no se traen filas y, sobre todo, un fallo de
+      // la consulta ya no se lee como "no hay cuentas/leads/pasos" (mensaje engañoso: lo que
+      // pasaba era que no se pudo preguntar).
+      const [freshRes, caRes, clRes, stRes] = await Promise.all([
         supabase.from("campaigns").select("account_tags").eq("id", campaign.id).single(),
-        supabase.from("campaign_accounts").select("id").eq("campaign_id", campaign.id),
-        supabase.from("campaign_leads").select("id").eq("campaign_id", campaign.id),
-        supabase.from("campaign_steps").select("id").eq("campaign_id", campaign.id),
+        supabase.from("campaign_accounts").select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id),
+        supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id),
+        supabase.from("campaign_steps").select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id),
       ]);
+      if (freshRes.error) { toast.error(`No se pudo leer la campaña: ${freshRes.error.message}`); return; }
+      if (caRes.error) { toast.error(`No se pudieron leer las cuentas asignadas: ${caRes.error.message}`); return; }
+      if (clRes.error) { toast.error(`No se pudieron leer los leads: ${clRes.error.message}`); return; }
+      if (stRes.error) { toast.error(`No se pudieron leer los pasos: ${stRes.error.message}`); return; }
 
       // Mirror the sending engine: direct assignments OR any CONNECTED account
       // whose tags overlap the campaign's account_tags.
-      const accountTags: string[] = (fresh?.account_tags as string[] | null) || [];
-      let hasAccounts = (ca?.length || 0) > 0;
+      const accountTags: string[] = (freshRes.data?.account_tags as string[] | null) || [];
+      let hasAccounts = (caRes.count || 0) > 0;
       if (!hasAccounts && accountTags.length > 0) {
-        const { data: tagAccounts } = await supabase
+        const { count, error: tagErr } = await supabase
           .from("email_accounts")
-          .select("id")
+          .select("id", { count: "exact", head: true })
           .eq("status", "connected")
           .overlaps("tags", accountTags);
-        hasAccounts = (tagAccounts?.length || 0) > 0;
+        if (tagErr) { toast.error(`No se pudieron leer las cuentas del tag: ${tagErr.message}`); return; }
+        hasAccounts = (count || 0) > 0;
       }
 
       if (!hasAccounts) { toast.error("Asigna al menos una cuenta de email o un tag con cuentas"); return; }
-      if (!cl?.length) { toast.error("Asigna al menos un lead"); return; }
-      if (!st?.length) { toast.error("Añade al menos un paso de email"); return; }
+      if (!(clRes.count || 0)) { toast.error("Asigna al menos un lead"); return; }
+      if (!(stRes.count || 0)) { toast.error("Añade al menos un paso de email"); return; }
     }
     // Check the write: a rejected status change used to toast "activada" while the
     // campaign stayed paused (and the card flipped back on the next load()).
@@ -457,7 +472,7 @@ export default function Campaigns() {
             <DialogHeader><DialogTitle className="font-display tracking-[-0.03em]">Crear campaña</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1"><Label>Nombre de la campaña</Label><Input value={form.name} onChange={e => setForm({ name: e.target.value })} placeholder="Prospección Q1" /></div>
-              <Button onClick={handleCreate} className="w-full" disabled={!form.name} variant={form.name ? "default" : "secondary"}>Crear</Button>
+              <Button onClick={handleCreate} className="w-full" disabled={!form.name || creating} variant={form.name ? "default" : "secondary"}>{creating ? "Creando…" : "Crear"}</Button>
             </div>
           </DialogContent>
         </Dialog>

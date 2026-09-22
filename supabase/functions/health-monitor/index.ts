@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +83,8 @@ function evaluate(m: any): Check[] {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const reqBody = await req.json().catch(() => ({}));
+  if (!cronOrServiceAuthorised(req, reqBody)) return unauthorized(corsHeaders);
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: metrics, error: mErr } = await admin.rpc("health_metrics");
@@ -139,16 +142,20 @@ serve(async (req) => {
     // got past the confirm step.
     const recoveredRows = (stateRows || []).filter((r: any) => !failingKeys.has(r.check_key));
     const recoveredAnnounce = recoveredRows.filter((r: any) => r.last_notified);
-    if (recoveredRows.length) {
-      await admin.from("health_monitor_state").delete().in("check_key", recoveredRows.map((r: any) => r.check_key));
+    // Las que nunca llegaron a avisarse se limpian ya; las avisadas, sólo después de mandar el
+    // "resuelto" (si el correo falla, el estado sigue ahí y se reintenta en la pasada siguiente).
+    const silentRecovered = recoveredRows.filter((r: any) => !r.last_notified);
+    if (silentRecovered.length) {
+      await admin.from("health_monitor_state").delete().in("check_key", silentRecovered.map((r: any) => r.check_key));
     }
 
     const wantEmail = toNotify.length > 0 || recoveredAnnounce.length > 0;
     let emailed = false;
     if (wantEmail) {
-      // Pick any healthy connected account to send FROM.
+      // Sólo el buzón de la agencia: un aviso interno nunca sale por el buzón de un cliente.
       const { data: acc } = await admin.from("email_accounts")
         .select("email, smtp_host, smtp_port, smtp_username, smtp_password")
+        .eq("email", Deno.env.get("ALERT_FROM") || "team@onepulso.online")
         .eq("status", "connected").not("smtp_host", "is", null).limit(1).maybeSingle();
       const to = Deno.env.get("ALERT_EMAIL") || "team@onepulso.online";
       if (acc?.smtp_host) {
@@ -166,6 +173,9 @@ serve(async (req) => {
           + `<p style="color:#98a2b3;font-size:11px">Monitor automático · comprueba cada 5 min · te aviso UNA vez por incidencia y otra cuando se resuelve.</p></div>`;
         const r = await sendSmtpEmail(acc.smtp_host, acc.smtp_port || 465, acc.smtp_username, acc.smtp_password, acc.email, to, subject, html);
         emailed = r.ok;
+        if (r.ok && recoveredAnnounce.length) {
+          await admin.from("health_monitor_state").delete().in("check_key", recoveredAnnounce.map((r: any) => r.check_key));
+        }
         if (r.ok && toNotify.length) {
           // Mark these as alerted so they stay quiet until recovery / the daily reminder.
           for (const c of toNotify) await admin.from("health_monitor_state").update({ last_notified: nowIso }).eq("check_key", c.key);

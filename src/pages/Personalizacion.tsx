@@ -241,7 +241,9 @@ export default function Personalizacion() {
       destructive: true,
     });
     if (!ok) return;
-    await (supabase as any).from("personalization_csv_jobs").delete().eq("id", id);
+    const { error } = await (supabase as any).from("personalization_csv_jobs").delete().eq("id", id);
+    // Sin comprobar el borrado se decía "Borrada" y la fila seguía ahí al recargar.
+    if (error) { toast.error(`No se pudo borrar: ${error.message}`); return; }
     if (jobId === id) { setJobId(null); setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 }); setJobStatus(""); }
     void loadHistory();
     toast.success("Borrada del registro");
@@ -253,12 +255,22 @@ export default function Personalizacion() {
     if (jobStatus === "completed" || jobStatus === "error" || jobStatus === "cancelled") return;
     let alive = true;
     let timer: any;
+    let fails = 0;
     const tick = async () => {
-      const { data } = await (supabase as any)
+      const { data, error } = await (supabase as any)
         .from("personalization_csv_jobs")
         .select("status, done, ok, failed, total")
         .eq("id", jobId).maybeSingle();
-      if (!alive || !data) return;
+      if (!alive) return;
+      // Un fallo suelto (red, token renovándose) dejaba la barra congelada para siempre: se
+      // vuelve a intentar, y sólo se rinde tras 10 seguidos.
+      if (error || !data) {
+        fails++;
+        if (fails >= 10) { toast.error("No se pudo seguir el progreso de la personalización"); return; }
+        timer = setTimeout(tick, 3500);
+        return;
+      }
+      fails = 0;
       const d = data as any;
       setJobStatus(d.status);
       setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });

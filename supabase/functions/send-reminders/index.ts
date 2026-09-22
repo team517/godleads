@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendSmtpReply, textToHtml } from "../_shared/smtp.ts";
 
@@ -12,6 +13,8 @@ const DEFAULT_BODY =
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const reqBody = await req.json().catch(() => ({}));
+  if (!cronOrServiceAuthorised(req, reqBody)) return unauthorized(corsHeaders);
 
   try {
     const admin = createClient(

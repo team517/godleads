@@ -455,7 +455,9 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
         fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/client-service-agent`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}` },
-          body: JSON.stringify({ owner_user_id: r.user_id, prospect_only: true, rule_id: r.id, limit: 30 }),
+          // Con el secreto del cron: la propia puerta de esta función rechaza la clave anon, así que
+          // este reparto devolvía 401 y las respuestas a prospectos nunca se generaban.
+          body: JSON.stringify({ secret: Deno.env.get("REPORTS_CRON_SECRET") || "", owner_user_id: r.user_id, prospect_only: true, rule_id: r.id, limit: 30 }),
         }).catch(() => {});
       }
     } catch { /* */ }

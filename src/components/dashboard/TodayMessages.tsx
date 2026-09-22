@@ -55,7 +55,7 @@ export default function TodayMessages() {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("inbox_messages")
       .select("id, from_email, from_name, subject, body_text, received_at, is_read, labels, lead_id, campaign_id")
       .eq("user_id", user.id)
@@ -67,6 +67,12 @@ export default function TodayMessages() {
       .order("received_at", { ascending: false })
       .limit(80); // fetch extra, then drop bounces/noise before showing 20
 
+    // Un fallo de la consulta no es "no hay mensajes hoy": se conserva lo que ya se veía.
+    if (error) {
+      console.warn("TodayMessages: no se pudo cargar la bandeja:", error.message);
+      setLoading(false);
+      return;
+    }
     setMessages(((data as InboxMessage[]) || []).filter(isRealMessage).slice(0, 20));
     setLoading(false);
     if (!initialLoadDone.current) initialLoadDone.current = true;

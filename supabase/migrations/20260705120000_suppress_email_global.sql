@@ -42,4 +42,5 @@ begin
 end;
 $$;
 
-grant execute on function public.suppress_email_global(uuid, text, text) to authenticated, service_role;
+revoke all on function public.suppress_email_global(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.suppress_email_global(uuid, text, text) to service_role;

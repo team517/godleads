@@ -98,8 +98,13 @@ serve(async (req) => {
       .select("email, smtp_host, smtp_port, smtp_username, smtp_password")
       .eq("status", "connected").not("smtp_host", "is", null);
     // Prefer the Google-hosted team@ account (best deliverability), else any connected.
-    const acct = (accts || []).find((a: any) => a.email === "team@onepulso.online") || (accts || [])[0];
+    const acct = (accts || []).find((a: any) => a.email === (Deno.env.get("ALERT_FROM") || "team@onepulso.online"));
     if (!acct?.smtp_host) return json({ ok: false, error: "No hay cuenta conectada para enviar el resumen" }, 500);
+    // Un resumen al día: un reintento del cron no lo manda dos veces.
+    if (!body.test_days) {
+      const { data: gotLock } = await admin.rpc("acquire_job_lock", { p_name: "daily-digest", p_ttl_seconds: 20 * 3600 });
+      if (gotLock === false) return json({ ok: true, sent: false, reason: "ya enviado hoy" });
+    }
 
     const nInteres = list.filter((r) => r.interesado).length;
     const nPreg = list.filter((r) => r.pregunta && !r.interesado).length;

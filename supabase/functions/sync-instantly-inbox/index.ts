@@ -1,6 +1,7 @@
 // Sync replies received in Instantly into OnePulso's inbox_messages.
 // Uses the workspace-level INSTANTLY_API_KEY secret. Maps each reply by
 // `eaccount` -> email_accounts.email and inserts under that account's owner.
+import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -14,6 +15,16 @@ const INSTANTLY_BASE = "https://api.instantly.ai/api/v2";
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // Cron/servidor: todas las cuentas. Usuario con sesión: SOLO las suyas (el user_id del
+  // cuerpo se ignora: antes cualquiera sincronizaba —y escribía en el Unibox de— otro usuario).
+  let onlyUserId: string | null = null;
+  const body = await req.json().catch(() => ({}));
+  if (!cronOrServiceAuthorised(req, body)) {
+    const user = await userFromRequest(req);
+    if (!user) return unauthorized(corsHeaders);
+    onlyUserId = user.id;
+  }
+
   try {
     const INSTANTLY_API_KEY = Deno.env.get("INSTANTLY_API_KEY");
     if (!INSTANTLY_API_KEY) throw new Error("INSTANTLY_API_KEY not configured");
@@ -22,13 +33,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-
-    // Optional: limit to a single user (manual sync from UI)
-    let onlyUserId: string | null = null;
-    try {
-      const body = await req.json();
-      if (body?.user_id) onlyUserId = String(body.user_id);
-    } catch (_) {}
 
     // Build email -> {id, user_id} map
     let accountQuery = supabase.from("email_accounts").select("id, user_id, email");

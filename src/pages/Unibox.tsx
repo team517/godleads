@@ -965,7 +965,14 @@ function searchTextOf(m: any): string {
   searchTextCache.set(m, text);
   return text;
 }
-function categoryOf(m: { subject?: string | null; body_text?: string | null }): MessageCategory {
+function categoryOf(m: { subject?: string | null; body_text?: string | null; labels?: string[] | null }): MessageCategory {
+  // Si el servidor (cron push-interested, con IA) ya puso su etiqueta, ésa manda: antes cada
+  // fila se reclasificaba aquí con las reglas y el body_text (sin el HTML que lee el servidor), y
+  // un "Interesado" que hacía sonar el móvil podía no aparecer en la pestaña Interesados.
+  for (const l of (m.labels || [])) {
+    const fromLabel = LABEL_TO_CATEGORY[l];
+    if (fromLabel) return fromLabel;
+  }
   const hit = categoryCache.get(m);
   if (hit) return hit;
   const cat = classifyMessage(m.subject ?? null, m.body_text ?? null);
@@ -997,6 +1004,12 @@ const categoryConfig: Record<MessageCategory, { label: string; bg: string; text:
   out_of_office:  { label: "Fuera / Auto",  bg: "bg-pink-100 dark:bg-pink-500/20",       text: "text-pink-700 dark:text-pink-300",       border: "border-transparent",    dot: "bg-pink-500" },
   neutral:        { label: "",              bg: "",                                     text: "text-muted-foreground",                  border: "border-border",         dot: "bg-muted-foreground" },
 };
+// Etiqueta guardada ("Interesado", "Pregunta"…) → categoría. Es lo que lee categoryOf primero.
+const LABEL_TO_CATEGORY: Record<string, MessageCategory> = Object.fromEntries(
+  (Object.entries(categoryConfig) as [MessageCategory, { label: string }][])
+    .filter(([, c]) => c.label)
+    .map(([k, c]) => [c.label, k]),
+);
 
 type FilterType = "all" | "ai_replied" | MessageCategory;
 
@@ -1562,11 +1575,12 @@ export default function Unibox() {
   const [deletingLead, setDeletingLead] = useState(false);
   const loadReminders = useCallback(async () => {
     if (!user) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("message_reminders")
       .select("*")
       .eq("user_id", user.id)
       .eq("is_done", false);
+    if (error) { console.warn("loadReminders failed, keeping current:", error.message); return; }
     const map: Record<string, any> = {};
     (data || []).forEach((r: any) => { map[r.message_id] = r; });
     setReminders(map);
@@ -1606,6 +1620,15 @@ export default function Unibox() {
         .order("received_at", { ascending: false })
         .limit(500),
     ]);
+    // Un token caducado o un corte de red dejaban el Unibox vacío, sin aviso, y ese vacío se
+    // guardaba en el caché para la visita siguiente. Ahora se conserva lo que hay y se avisa.
+    if (linkedRes.error || unlinkedRes.error) {
+      const msg = (linkedRes.error || unlinkedRes.error)?.message || "error de red";
+      console.warn("Unibox load failed, keeping current list:", msg);
+      toast.error(`No se pudo cargar el Unibox: ${msg}`);
+      setLoading(false);
+      return;
+    }
     const seenIds = new Set<string>();
     const raw = [...((linkedRes.data as any[]) || []), ...((unlinkedRes.data as any[]) || [])]
       .filter((m) => (seenIds.has(m.id) ? false : (seenIds.add(m.id), true)))
@@ -2471,6 +2494,42 @@ export default function Unibox() {
   // Clean tabs show: campaign mail (lead / lead-domain / onepulso) ALWAYS, plus legit human mail —
   // and drop only the clear warm-up / random noise + bounces. "Todos" (all_mailboxes) and the
   // "Mostrar warmup" toggle bypass this to show the raw mailbox, so nothing is ever unrecoverable.
+  // Todo lo que decide la pestaña ANTES de la categoría. Lo comparten la lista y los contadores
+  // de los chips (antes los contadores ignoraban bloqueados, pestaña, carpeta y búsqueda, y en
+  // "Todos" la lista saltaba el filtro limpio pero los chips no: "Interesados (12)" con 400 filas).
+  const preCategory = useMemo(() => {
+    if (viewTab === "sent" || viewTab === "important") return [] as any[];
+    const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const inTab = (m: any) => {
+      if (viewTab === "reminders") return !!reminders[m.id];
+      if (viewTab === "campaigns") return selectedCampaignId === "all" || m.campaign_id === selectedCampaignId;
+      return true;
+    };
+    // SEARCH (main inbox tabs): when there's a query, show the DB search results — the whole
+    // mailbox, ignoring the language/warmup filter and the loaded window. Sigue respetando la
+    // pestaña, "Hoy" y la carpeta: buscar con "Interesados" marcado ya no devolvía el buzón entero.
+    if (search.trim().length >= 2 && searchResults !== null) {
+      return searchResults
+        .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
+        .filter(inTab)
+        .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
+        .filter(m => !folderFilter || m.folder_id === folderFilter);
+    }
+    // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
+    // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
+    // English/warmup filter hides is ever unrecoverable from the UI.
+    const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
+    return messages
+      // Blocked senders never show — unless it is their reply inside a real thread. Blocking
+      // (or a bounce suppression) must not delete an answer the lead already gave us.
+      .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
+      .filter(m => bypassFilters || !hiddenFromClean(m))
+      .filter(inTab)
+      .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
+      .filter(m => !folderFilter || m.folder_id === folderFilter)
+      .filter(m => !search || searchTextOf(m).includes(search.toLowerCase()));
+  }, [messages, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
     if (viewTab === "sent") {
@@ -2495,40 +2554,8 @@ export default function Unibox() {
           decodeSubject(m.subject)?.toLowerCase().includes(q))
         .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     }
-    // SEARCH (main inbox tabs): when there's a query, show the DB search results —
-    // the whole mailbox, ignoring the language/warmup filter and the loaded window —
-    // filtered only by the blocklist. This is what makes "type an email → find the
-    // conversation" actually work.
-    if (search.trim().length >= 2 && searchResults !== null) {
-      return searchResults
-        .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
-        .filter(m => !folderFilter || m.folder_id === folderFilter);
-    }
-    const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    // ESCAPE HATCH: the "Todos" tab (all_mailboxes) shows the RAW mailbox and the
-    // "Mostrar warmup" toggle reveals filtered messages — so nothing the strict
-    // English/warmup filter hides is ever unrecoverable from the UI.
-    const bypassFilters = viewTab === "all_mailboxes" || showWarmup;
-    const list = messages
-      // Blocked senders never show — unless it is their reply inside a real thread. Blocking
-      // (or a bounce suppression) must not delete an answer the lead already gave us.
-      .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
-      .filter(m => bypassFilters || !hiddenFromClean(m))
-      .filter(m => {
-        if (viewTab === "reminders") return !!reminders[m.id];
-        if (viewTab === "campaigns") {
-          if (selectedCampaignId === "all") return true;
-          return m.campaign_id === selectedCampaignId;
-        }
-        return true;
-      })
-      .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
-      .filter(m => !folderFilter || m.folder_id === folderFilter)
-      .filter(m => categoryFilter === "all" || (categoryFilter === "ai_replied" ? aiReplied(m.from_email) : categoryOf(m) === categoryFilter))
-      .filter(m => {
-        if (!search) return true;
-        return searchTextOf(m).includes(search.toLowerCase());
-      });
+    const list = preCategory
+      .filter(m => categoryFilter === "all" || (categoryFilter === "ai_replied" ? aiReplied(m.from_email) : categoryOf(m) === categoryFilter));
     // Sort: due reminders first (yellow), then by received_at desc
     return list.sort((a, b) => {
       const aDue = isReminderDue(a.id);
@@ -2537,19 +2564,25 @@ export default function Unibox() {
       if (!aDue && bDue) return 1;
       return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
     });
-  }, [messages, sentItems, importantItems, searchResults, mailboxMode, search, categoryFilter, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, hiddenFromClean, langNonce, showWarmup, isBlockedSender, isThreadReply]);
+  // aiReplied/isImportant/isReminderDue no están memoizadas: se listan sus fuentes estables.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewTab, sentItems, importantItems, search, preCategory, categoryFilter, aiRepliedSet, reminders]);
 
   const categoryCounts = useMemo(() => {
-    const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const base = messages.filter(m => !hiddenFromClean(m));
-    const visible = base.filter(m => !showTodayOnly || new Date(m.received_at) >= now24h);
-    const counts: Record<string, number> = { all: visible.length };
-    for (const m of visible) {
+    const counts: Record<string, number> = { all: preCategory.length };
+    for (const m of preCategory) {
       const cat = categoryOf(m);
       counts[cat] = (counts[cat] || 0) + 1;
     }
     return counts;
-  }, [messages, mailboxMode, showTodayOnly, hiddenFromClean, langNonce]);
+  }, [preCategory]);
+
+  // Recordatorios que la pestaña puede enseñar de verdad (en la ventana cargada y no ocultos):
+  // el globo decía 3 y la pestaña enseñaba 1.
+  const remindersVisible = useMemo(
+    () => messages.filter(m => reminders[m.id] && !hiddenFromClean(m)).length,
+    [messages, reminders, hiddenFromClean, langNonce],
+  );
 
   const unreadCount = useMemo(() =>
     messages.filter(m => !m.is_read && !hiddenFromClean(m)).length
@@ -3300,9 +3333,9 @@ export default function Unibox() {
             </TabsTrigger>
             <TabsTrigger value="reminders" className="gap-1.5 font-display text-[13px] font-semibold tracking-[-0.03em]">
               <Bell className="h-3.5 w-3.5" /> Recordatorios
-              {Object.keys(reminders).length > 0 && (
+              {remindersVisible > 0 && (
                   <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-warning px-1 text-[10.5px] font-bold text-warning-foreground">
-                  {Object.keys(reminders).length}
+                  {remindersVisible}
                 </span>
               )}
             </TabsTrigger>

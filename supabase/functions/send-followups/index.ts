@@ -3,6 +3,7 @@
 // sends from the chosen mailbox (team@) THREADED to the conversation, marks them sent, and records
 // the message in sent_emails so it shows in the conversation timeline.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
@@ -46,6 +47,15 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const input = await req.json().catch(() => ({} as any));
+  // Cron/servidor: todos los seguimientos vencidos. Usuario con sesión (botón de Seguimiento):
+  // sólo los suyos. Sin ninguna de las dos cosas, nada (antes cualquiera disparaba envíos y
+  // recibía en la respuesta los correos de los prospectos de todos los usuarios).
+  let onlyOwner: string | null = null;
+  if (!cronOrServiceAuthorised(req, input)) {
+    const user = await userFromRequest(req);
+    if (!user) return unauthorized(corsHeaders);
+    onlyOwner = user.id;
+  }
   const limit = Math.min(Number(input.limit) || 15, 40);
 
   // ── CANCEL-ON-REPLY ─────────────────────────────────────────────────────────────────────
@@ -80,7 +90,9 @@ serve(async (req) => {
     }
   } catch { /* non-fatal */ }
 
-  const { data: due } = await admin.from("follow_ups").select("*").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString()).order("scheduled_at", { ascending: true }).limit(limit);
+  let dueQuery = admin.from("follow_ups").select("*").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString()).order("scheduled_at", { ascending: true }).limit(limit);
+  if (onlyOwner) dueQuery = dueQuery.eq("owner_id", onlyOwner);
+  const { data: due } = await dueQuery;
   if (!due?.length) return new Response(JSON.stringify({ sent: 0, canceled }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   let sent = 0; const results: any[] = [];
@@ -126,7 +138,7 @@ serve(async (req) => {
       await admin.from("follow_ups").update({ status: "sent", sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", f.id);
       // Record in sent_emails so it appears in the conversation timeline.
       try { await admin.from("sent_emails").insert({ user_id: f.owner_id, account_id: acct.id, to_email: f.contact_email, subject, body: toHtml(f.body || ""), status: "sent", sent_at: new Date().toISOString(), smtp_message_id: r.msgId || null }); } catch { /* non-fatal */ }
-      sent++; results.push({ id: f.id, to: f.contact_email, ok: true });
+      sent++; results.push({ id: f.id, ok: true });
     } catch (e) { try { await admin.from("follow_ups").update({ status: "scheduled", note: String((e as Error).message).slice(0, 200) }).eq("id", f.id).eq("status", "sending"); } catch { /* */ } }
   }
   return new Response(JSON.stringify({ sent, canceled, results }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

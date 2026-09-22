@@ -33,3 +33,7 @@ end; $$;
 --   select cron.schedule('purge-warmup-weekly', '0 3 * * 0', $$select public.purge_old_warmup(7)$$);
 -- And once, to clean the current backlog immediately:
 --   select public.purge_old_warmup(7);
+
+-- Sólo la usa pg_cron (postgres): nadie más puede borrar mensajes de todos los usuarios.
+revoke all on function public.purge_old_warmup(integer) from public, anon, authenticated;
+grant execute on function public.purge_old_warmup(integer) to service_role;

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
@@ -896,7 +897,9 @@ async function fetchImapMessages(
             body_text: bodyText,
             body_html: bodyHtml,
             message_id: msgId,
-            date: dateMatch ? dateMatch[1].trim() : new Date().toISOString(),
+            // Sin Date: fecha FIJA, no "ahora". Con "ahora", un correo sin Message-ID ni Date
+            // cambiaba de dedupe_hash en cada pasada y se insertaba (y notificaba) una y otra vez.
+            date: dateMatch ? dateMatch[1].trim() : "1970-01-01T00:00:00.000Z",
             ref_chain: sanitizeForPostgres(refChain),
             // Los logos de la firma NO son archivos adjuntos: colgarlos como tales llenaba
             // el Unibox de iconos de 38x38 (facebook.png, instagram.png...) en cada correo.
@@ -961,6 +964,10 @@ serve(async (req) => {
     let body: any = {};
     try { body = await req.json(); } catch { body = {}; }
 
+    // Rama cron (todas las cuentas): sólo con el secreto compartido o service_role. Antes valía
+    // la clave pública anon o ninguna cabecera: cualquiera podía sincronizar un buzón ajeno por
+    // su id y enumerar los correos de todos los buzones a través de la respuesta.
+    const cronAuthorised = cronOrServiceAuthorised(req, body);
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.replace("Bearer ", "");
       const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
@@ -979,6 +986,8 @@ serve(async (req) => {
         }
       }
     }
+
+    if (targetUserId === null && !cronAuthorised) return unauthorized(corsHeaders);
 
     const offsetProvided = Number.isFinite(Number(body.offset));
     const requestedOffset = offsetProvided ? Math.max(0, Number(body.offset)) : 0;
@@ -1118,7 +1127,8 @@ serve(async (req) => {
           45_000 // per-mailbox time budget: one slow mailbox can never hog a whole wave
         );
         timings.push({
-          email: account.email, ms: Date.now() - t0, ok: result.ok,
+          // El correo del buzón sólo se enseña a su dueño; al cron le vale el id.
+          email: targetUserId ? account.email : account.id, ms: Date.now() - t0, ok: result.ok,
           msgs: result.ok ? result.messages.length : undefined,
           unchanged: result.unchangedFolders?.length, err: result.ok ? undefined : result.error,
         });
@@ -1129,7 +1139,7 @@ serve(async (req) => {
 
         if (!result.ok) {
           console.error(`IMAP fetch failed for ${account.email}:`, result.error);
-          errors.push(`${account.email}: ${result.error}`);
+          errors.push(`${targetUserId ? account.email : account.id}: ${result.error}`);
           return 0;
         }
 
@@ -1469,8 +1479,15 @@ serve(async (req) => {
             const repliedLeadIds = inserted.filter(r => r.lead_id && !warmIds.has((r as any).message_id)).map(r => r.lead_id);
             if (repliedLeadIds.length > 0) {
               await adminClient.from("leads").update({ status: "replied" }).in("id", repliedLeadIds);
-              await adminClient.from("sent_emails").update({ replied_at: new Date().toISOString() })
-                .in("lead_id", repliedLeadIds).eq("user_id", account.user_id).is("replied_at", null);
+              // Marca "respondido" SOLO en la campaña a la que contesta (y con la fecha real de la
+              // respuesta): antes una respuesta a la campaña B subía también el contador de la A.
+              for (const r of inserted) {
+                if (!r.lead_id || warmIds.has((r as any).message_id)) continue;
+                let q = adminClient.from("sent_emails").update({ replied_at: (r as any).received_at || new Date().toISOString() })
+                  .eq("lead_id", r.lead_id).eq("user_id", account.user_id).is("replied_at", null);
+                if (r.campaign_id) q = q.eq("campaign_id", r.campaign_id);
+                await q;
+              }
               const campaignPairs = inserted.filter(r => r.lead_id && r.campaign_id);
               for (const cp of campaignPairs) {
                 await adminClient.from("campaign_leads")

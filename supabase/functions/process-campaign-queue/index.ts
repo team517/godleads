@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { chunkIds, perTickCampaignCap, sortBySentToday } from "../_shared/engine-scale.ts";
+import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -965,6 +966,10 @@ async function sendSmtpEmail(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // Sólo el cron (secreto compartido) o el servidor: con la clave pública anon cualquiera podía
+  // disparar pasadas del motor en bucle (22-09-2026).
+  const reqBody = await req.json().catch(() => ({}));
+  if (!cronOrServiceAuthorised(req, reqBody)) return unauthorized(corsHeaders);
 
   try {
     const adminClient = createClient(

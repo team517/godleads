@@ -209,6 +209,12 @@ export default function CampaignsTable({
   const PAGE_SIZE = 25;
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const page = Math.min(pageRaw, pageCount);
+
+  // Al cambiar de pestaña, de búsqueda o de página se suelta la selección: si no, "Editar (12)"
+  // seguía apuntando a campañas que ya no se ven y la edición masiva tocaba otras.
+  useEffect(() => {
+    setSelected((prev) => (prev.size ? new Set<string>() : prev));
+  }, [tab, q, page]);
   const pageRows = useMemo(() => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [rows, page]);
   const visibleIds = useMemo(() => pageRows.map((r) => r.id as string), [pageRows]);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));

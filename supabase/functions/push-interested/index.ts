@@ -128,8 +128,10 @@ Deno.serve(async (req) => {
     // the room left in the 200-row budget. They are classified but never pushed (see staleIds) —
     // nobody wants their phone buzzing for a three-day-old reply.
     const staleIds = new Set<string>();
-    const room = 200 - (msgs?.length || 0);
-    if (room > 20 && !force) {
+    // Siempre con un mínimo de sitio: en cuentas con ≥180 respuestas por ventana el barrido
+    // —el único rescate de las respuestas que salían de la ventana sin juzgar— no corría nunca.
+    const room = Math.max(30, 200 - (msgs?.length || 0));
+    if (!force) {
       const { data: old } = await admin
         .from("inbox_messages")
         .select(COLS)
@@ -267,7 +269,9 @@ Deno.serve(async (req) => {
 
     // Guardar el ritmo para la próxima ejecución: lo gastado en esta ventana y, si la API pidió
     // parar, hasta cuándo no se la vuelve a llamar.
-    if (useAi && !dryRun) {
+    // En enfriamiento no se ha llamado al modelo: no hay nada que anotar y, sobre todo, no se
+    // borra el enfriamiento ni el contador de 429 seguidos (los borraba cada dos minutos).
+    if (useAi && !dryRun && !(enfriando > 0 && aiCalls === 0)) {
       const consecutive = rateLimited ? ((throttleRow as ThrottleState)?.consecutive_limits || 0) + 1 : 0;
       await admin.from("ai_throttle_state").upsert({
         id: 1,
@@ -294,7 +298,9 @@ Deno.serve(async (req) => {
       // Sin duplicados: cada repaso volvía a añadir la marca y las filas acababan con ["IA","IA","IA"].
       const newLabels = Array.from(new Set(etiqueta ? [...others, etiqueta, AI_MARKER] : [...others, ...previousCats, AI_MARKER]));
       // staleIds = rows pulled in by the catch-up sweep: label them, never buzz the phone for them.
-      const shouldNotify = notify && (p.verdict === "interested" || p.verdict === "question") && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
+      // "Pregunta" sólo avisa cuando lo ha decidido el modelo: la regla salta con un simple "?"
+      // (una firma con "¿nos sigues en LinkedIn?") y con la IA caída hacía sonar el móvil sin motivo.
+      const shouldNotify = notify && (p.verdict === "interested" || (p.verdict === "question" && p.via === "ia")) && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
 
       if (!dryRun) {
@@ -312,7 +318,7 @@ Deno.serve(async (req) => {
           const who = (p.m.from_name || "").trim() || (p.m.from_email || "").split("@")[0];
           const preview = p.text.replace(/\s+/g, " ").trim().slice(0, 110);
           const esPregunta = p.verdict === "question";
-          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
+          const pushRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
             body: JSON.stringify({
@@ -321,7 +327,13 @@ Deno.serve(async (req) => {
               body: preview || p.m.subject || (esPregunta ? "Te han preguntado algo" : "Nueva respuesta interesada"),
               url: "/unibox",
             }),
-          }).catch(() => { /* push is best-effort; push_notified is what prevents repeats */ });
+          }).then((r) => r.json().catch(() => ({}))).catch(() => null);
+          // Si no llegó a ningún dispositivo (el usuario aún no había activado los avisos), se
+          // libera la marca para que el aviso salga en cuanto los active. Un fallo duro la deja
+          // puesta: mejor un aviso perdido que el móvil sonando cada dos minutos.
+          if (pushRes && Number((pushRes as any).sent) === 0) {
+            await admin.from("push_notified").delete().eq("message_id", p.m.id);
+          }
         }
         notified++;
       }

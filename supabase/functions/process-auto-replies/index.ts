@@ -333,6 +333,15 @@ serve(async (req) => {
               .from("auto_reply_log").select("id").eq("inbox_message_id", msg.id).limit(1);
             if (alreadyLogged && alreadyLogged.length > 0) { stat.skipped_by_rule++; await markDone(msg.id); continue; }
 
+            // Reclamar el mensaje AHORA (update condicional): si otra pasada solapada ya lo tiene,
+            // aquí no se genera nada. Antes la marca se ponía al final, tras 20-40 s de modelo, y dos
+            // pasadas podían responder dos veces al mismo prospecto.
+            if (!dryRun) {
+              const { data: claimed } = await admin.from("inbox_messages")
+                .update({ auto_replied: true }).eq("id", msg.id).eq("auto_replied", false).select("id");
+              if (!claimed || claimed.length === 0) { stat.skipped_by_rule++; continue; }
+            }
+
             const { data: humanReply } = await admin
               .from("sent_emails").select("id")
               .eq("account_id", msg.account_id).eq("to_email", msg.from_email)

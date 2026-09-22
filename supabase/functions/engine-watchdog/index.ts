@@ -151,8 +151,12 @@ serve(async (req) => {
     const { data: accts } = await admin.from("email_accounts")
       .select("email, smtp_host, smtp_port, smtp_username, smtp_password")
       .eq("status", "connected").not("smtp_host", "is", null);
-    const acct = (accts || []).find((a: any) => a.email === "team@onepulso.online") || (accts || [])[0];
-    if (!acct?.smtp_host) return json({ ok: false, error: "No hay cuenta conectada para enviar el aviso", ...diagnostics }, 500);
+    // Sólo el buzón de la agencia: un aviso interno nunca sale por el buzón de un cliente.
+    const acct = (accts || []).find((a: any) => a.email === (Deno.env.get("ALERT_FROM") || "team@onepulso.online"));
+    if (!acct?.smtp_host) {
+      if (!body.test) { try { await admin.rpc("release_job_lock", { p_name: "engine-watchdog-alert" }); } catch { /* TTL */ } }
+      return json({ ok: false, error: "No hay cuenta conectada para enviar el aviso", ...diagnostics }, 500);
+    }
 
     const reasons: string[] = [];
     if (highFailure) reasons.push(`Los envios estan FALLANDO: ${fail20} fallidos y solo ${ok20} correctos en los ultimos 20 minutos.`);
@@ -182,6 +186,9 @@ serve(async (req) => {
       : silence ? "AVISO: el motor no esta enviando"
       : "AVISO: una cuenta de envio esta rota";
     const r = await sendMail(acct, to, subject, text);
+    // Si el aviso no salió (justo cuando IONOS falla), se suelta el candado: la pasada siguiente
+    // (15 min) vuelve a intentarlo en vez de callar una hora.
+    if (!r.ok && !body.test) { try { await admin.rpc("release_job_lock", { p_name: "engine-watchdog-alert" }); } catch { /* TTL */ } }
     return json({ ok: r.ok, alerted: r.ok, error: r.error, ...diagnostics, preview: body.test ? { subject, text } : undefined });
   } catch (e: any) {
     return json({ error: e?.message || String(e) }, 500);

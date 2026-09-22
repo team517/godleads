@@ -29,4 +29,5 @@ as $$
   order by d, sent_at desc nulls last;
 $$;
 
-grant execute on function public.resolve_sent_by_domains(uuid, text[]) to service_role, authenticated;
+revoke all on function public.resolve_sent_by_domains(uuid, text[]) from public, anon, authenticated;
+grant execute on function public.resolve_sent_by_domains(uuid, text[]) to service_role;

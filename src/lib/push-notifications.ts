@@ -89,7 +89,7 @@ async function saveSubscription(userId: string, subscription: PushSubscription):
   const deviceId = getDeviceId();
   const endpoint = subJSON.endpoint!;
 
-  await supabase.from("push_subscriptions").upsert(
+  const { error } = await supabase.from("push_subscriptions").upsert(
     {
       user_id: userId,
       endpoint,
@@ -99,6 +99,9 @@ async function saveSubscription(userId: string, subscription: PushSubscription):
     },
     { onConflict: "user_id,endpoint" }
   );
+  // Sin esta fila el servidor NO puede avisar a este móvil: el navegador queda suscrito y la
+  // pantalla decía "activadas" mientras no llegaba nada. Es un fallo, no un detalle.
+  if (error) throw new Error(error.message);
 
   // Drop this device's PREVIOUS endpoint. A phone re-subscribes whenever its push token rotates,
   // and the abandoned endpoint is a zombie: Apple still answers 201 for it and delivers nothing,

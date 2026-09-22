@@ -14,6 +14,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
 import { splitRows } from "@/lib/lead-merge";
+import { chunk } from "@/lib/bulk-apply";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 
@@ -32,6 +33,11 @@ export default function CampaignLeads({ campaignId }: Props) {
   const [realLeadCount, setRealLeadCount] = useState(0);
   const [tablePage, setTablePage] = useState(0);
   const [searchFilter, setSearchFilter] = useState("");
+  // Lo que se consulta de verdad: el texto tecleado con 300 ms de espera, para no lanzar una
+  // consulta por letra. `searchSeq` descarta la respuesta que llega tarde (una búsqueda vieja
+  // pisaba la lista de la búsqueda nueva).
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchSeq = useRef(0);
   const [loadingPage, setLoadingPage] = useState(false);
 
   const [leadListCounts, setLeadListCounts] = useState<Record<string, number>>({});
@@ -114,17 +120,30 @@ export default function CampaignLeads({ campaignId }: Props) {
     let allAccIds: string[] = (accRes.data || []).map((a: any) => a.account_id);
     const accountTags: string[] = campaignRes.data?.account_tags || [];
     if (accountTags.length > 0) {
-      const { data: tagAccounts } = await supabase
-        .from("email_accounts").select("id").eq("status", "connected").overlaps("tags", accountTags);
-      if (tagAccounts) {
+      // Paginado: la consulta se corta en 1000 filas y con muchas cuentas etiquetadas faltaban
+      // buzones (la campaña parecía tener menos cuentas de las que usa el motor).
+      for (let off = 0; ; off += 1000) {
+        const { data: tagAccounts, error } = await supabase
+          .from("email_accounts").select("id").eq("status", "connected").overlaps("tags", accountTags)
+          .order("id").range(off, off + 999);
+        if (error) { toast.error(`No se pudieron cargar las cuentas: ${error.message}`); return; }
+        if (!tagAccounts?.length) break;
         for (const ta of tagAccounts) {
           if (!allAccIds.includes(ta.id)) allAccIds.push(ta.id);
         }
+        if (tagAccounts.length < 1000) break;
       }
     }
     if (allAccIds.length > 0) {
-      const { data: accs } = await supabase.from("email_accounts").select("*").in("id", allAccIds).eq("status", "connected");
-      setAccounts(accs || []);
+      // Por tandas de 200: la URL de `.in(...)` se rompe entre 600 y 900 uuids.
+      const accs: any[] = [];
+      for (const part of chunk(allAccIds, 200)) {
+        const { data, error } = await supabase.from("email_accounts").select("*").in("id", part).eq("status", "connected");
+        // Si falla se conserva lo que ya hay: quedarse sin cuentas bloquea "Enviar ahora".
+        if (error) { toast.error(`No se pudieron cargar las cuentas: ${error.message}`); return; }
+        accs.push(...(data || []));
+      }
+      setAccounts(accs);
     } else {
       setAccounts([]);
     }
@@ -135,6 +154,7 @@ export default function CampaignLeads({ campaignId }: Props) {
   // ──────────────────────────────────────────────
   const loadPage = useCallback(async (page: number, search?: string) => {
     if (!user) return;
+    const mine = ++searchSeq.current;
     setLoadingPage(true);
     const from = page * TABLE_PAGE_SIZE;
     const to = from + TABLE_PAGE_SIZE - 1;
@@ -143,7 +163,7 @@ export default function CampaignLeads({ campaignId }: Props) {
       const q = search.trim();
       // Fetch campaign leads with join, filter by email on the leads side
       // Use campaign_leads as base to only get leads IN this campaign
-      const { data: allCl } = await supabase
+      const { data: allCl, error: searchErr } = await supabase
         .from("campaign_leads")
         .select("*, leads!inner(email, custom_fields)")
         .eq("campaign_id", campaignId)
@@ -156,6 +176,9 @@ export default function CampaignLeads({ campaignId }: Props) {
         .eq("campaign_id", campaignId)
         .ilike("leads.email", `%${q}%`);
 
+      if (mine !== searchSeq.current) return; // llegó tarde: ya se está buscando otra cosa
+      // Un fallo de la consulta NO es "no hay resultados": se conserva lo que se ve.
+      if (searchErr) { toast.error(`No se pudo buscar: ${searchErr.message}`); setLoadingPage(false); return; }
       setPageLeads(allCl || []);
       setTotalLeadCount(count || 0);
     } else {
@@ -171,6 +194,7 @@ export default function CampaignLeads({ campaignId }: Props) {
           .eq("campaign_id", campaignId),
       ]);
 
+      if (mine !== searchSeq.current) return; // llegó tarde: ya se está cargando otra página
       if (!error && data) {
         setPageLeads(data);
       }
@@ -183,16 +207,21 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   // Initial load
   useEffect(() => { loadMeta(); }, [loadMeta]);
+  // Lo tecleado se consulta 300 ms después de parar de escribir.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchFilter), 300);
+    return () => clearTimeout(t);
+  }, [searchFilter]);
   // Reset to first page when search changes
-  useEffect(() => { setTablePage(0); }, [searchFilter]);
+  useEffect(() => { setTablePage(0); }, [searchQuery]);
   // Load page whenever page/search changes or after meta
-  useEffect(() => { loadPage(tablePage, searchFilter); }, [tablePage, searchFilter, loadPage]);
+  useEffect(() => { loadPage(tablePage, searchQuery); }, [tablePage, searchQuery, loadPage]);
 
   // Refresh both meta + current page
   const refreshAll = useCallback(async () => {
     await loadMeta();
-    await loadPage(tablePage, searchFilter);
-  }, [loadMeta, loadPage, tablePage, searchFilter]);
+    await loadPage(tablePage, searchQuery);
+  }, [loadMeta, loadPage, tablePage, searchQuery]);
 
   // Memoize field columns from current page
   const fieldCols = useMemo(() => {
@@ -245,7 +274,56 @@ export default function CampaignLeads({ campaignId }: Props) {
     toast.success("Lead eliminado de la campaña");
     // Update count and refresh page without full reload
     setTotalLeadCount(c => Math.max(0, c - 1));
-    loadPage(tablePage, searchFilter);
+    loadPage(tablePage, searchQuery);
+  };
+
+  /** "Eliminar todos": quita los leads de ESTA campaña y borra de verdad sólo los que se
+   *  importaron aquí y ya no están en ninguna otra. Si algo falla se aborta: borrar a medias
+   *  con la lista incompleta se llevaba por delante leads que seguían en uso. */
+  const deleteAllCampaignLeads = async () => {
+    setDeletingBulk(true);
+    try {
+      // 1) Collect THIS campaign's lead ids first (ordered + paged: no 1000-row cap).
+      //    The old code selected every is_campaign_only lead of the USER (no campaign
+      //    filter) and bulk-deleted them all → "Eliminar todos" in campaign A wiped the
+      //    imported leads (+ their sent log and Unibox replies) of every other campaign.
+      const thisCampaignLeadIds: string[] = [];
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await supabase.from("campaign_leads").select("lead_id").eq("campaign_id", campaignId).order("lead_id").range(off, off + 999);
+        if (error) { toast.error(`No se pudieron leer los leads: ${error.message}`); return; }
+        if (!data?.length) break;
+        thisCampaignLeadIds.push(...data.map((d) => d.lead_id));
+        if (data.length < 1000) break;
+      }
+      // 2) Detach them from this campaign.
+      const { error: detachErr } = await supabase.from("campaign_leads").delete().eq("campaign_id", campaignId);
+      if (detachErr) { toast.error(`No se pudieron quitar los leads de la campaña: ${detachErr.message}`); return; }
+      // 3) Hard-delete ONLY campaign-only leads that are now orphaned (in no other campaign).
+      //    La consulta de "¿sigue en uso?" va PAGINADA: se cortaba en 1000 filas, así que un lead
+      //    que seguía en otra campaña salía como huérfano y se borraba de verdad.
+      for (const part of chunk(thisCampaignLeadIds, 200)) {
+        const used = new Set<string>();
+        for (let off = 0; ; off += 1000) {
+          const { data, error } = await supabase.from("campaign_leads").select("id, lead_id").in("lead_id", part).order("id").range(off, off + 999);
+          if (error) { toast.error(`No se pudo comprobar qué leads siguen en uso: ${error.message}`); return; }
+          if (!data?.length) break;
+          for (const r of data) used.add(r.lead_id);
+          if (data.length < 1000) break;
+        }
+        const { data: campaignOnly, error: coErr } = await supabase.from("leads").select("id").in("id", part).eq("is_campaign_only", true);
+        if (coErr) { toast.error(`No se pudieron leer los leads: ${coErr.message}`); return; }
+        const orphans = (campaignOnly || []).map((l) => l.id).filter((id) => !used.has(id));
+        if (orphans.length) {
+          const { error: delErr } = await supabase.rpc("bulk_delete_leads", { lead_ids: orphans });
+          if (delErr) { toast.error(`No se pudieron eliminar los leads: ${delErr.message}`); return; }
+        }
+      }
+      toast.success("Leads eliminados");
+      setSelectedCampaignLeads(new Set());
+    } finally {
+      setDeletingBulk(false);
+      refreshAll();
+    }
   };
 
   const toggleColumnSelection = (col: string) => {
@@ -299,7 +377,7 @@ export default function CampaignLeads({ campaignId }: Props) {
       }
       toast.success(`${selectedColumns.size} columna(s) eliminada(s)`);
       setSelectedColumns(new Set());
-      loadPage(tablePage, searchFilter);
+      loadPage(tablePage, searchQuery);
     } catch (err: any) {
       toast.error(`Error eliminando columnas: ${err.message}`);
     } finally {
@@ -331,7 +409,7 @@ export default function CampaignLeads({ campaignId }: Props) {
     setManualEmail(""); setManualFirstName(""); setManualLastName(""); setManualCompany("");
     setShowAddManual(false);
     setTotalLeadCount(c => c + 1);
-    loadPage(tablePage, searchFilter);
+    loadPage(tablePage, searchQuery);
   };
 
   const handleCsvParse = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -579,7 +657,7 @@ export default function CampaignLeads({ campaignId }: Props) {
       // Just update count + reload current page — no full reload
       setTotalLeadCount(c => c + totalAdded);
       setTablePage(0);
-      await loadPage(0, searchFilter);
+      await loadPage(0, searchQuery);
       await loadMeta();
     } catch (err: any) {
       toast.error(`Error procesando CSV: ${err.message}`);
@@ -644,7 +722,7 @@ export default function CampaignLeads({ campaignId }: Props) {
           last_sent_at: new Date().toISOString(),
           status: cl.current_step + 1 >= steps.length ? "completed" : "in_progress",
         }).eq("id", cl.id);
-        loadPage(tablePage, searchFilter);
+        loadPage(tablePage, searchQuery);
       } else {
         toast.error(`Error: ${result.error}`);
       }
@@ -679,14 +757,27 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   const startPolling = (jobId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
+    // Si el job desaparece (borrado) o la consulta falla 5 veces seguidas se para el reloj y se
+    // suelta el "running": antes la barra se quedaba girando para siempre y el bot�n bloqueado.
+    let fails = 0;
+    const stop = () => { if (pollRef.current) clearInterval(pollRef.current); pollRef.current = null; };
     pollRef.current = setInterval(async () => {
-      const { data } = await supabase
-        .from("personalization_jobs").select("completed, total, errors, status").eq("id", jobId).single();
-      if (!data) return;
+      const { data, error } = await supabase
+        .from("personalization_jobs").select("completed, total, errors, status").eq("id", jobId).maybeSingle();
+      if (error || !data) {
+        fails++;
+        if (!error || fails >= 5) {
+          stop();
+          setActiveJobId(null);
+          setPersonalizeProgress(p => ({ ...p, running: false }));
+          if (error) toast.error(`No se pudo seguir la personalizaci�n: ${error.message}`);
+        }
+        return;
+      }
+      fails = 0;
       setPersonalizeProgress({ current: data.completed || 0, total: data.total || 0, running: data.status === "running" || data.status === "pending" });
       if (data.status === "completed" || data.status === "failed") {
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = null;
+        stop();
         setActiveJobId(null);
         setPersonalizeProgress(p => ({ ...p, running: false }));
         if (data.status === "completed") {
@@ -694,7 +785,7 @@ export default function CampaignLeads({ campaignId }: Props) {
         } else {
           toast.error("La personalización falló");
         }
-        loadPage(tablePage, searchFilter);
+        loadPage(tablePage, searchQuery);
       }
     }, 3000);
   };
@@ -1283,35 +1374,7 @@ export default function CampaignLeads({ campaignId }: Props) {
                   destructive: true,
                 });
                 if (!ok) return;
-                setDeletingBulk(true);
-                // 1) Collect THIS campaign's lead ids first (ordered + paged: no 1000-row cap).
-                //    The old code selected every is_campaign_only lead of the USER (no campaign
-                //    filter) and bulk-deleted them all → "Eliminar todos" in campaign A wiped the
-                //    imported leads (+ their sent log and Unibox replies) of every other campaign.
-                const thisCampaignLeadIds: string[] = [];
-                for (let off = 0; ; off += 1000) {
-                  const { data } = await supabase.from("campaign_leads").select("lead_id").eq("campaign_id", campaignId).order("lead_id").range(off, off + 999);
-                  if (!data?.length) break;
-                  thisCampaignLeadIds.push(...data.map((d) => d.lead_id));
-                  if (data.length < 1000) break;
-                }
-                // 2) Detach them from this campaign.
-                await supabase.from("campaign_leads").delete().eq("campaign_id", campaignId);
-                // 3) Hard-delete ONLY campaign-only leads that are now orphaned (in no other campaign).
-                for (let i = 0; i < thisCampaignLeadIds.length; i += 200) {
-                  const chunk = thisCampaignLeadIds.slice(i, i + 200);
-                  const [{ data: stillUsed }, { data: campaignOnly }] = await Promise.all([
-                    supabase.from("campaign_leads").select("lead_id").in("lead_id", chunk),
-                    supabase.from("leads").select("id").in("id", chunk).eq("is_campaign_only", true),
-                  ]);
-                  const used = new Set((stillUsed || []).map((r) => r.lead_id));
-                  const orphans = (campaignOnly || []).map((l) => l.id).filter((id) => !used.has(id));
-                  if (orphans.length) await supabase.rpc("bulk_delete_leads", { lead_ids: orphans });
-                }
-                toast.success(`Leads eliminados`);
-                setSelectedCampaignLeads(new Set());
-                setDeletingBulk(false);
-                refreshAll();
+                await deleteAllCampaignLeads();
               }}
             >
               {deletingBulk ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}

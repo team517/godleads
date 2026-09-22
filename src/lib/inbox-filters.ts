@@ -155,10 +155,10 @@ export function isWarmupMessage(input: { subject?: string | null; body?: string 
   const b64 = BASE64_BODY_RE.test(b.slice(0, 600));
   if (pairs >= 2) return true;
   if (pairs >= 1 && (generic || b64)) return true;
-  // A nonsense pair in a mail that is NOT a reply to any lead/campaign of ours (linked === false)
-  // is warm-up: real prospect replies are always attached to the lead we wrote to. When the
-  // caller cannot tell (linked undefined/null) a single pair alone is NOT enough.
-  if (pairs >= 1 && input.linked === false) return true;
+  // Un solo par con guion NO basta, ni siquiera sin enlazar: "relación precio-calidad" o
+  // "video-llamada" en una respuesta real (a un envío manual, que no se enlaza) la escondían para
+  // siempre como warm-up (22-09-2026). Sin enlazar, el recuento ya corre en modo no estricto y
+  // hacen falta dos pares (arriba) o un par más otra señal.
   if (generic && b64) return true;
   return false;
 }

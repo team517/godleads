@@ -20,6 +20,11 @@ export default function Dashboard() {
   const [stats, setStats] = useState(() => ({ sent: 0, contacted: 0, replied: 0, leads: 0, accounts: 0, ...(cacheGet<any>("dash:stats") || {}) }));
   const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("dash:campaigns") || []);
   const [loading, setLoading] = useState(() => !cacheGet<any>("dash:stats"));
+  // Si la carga falla no se pintan ceros: se avisa y se ofrece reintentar. `hasData` dice si
+  // lo que se ve es de verdad (caché o una carga buena) o si no hay NADA que enseñar.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [hasData, setHasData] = useState(() => !!cacheGet<any>("dash:stats"));
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -31,7 +36,9 @@ export default function Dashboard() {
       try {
         const [statsRes, accountsRes, leadsRes, campaignsRes] = await Promise.all([
           (supabase as any).rpc("user_email_stats"),
-          supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+          // "Cuentas ACTIVAS" = buzones conectados, no todas las filas de la tabla (antes
+          // contaba también las pendientes y las que fallan al conectar).
+          supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "connected"),
           supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
           supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
         ]);
@@ -47,9 +54,11 @@ export default function Dashboard() {
         // PostgREST no "lanza": devuelve { error }. Sin esta comprobación, un token caducado
         // guardaba ceros y una lista vacía en el caché de disco y el panel seguía en blanco.
         const failed = !!(statsRes?.error || accountsRes.error || leadsRes.error || campaignsRes.error);
-        if (failed) return;
+        if (failed) { setLoadFailed(true); return; }
+        setLoadFailed(false);
         setStats(newStats);
         setCampaigns(campaignsRes.data || []);
+        setHasData(true);
         cacheSet("dash:stats", newStats);
         cacheSet("dash:campaigns", campaignsRes.data || []);
       } catch {
@@ -59,7 +68,7 @@ export default function Dashboard() {
       }
     };
     load();
-  }, [user]);
+  }, [user, reloadTick]);
 
   // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
   const responseRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
@@ -90,6 +99,14 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {loadFailed && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <span className="text-[14px] text-muted-foreground">No se pudieron cargar los datos del panel.</span>
+          <Button size="sm" variant="outline" onClick={() => setReloadTick(t => t + 1)}>Reintentar</Button>
+        </div>
+      )}
+
+      {(hasData || !loadFailed) && (
       <div className="stagger grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((stat, i) => (
           <Card key={i} className="lift">
@@ -104,6 +121,7 @@ export default function Dashboard() {
           </Card>
         ))}
       </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Today Messages */}
@@ -117,7 +135,9 @@ export default function Dashboard() {
           <CardContent>
             {campaigns.length === 0 ? (
               <p className="text-[15px] text-muted-foreground text-center py-8">
-                No tienes campañas aún. ¡Crea tu primera campaña!
+                {loadFailed && !hasData
+                  ? "No se pudieron cargar las campañas."
+                  : "No tienes campañas aún. ¡Crea tu primera campaña!"}
               </p>
             ) : (
               <div className="space-y-3">

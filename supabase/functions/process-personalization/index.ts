@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, applyMapping, generatePersonalized } from "../_shared/personalize-ai.ts";
 
@@ -9,6 +10,13 @@ const corsHeaders = {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const reqBody = await req.json().catch(() => ({}));
+  let onlyUser: string | null = null;
+  if (!cronOrServiceAuthorised(req, reqBody)) {
+    const user = await userFromRequest(req);
+    if (!user) return unauthorized(corsHeaders);
+    onlyUser = user.id; // el botón de Personalización empuja SUS trabajos, no los de otros
+  }
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
   const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -16,12 +24,14 @@ serve(async (req) => {
   try {
     // Claim ONE job: pending, or a running one that stalled (>90s) → resumable.
     const staleIso = new Date(Date.now() - 60_000).toISOString();
-    const { data: jobs } = await db
+    let jobsQuery = db
       .from("personalization_csv_jobs")
       .select("*")
       .or(`status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`)
       .order("updated_at", { ascending: true })
       .limit(1);
+    if (onlyUser) jobsQuery = jobsQuery.eq("user_id", onlyUser);
+    const { data: jobs } = await jobsQuery;
     const job = jobs?.[0];
     if (!job) return new Response(JSON.stringify({ ok: true, idle: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 

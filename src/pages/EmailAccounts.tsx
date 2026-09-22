@@ -484,11 +484,20 @@ export default function EmailAccounts() {
   const loadAccounts = async () => {
     if (!user) return;
     try {
-      const { data, error } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id).order("created_at", { ascending: false });
-      // A transient query error / timeout (common on the NANO compute tier) must NOT wipe
-      // the list — keep whatever is on screen (cache) instead of showing zero accounts.
-      if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
-      const normalized = (data || []).map((account: any) => normalizeEmailAccount(account));
+      // Por tandas de 1000: un select sin paginar se corta ahí, así que a partir del buzón 1001
+      // las cuentas simplemente no salían en pantalla (ni en los alcances "todas").
+      const all: any[] = [];
+      for (let off = 0; ; off += 1000) {
+        const { data, error } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id)
+          .order("created_at", { ascending: false }).order("id").range(off, off + 999);
+        // A transient query error / timeout (common on the NANO compute tier) must NOT wipe
+        // the list — keep whatever is on screen (cache) instead of showing zero accounts.
+        if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
+        const page = (data || []) as any[];
+        all.push(...page);
+        if (page.length < 1000) break;
+      }
+      const normalized = all.map((account: any) => normalizeEmailAccount(account));
       setAccounts(normalized);
       setLoading(false); // la lista ya está: se pinta YA, sin esperar a nada más
       cacheSet("accounts:list", normalized); // instant paint on next visit
@@ -560,14 +569,25 @@ export default function EmailAccounts() {
   const handleDeleteSavedTag = async (tagName: string) => {
     if (!user) return;
     if (!window.confirm(`¿Eliminar el tag "${tagName}"? Se quitará de todas las cuentas que lo tengan.`)) return;
-    // Remove from all accounts
+    // Remove from all accounts — contando fallos: antes se decía "eliminado" aunque el tag
+    // siguiera puesto en la mitad de las cuentas.
     const accountsWithTag = accounts.filter(a => (a.tags || []).includes(tagName));
+    let failed = 0;
     for (const account of accountsWithTag) {
       const currentTags: string[] = account.tags || [];
-      await supabase.from("email_accounts").update({ tags: currentTags.filter(t => t !== tagName) } as any).eq("id", account.id);
+      const { error } = await supabase.from("email_accounts").update({ tags: currentTags.filter(t => t !== tagName) } as any).eq("id", account.id);
+      if (error) failed++;
     }
     // Remove from saved tags
-    await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", tagName);
+    const { error: tagErr } = await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", tagName);
+    if (failed > 0 || tagErr) {
+      toast.error(tagErr
+        ? `No se pudo eliminar el tag: ${tagErr.message}`
+        : `No se pudo quitar el tag de ${failed} de ${accountsWithTag.length} cuenta(s).`);
+      loadSavedTags();
+      loadAccounts();
+      return;
+    }
     if (filterTag === tagName) setFilterTag(null);
     toast.success(`Tag "${tagName}" eliminado`);
     loadSavedTags();
@@ -582,27 +602,44 @@ export default function EmailAccounts() {
     const newName = rawNew.trim();
     if (!newName || newName === oldName) { setEditingTag(null); return; }
 
+    // Cada escritura se comprueba: un renombrado a medias (mitad de cuentas con el nombre viejo)
+    // se anunciaba igualmente como hecho.
+    let failed = 0;
+
     // 1) Cuentas con el tag viejo → sustituir por el nuevo (dedup)
     const accountsWithOld = accounts.filter(a => (a.tags || []).includes(oldName));
     for (const account of accountsWithOld) {
       const cur: string[] = account.tags || [];
       const next = Array.from(new Set(cur.map(t => (t === oldName ? newName : t))));
-      await supabase.from("email_accounts").update({ tags: next } as any).eq("id", account.id);
+      const { error } = await supabase.from("email_accounts").update({ tags: next } as any).eq("id", account.id);
+      if (error) failed++;
     }
 
     // 2) Campañas que apuntan al tag viejo → re-apuntar al nuevo (dedup)
-    const { data: camps } = await supabase.from("campaigns").select("id, account_tags").eq("user_id", user.id);
+    const { data: camps, error: campsErr } = await supabase.from("campaigns").select("id, account_tags").eq("user_id", user.id);
+    if (campsErr) failed++;
     for (const c of (camps || [])) {
       const tags: string[] = (c as any).account_tags || [];
       if (tags.includes(oldName)) {
         const next = Array.from(new Set(tags.map(t => (t === oldName ? newName : t))));
-        await supabase.from("campaigns").update({ account_tags: next } as any).eq("id", c.id);
+        const { error } = await supabase.from("campaigns").update({ account_tags: next } as any).eq("id", c.id);
+        if (error) failed++;
       }
     }
 
     // 3) Tag guardado: crear el nuevo (idempotente) + borrar el viejo
-    await supabase.from("email_tags").upsert({ user_id: user.id, name: newName }, { onConflict: "user_id,name" } as any);
-    await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", oldName);
+    const { error: upErr } = await supabase.from("email_tags").upsert({ user_id: user.id, name: newName }, { onConflict: "user_id,name" } as any);
+    const { error: delErr } = await supabase.from("email_tags").delete().eq("user_id", user.id).eq("name", oldName);
+    if (upErr || delErr) failed++;
+
+    if (failed > 0) {
+      toast.error(`No se pudo renombrar del todo: ${failed} cambio(s) fallaron. Vuelve a intentarlo.`);
+      setEditingTag(null);
+      setEditingTagValue("");
+      loadSavedTags();
+      loadAccounts();
+      return;
+    }
 
     if (filterTag === oldName) setFilterTag(newName);
     setEditingTag(null);
@@ -632,13 +669,16 @@ export default function EmailAccounts() {
 
   const handleBulkRemoveTag = async (tag: string) => {
     const selected = accounts.filter(a => selectedIds.has(a.id));
+    let failed = 0;
     for (const account of selected) {
       const currentTags: string[] = account.tags || [];
       if (currentTags.includes(tag)) {
-        await supabase.from("email_accounts").update({ tags: currentTags.filter(t => t !== tag) } as any).eq("id", account.id);
+        const { error } = await supabase.from("email_accounts").update({ tags: currentTags.filter(t => t !== tag) } as any).eq("id", account.id);
+        if (error) failed++;
       }
     }
-    toast.success(`Tag "${tag}" eliminado de ${selected.length} cuentas`);
+    if (failed > 0) toast.error(`No se pudo quitar el tag de ${failed} de ${selected.length} cuenta(s).`);
+    else toast.success(`Tag "${tag}" eliminado de ${selected.length} cuentas`);
     loadAccounts();
   };
 
@@ -824,19 +864,26 @@ export default function EmailAccounts() {
       }).filter(row => emailPattern.test(row.email) && row.imap_host && row.smtp_host);
 
       if (inserts.length === 0) { toast.error("No se encontraron cuentas válidas"); return; }
-      const { toInsert, toUpdate } = await splitNewAndExisting(inserts);
+      const { toInsert, toUpdate, error: splitErr } = await splitNewAndExisting(inserts);
+      if (splitErr) { toast.error(`No se pudo comprobar qué cuentas ya existen: ${splitErr}`); return; }
       if (toInsert.length > 0) {
         const { error } = await supabase.from("email_accounts").insert(toInsert);
         if (error) { toast.error(error.message); return; }
       }
+      let updateFailed = 0;
       for (const { id, row } of toUpdate) {
         const { email: _e, status: _s, user_id: _u, ...fields } = row as Record<string, unknown>;
-        await supabase.from("email_accounts").update(fields).eq("id", id);
+        const { error } = await supabase.from("email_accounts").update(fields).eq("id", id);
+        if (error) updateFailed++;
       }
-      toast.success(
-        `${toInsert.length} cuentas nuevas importadas` +
-        (toUpdate.length > 0 ? ` · ${toUpdate.length} ya existían y se han actualizado (sin duplicar)` : ""),
-      );
+      if (updateFailed > 0) {
+        toast.error(`${toInsert.length} cuentas nuevas importadas, pero ${updateFailed} de ${toUpdate.length} actualizaciones fallaron.`);
+      } else {
+        toast.success(
+          `${toInsert.length} cuentas nuevas importadas` +
+          (toUpdate.length > 0 ? ` · ${toUpdate.length} ya existían y se han actualizado (sin duplicar)` : ""),
+        );
+      }
       loadAccounts();
     };
     reader.readAsText(file);
@@ -859,11 +906,14 @@ export default function EmailAccounts() {
    *  Re-importing a corrected CSV must UPDATE the existing mailbox (fixing a wrong password),
    *  never create a second row for the same address — that is how the account list grew to 399
    *  duplicated addresses, each one then synced twice for nothing. Nothing is ever deleted. */
-  const splitNewAndExisting = async <T extends { email: string }>(rows: T[]) => {
+  const splitNewAndExisting = async <T extends { email: string }>(rows: T[]): Promise<{ toInsert: T[]; toUpdate: { id: string; row: T }[]; error?: string }> => {
     if (!user) return { toInsert: rows, toUpdate: [] as { id: string; row: T }[] };
     const existing = new Map<string, string>();
     for (let off = 0; ; off += 1000) {
-      const { data } = await supabase.from("email_accounts").select("id, email").eq("user_id", user.id).range(off, off + 999);
+      const { data, error } = await supabase.from("email_accounts").select("id, email").eq("user_id", user.id).order("id").range(off, off + 999);
+      // Sin el mapa COMPLETO no se sabe qué direcciones ya existen: insertar aquí crearía
+      // buzones duplicados, así que se aborta la importación en vez de adivinar.
+      if (error) return { toInsert: [], toUpdate: [], error: error.message };
       if (!data?.length) break;
       for (const a of data) existing.set(String(a.email).trim().toLowerCase(), a.id);
       if (data.length < 1000) break;
@@ -978,7 +1028,8 @@ export default function EmailAccounts() {
         status: "pending" as const,
       };
     });
-    const { toInsert, toUpdate } = await splitNewAndExisting(inserts);
+    const { toInsert, toUpdate, error: splitErr } = await splitNewAndExisting(inserts);
+    if (splitErr) { toast.error(`No se pudo comprobar qué cuentas ya existen: ${splitErr}`); setIonosImporting(false); return; }
     if (toInsert.length > 0) {
       const { error } = await supabase.from("email_accounts").insert(toInsert);
       if (error) { toast.error(error.message); setIonosImporting(false); return; }
@@ -1012,10 +1063,17 @@ export default function EmailAccounts() {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
     if (!window.confirm(`¿Estás seguro de que quieres eliminar ${count} cuenta(s)? Esta acción no se puede deshacer.`)) return;
-    // Un solo DELETE en lugar de N peticiones cuyos errores se ignoraban: así un fallo se ve
-    // y no se anuncia "eliminadas" con las cuentas todavía ahí.
-    const { error } = await supabase.from("email_accounts").delete().in("id", Array.from(selectedIds));
-    if (error) { toast.error(error.message); return; }
+    // Por tandas (la URL de `.in(...)` se rompe entre 600 y 900 uuids) y contando fallos: así un
+    // fallo se ve y no se anuncia "eliminadas" con las cuentas todavía ahí.
+    const res = await applyInChunks(
+      Array.from(selectedIds),
+      async (batch) => await supabase.from("email_accounts").delete().in("id", batch),
+    );
+    if (res.failed > 0) {
+      toast.error(`No se pudo aplicar en ${res.failed} de ${res.total} cuenta(s). Vuelve a intentarlo.`);
+      loadAccounts();
+      return;
+    }
     toast.success(`${count} cuenta(s) eliminada(s)`);
     setSelectedIds(new Set());
     loadAccounts();
@@ -1072,10 +1130,17 @@ export default function EmailAccounts() {
     setSigSaving(true);
     const htmlToSave = await hostSignatureImages(sigHtml);
     if (htmlToSave !== sigHtml) { setSigHtml(htmlToSave); toast.info("El logo de la firma se ha subido para que se vea también en las campañas"); }
-    // One query for the whole scope (up to all 84 accounts).
-    const { error } = await supabase.from("email_accounts").update({ signature_html: htmlToSave } as any).in("id", ids);
+    // Por tandas: con cientos de cuentas en el alcance, un solo `.in(...)` rompe la URL.
+    const res = await applyInChunks(
+      ids,
+      async (batch) => await supabase.from("email_accounts").update({ signature_html: htmlToSave } as any).in("id", batch),
+    );
     setSigSaving(false);
-    if (error) { toast.error(`No se pudo aplicar la firma: ${error.message}`); return; }
+    if (res.failed > 0) {
+      toast.error(`No se pudo aplicar en ${res.failed} de ${res.total} cuenta(s). Vuelve a intentarlo.`);
+      loadAccounts();
+      return;
+    }
     toast.success(sigHtml.trim()
       ? `Firma aplicada a ${ids.length} cuenta(s)`
       : `Firma eliminada de ${ids.length} cuenta(s)`);
@@ -1170,10 +1235,17 @@ export default function EmailAccounts() {
     if (bulkEditFields.has("send_start_hour") && bulkEditForm.send_start_hour) updates.send_start_hour = parseInt(bulkEditForm.send_start_hour);
     if (bulkEditFields.has("send_end_hour") && bulkEditForm.send_end_hour) updates.send_end_hour = parseInt(bulkEditForm.send_end_hour);
     if (Object.keys(updates).length === 0) { toast.error("No hay cambios que aplicar"); return; }
-    // One query for ALL selected accounts (was N per-row updates — heavy on 84 cuentas).
+    // Por tandas (25 ids, 5 a la vez) en vez de un `.in(...)` gigante que rompe la URL.
     const ids = [...selectedIds];
-    const { error } = await supabase.from("email_accounts").update(updates).in("id", ids);
-    if (error) { toast.error(`No se pudieron aplicar los cambios: ${error.message}`); return; }
+    const res = await applyInChunks(
+      ids,
+      async (batch) => await supabase.from("email_accounts").update(updates).in("id", batch),
+    );
+    if (res.failed > 0) {
+      toast.error(`No se pudo aplicar en ${res.failed} de ${res.total} cuenta(s). Vuelve a intentarlo.`);
+      loadAccounts();
+      return;
+    }
     toast.success(`${ids.length} cuenta(s) actualizadas`);
     setShowBulkEdit(false);
     setSelectedIds(new Set());

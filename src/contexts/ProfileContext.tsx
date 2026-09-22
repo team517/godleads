@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 const INFINITE_COINS_EMAILS = ["hello@onepulso.blog", "eric@dekano-core.es", "alex@vioonyx.com"];
 
@@ -39,8 +40,22 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (!user) { setLoading(false); return; }
-    const { data } = await (supabase as any).from("profiles").select("full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager, client_login_of").eq("user_id", user.id).single();
+    const COLS = "full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager, client_login_of";
+    const read = () => (supabase as any).from("profiles").select(COLS).eq("user_id", user.id).single();
+    let { data, error } = await read();
+    // Un fallo suele ser pasajero (token que se está renovando, red): se reintenta UNA vez.
+    if (error) {
+      await new Promise((r) => setTimeout(r, 1000));
+      ({ data, error } = await read());
+    }
     setLoading(false);
+    if (error) {
+      // Nunca se deja al usuario encerrado en el spinner ni se pisa el perfil que ya se tenía
+      // (ProtectedRoute decide rutas con allowed_routes: inventar "sin restricciones" aquí
+      // abriría la app entera a un cliente acotado).
+      toast.error(`No se pudo cargar tu perfil: ${error.message || error}`);
+      return;
+    }
     if (data) {
       const contactEmail = data.contact_email?.toLowerCase() ?? "";
       setProfile({
@@ -63,7 +78,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const updateProfile = useCallback(async (updates: Partial<ProfileData>) => {
     if (!user) return;
     const { infiniteCoins, ...dbUpdates } = updates as any;
-    await supabase.from("profiles").update(dbUpdates).eq("user_id", user.id);
+    const { error } = await supabase.from("profiles").update(dbUpdates).eq("user_id", user.id);
+    // Si el guardado falla, el cambio NO se pinta como si se hubiera guardado.
+    if (error) { toast.error(`No se pudo guardar: ${error.message}`); return; }
     setProfile(prev => ({ ...prev, ...updates }));
   }, [user]);
 

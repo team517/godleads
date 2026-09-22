@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -60,14 +61,27 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta forma exacta, sin markdown ni t
 {"steps":[{"subject":"...","body":"<p>...</p>","variants":[{"subject":"...","body":"<p>...</p>"}]}]}`;
 }
 
+/** Sólo webs públicas: nada de IPs, localhost ni hosts internos (SSRF), y sin seguir redirecciones. */
+function isPublicWebsite(u: URL): boolean {
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  const h = u.hostname.toLowerCase();
+  if (!h.includes(".") || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".localhost") || h === "localhost") return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":")) return false; // IPv4 / IPv6 literales
+  if (u.username || u.password || (u.port && !["80", "443"].includes(u.port))) return false;
+  return true;
+}
+
 async function fetchWebsiteText(rawUrl: string): Promise<string> {
   try {
     const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return ""; }
+    if (!isPublicWebsite(parsed)) return "";
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 12000);
     let html = "";
     try {
-      const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; OnePulsoBot/1.0)" }, signal: ctrl.signal });
+      const r = await fetch(parsed.toString(), { headers: { "User-Agent": "Mozilla/5.0 (compatible; OnePulsoBot/1.0)" }, signal: ctrl.signal, redirect: "manual" });
       if (!r.ok) return "";
       html = await r.text();
     } finally { clearTimeout(t); }
@@ -85,12 +99,12 @@ async function fetchWebsiteText(rawUrl: string): Promise<string> {
   } catch { return ""; }
 }
 
-async function callDeepSeekJson(key: string, system: string, user: string): Promise<string> {
-  const r = await fetch("https://api.deepseek.com/chat/completions", {
+async function callDeepSeekJson(key: string, system: string, user: string, baseUrl = "https://api.deepseek.com/v1", model = "deepseek-chat"): Promise<string> {
+  const r = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       max_tokens: 6000, temperature: 0.8, response_format: { type: "json_object" },
     }),
@@ -122,11 +136,11 @@ function cleanHtmlBody(s: string): string {
   return String(s || "").trim().replace(/^```(?:html)?\s*/i, "").replace(/\s*```$/i, "").trim();
 }
 
-async function callDeepSeekText(key: string, system: string, user: string): Promise<string> {
-  const r = await fetch("https://api.deepseek.com/chat/completions", {
+async function callDeepSeekText(key: string, system: string, user: string, baseUrl = "https://api.deepseek.com/v1", model = "deepseek-chat"): Promise<string> {
+  const r = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: 1200, temperature: 0.7 }),
+    body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: 1200, temperature: 0.7 }),
   });
   if (!r.ok) throw new Error(`DeepSeek ${r.status}`);
   return (await r.json()).choices?.[0]?.message?.content || "";
@@ -145,14 +159,14 @@ async function callClaudeText(key: string, system: string, user: string): Promis
 // Iteratively rewrite a too-short initial email until it reaches 160+ words. Tells the
 // model its current count and the deficit each round; stops at 160, at 4 tries, or when
 // a round makes no progress. Keeps style / vars / signature.
-async function ensure160(body: string, language: string, tone: string, useClaude: boolean, dkKey?: string, clKey?: string): Promise<string> {
+async function ensure160(body: string, language: string, tone: string, useClaude: boolean, dkKey?: string, clKey?: string, dkBase?: string, dkModel?: string): Promise<string> {
   let current = body;
   for (let attempt = 0; attempt < 3 && countWords(current) < 160; attempt++) {
     const wc = countWords(current);
     const need = Math.max(15, 172 - wc);
     const sys = `Este email de cold email tiene ${wc} palabras y es DEMASIADO CORTO. Reescríbelo en ${language} para que el cuerpo tenga ENTRE 160 y 190 palabras — MÍNIMO 160, NUNCA menos. Añade unas ${need} palabras más de VALOR REAL: más contexto general del sector, beneficios concretos, otro ángulo del caso/número, una frase más en la apertura o en el gancho. Mantén EXACTAMENTE el idioma, el tono (${tone}), la estructura en párrafos <p>, los <strong> en lo importante, TODAS las variables {{...}} tal cual, y la firma final. SIN relleno vacío, sin repetir frases, sin inventar hechos del prospect. Devuelve SOLO el HTML del cuerpo (<p>...</p>), sin comentarios ni comillas.`;
     let out = "";
-    try { out = cleanHtmlBody(useClaude ? await callClaudeText(clKey!, sys, current) : await callDeepSeekText(dkKey!, sys, current)); }
+    try { out = cleanHtmlBody(useClaude ? await callClaudeText(clKey!, sys, current) : await callDeepSeekText(dkKey!, sys, current, dkBase, dkModel)); }
     catch { break; }
     if (countWords(out) > countWords(current)) current = out; // progress → keep, loop again
     else break; // no progress → stop
@@ -202,8 +216,17 @@ serve(async (req) => {
     const skills = String(body?.skills || "").trim().slice(0, 12000);
     if (!briefing && !website) return new Response(JSON.stringify({ error: "Falta el briefing (o una web)" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
-    const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
+    // Clave de IA como en el resto de funciones: la de la plataforma para la agencia y sus
+    // clientes; los registros externos usan la SUYA (Ajustes → IA). Antes esta función gastaba la
+    // clave de la plataforma con cualquier usuario registrado.
+    const ai = await resolveAiKeyForAuth(authHeader);
+    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const byok = ai.source === "user";
+    const deepseekKey = byok ? ai.apiKey : Deno.env.get("DEEPSEEK_API_KEY");
+    const claudeKey = byok ? undefined : Deno.env.get("ANTHROPIC_API_KEY");
+    const dkBase = byok ? ai.baseUrl : undefined;
+    const dkModel = byok ? ai.model : undefined;
     if (!deepseekKey && !claudeKey) {
       return new Response(JSON.stringify({ error: "No hay clave de IA configurada" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -221,7 +244,7 @@ serve(async (req) => {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2 && steps.length === 0; attempt++) {
       try {
-        const raw = claudeKey ? await callClaudeJson(claudeKey, system, userPrompt) : await callDeepSeekJson(deepseekKey!, system, userPrompt);
+        const raw = claudeKey ? await callClaudeJson(claudeKey, system, userPrompt) : await callDeepSeekJson(deepseekKey!, system, userPrompt, dkBase, dkModel);
         steps = parseSteps(raw);
       } catch (e) { lastErr = e; }
     }
@@ -235,9 +258,9 @@ serve(async (req) => {
     // undershoot word counts, so if it's short we ask the AI to expand it. Follow-ups stay short.
     const useClaude = !!claudeKey;
     if (steps[0]) {
-      try { steps[0].body = await ensure160(steps[0].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep original */ }
+      try { steps[0].body = await ensure160(steps[0].body, language, tone, useClaude, deepseekKey, claudeKey, dkBase, dkModel); } catch { /* keep original */ }
       for (let vi = 0; vi < steps[0].variants.length; vi++) {
-        try { steps[0].variants[vi].body = await ensure160(steps[0].variants[vi].body, language, tone, useClaude, deepseekKey, claudeKey); } catch { /* keep */ }
+        try { steps[0].variants[vi].body = await ensure160(steps[0].variants[vi].body, language, tone, useClaude, deepseekKey, claudeKey, dkBase, dkModel); } catch { /* keep */ }
       }
     }
 

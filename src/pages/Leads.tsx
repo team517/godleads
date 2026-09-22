@@ -21,6 +21,7 @@ import { useVerification } from "@/contexts/VerificationContext";
 import { useSearchParams } from "react-router-dom";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { normalizeLeadQuery } from "@/lib/campaign-metrics";
+import { applyInChunks } from "@/lib/bulk-apply";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DOMAIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
@@ -61,6 +62,7 @@ export default function Leads() {
   const [searchTick, setSearchTick] = useState(0);
   const searchSeq = useRef(0);
   const [showAdd, setShowAdd] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [showList, setShowList] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [form, setForm] = useState({ email: "", first_name: "", last_name: "", company: "", list_id: "" });
@@ -213,18 +215,23 @@ export default function Leads() {
   }, [fetchUnverifiedCount]);
 
   const handleAddLead = async () => {
-    if (!user || !form.email.trim()) return;
+    // `adding` evita que un doble clic inserte el mismo lead dos veces.
+    if (!user || !form.email.trim() || adding) return;
+    const email = form.email.trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) { toast.error("Email no válido"); return; }
     const custom_fields: Record<string, string> = {};
     if (form.first_name.trim()) custom_fields.first_name = form.first_name.trim();
     if (form.last_name.trim()) custom_fields.last_name = form.last_name.trim();
     if (form.company.trim()) custom_fields.company = form.company.trim();
 
+    setAdding(true);
     const { error } = await supabase.from("leads").insert({
       user_id: user.id,
-      email: form.email.trim().toLowerCase(),
+      email,
       custom_fields,
       list_id: form.list_id || null,
     });
+    setAdding(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Lead añadido");
     setShowAdd(false);
@@ -422,7 +429,17 @@ export default function Leads() {
   const handleBulkMove = async () => {
     if (selectedLeads.size === 0) return;
     const listId = moveTargetList === "__none__" ? null : moveTargetList;
-    await supabase.from("leads").update({ list_id: listId }).in("id", Array.from(selectedLeads));
+    // Por tandas y comprobando el resultado: un fallo se anunciaba igual como "movidos".
+    const res = await applyInChunks(
+      Array.from(selectedLeads),
+      async (batch) => await supabase.from("leads").update({ list_id: listId }).in("id", batch),
+    );
+    if (res.failed > 0) {
+      toast.error(`No se pudieron mover ${res.failed} de ${res.total} lead(s). Vuelve a intentarlo.`);
+      setShowMoveDialog(false);
+      load();
+      return;
+    }
     toast.success(`${selectedLeads.size} leads movidos`);
     setSelectedLeads(new Set());
     setShowMoveDialog(false);
@@ -476,14 +493,17 @@ export default function Leads() {
       while (true) {
         let query = supabase.from("leads").select("id").eq("user_id", user!.id);
         if (activeList) query = query.eq("list_id", activeList);
-        const { data } = await query.range(from, from + batchSize - 1);
+        // `.order("id")` para que las páginas no se solapen ni se salten filas, y el error se
+        // comprueba: sin la lista completa no se puede decir "todos eliminados".
+        const { data, error } = await query.order("id").range(from, from + batchSize - 1);
+        if (error) { toast.error(`No se pudieron leer los leads: ${error.message}`); setDeleting(false); return; }
         if (!data?.length) break;
         allIds = [...allIds, ...data.map((d: any) => d.id)];
         if (data.length < batchSize) break;
         from += batchSize;
       }
 
-      if (!allIds.length) { setDeleting(false); return; }
+      if (!allIds.length) { toast.info("No hay leads que eliminar"); setDeleting(false); return; }
 
       // Delete in chunks of 100 via RPC
       for (let i = 0; i < allIds.length; i += 100) {
@@ -570,7 +590,7 @@ export default function Leads() {
                     </Select>
                   </div>
                 )}
-                <Button onClick={handleAddLead} className="w-full" disabled={!form.email.trim()} variant={form.email.trim() ? "default" : "secondary"}>Añadir</Button>
+                <Button onClick={handleAddLead} className="w-full" disabled={!form.email.trim() || adding} variant={form.email.trim() ? "default" : "secondary"}>{adding ? "Añadiendo…" : "Añadir"}</Button>
               </div>
             </DialogContent>
           </Dialog>

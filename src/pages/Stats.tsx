@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 type Daily = { day: string; label: string; full: string; envios: number; nuevos: number; followups: number; respuestas: number };
 
@@ -11,6 +12,9 @@ export default function Stats() {
   const [stats, setStats] = useState({ sent: 0, contacted: 0, delivered: 0, opened: 0, replied: 0, bounced: 0, failed: 0 });
   const [daily, setDaily] = useState<Daily[]>([]);
   const [loading, setLoading] = useState(true);
+  // Un fallo de carga NO es "aún no hay datos": se dice lo que ha pasado y se ofrece reintentar.
+  const [loadError, setLoadError] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -27,6 +31,14 @@ export default function Stats() {
           (supabase as any).rpc("user_daily_sends", { p_days: 14 }),
         ]);
         if (!alive) return;
+        // Las RPC no "lanzan": devuelven { error }. Sin esto, un token caducado pintaba ceros
+        // y la tarjeta de "aún no hay datos" como si la cuenta no hubiera enviado nunca.
+        if (statsRes?.error || dailyRes?.error) {
+          setLoadError(true);
+          toast.error(`No se pudieron cargar las estadísticas: ${statsRes?.error?.message || dailyRes?.error?.message}`);
+          return;
+        }
+        setLoadError(false);
         const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; bounced?: number; opened?: number; replied?: number; failed?: number };
         const sent = Number(s.sent || 0);
         const bounced = Number(s.bounced || 0);
@@ -59,7 +71,7 @@ export default function Stats() {
       }
     })();
     return () => { alive = false; };
-  }, [user]);
+  }, [user, reloadTick]);
 
   const pieData = [
     { name: "Entregados", value: stats.delivered || 1, color: "hsl(var(--brand-cyan))" },
@@ -123,7 +135,18 @@ export default function Stats() {
         ))}
       </div>
 
-      {stats.sent === 0 ? (
+      {loadError ? (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <p className="text-[15px] text-muted-foreground">
+              No se pudieron cargar las estadísticas.{" "}
+              <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setReloadTick(t => t + 1)}>
+                Reintentar
+              </button>
+            </p>
+          </CardContent>
+        </Card>
+      ) : stats.sent === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
             <p className="text-[15px] text-muted-foreground">Aún no hay datos de envío. Las estadísticas aparecerán cuando empieces a enviar campañas.</p>
