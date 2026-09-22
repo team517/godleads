@@ -1387,6 +1387,23 @@ serve(async (req) => {
             } catch { /* non-fatal */ }
           }
         }
+        // Empresa de un lead de CAMPAÑA sin envío que la ate (22-09-2026): mismo dominio aunque aún
+        // no le hayamos escrito, o mismo nombre con otra terminación (acme.fr ↔ acme.com). Se ata a
+        // la campaña de ese lead → sale en Campaigns y en Global y avisa si es de interés/pregunta.
+        // Sólo la campaña: ningún lead pasa a "respondido" por esto. Último recurso: nunca pisa un
+        // enlace exacto (envío o lead) ni el de un compañero al que sí escribimos.
+        const companyCampaign = new Map<string, string>();
+        {
+          const candidates = [...new Set(fromDomains)]
+            .filter((d) => d && !GENERIC_DOMAINS.test(d) && !domainSent.has(d))
+            .slice(0, 50);
+          if (candidates.length > 0) {
+            try {
+              const { data: rows } = await adminClient.rpc("resolve_lead_company_user", { p_user: account.user_id, p_domains: candidates });
+              for (const r of (rows || []) as { dom: string; campaign_id: string }[]) if (r?.dom && r.campaign_id) companyCampaign.set(r.dom, r.campaign_id);
+            } catch { /* non-fatal: sin esto el correo entra igual (Global por empresa del lead) */ }
+          }
+        }
 
         tResolve = Date.now();
         // ── Attachments → Storage ──────────────────────────────────────────
@@ -1454,7 +1471,8 @@ serve(async (req) => {
           const exactLead = leadsMap.get(fe) || null;
           const domHit = (!exactSent && !exactLead && dom) ? (domainSent.get(dom) || null) : null;
           const leadId = exactSent?.lead_id || exactLead || domHit?.lead_id || null;
-          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null) || null;
+          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
+            || (dom ? companyCampaign.get(dom) : null) || null;
           return {
             user_id: account.user_id,
             account_id: account.id,

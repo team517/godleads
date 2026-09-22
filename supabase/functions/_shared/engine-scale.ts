@@ -51,3 +51,50 @@ export function chunkIds<T>(ids: T[], size: number = IN_CHUNK): T[][] {
 export function sortBySentToday<T extends { sent_today?: number | null }>(accounts: T[]): T[] {
   return [...accounts].sort((a, b) => (a.sent_today || 0) - (b.sent_today || 0));
 }
+
+/**
+ * Medianoche de HOY en la zona horaria de la campaña, como instante ISO.
+ * Antes se usaba `new Date("YYYY-MM-DDT00:00:00")`, que el servidor (UTC) lee como medianoche
+ * UTC: para una campaña de Nueva York "hoy" empezaba a las 20:00 del día anterior y los envíos
+ * de esa tarde contaban para el día siguiente (mañana vacía y menos envíos). En Madrid/París con
+ * 9-18 no se notaba. Cambios de hora incluidos (se recalcula el desfase en el instante hallado).
+ */
+export function zonedMidnightIso(now: Date, tz: string): string {
+  const dateStr = now.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD local
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const offsetAt = (ms: number) => {
+    const p = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(new Date(ms));
+    const g = (t: string) => Number(p.find((x) => x.type === t)?.value || 0);
+    return Date.UTC(g("year"), g("month") - 1, g("day"), g("hour") % 24, g("minute"), g("second")) - ms;
+  };
+  const guess = Date.UTC(y, m - 1, d, 0, 0, 0);
+  let t = guess - offsetAt(guess);
+  t = guess - offsetAt(t); // segunda pasada: acierta aunque ese día cambie la hora
+  return new Date(t).toISOString();
+}
+
+/** Minutos de gracia: una campaña cuyo primer envío del día cae en este margen "empezó a su hora". */
+export const LATE_START_GRACE_MIN = 15;
+
+/**
+ * Tramo del día sobre el que una campaña reparte su cupo.
+ * · Empezó a su hora (o en los primeros 15 min): toda la franja, exactamente como siempre.
+ * · Se activó más tarde (p. ej. a las 13:00 con franja 9-18): desde su PRIMER envío de hoy hasta
+ *   el cierre. Así no "cree" que va retrasada y no suelta de golpe lo que tocaba desde las 9.
+ * @param firstSendMinAgo minutos desde su primer envío de hoy; null si hoy aún no ha enviado.
+ */
+export function paceWindow(totalWindowMinutes: number, elapsedWindowMinutes: number, firstSendMinAgo: number | null) {
+  const total = Math.max(1, totalWindowMinutes);
+  const elapsed = Math.max(0, Math.min(total, elapsedWindowMinutes));
+  let startMin = 0;
+  if (elapsed > LATE_START_GRACE_MIN) {
+    const startedAt = firstSendMinAgo == null ? elapsed : Math.max(0, elapsed - Math.max(0, firstSendMinAgo));
+    if (startedAt > LATE_START_GRACE_MIN) startMin = startedAt;
+  }
+  const spanMinutes = Math.max(1, total - startMin);
+  const fraction = Math.min(1, (elapsed - startMin + 1) / spanMinutes);
+  return { startMin, spanMinutes, fraction };
+}

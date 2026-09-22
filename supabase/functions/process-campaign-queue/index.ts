@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
-import { chunkIds, perTickCampaignCap, sortBySentToday } from "../_shared/engine-scale.ts";
+import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -1471,8 +1471,8 @@ serve(async (req) => {
       // Campaign daily limit check
       let todayStart: string;
       try {
-        const localDateStr = now.toLocaleDateString("en-CA", { timeZone: tz });
-        todayStart = new Date(`${localDateStr}T00:00:00`).toISOString();
+        // Medianoche en la zona de la CAMPAÑA (antes era medianoche UTC de esa fecha).
+        todayStart = zonedMidnightIso(now, tz);
       } catch {
         todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       }
@@ -1515,12 +1515,31 @@ serve(async (req) => {
       // +1: lo que "toca" al ACABAR este minuto. Sin él, en la última pasada de la ventana (17:59)
       // tocaba el 99,8 % y el día cerraba 2–20 correos por debajo de su capacidad. Hasta ahora no
       // se notaba porque el recuento de enviados se clavaba en 1.000 y el ritmo dejaba de frenar.
-      const paceFraction = Math.min(1, (elapsedWindowMinutes + 1) / totalWindowMinutes);
+      // Campaña activada a media franja (22-09-2026): el cupo se reparte desde su PRIMER envío de
+      // hoy hasta el cierre, no desde la hora de apertura. Antes, activada a las 13:00 en 9-18,
+      // "debía" ya el 44 % del día y lo soltaba de golpe (LUCY/SAMUEL/JAVI/ERIK SOFTWARE).
+      // Si empezó a su hora (primeros 15 min) el cálculo es EXACTAMENTE el de siempre.
+      let firstSendMinAgo: number | null = null;
+      if (campaignSentToday > 0 && elapsedWindowMinutes > 15) {
+        const { data: firstToday } = await adminClient
+          .from("sent_emails")
+          .select("sent_at")
+          .eq("campaign_id", campaign.id)
+          .gte("sent_at", todayStart)
+          .order("sent_at", { ascending: true })
+          .limit(1);
+        const firstMs = firstToday?.[0]?.sent_at ? Date.parse(firstToday[0].sent_at) : NaN;
+        // Sin dato fiable: como si hubiera empezado a su hora (el comportamiento de siempre).
+        firstSendMinAgo = Number.isFinite(firstMs) ? Math.floor((now.getTime() - firstMs) / 60_000) : elapsedWindowMinutes;
+      }
+      const pace = paceWindow(totalWindowMinutes, elapsedWindowMinutes, firstSendMinAgo);
+      const paceFraction = pace.fraction;
       const expectedByNow = Math.max(4, Math.ceil(campaignDailyLimit * paceFraction));
       const paceBudgetThisRun = Math.max(0, expectedByNow - campaignSentToday);
       if (paceBudgetThisRun <= 0) continue; // on pace for this hour — nothing due yet
-      // Huecos de ESTA campaña en esta pasada, según lo que sus buzones pueden enviar hoy.
-      const campaignTickCap = perTickCampaignCap(campaignDailyLimit, totalWindowMinutes);
+      // Huecos de ESTA campaña en esta pasada, según lo que sus buzones pueden enviar hoy
+      // en el tramo que le queda (toda la franja si empezó a su hora).
+      const campaignTickCap = perTickCampaignCap(campaignDailyLimit, pace.spanMinutes);
 
       // ═══ Blocklist check (load once per campaign) ═══
       // Paged: an unpaged select is silently capped at PostgREST's 1000 rows, and every hard
