@@ -28,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 import { EmailDomainHealthCard } from "@/components/settings/EmailDomainHealthCard";
 import { BlocklistCard } from "@/components/settings/BlocklistCard";
 import { AiKeyCard } from "@/components/settings/AiKeyCard";
+import { PushDeviceCard } from "@/components/settings/PushDeviceCard";
 import { PlanUsageCard } from "@/components/settings/PlanUsageCard";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
@@ -485,6 +486,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <PushDeviceCard />
           <HealthAlertsCard />
 
           <KeepSessionCard />

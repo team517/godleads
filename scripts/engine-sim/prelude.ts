@@ -17,6 +17,10 @@ class __FakeDate extends __RealDate {
 (globalThis as any).Date = __FakeDate;
 const __setClock = (iso: string) => { __fakeNow = new __RealDate(iso).getTime(); };
 
+// Puerta del cron: en la simulación siempre autorizada.
+const cronOrServiceAuthorised = (_req: Request, _body: any) => true;
+const unauthorized = (h: Record<string, string>) => new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: h });
+
 let __handler: ((req: Request) => Promise<Response>) | null = null;
 const serve = (h: (req: Request) => Promise<Response>) => { __handler = h; };
 

@@ -1060,7 +1060,31 @@ serve(async (req) => {
     // DEFAULT 1 = IONOS sees the EXACT one-at-a-time pattern it always had (zero added
     // load, provably safe). Raise via the SMTP_HOST_CONCURRENCY secret to allow a
     // gentle N concurrent per server once we've watched it behave.
-    const MAX_CONCURRENT_PER_HOST = Math.max(1, Math.min(SEND_CONCURRENCY, Number(Deno.env.get("SMTP_HOST_CONCURRENCY")) || 1));
+    let MAX_CONCURRENT_PER_HOST = Math.max(1, Math.min(SEND_CONCURRENCY, Number(Deno.env.get("SMTP_HOST_CONCURRENCY")) || 1));
+    // FRENO AUTOMÁTICO (22-09-2026): si en los últimos 10 min el SERVIDOR SMTP ha empezado a pedir
+    // calma (503 bad sequence / 421 / throttle / too many), esta pasada vuelve a UNA conexión por
+    // servidor —el patrón de siempre— hasta que se le pase. Así subir la concurrencia nunca puede
+    // desencadenar una tormenta de IONOS. Los rechazos del DESTINATARIO (550, "Recipient rejected:
+    // 451 local error") no cuentan: son del lead, no de IONOS.
+    if (MAX_CONCURRENT_PER_HOST > 1) {
+      try {
+        const { data: recentFails } = await adminClient
+          .from("sent_emails")
+          .select("error_message")
+          .eq("status", "failed")
+          .gte("created_at", new Date(Date.now() - 10 * 60_000).toISOString())
+          .limit(200);
+        const throttled = (recentFails || []).filter((r: any) => {
+          const e = String(r.error_message || "");
+          if (/^Recipient rejected:\s*(45\d|55\d)/i.test(e) && !/throttl|rate limit|too many|421/i.test(e)) return false;
+          return /\b503\b|bad sequence|\b421\b|throttl|rate limit|too many (connections|messages|recipients)|try again later/i.test(e);
+        }).length;
+        if (throttled >= 5) {
+          console.warn(`SMTP throttling detectado (${throttled} en 10 min): esta pasada usa 1 conexión por servidor.`);
+          MAX_CONCURRENT_PER_HOST = 1;
+        }
+      } catch { /* si la comprobación falla, se sigue con el valor configurado */ }
+    }
     // WALL-CLOCK DEADLINE — the real safety net. The attempt cap alone can't bound
     // a tick's duration (each attempt costs 2–15s, plus per-lead DB round-trips),
     // and an overrunning tick makes the NEXT cron fire hit the job lock and skip —

@@ -18,13 +18,29 @@ Deno.serve(async (req) => {
     // notifications to any user's devices.
     const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const auth = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const input = await req.json().catch(() => ({}));
+    let { user_id, title, body: msgBody, url, debug } = input;
     if (!svc || auth !== svc) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // Un usuario con sesión sólo puede mandarse un AVISO DE PRUEBA a sí mismo (Ajustes →
+      // Avisos de interesados). Texto fijo: nadie puede enviar avisos con contenido propio.
+      const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      let uid: string | null = null;
+      if (input?.test === true && auth && auth !== anon) {
+        const uc = createClient(Deno.env.get("SUPABASE_URL")!, anon, { global: { headers: { Authorization: `Bearer ${auth}` } } });
+        const { data } = await uc.auth.getUser();
+        uid = data?.user?.id || null;
+      }
+      if (!uid) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      user_id = uid;
+      title = "🔔 Prueba de avisos — OnePulso";
+      msgBody = "Si ves esto, los avisos de interesados llegan a este dispositivo.";
+      url = "/unibox";
+      debug = false;
     }
-
-    const { user_id, title, body: msgBody, url, debug } = await req.json();
     if (!user_id) throw new Error("user_id required");
 
     const pubKey = Deno.env.get("VAPID_PUBLIC_KEY") || "";

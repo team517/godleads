@@ -19,6 +19,8 @@ shared = "file:///" + os.path.abspath("supabase/functions/_shared").replace("\\"
 # Fuera los bordes reales: serve de Deno y el cliente de Supabase (los pone prelude.ts).
 src = "\n".join(l for l in src.split("\n") if not re.match(r'^import .*(deno\.land/std|supabase-js)', l))
 src = src.replace('"../_shared/', '"' + shared + '/')
+# La puerta del cron (cron-auth.ts) trae supabase-js: en la simulación el cron siempre está autorizado.
+src = re.sub(r'^import \{[^}]*\} from "[^"]*cron-auth\.ts";\s*$', "", src, flags=re.M)
 # El envío real queda aparcado; el motor llama al falso de prelude.ts.
 assert src.count("async function sendSmtpEmail(") == 1
 src = src.replace("async function sendSmtpEmail(", "async function __realSendSmtpEmail(")
