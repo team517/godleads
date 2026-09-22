@@ -34,6 +34,7 @@ import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
 import { isWarmupMessage, looksLikeWarmupSubject } from "../_shared/inbox-filters.ts";
+import { shouldPushReply } from "../_shared/push-rule.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -365,7 +366,16 @@ Deno.serve(async (req) => {
       // staleIds = rows pulled in by the catch-up sweep: label them, never buzz the phone for them.
       // "Pregunta" sólo avisa cuando lo ha decidido el modelo: la regla salta con un simple "?"
       // (una firma con "¿nos sigues en LinkedIn?") y con la IA caída hacía sonar el móvil sin motivo.
-      const shouldNotify = notify && (p.verdict === "interested" || (p.verdict === "question" && p.via === "ia")) && !yaEnviados.has(p.m.id) && !staleIds.has(p.m.id);
+      // AVISO SÓLO POR LO QUE ESTÁ EN "CAMPAIGNS" (22-09-2026, petición del usuario): el correo tiene
+      // que estar atado a una campaña (respuesta del lead, de un compañero de su empresa o del mismo
+      // nombre de empresa: fetch-inbox pone campaign_id en los tres casos). Lo que sólo sale en
+      // Global o en "Todos" se sigue etiquetando para el Unibox, pero NUNCA hace sonar el móvil:
+      // en 3 días 21 de 48 avisos eran de hilos sin campaña (warm-up "RE: Gym Membership Discount",
+      // respuestas a envíos hechos fuera de la plataforma).
+      const shouldNotify = shouldPushReply({
+        notify, campaignId: p.m.campaign_id, verdict: p.verdict, via: p.via,
+        alreadyPushed: yaEnviados.has(p.m.id), stale: staleIds.has(p.m.id),
+      });
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
 
       if (!dryRun) {
