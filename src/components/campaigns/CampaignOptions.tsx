@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
+import { campaignsUsingAccounts } from "@/lib/account-usage";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,6 +102,9 @@ export default function CampaignOptions({ campaignId }: Props) {
   const confirm = useConfirm();
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<any[]>([]);
+  // Buzón → nombres de las OTRAS campañas donde ya envía (directo o por etiqueta), para no
+  // repetir un buzón en dos campañas sin darse cuenta.
+  const [usedElsewhere, setUsedElsewhere] = useState<Record<string, string[]>>({});
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [stopOnReply, setStopOnReply] = useState(true);
@@ -280,7 +284,7 @@ export default function CampaignOptions({ campaignId }: Props) {
   useEffect(() => {
     const load = async () => {
       if (!user) return;
-      const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes, cliRes] = await Promise.all([
+      const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes, cliRes, otherCampRes] = await Promise.all([
         supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id).eq("status", "connected"),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
@@ -288,8 +292,21 @@ export default function CampaignOptions({ campaignId }: Props) {
         supabase.from("email_tags").select("name").eq("user_id", user.id).order("name"),
         (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
         (supabase as any).from("clients").select("id, name").eq("owner_user_id", user.id).is("archived_at", null).order("name"),
+        supabase.from("campaigns").select("id, name, status, account_tags").eq("user_id", user.id).neq("id", campaignId),
       ]);
+      const otherCampaigns = (otherCampRes.data || []) as { id: string; name: string; status: string; account_tags: string[] | null }[];
       setSavedTags((tagsRes.data || []).map((t: any) => t.name));
+      {
+        // En qué otras campañas está cada buzón: asignación directa (campaign_accounts, en tandas
+        // de 100 campañas para no pasar el límite de la URL) + por etiqueta (tags ∩ account_tags).
+        const ids = otherCampaigns.map((c) => c.id);
+        const links: { campaign_id: string; account_id: string }[] = [];
+        for (let i = 0; i < ids.length; i += 100) {
+          const { data } = await supabase.from("campaign_accounts").select("campaign_id, account_id").in("campaign_id", ids.slice(i, i + 100));
+          links.push(...((data || []) as { campaign_id: string; account_id: string }[]));
+        }
+        setUsedElsewhere(campaignsUsingAccounts((accRes.data || []) as any[], otherCampaigns, links));
+      }
       setManagers((mgrRes.data as any) || []);
       setClients((cliRes.data as any) || []);
       {
@@ -746,6 +763,14 @@ export default function CampaignOptions({ campaignId }: Props) {
                     <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
                     <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
                     {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10.5px] font-semibold">vía tag</Badge>}
+                    {(usedElsewhere[acc.id] || []).length > 0 && (
+                      <span
+                        className="truncate rounded-md bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"
+                        title={`Este buzón ya envía en: ${usedElsewhere[acc.id].join(", ")}`}
+                      >
+                        en {usedElsewhere[acc.id].join(", ")}
+                      </span>
+                    )}
                     {(acc.tags || []).length > 0 && <span className="ml-auto truncate text-[10px] text-muted-foreground">{(acc.tags || []).join(", ")}</span>}
                   </label>
                 );
