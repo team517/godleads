@@ -245,7 +245,12 @@ Deno.serve(async (req) => {
       // office subjects the sync detector used to miss; the model then read "let's confirm the
       // workshop" as Interesado and 99 phones buzzed in a week (2026-09-15). Flag them here — the
       // same detector as the sync, with the same lead/campaign exemption — and never judge them.
-      if (isWarmupMessage({ subject: m.subject, body: m.body_text, fromEmail: m.from_email, linked: !!(m.lead_id || m.campaign_id) || leadCompany.has(m.id) })) {
+      // Igual que al sincronizar: remitente desconocido + asunto con forma de hilo de pool = warm-up.
+      if (isWarmupMessage({
+        subject: m.subject, body: m.body_text, fromEmail: m.from_email,
+        linked: !!(m.lead_id || m.campaign_id) || leadCompany.has(m.id),
+        senderKnown: !!(m.lead_id || m.campaign_id || leadCompany.has(m.id)),
+      })) {
         warmupFlagged++;
         if (!dryRun) await admin.from("inbox_messages").update({ is_warmup: true }).eq("id", m.id);
         continue;

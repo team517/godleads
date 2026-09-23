@@ -1507,7 +1507,14 @@ serve(async (req) => {
             // NOTE: "References points at our own domain" is NOT a link: warm-up pool threads are
             // started by our own seed mailboxes, so they reference our domain too. Only a real
             // lead/campaign link may exempt a message from the warm-up detector.
-            is_warmup: isWarmupMessage({ subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes, linked: !!(leadId || campaignId) || leadDomainHit.has(dom) }),
+            // senderKnown: ¿sabemos algo de quien escribe? (lead exacto, envío nuestro a esa
+            // dirección o a su dominio, empresa de un lead). Si NO, un asunto con forma de hilo
+            // de pool ("RE: Yoga Class") es warm-up aunque no lleve palabra de oficina.
+            is_warmup: isWarmupMessage({
+              subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes,
+              linked: !!(leadId || campaignId) || leadDomainHit.has(dom),
+              senderKnown: !!(exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom))),
+            }),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),

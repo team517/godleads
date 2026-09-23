@@ -137,7 +137,25 @@ export function looksLikeWarmupSubject(subject: string | null | undefined): bool
   return OFFICE_WORD_RE.test(s);
 }
 
-export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null }): boolean {
+/**
+ * Asunto con FORMA de hilo de pool: inglés, 2-7 palabras con mayúscula inicial, sin nada
+ * personal (ni " - ", ni cifras, ni acentos, ni "?"). Es looksLikeWarmupSubject SIN exigir
+ * la palabra de oficina: "Yoga Class", "New Hire", "Trip to Italy" o "Coffee Meetup" no la
+ * llevan y se colaban. Sólo se usa cuando el remitente es DESCONOCIDO (ni lead, ni empresa
+ * de un lead, ni nadie a quien hayamos escrito), así que una respuesta real nunca cae aquí:
+ * medido el 23-09-2026 sobre 45 dias, 469 correos, 0 con contacto previo nuestro.
+ */
+export function looksLikeGenericEnglishSubject(subject: string | null | undefined): boolean {
+  const s = String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
+  if (!s || s.length > 70) return false;
+  if (/ - |[0-9@?|¿!€$%]/.test(s) || /[^\x00-\x7F]/.test(s)) return false;
+  if (!/^[A-Za-z][A-Za-z' :-]*$/.test(s) || (s.match(/:/g) || []).length > 1) return false;
+  const words = s.replace(/:/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 7) return false;
+  return words.every((w) => /^[A-Z][a-z']*(-[A-Z][a-z']*)?$/.test(w) || /^[A-Z]{2,3}$/.test(w) || /^(on|and|for|of|the|in|to|a|an|with|at|from|vs)$/i.test(w));
+}
+
+export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null; senderKnown?: boolean | null }): boolean {
   const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
   // Our OWN seed mailboxes are warm-up whatever they write, and an explicit marker is definitive.
   if (from && input.ownMailboxes && input.ownMailboxes.has(from)) return true;
@@ -149,12 +167,23 @@ export function isWarmupMessage(input: { subject?: string | null; body?: string 
   if (input.linked === true) return false;
   // Not linked + a generic English office subject = a warm-up pool thread.
   if (looksLikeWarmupSubject(s)) return true;
+  // Sin enlazar y de un remitente que NO conocemos de nada (ni lead, ni su empresa, ni nadie a
+  // quien hayamos escrito): basta con que el asunto tenga la FORMA del pool. Así caen "Yoga
+  // Class", "New Hire" o "Coffee Meetup", que no llevan palabra de oficina. Si senderKnown no
+  // se pasa (undefined) no se aplica nada: el comportamiento de siempre.
+  if (input.senderKnown === false && looksLikeGenericEnglishSubject(s)) return true;
   if (hasWarmupCodes(s, b)) return true;
   const pairs = warmupPairCount(s + " " + b, input.linked !== false);
   const generic = WARMUP_SUBJECT_RE.test(s.trim());
   const b64 = BASE64_BODY_RE.test(b.slice(0, 600));
   if (pairs >= 2) return true;
   if (pairs >= 1 && (generic || b64)) return true;
+  // Remitente DESCONOCIDO (ni lead, ni su empresa, ni nadie a quien hayamos escrito) + un solo par
+  // sin sentido metido en mitad de la frase ("teeth-agree", "daily-honor"): es la marca del pool de
+  // calentamiento. Medido el 23-09-2026 sobre 45 dias y 4.770 correos: 313 casos, ninguno con
+  // pinta de respuesta real. Con remitente conocido sigue haciendo falta un segundo indicio, para
+  // no esconder un "relación precio-calidad" de una respuesta de verdad.
+  if (input.senderKnown === false && pairs >= 1) return true;
   // Un solo par con guion NO basta, ni siquiera sin enlazar: "relación precio-calidad" o
   // "video-llamada" en una respuesta real (a un envío manual, que no se enlaza) la escondían para
   // siempre como warm-up (22-09-2026). Sin enlazar, el recuento ya corre en modo no estricto y
