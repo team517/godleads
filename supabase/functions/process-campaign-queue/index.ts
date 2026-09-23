@@ -636,7 +636,10 @@ async function sendSmtpEmail(
       opts.textOnly ? wrapPlainTextNaturally(removeUrlsAndTracking(htmlToPlainText(normalizedBody))) : wrapPlainTextNaturally(htmlToPlainText(fullHtml)),
       // No "--" signature delimiter: Gmail treats it as a sig boundary and collapses
       // everything after it into the "•••" (show trimmed content) pill.
-      plainSignature || "",
+      // SÓLO en modo "solo texto": en modo HTML la firma YA va dentro de fullHtml, y añadirla
+      // aquí la repetía DOS VECES en la parte de texto (visto en el test de cable el 23-09-2026;
+      // 143 buzones tienen firma). Texto y HTML deben decir exactamente lo mismo.
+      opts.textOnly ? (plainSignature || "") : "",
     ]
       .filter(Boolean)
       .join("\n\n");
