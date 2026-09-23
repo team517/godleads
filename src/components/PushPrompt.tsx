@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { isPushSupported, getPushPermission, subscribeToPush } from "@/lib/push-notifications";
+import { isIosDevice, pushOfferState, type PushOffer } from "@/lib/push-offer";
 
 const SNOOZE_KEY = "push-prompt-snoozed-until";
 const SNOOZE_DAYS = 7;
@@ -20,32 +21,39 @@ export function isStandalone(): boolean {
 }
 
 /**
- * Asks to turn on notifications the first time the app is opened from the home screen.
+ * Ofrece al cliente activar los avisos de interesados y preguntas.
  *
- * It only appears where it can actually work — installed, push supported, permission still
- * undecided — because a browser tab on iOS cannot subscribe at all, and prompting there would
- * just be noise. Dismissing snoozes it for a week instead of nagging on every launch.
+ * Sale donde puede funcionar: en el navegador (ordenador y Android) y en la app instalada. En
+ * iPhone dentro de una pestaña no se puede suscribir, así que en vez de callarse explica cómo
+ * instalarla. Quien lo cierra no lo vuelve a ver en una semana, y a quien ya los tiene (o los
+ * ha bloqueado en el navegador) no se le molesta. La decisión está en pushOfferState.
  */
 export function PushPrompt() {
   const { user } = useAuth();
-  const [show, setShow] = useState(false);
+  const [offer, setOffer] = useState<PushOffer>("hidden");
   const [busy, setBusy] = useState(false);
+  const show = offer !== "hidden";
 
   useEffect(() => {
-    if (!user || !isPushSupported() || !isStandalone()) return;
-    const snoozedUntil = Number(localStorage.getItem(SNOOZE_KEY) || 0);
-    if (Date.now() < snoozedUntil) return;
+    if (!user) return;
     let alive = true;
-    getPushPermission().then((perm) => {
-      // "granted" → already on. "denied" → only the OS settings can undo it, so never ask.
-      if (alive && perm === "default") setTimeout(() => alive && setShow(true), 1500);
-    });
+    const supported = isPushSupported();
+    const ios = isIosDevice(navigator.userAgent, navigator.maxTouchPoints || 0);
+    const snoozedUntil = Number(localStorage.getItem(SNOOZE_KEY) || 0);
+    // La decisión vive en pushOfferState (probada aparte): ofrecer también en el navegador, no
+    // sólo con la app instalada — así lo ve cualquier cliente, no sólo quien la instaló.
+    const decide = (perm: NotificationPermission | "unknown") => {
+      const next = pushOfferState({ supported, permission: perm, standalone: isStandalone(), isIos: ios, snoozedUntil });
+      if (alive && next !== "hidden") setTimeout(() => alive && setOffer(next), 1500);
+    };
+    if (supported) getPushPermission().then(decide);
+    else decide("unknown");
     return () => { alive = false; };
   }, [user]);
 
   const snooze = () => {
     localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_DAYS * 86400_000));
-    setShow(false);
+    setOffer("hidden");
   };
 
   const enable = async () => {
@@ -54,8 +62,8 @@ export function PushPrompt() {
     try {
       const ok = await subscribeToPush(user.id);
       if (ok) {
-        toast.success("Notificaciones activadas — te avisaremos de cada interesado");
-        setShow(false);
+        toast.success("Avisos activados — te avisamos de cada interesado y de cada pregunta");
+        setOffer("hidden");
       } else {
         // Permission denied, or the browser refused the subscription.
         toast.error("No se pudieron activar. Revisa los permisos de notificaciones del navegador.");
@@ -78,9 +86,11 @@ export function PushPrompt() {
             <Bell className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-sm text-foreground">Avisos de leads interesados</p>
+            <p className="font-semibold text-sm text-foreground">Avisos de interesados y preguntas</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Te avisamos en el móvil en cuanto un lead responda con interés, aunque tengas la app cerrada.
+              {offer === "install"
+                ? "En iPhone: toca Compartir y «Añadir a pantalla de inicio». Abre la app desde el icono y podrás activarlos."
+                : "Te avisamos en cuanto un lead responda con interés o con una pregunta, aunque tengas la plataforma cerrada."}
             </p>
           </div>
           <button
@@ -93,11 +103,13 @@ export function PushPrompt() {
           </button>
         </div>
         <div className="mt-3 flex gap-2">
-          <Button size="sm" className="flex-1" onClick={enable} disabled={busy}>
-            {busy ? "Activando…" : "Activar notificaciones"}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={snooze} disabled={busy}>
-            Ahora no
+          {offer === "ask" && (
+            <Button size="sm" className="flex-1" onClick={enable} disabled={busy}>
+              {busy ? "Activando…" : "Activar avisos"}
+            </Button>
+          )}
+          <Button size="sm" variant={offer === "ask" ? "ghost" : "default"} className={offer === "ask" ? "" : "flex-1"} onClick={snooze} disabled={busy}>
+            {offer === "ask" ? "Ahora no" : "Entendido"}
           </Button>
         </div>
       </div>
