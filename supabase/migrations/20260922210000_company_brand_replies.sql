@@ -19,8 +19,13 @@ $$;
 
 -- Para cada dominio dado: la campaña de la empresa (prioridad: mismo dominio con lead en campaña
 -- → mismo nombre con envío hecho → mismo nombre con lead en campaña). Campañas activas primero.
-create or replace function public.resolve_lead_company_user(p_user uuid, p_domains text[])
-returns table(dom text, campaign_id uuid, how text)
+drop function if exists public.resolve_lead_company_user(uuid, text[]);
+drop function if exists public.resolve_lead_company_user(uuid, text[], timestamptz);
+-- p_before (23-09-2026): una respuesta NUNCA pertenece a una campaña creada DESPUÉS de que llegara.
+-- Sin esta guarda, una campaña nueva con leads antiguos se quedaba con respuestas de meses atrás
+-- (CHIPSFINDER spain (copia), creada el 22-09, salía con 496 respuestas desde el 2 de julio).
+create or replace function public.resolve_lead_company_user(p_user uuid, p_domains text[], p_before timestamptz default now())
+returns table(dom text, campaign_id uuid, how text, campaign_created_at timestamptz)
 language sql stable security definer set search_path = public as $$
   with q as (
     select distinct lower(x) as d, public.domain_brand(lower(x)) as b
@@ -35,22 +40,22 @@ language sql stable security definer set search_path = public as $$
     from q
     join public.leads l on l.user_id = p_user and lower(split_part(l.email, '@', 2)) = q.d
     join public.campaign_leads cl on cl.lead_id = l.id
-    join public.campaigns c on c.id = cl.campaign_id and c.user_id = p_user
+    join public.campaigns c on c.id = cl.campaign_id and c.user_id = p_user and c.created_at <= p_before
     union all
     select q.d, s.campaign_id, 2, c.status = 'active', c.created_at, 'nombre-envio'
     from q
     join public.sent_emails s on s.user_id = p_user and q.b is not null
       and public.domain_brand(lower(split_part(s.to_email, '@', 2))) = q.b
-    join public.campaigns c on c.id = s.campaign_id and c.user_id = p_user
+    join public.campaigns c on c.id = s.campaign_id and c.user_id = p_user and c.created_at <= p_before
     union all
     select q.d, cl.campaign_id, 3, c.status = 'active', c.created_at, 'nombre-lead'
     from q
     join public.leads l on l.user_id = p_user and q.b is not null
       and public.domain_brand(lower(split_part(l.email, '@', 2))) = q.b
     join public.campaign_leads cl on cl.lead_id = l.id
-    join public.campaigns c on c.id = cl.campaign_id and c.user_id = p_user
+    join public.campaigns c on c.id = cl.campaign_id and c.user_id = p_user and c.created_at <= p_before
   )
-  select distinct on (d) d, campaign_id, how
+  select distinct on (d) d, campaign_id, how, created_at
   from cand
   where d not in (select d from own)
     -- Por NOMBRE (otra terminación) nunca desde subdominios de envío masivo: news.acme.com es su
@@ -59,8 +64,8 @@ language sql stable security definer set search_path = public as $$
     and public.domain_brand(d) is not null  -- nunca correo gratuito ni nombres genéricos
   order by d, pri, act desc, created_at desc;
 $$;
-revoke all on function public.resolve_lead_company_user(uuid, text[]) from public, anon, authenticated;
-grant execute on function public.resolve_lead_company_user(uuid, text[]) to service_role;
+revoke all on function public.resolve_lead_company_user(uuid, text[], timestamptz) from public, anon, authenticated;
+grant execute on function public.resolve_lead_company_user(uuid, text[], timestamptz) to service_role;
 -- Índices (creados en vivo con CONCURRENTLY, uno por archivo):
 --   create index concurrently if not exists idx_se_user_brand on public.sent_emails (user_id, public.domain_brand(lower(split_part(to_email, '@', 2))));
 --   create index concurrently if not exists idx_leads_user_brand on public.leads (user_id, public.domain_brand(lower(split_part(email, '@', 2))));

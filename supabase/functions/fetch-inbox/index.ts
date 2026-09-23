@@ -1392,7 +1392,7 @@ serve(async (req) => {
         // la campaña de ese lead → sale en Campaigns y en Global y avisa si es de interés/pregunta.
         // Sólo la campaña: ningún lead pasa a "respondido" por esto. Último recurso: nunca pisa un
         // enlace exacto (envío o lead) ni el de un compañero al que sí escribimos.
-        const companyCampaign = new Map<string, string>();
+        const companyCampaign = new Map<string, { id: string; created: number }>();
         {
           const candidates = [...new Set(fromDomains)]
             .filter((d) => d && !GENERIC_DOMAINS.test(d) && !domainSent.has(d))
@@ -1400,7 +1400,11 @@ serve(async (req) => {
           if (candidates.length > 0) {
             try {
               const { data: rows } = await adminClient.rpc("resolve_lead_company_user", { p_user: account.user_id, p_domains: candidates });
-              for (const r of (rows || []) as { dom: string; campaign_id: string }[]) if (r?.dom && r.campaign_id) companyCampaign.set(r.dom, r.campaign_id);
+              for (const r of (rows || []) as { dom: string; campaign_id: string; campaign_created_at: string }[]) {
+                if (!r?.dom || !r.campaign_id) continue;
+                const created = Date.parse(r.campaign_created_at || "");
+                companyCampaign.set(r.dom, { id: r.campaign_id, created: Number.isFinite(created) ? created : 0 });
+              }
             } catch { /* non-fatal: sin esto el correo entra igual (Global por empresa del lead) */ }
           }
         }
@@ -1472,7 +1476,13 @@ serve(async (req) => {
           const domHit = (!exactSent && !exactLead && dom) ? (domainSent.get(dom) || null) : null;
           const leadId = exactSent?.lead_id || exactLead || domHit?.lead_id || null;
           const campaignId = exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
-            || (dom ? companyCampaign.get(dom) : null) || null;
+            // Una respuesta NUNCA es de una campaña creada DESPUÉS de que llegara (23-09-2026).
+            || (() => {
+              const hit = dom ? companyCampaign.get(dom) : null;
+              if (!hit) return null;
+              const when = Date.parse(parsedDate);
+              return (Number.isFinite(when) && hit.created > when) ? null : hit.id;
+            })() || null;
           return {
             user_id: account.user_id,
             account_id: account.id,
