@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { sentBodyHtml } from "@/lib/sent-body";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -230,7 +231,7 @@ export default function CampaignSentLog({ campaignId }: Props) {
                     <p className="text-xs font-medium text-muted-foreground mb-1">Mensaje</p>
                     <div
                       className="text-sm rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 [color-scheme:light] [&_a]:text-blue-700 [&_a]:underline prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodies[email.id] ?? email.body ?? "") }}
+                      dangerouslySetInnerHTML={{ __html: sentBodyHtml(bodies[email.id] ?? email.body) }}
                     />
                     {bodies[email.id] === undefined && email.body == null && (
                       <p className="mt-1 text-xs text-muted-foreground">Cargando el mensaje…</p>

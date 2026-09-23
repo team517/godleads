@@ -1,4 +1,5 @@
 import { isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
+import { sentBodyHtml } from "@/lib/sent-body";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { classifyMessage as classifyIntent } from "@/lib/classify";
@@ -3949,7 +3950,7 @@ export default function Unibox() {
                               {isSent ? (
                                 <div
                                   className={`${MAIL_PAPER} ${MAIL_PROSE}`}
-                                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(tm.body || "") }}
+                                  dangerouslySetInnerHTML={{ __html: sentBodyHtml(tm.body) }}
                                 />
                               ) : (translatedBody && tm.id === selected.id) ? (
                                 // Show the Spanish translation IN PLACE of this message's body.

@@ -161,8 +161,18 @@ const casos: Case[] = [
     },
   },
   {
-    name: "6) campaña de solo texto", subject: "Sin enlaces", html: BODY, opts: { firstName: "María", textOnly: true },
-    esperar: (t, p) => { if (!/Content-Type: text\/plain/i.test(t)) p.push("la campaña de solo texto no sale como texto"); },
+    // Seguimiento REAL de una campaña "solo texto" (CHIPSFINDER FRANCE, paso 2): tiene que llegar
+    // con sus párrafos separados, no como un ladrillo de texto seguido.
+    name: "6) seguimiento de campana de solo texto", subject: "Une reference difficile a trouver ?",
+    html: "Bonjour Oceane,\n\nJe voulais simplement revenir vers vous au cas ou mon precedent message se serait perdu dans votre boite de reception.\n\nNous travaillons actuellement avec plusieurs entreprises similaires a Bcauto Encheres et nous les aidons a trouver des composants electroniques.\n\nBien cordialement,\nJohn\nChipsFinder",
+    opts: { firstName: "John", textOnly: true, inReplyTo: "<20260922.101010.abcdefghij.klmnop@onepulso-lead.es>", references: "<20260922.101010.abcdefghij.klmnop@onepulso-lead.es>" },
+    esperar: (t, p) => {
+      if (!/Content-Type: text\/plain/i.test(t)) p.push("la campana de solo texto no sale como texto");
+      const cuerpo = t.slice(t.indexOf("\r\n\r\n") + 4).replace(/=\r\n/g, "");
+      const parrafos = cuerpo.split("\r\n\r\n").filter((x) => x.trim().length > 0).length;
+      if (parrafos < 4) p.push(`el seguimiento llega con ${parrafos} parrafo(s): se pierden los saltos`);
+      if (cuerpo.indexOf("Bien cordialement,\r\nJohn\r\nChipsFinder") < 0) p.push("la despedida pierde sus saltos de linea");
+    },
   },
 ];
 
