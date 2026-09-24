@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, htmlToPlainText, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { copiarAEnviados } from "../_shared/imap-append.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -242,7 +243,7 @@ async function sendSmtpEmail(
   subject: string,
   body: string,
   opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; quoteHtml?: string; quoteHeader?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
-): Promise<{ ok: boolean; error?: string; messageId?: string }> {
+): Promise<{ ok: boolean; error?: string; messageId?: string; raw?: string }> {
   try {
     const endpoint = normalizeSmtpEndpoint(host, port);
     let conn: Deno.Conn;
@@ -295,6 +296,7 @@ async function sendSmtpEmail(
     const fromHeader = formatMailbox(opts?.fromName, from);
     const messageId = opts?.messageId || generateMessageId(fromDomain);
 
+    let rawEnviado = "";
     const buildMessage = () => {
       const normalizedBody = sanitizeHtmlForDelivery(body);
       // Per-account signature (HTML) appended BELOW the message body. Sanitized like
@@ -469,6 +471,7 @@ async function sendSmtpEmail(
       }
       // Dot-stuff content, then append DATA terminator
       const content = msgLines.join("\r\n");
+      rawEnviado = content;   // el mismo correo, sin el punto final, para copiarlo a "Enviados"
       return dotStuff(content) + "\r\n.\r\n";
     };
 
@@ -548,7 +551,7 @@ async function sendSmtpEmail(
         const sent = /^250[ -]/m.test(dataResp);
         try { await sendTls("QUIT"); } catch {}
         try { conn.close(); } catch {}
-        return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
+        return sent ? { ok: true, messageId, raw: rawEnviado } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
     }
 
     await send(`EHLO ${from.split("@")[1] || "localhost"}`);
@@ -577,7 +580,7 @@ async function sendSmtpEmail(
         const sent = /^250[ -]/m.test(dataResp);
     try { await send("QUIT"); } catch {}
     try { conn.close(); } catch {}
-    return sent ? { ok: true, messageId } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
+    return sent ? { ok: true, messageId, raw: rawEnviado } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `SMTP error: ${message}` };
@@ -866,6 +869,21 @@ serve(async (req) => {
         smtp_message_id: result.messageId || resolvedMessageId || null,
         forwarded_from: isForward && forwarded_from ? String(forwarded_from) : null,
       });
+
+      // Copia en la carpeta "Enviados" del buzón: así quien abra esa cuenta desde Outlook, el
+      // móvil o el correo de IONOS ve lo que se respondió desde el Unibox (24-09-2026). Nunca
+      // hace fallar el envío: el correo ya salió, esto es sólo la copia.
+      if (result.ok && result.raw && account.imap_host && account.imap_password) {
+        try {
+          const copia = await copiarAEnviados(
+            { host: account.imap_host, port: account.imap_port, user: account.imap_username || account.email, pass: account.imap_password },
+            result.raw,
+          );
+          if (!copia.ok) console.warn(`No se pudo copiar a Enviados (${account.email}): ${copia.motivo} ${copia.detalle || ""}`);
+        } catch (e) {
+          console.warn(`No se pudo copiar a Enviados (${account.email}):`, (e as Error).message);
+        }
+      }
 
       if (result.ok && campaign_id) {
         // Only CAMPAIGN sends consume the daily quota. A manual Unibox reply/forward
