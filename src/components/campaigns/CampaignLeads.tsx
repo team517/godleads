@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -532,7 +533,9 @@ export default function CampaignLeads({ campaignId }: Props) {
           const obj: Record<string, string> = {};
           Object.entries(row).forEach(([key, value]) => {
             const normalized = normalizeHeader(key);
-            if (allowedKeys.has(normalized)) obj[normalized] = value;
+            // Tildes rotas del CSV ("diseÃ±o y comunicaciÃ³n"): se arreglan AL IMPORTAR, porque
+            // company_name acaba dentro del correo del cliente (24-09-2026: 20 leads así).
+            if (allowedKeys.has(normalized)) obj[normalized] = repairMojibakeBytes(value);
           });
           return obj;
         }).filter(r => r.email?.trim());
