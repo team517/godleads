@@ -255,7 +255,7 @@ const IMPORTANT_LABEL = "Importante";
 
 /** Columns the list/search/thread need (NOT body_html — fetched only when a message
  *  is opened). Typed loosely because the generated types.ts is stale. */
-const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain, is_warmup";
+const INBOX_LIST_COLS = "id, user_id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, dedupe_hash, ref_chain, is_warmup, to_emails, cc_emails";
 
 /** Rejoin words that a sender's client hard-wrapped MID-WORD (e.g. "respo\nnsable de…"
  *  "explic\nar", "ofre\ncéis"). We only act when the message is CLEARLY wrapped that
@@ -1245,6 +1245,48 @@ function AttachmentCard({ att }: { att: ParsedAttachment }) {
  *  name-only chip. */
 /** Mensajes a los que ya se les ha preguntado por sus adjuntos en esta sesión. */
 const attachmentsAsked = new Set<string>();
+
+/** A quién más iba el correo: los demás destinatarios del "Para" y las copias.
+ *  Nuestro propio buzón no se repite, porque ya se sabe que es para nosotros. Sin esta línea,
+ *  una respuesta que sumaba a un compañero ("ANDRES LOSADA <andreslostor@gmail.com>") parecía
+ *  dirigida sólo a nosotros y nadie se enteraba de que había alguien más (24-09-2026). */
+export function otrosDestinatarios(to: string | null | undefined, cc: string | null | undefined, cuenta: string | null | undefined) {
+  const mio = String(cuenta || "").toLowerCase().trim();
+  // Se parte por comas, pero NO por las que van dentro de comillas o de <…>:
+  // '"Losada, Andres" <andres@x.com>' es UN destinatario, no dos.
+  const partir = (v: string | null | undefined) => {
+    const texto = String(v || "");
+    const trozos: string[] = [];
+    let actual = "", comillas = false, angulo = false;
+    for (const ch of texto) {
+      if (ch === '"') comillas = !comillas;
+      else if (ch === "<") angulo = true;
+      else if (ch === ">") angulo = false;
+      if (ch === "," && !comillas && !angulo) { trozos.push(actual); actual = ""; continue; }
+      actual += ch;
+    }
+    trozos.push(actual);
+    return trozos
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .filter((x) => {
+        const dir = (x.match(/<([^>]+)>/)?.[1] || x).toLowerCase().trim();
+        return dir !== mio;
+      });
+  };
+  return { para: partir(to), copia: partir(cc) };
+}
+
+function Destinatarios({ m, cuenta }: { m: { to_emails?: string | null; cc_emails?: string | null }; cuenta?: string | null }) {
+  const { para, copia } = otrosDestinatarios(m.to_emails, m.cc_emails, cuenta);
+  if (para.length === 0 && copia.length === 0) return null;
+  return (
+    <span className="text-xs text-muted-foreground truncate" title={[...para, ...copia].join(", ")}>
+      {para.length > 0 && <>· también para {para.join(", ")}</>}
+      {copia.length > 0 && <> · en copia {copia.join(", ")}</>}
+    </span>
+  );
+}
 
 function AttachmentChips({ bodyText, bodyHtml, stored, messageId }: { bodyText?: string | null; bodyHtml?: string | null; stored?: StoredAttachment[] | null; messageId?: string | null }) {
   // La sincronización sólo baja los primeros 256 KB de cada correo, así que un PDF grande puede
@@ -3942,6 +3984,7 @@ export default function Unibox() {
                                   {!isSent && (
                                     <span className="text-xs text-muted-foreground truncate">&lt;{tm.from_email}&gt;</span>
                                   )}
+                                  {!isSent && <Destinatarios m={tm} cuenta={accountEmailMap[tm.account_id]} />}
                                 </div>
                               </div>
                               <span className="text-[11px] text-muted-foreground whitespace-nowrap flex-shrink-0">{dateStr}</span>
@@ -3981,6 +4024,7 @@ export default function Unibox() {
                           <div className="flex-1 min-w-0">
                             <span className="font-semibold text-sm text-foreground">{selected.from_name || selected.from_email?.split("@")[0]}</span>
                             <span className="text-xs text-muted-foreground ml-2">&lt;{selected.from_email}&gt;</span>
+                            <Destinatarios m={selected} cuenta={accountEmailMap[selected.account_id]} />
                           </div>
                           <span className="text-[11px] text-muted-foreground">
                             {new Date(selected.received_at).toLocaleString("es", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}

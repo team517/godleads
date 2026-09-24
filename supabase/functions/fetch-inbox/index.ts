@@ -821,6 +821,10 @@ async function fetchImapMessages(
         const msgIdMatch: RegExpMatchArray | null = msgIdInner ? ([msgIdInner[0], msgIdInner[1]] as unknown as RegExpMatchArray) : null;
         // Thread chain: References + In-Reply-To of the received message, so a
         // reply can carry the FULL chain and thread perfectly in every client.
+        // Destinatarios: "Para" y "Cc". Sin esto no se veía a quién más escribían (24-09-2026:
+        // una respuesta sumaba a un compañero en el "Para" y en el Unibox no aparecía por ningún lado).
+        const toStr = headerVal(/^To:\s*(.+(?:\r?\n[ \t]+.+)*)/im).slice(0, 2000);
+        const ccStr = headerVal(/^Cc:\s*(.+(?:\r?\n[ \t]+.+)*)/im).slice(0, 2000);
         const referencesStr = headerVal(/References:\s*(<[^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);
         const inReplyToStr = headerVal(/In-Reply-To:\s*(<[^\r\n>]+>)/i);
         const refChain = Array.from(new Set(
@@ -901,6 +905,8 @@ async function fetchImapMessages(
             // cambiaba de dedupe_hash en cada pasada y se insertaba (y notificaba) una y otra vez.
             date: dateMatch ? dateMatch[1].trim() : "1970-01-01T00:00:00.000Z",
             ref_chain: sanitizeForPostgres(refChain),
+            to_emails: sanitizeForPostgres(decodeMimeWords(toStr)),
+            cc_emails: sanitizeForPostgres(decodeMimeWords(ccStr)),
             // Los logos de la firma NO son archivos adjuntos: colgarlos como tales llenaba
             // el Unibox de iconos de 38x38 (facebook.png, instagram.png...) en cada correo.
             attachments: extractAttachments(rawBody).filter((a) => !looksInline(a)),
@@ -1523,6 +1529,10 @@ serve(async (req) => {
             // is what lets replies carry the FULL thread chain in References, so they land in the
             // right conversation even when the sender keeps changing the subject.
             ref_chain: msg.ref_chain || null,
+            // A quién más iba el correo: sin esto, una respuesta que suma a un compañero en el
+            // "Para" parecía dirigida sólo a nuestro buzón (24-09-2026).
+            to_emails: (msg as unknown as { to_emails?: string }).to_emails || null,
+            cc_emails: (msg as unknown as { cc_emails?: string }).cc_emails || null,
           };
         });
 
