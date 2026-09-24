@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useReducer } from "react";
+import { textToHtmlBody, htmlToPlainText } from "@/lib/mime-headers";
 import { replaceVariables } from "@/lib/personalize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -800,6 +801,14 @@ export default function CampaignSequences({ campaignId }: Props) {
     };
   };
 
+  /** Vista previa con párrafos de verdad: convierte el texto (o respeta el HTML) y sustituye
+   *  las variables por datos de ejemplo. Antes se pintaba con whitespace-pre-wrap, y un cuerpo
+   *  guardado con <p> se veía todo junto (24-09-2026). */
+  const previewHtml = (text: string) => textToHtmlBody(previewText(text));
+
+  /** Resumen del paso cerrado: si el cuerpo es HTML lo pasa a texto para no enseñar etiquetas. */
+  const plainSnippet = (text: string) => (/<\/?(p|div|br)/i.test(text) ? htmlToPlainText(text) : text);
+
   const previewText = (text: string) => {
     let result = text.replace(/\{\{(\w+)\}\}/g, (_, key) => {
       const map: Record<string, string> = {};
@@ -1293,7 +1302,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                               <Maximize2 className="h-3.5 w-3.5" /> Ampliar
                             </button>
                           </div>
-                          <div className={PAPER + " whitespace-pre-wrap p-4 text-sm leading-relaxed"} dangerouslySetInnerHTML={{ __html: previewText(body) }} />
+                          <div className={PAPER + " p-4 text-sm leading-relaxed [&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"} dangerouslySetInnerHTML={{ __html: previewHtml(body) }} />
                         </div>
                       ) : isSel ? (
                         <textarea
@@ -1310,7 +1319,7 @@ export default function CampaignSequences({ campaignId }: Props) {
                           className="max-h-[195px] overflow-hidden whitespace-pre-wrap p-[22px] text-[16px] leading-relaxed text-muted-foreground"
                           style={body.length > 260 ? { maskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)", WebkitMaskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)" } : undefined}
                         >
-                          {body || "Escribe tu email aquí..."}
+                          {plainSnippet(body) || "Escribe tu email aquí..."}
                         </div>
                       )}
 
@@ -1703,8 +1712,8 @@ export default function CampaignSequences({ campaignId }: Props) {
             <span className="font-medium" dangerouslySetInnerHTML={{ __html: previewText(getCurrentSubject()) }} />
           </p>
           <div
-            className="whitespace-pre-wrap text-sm leading-relaxed [&_b]:font-semibold [&_strong]:font-semibold"
-            dangerouslySetInnerHTML={{ __html: previewText(getCurrentBody()) }}
+            className="text-sm leading-relaxed [&_b]:font-semibold [&_strong]:font-semibold [&_p]:my-3 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"
+            dangerouslySetInnerHTML={{ __html: previewHtml(getCurrentBody()) }}
           />
         </div>
       </DialogContent>
