@@ -1710,12 +1710,19 @@ serve(async (req) => {
 
         // Check stop_on_reply
         if (stopOnReply) {
-          const { data: replies } = await adminClient
-            .from("inbox_messages")
-            .select("id")
-            .eq("lead_id", lead.id)
-            .limit(1);
-          if (replies?.length) {
+          // Se mira por lead Y por DIRECCIÓN. Sólo por lead se escapaban seguimientos a gente que
+          // ya había contestado: la respuesta podía estar atada a otra fila del mismo lead (hay
+          // leads duplicados), a ninguna, o haberse enlazado después. Medido el 25-09-2026: 55
+          // seguimientos en 30 días a personas que ya habían respondido. La consulta por correo va
+          // por el índice idx_inbox_user_from_email.
+          const [porLead, porCorreo] = await Promise.all([
+            adminClient.from("inbox_messages").select("id").eq("lead_id", lead.id).limit(1),
+            adminClient.from("inbox_messages").select("id").eq("user_id", campaign.user_id).ilike("from_email", leadEmail).limit(1),
+          ]);
+          // Si la consulta falla no se asume "no ha contestado": se salta el lead y se reintenta
+          // en la pasada siguiente. Mejor un seguimiento tarde que uno a quien ya te respondió.
+          if (porLead.error || porCorreo.error) { totalSkipped++; continue; }
+          if (porLead.data?.length || porCorreo.data?.length) {
             await adminClient.from("campaign_leads").update({ status: "replied" }).eq("id", cl.id);
             continue;
           }
