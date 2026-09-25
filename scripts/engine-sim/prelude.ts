@@ -147,6 +147,18 @@ const createClient = (_u?: string, _k?: string) => ({
       return { data: null, error: null };
     }
     if (name === "suppress_email_global") return { data: null, error: null };
+    if (name === "user_company_sends_today") {
+      // Lo que ya recibió hoy cada empresa de este cliente (todas sus campañas).
+      const porDom = new Map<string, { n: number; ultimo: string }>();
+      for (const r of __DB.sent_emails) {
+        if (r.user_id !== args.p_user || r.status !== "sent" || !r.sent_at || r.sent_at < args.p_since) continue;
+        const d = String(r.to_email || "").split("@")[1]?.toLowerCase() || "";
+        if (!d) continue;
+        const e = porDom.get(d) || { n: 0, ultimo: "" };
+        porDom.set(d, { n: e.n + 1, ultimo: r.sent_at > e.ultimo ? r.sent_at : e.ultimo });
+      }
+      return { data: [...porDom].map(([dom, e]) => ({ dom, n: e.n, ultimo: e.ultimo })), error: null };
+    }
     __SIM.errors.push(`rpc desconocida: ${name}`);
     return { data: null, error: { message: `unknown rpc ${name}` } };
   },

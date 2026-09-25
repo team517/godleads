@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
+import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -1172,6 +1173,13 @@ serve(async (req) => {
     // to SEND_CONCURRENCY-1. Reset on every flush. At SEND_CONCURRENCY=1 they stay
     // empty/0 (nothing is ever pushed), so the gates below are unchanged.
     let batchDomainCounts: Record<string, number> = {};
+    // ═══ Ritmo por EMPRESA (25-09-2026) ═══ clave "cliente|dominio" → cuántos hoy y el último.
+    // Suma TODAS las campañas del mismo cliente: airbus.com recibió 107 correos en un día desde
+    // 6 campañas. Se carga una vez por cliente y pasada, y se apunta al ENCOLAR cada envío.
+    const cupoEmpresa = Math.max(1, Number(Deno.env.get("COMPANY_DAILY_CAP")) || CUPO_EMPRESA_DIA);
+    const huecoEmpresaMin = Math.max(0, Number(Deno.env.get("COMPANY_MIN_GAP_MIN") ?? HUECO_EMPRESA_MIN));
+    const ritmoEmpresa = new Map<string, EstadoEmpresa>();
+    const ritmoCargado = new Set<string>();   // "cliente|día" ya leído de la base
     let batchNewLeads = 0;
     // Sending domains already represented in the current batch. Two mailboxes on the
     // SAME sending domain must never fire concurrently (that would be a burst on one
@@ -1572,6 +1580,29 @@ serve(async (req) => {
       const blockedEmails = blockSets.emails;
       const blockedDomains = blockSets.domains;
 
+      // Ritmo por empresa: lo que ya recibió hoy cada empresa de ESTE cliente (todas sus campañas).
+      // Si la lectura falla, esta campaña espera a la pasada siguiente: sin la cuenta no se sabe
+      // si ya se ha llenado el cupo de alguna empresa.
+      {
+        const claveDia = `${campaign.user_id}|${todayStart}`;
+        if (!ritmoCargado.has(claveDia)) {
+          const { data: hoyPorEmpresa, error: ritmoErr } = await adminClient
+            .rpc("user_company_sends_today", { p_user: campaign.user_id, p_since: todayStart });
+          if (ritmoErr) {
+            console.error(`Campaign "${campaign.name}": ritmo por empresa no disponible:`, ritmoErr.message);
+            continue;
+          }
+          for (const r of (hoyPorEmpresa || []) as { dom: string; n: number; ultimo: string }[]) {
+            if (!r?.dom) continue;
+            const k = `${campaign.user_id}|${r.dom}`;
+            const previo = ritmoEmpresa.get(k);
+            const ultimoMs = r.ultimo ? Date.parse(r.ultimo) : 0;
+            ritmoEmpresa.set(k, { n: Math.max(Number(r.n) || 0, previo?.n || 0), ultimoMs: Math.max(ultimoMs, previo?.ultimoMs || 0) });
+          }
+          ritmoCargado.add(claveDia);
+        }
+      }
+
       // ═══ Domain daily limit tracking ═══
       const domainLimitEnabled = (campaign as any).domain_limit_enabled ?? false;
       const domainDailyLimit = (campaign as any).domain_daily_limit ?? 50;
@@ -1652,6 +1683,16 @@ serve(async (req) => {
         // Per-tick fairness cap: leave slots for the OTHER campaigns in this tick.
         if (sentThisCampaign + sendBatch.length >= campaignTickCap) break;
         if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
+        // Ritmo por EMPRESA, ANTES del tope de revisión: es una comprobación en memoria, así que un
+        // lead de una empresa ya servida hoy no gasta el tope y el motor llega a las demás aunque
+        // media campaña sea de la misma empresa.
+        {
+          const dom0 = String(cl.leads?.email || "").split("@")[1]?.toLowerCase() || "";
+          if (esEmpresa(dom0) && puedeEscribirEmpresa(ritmoEmpresa.get(`${campaign.user_id}|${dom0}`), now.getTime(), cupoEmpresa, huecoEmpresaMin) !== "si") {
+            totalSkipped++;
+            continue;
+          }
+        }
         // Per-lane scan cap — continue past an exhausted lane so the other is reached.
         if ((cl.current_step || 0) === 0) { if (++newLeadsScanned > MAX_NEW_LEAD_SCAN) continue; }
         else { if (++followupsScanned > MAX_FOLLOWUP_SCAN) continue; }
@@ -1707,6 +1748,12 @@ serve(async (req) => {
             continue;
           }
         }
+
+        // Ritmo por EMPRESA: no más de N correos al día a la misma empresa (todas las campañas del
+        // cliente) y con horas entre medias. El lead no se pierde: sigue en cola y sale otro día u
+        // otra hora. El correo personal (gmail, hotmail…) no cuenta como empresa.
+        // (La comprobación del ritmo por empresa se hace al principio del bucle; aquí sólo la clave.)
+        const claveEmpresa = `${campaign.user_id}|${leadDomain}`;
 
         // Check stop_on_reply
         if (stopOnReply) {
@@ -2308,6 +2355,7 @@ serve(async (req) => {
         // Every real attempt (success OR failure) counts toward the invocation cap,
         // incremented BEFORE dispatch so the cap stays exact under parallelism.
         sendAttemptsThisRun++;
+        if (esEmpresa(leadDomain)) apuntarEnvioEmpresa(ritmoEmpresa, claveEmpresa, now.getTime());
         if (SEND_CONCURRENCY <= 1) {
           // Sequential — byte-for-byte the original one-at-a-time behaviour.
           const seqResult = await doSend();
