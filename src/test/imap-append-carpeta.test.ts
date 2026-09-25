@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { elegirCarpetaEnviados, fechaImap } from "../../supabase/functions/_shared/imap-append";
+import { elegirCarpetaEnviados, fechaImap } from "../../supabase/functions/_shared/sent-folder";
 
 const LISTA_IONOS = [
   '* LIST (\HasNoChildren) "." "INBOX"',
