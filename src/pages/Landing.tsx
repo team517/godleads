@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { landingIsPainted, landingTarget } from "@/lib/landing-links";
+import { destinoChoose, landingIsPainted, landingTarget, textoDeTarjeta } from "@/lib/landing-links";
 import { Wordmark } from "@/components/Wordmark";
 
 /* =============================================================================
@@ -59,7 +59,9 @@ export default function Landing() {
     doc.addEventListener("click", (e) => {
       if (e.defaultPrevented || (e as MouseEvent).button !== 0) return;
       const a = (e.target as Element | null)?.closest?.("a[href]");
-      const target = landingTarget(a?.getAttribute("href"));
+      const href = a?.getAttribute("href");
+      // "Choose" de una tarjeta de precio → pago de ese plan (mensual o anual según la tarjeta).
+      const target = (href?.trim().toLowerCase() === "#signup" && destinoChoose(textoDeTarjeta(a))) || landingTarget(href);
       if (!target) return;
       e.preventDefault();
       if (target.kind === "route") navigate(target.to);

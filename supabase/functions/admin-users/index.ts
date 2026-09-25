@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import { sendSmtpReply, sendSmtpWithAttachments } from "../_shared/smtp.ts";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
@@ -66,79 +65,68 @@ serve(async (req) => {
     if (!isAdmin && !MANAGER_ACTIONS.has(action)) throw new Error("Forbidden: admin only");
 
     if (action === "list") {
-      // Get all users from auth
-      const { data: authUsers, error: authErr } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-      if (authErr) throw new Error(`List users error: ${authErr.message}`);
+      // TODOS los usuarios: equipo, clientes creados por la agencia y registros propios. Antes se
+      // ocultaban los clientes y una lista fija de correos, y el plan se preguntaba a Stripe uno a
+      // uno (sin clave en el servidor salía siempre "sin suscripción"). El plan sale ahora de
+      // user_entitlements, que es lo que escribe el webhook de Stripe.
+      const authList: any[] = [];
+      for (let page = 1; page <= 50; page++) {
+        const { data, error: authErr } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+        if (authErr) throw new Error(`List users error: ${authErr.message}`);
+        const lote = data?.users || [];
+        authList.push(...lote);
+        if (lote.length < 1000) break;
+      }
 
-      // Get all profiles
-      const { data: profiles } = await supabase.from("profiles").select("*");
+      const [{ data: profiles }, { data: roles }, { data: ents }, { data: clientRows }] = await Promise.all([
+        supabase.from("profiles").select("user_id, full_name, company_name, contact_email, allowed_routes, is_client_manager, client_password"),
+        supabase.from("user_roles").select("user_id, role"),
+        supabase.from("user_entitlements").select("user_id, tier, status, current_period_end, stripe_customer_id"),
+        supabase.from("clients").select("owner_user_id").is("archived_at", null),
+      ]);
       const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
-
-      // Get all roles
-      const { data: roles } = await supabase.from("user_roles").select("*");
       const roleMap = new Map((roles || []).map((r: any) => [r.user_id, r.role]));
+      const entMap = new Map((ents || []).map((e: any) => [e.user_id, e]));
+      const clientCount = new Map<string, number>();
+      for (const c of clientRows || []) clientCount.set((c as any).owner_user_id, (clientCount.get((c as any).owner_user_id) || 0) + 1);
 
-      // Get lead counts per user
       const { data: leadCounts } = await supabase.rpc("admin_lead_counts") as any;
-      const leadCountMap = new Map((leadCounts || []).map((lc: any) => [lc.user_id, lc.count]));
-
-      // Get account counts per user  
+      const leadCountMap = new Map((leadCounts || []).map((lc: any) => [lc.user_id, Number(lc.count) || 0]));
       const { data: accountCounts } = await supabase.rpc("admin_account_counts") as any;
-      const accountCountMap = new Map((accountCounts || []).map((ac: any) => [ac.user_id, ac.count]));
+      const accountCountMap = new Map((accountCounts || []).map((ac: any) => [ac.user_id, Number(ac.count) || 0]));
 
-      // Check Stripe subscriptions for all users
-      const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", { apiVersion: "2025-08-27.basil" });
-      
-      // Emails to always hide from admin panel
-      const HIDDEN_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "hello@onepulso.blog", "rk@coldabry.com", "oliver@osakaadigital.com", "eric@dekano-core.es", "oliver@clackstudio-creative.com", "oliver@warnier-base.com", "info@kidekom.com"];
-
-      const users = await Promise.all(authUsers.users.map(async (u: any) => {
-        const profile = profileMap.get(u.id) || {};
-        const role = roleMap.get(u.id) || "client";
-        const trialStartedAt = profile.trial_started_at || null;
-
-        // Hide by email or by allowed_routes
-        if (HIDDEN_EMAILS.includes(u.email?.toLowerCase())) return null;
-        if (profile.allowed_routes && profile.allowed_routes.length > 0) return null;
-        
-        let stripeStatus: any = { subscribed: false, product_id: null, subscription_end: null };
-        
-        try {
-          if (u.email) {
-            const customers = await stripe.customers.list({ email: u.email, limit: 1 });
-            if (customers.data.length > 0) {
-              const subs = await stripe.subscriptions.list({ customer: customers.data[0].id, status: "active", limit: 1 });
-              if (subs.data.length > 0) {
-                const sub = subs.data[0];
-                stripeStatus = {
-                  subscribed: true,
-                  product_id: sub.items.data[0].price.product,
-                  subscription_end: new Date(sub.current_period_end * 1000).toISOString(),
-                };
-              }
-            }
-          }
-        } catch (e) {
-          // Skip Stripe errors per user
-        }
-
+      const users = authList.map((u: any) => {
+        const p: any = profileMap.get(u.id) || {};
+        const e: any = entMap.get(u.id) || null;
         return {
           id: u.id,
-          email: u.email,
+          email: u.email || "",
           created_at: u.created_at,
-          full_name: profile.full_name || null,
-          company_name: profile.company_name || null,
-          role,
-          trial_started_at: trialStartedAt,
+          last_sign_in_at: u.last_sign_in_at || null,
+          email_confirmed: !!(u.email_confirmed_at || u.confirmed_at),
+          provider: u.app_metadata?.provider || null,
+          full_name: p.full_name || u.user_metadata?.full_name || null,
+          company_name: p.company_name || null,
+          contact_email: p.contact_email || null,
+          role: roleMap.get(u.id) || "client",
+          is_client_manager: !!p.is_client_manager,
+          allowed_routes: Array.isArray(p.allowed_routes) ? p.allowed_routes : null,
+          // Sólo la tienen las cuentas que creó la agencia: la de un registro propio la eligió
+          // esa persona y Supabase sólo guarda su huella cifrada, no se puede leer.
+          client_password: p.client_password || null,
           leads_count: leadCountMap.get(u.id) || 0,
           accounts_count: accountCountMap.get(u.id) || 0,
-          stripe: stripeStatus,
+          clients_count: clientCount.get(u.id) || 0,
+          plan: {
+            tier: e?.tier || "free",
+            status: e?.status || "inactive",
+            current_period_end: e?.current_period_end || null,
+            stripe_customer_id: e?.stripe_customer_id || null,
+          },
         };
-      }));
+      }).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)));
 
-      const filteredUsers = users.filter(Boolean);
-
-      return new Response(JSON.stringify({ users: filteredUsers }), {
+      return new Response(JSON.stringify({ users }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

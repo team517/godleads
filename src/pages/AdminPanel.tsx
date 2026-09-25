@@ -10,70 +10,54 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Search, Users, Trash2, RefreshCw, Mail, Building2, Calendar, CreditCard, Shield, Loader2 } from "lucide-react";
+import { Search, Users, Trash2, RefreshCw, Mail, Building2, Calendar, CreditCard, Shield, Loader2, KeyRound, Eye, EyeOff, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
+import {
+  type AdminUserRaw, type TipoUsuario, type EstadoPanel, TIPO_LABEL,
+  tipoDeUsuario, estadoPanel, coincideBusqueda, accesoDe,
+} from "@/lib/admin-users";
 
-interface AdminUser {
-  id: string;
-  email: string;
-  created_at: string;
-  full_name: string | null;
-  company_name: string | null;
-  role: string;
-  trial_started_at: string | null;
-  leads_count: number;
-  accounts_count: number;
-  stripe: {
-    subscribed: boolean;
-    product_id: string | null;
-    subscription_end: string | null;
-  };
+type AdminUser = AdminUserRaw;
+
+const FILTROS: { id: "todos" | TipoUsuario; label: string }[] = [
+  { id: "todos", label: "Todos" },
+  { id: "registro", label: "Registro propio" },
+  { id: "cliente", label: "Clientes" },
+  { id: "invitado", label: "Acceso gratis" },
+  { id: "equipo", label: "Equipo" },
+];
+
+function planLabel(tier: string): string {
+  if (!tier || tier === "free") return "Sin plan";
+  return PLAN_CONFIG[tier as keyof typeof PLAN_CONFIG]?.label || tier;
 }
 
-function getTrialInfo(trialStartedAt: string | null, subscribed: boolean) {
-  if (subscribed) return { status: "paid" as const, daysLeft: null, label: "Suscrito" };
-  if (!trialStartedAt) return { status: "unknown" as const, daysLeft: null, label: "Sin trial" };
-
-  // The ENFORCED trial (src/lib/access.ts) is 5 days — the panel showed 7, so it displayed
-  // "Día 4 de 7 / 3 días restantes" for users ProtectedRoute had already blocked.
-  const TRIAL = 5;
-  const start = new Date(trialStartedAt);
-  const end = new Date(start.getTime() + TRIAL * 24 * 60 * 60 * 1000);
-  const now = new Date();
-  const daysLeft = Math.min(TRIAL, Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))));
-
-  if (daysLeft > 3) return { status: "active" as const, daysLeft, label: `Día ${TRIAL - daysLeft + 1} de ${TRIAL}` };
-  if (daysLeft > 0) return { status: "warning" as const, daysLeft, label: `${daysLeft} días restantes` };
-  return { status: "expired" as const, daysLeft: 0, label: "Trial expirado" };
-}
-
-function getPlanName(productId: string | null): string {
-  if (!productId) return "Free";
-  for (const [tier, config] of Object.entries(PLAN_CONFIG)) {
-    if ((config.productIds as readonly string[]).includes(productId)) return config.label;
-  }
-  return "Desconocido";
-}
-
-function statusColor(trialStatus: string): string {
-  switch (trialStatus) {
-    case "paid": return "bg-success/10 text-success border-success/30";
-    case "active": return "bg-success/10 text-success border-success/30";
-    case "warning": return "bg-warning/10 text-warning border-warning/30";
-    case "expired": return "bg-destructive/10 text-destructive border-destructive/30";
-    default: return "bg-muted text-muted-foreground border-border";
+function statusColor(estado: EstadoPanel): string {
+  switch (estado) {
+    case "pago": return "bg-success/10 text-success border-success/30";
+    case "gratis": return "bg-muted text-muted-foreground border-border";
+    case "prueba": return "bg-warning/10 text-warning border-warning/30";
+    case "caducada": return "bg-destructive/10 text-destructive border-destructive/30";
   }
 }
 
-function statusDot(trialStatus: string): string {
-  switch (trialStatus) {
-    case "paid": return "bg-emerald-500";
-    case "active": return "bg-emerald-500";
-    case "warning": return "bg-amber-500";
-    case "expired": return "bg-red-500";
-    default: return "bg-muted-foreground";
+function statusDot(estado: EstadoPanel): string {
+  switch (estado) {
+    case "pago": return "bg-emerald-500";
+    case "gratis": return "bg-muted-foreground";
+    case "prueba": return "bg-amber-500";
+    case "caducada": return "bg-red-500";
   }
+}
+
+const fecha = (iso: string | null, largo = false) => iso
+  ? new Date(iso).toLocaleDateString("es", largo ? { day: "numeric", month: "long", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" })
+  : "—";
+
+async function copiar(texto: string, que: string) {
+  try { await navigator.clipboard.writeText(texto); toast.success(`${que} copiado`); }
+  catch { toast.error("No se pudo copiar"); }
 }
 
 export default function AdminPanel() {
@@ -81,6 +65,7 @@ export default function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [filtro, setFiltro] = useState<"todos" | TipoUsuario>("todos");
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -112,7 +97,10 @@ export default function AdminPanel() {
       if (result.error) {
         toast.error(result.error);
       } else {
-        setUsers(result.users || []);
+        const lista: AdminUser[] = result.users || [];
+        setUsers(lista);
+        // El detalle abierto se refresca con los datos nuevos (rol cambiado, etc.).
+        setSelectedUser((prev) => (prev ? lista.find((u) => u.id === prev.id) || null : null));
       }
     } catch (e: any) {
       toast.error(`Error: ${e.message}`);
@@ -162,7 +150,6 @@ export default function AdminPanel() {
       if (result.error) toast.error(result.error);
       else {
         toast.success(`Rol cambiado a ${newRole}`);
-        setSelectedUser(prev => prev ? { ...prev, role: newRole } : null);
         loadUsers();
       }
     } catch (e: any) { toast.error(e.message); }
@@ -179,24 +166,16 @@ export default function AdminPanel() {
 
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
-  const filtered = users.filter(u =>
-    !search ||
-    u.email?.toLowerCase().includes(search.toLowerCase()) ||
-    u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    u.company_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const now = Date.now();
+  const conTipo = users.map((u) => ({ u, tipo: tipoDeUsuario(u), est: estadoPanel(u, now) }));
+  const porTipo = (t: "todos" | TipoUsuario) => (t === "todos" ? conTipo.length : conTipo.filter((x) => x.tipo === t).length);
+  const filtered = conTipo.filter((x) => (filtro === "todos" || x.tipo === filtro) && coincideBusqueda(x.u, search));
 
   const stats = {
     total: users.length,
-    paid: users.filter(u => u.stripe.subscribed).length,
-    trial: users.filter(u => {
-      const info = getTrialInfo(u.trial_started_at, u.stripe.subscribed);
-      return info.status === "active" || info.status === "warning";
-    }).length,
-    expired: users.filter(u => {
-      const info = getTrialInfo(u.trial_started_at, u.stripe.subscribed);
-      return info.status === "expired";
-    }).length,
+    paid: conTipo.filter((x) => x.est.estado === "pago").length,
+    trial: conTipo.filter((x) => x.est.estado === "prueba").length,
+    expired: conTipo.filter((x) => x.est.estado === "caducada").length,
   };
 
   return (
@@ -208,7 +187,7 @@ export default function AdminPanel() {
             <Shield className="h-6 w-6 text-primary" /> Admin Panel
           </h1>
           <p className="text-[15px] text-muted-foreground mt-1">
-            {stats.total} usuarios · {stats.paid} pagando · {stats.trial} en trial · {stats.expired} expirados
+            {stats.total} usuarios · {porTipo("registro")} con registro propio · {porTipo("cliente")} clientes creados por ti · {stats.paid} pagando
           </p>
         </div>
         <Button variant="outline" size="sm" className="gap-2" onClick={loadUsers} disabled={loading}>
@@ -218,12 +197,12 @@ export default function AdminPanel() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-4 gap-3 px-1 pb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-1 pb-4">
         {[
           { label: "Total", value: stats.total, color: "text-foreground", bg: "bg-muted" },
           { label: "Pagando", value: stats.paid, color: "text-success", bg: "bg-success/10" },
-          { label: "En Trial", value: stats.trial, color: "text-warning", bg: "bg-warning/10" },
-          { label: "Expirados", value: stats.expired, color: "text-destructive", bg: "bg-destructive/10" },
+          { label: "En prueba", value: stats.trial, color: "text-warning", bg: "bg-warning/10" },
+          { label: "Prueba acabada sin pagar", value: stats.expired, color: "text-destructive", bg: "bg-destructive/10" },
         ].map(s => (
           <div key={s.label} className={`rounded-lg border p-3 ${s.bg}`}>
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -232,28 +211,40 @@ export default function AdminPanel() {
         ))}
       </div>
 
-      {loading ? (
+      {loading && users.length === 0 ? (
         <div className="flex h-[60vh] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="flex h-[60vh] gap-0 rounded-lg border bg-card overflow-hidden min-h-0">
+        <div className="flex h-[70vh] gap-0 rounded-lg border bg-card overflow-hidden min-h-0">
           {/* User list */}
           <div className="w-[400px] flex-shrink-0 flex flex-col border-r bg-muted/20">
-            <div className="p-3 border-b bg-card">
+            <div className="p-3 border-b bg-card space-y-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar usuario…"
+                  placeholder="Buscar por correo, nombre o empresa…"
                   className="pl-9 h-8 text-sm bg-muted/40 border-0 focus-visible:ring-1"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
               </div>
+              <div className="flex flex-wrap gap-1">
+                {FILTROS.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFiltro(f.id)}
+                    className={`rounded-md border px-2 py-0.5 text-[12px] font-medium transition-colors ${
+                      filtro === f.id ? "bg-primary text-primary-foreground border-primary" : "bg-card text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {f.label} <span className="tabular-nums opacity-70">{porTipo(f.id)}</span>
+                  </button>
+                ))}
+              </div>
             </div>
             <ScrollArea className="flex-1">
-              {filtered.map(u => {
-                const trialInfo = getTrialInfo(u.trial_started_at, u.stripe.subscribed);
+              {filtered.map(({ u, tipo, est }) => {
                 const isActive = selectedUser?.id === u.id;
                 return (
                   <button
@@ -263,23 +254,24 @@ export default function AdminPanel() {
                       ${isActive ? "bg-primary/8 border-l-2 border-l-primary" : "hover:bg-muted/50 border-l-2 border-l-transparent"}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${statusDot(trialInfo.status)}`} />
+                      <div className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${statusDot(est.estado)}`} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium truncate">{u.full_name || u.email.split("@")[0]}</span>
+                          <span className="text-sm font-medium truncate">{u.full_name || u.company_name || u.email.split("@")[0]}</span>
                           {u.role === "admin" && (
                             <Badge variant="outline" className="text-[10px] border-primary/30 text-primary px-1.5 py-0">Admin</Badge>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground truncate">{u.email}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusColor(trialInfo.status)}`}>
-                            {trialInfo.label}
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-card text-foreground/80">
+                            {TIPO_LABEL[tipo]}
                           </span>
-                          {u.stripe.subscribed && (
-                            <span className="text-[10px] font-semibold text-success">
-                              {getPlanName(u.stripe.product_id)}
-                            </span>
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusColor(est.estado)}`}>
+                            {est.etiqueta}
+                          </span>
+                          {u.plan.tier !== "free" && (
+                            <span className="text-[10px] font-semibold text-success">{planLabel(u.plan.tier)}</span>
                           )}
                         </div>
                       </div>
@@ -296,14 +288,14 @@ export default function AdminPanel() {
           {/* Detail pane */}
           <div className="flex-1 flex flex-col min-w-0 bg-card">
             {selectedUser ? (
-              <UserDetail user={selectedUser} onDelete={handleDelete} deleting={deleting} onToggleRole={handleToggleRole} togglingRole={togglingRole} />
+              <UserDetail key={selectedUser.id} user={selectedUser} onDelete={handleDelete} deleting={deleting} onToggleRole={handleToggleRole} togglingRole={togglingRole} isSelf={selectedUser.id === user?.id} />
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground gap-3">
                 <div className="h-16 w-16 rounded-full bg-muted/40 flex items-center justify-center">
                   <Users className="h-8 w-8" />
                 </div>
                 <p className="text-[15px] font-medium">Selecciona un usuario</p>
-                <p className="text-xs text-muted-foreground/60">Elige un usuario de la lista para ver sus detalles</p>
+                <p className="text-xs text-muted-foreground/60">Elige un usuario de la lista para ver sus datos y credenciales</p>
               </div>
             )}
           </div>
@@ -439,23 +431,24 @@ function UsersAndClients() {
   );
 }
 
-function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { user: AdminUser; onDelete: (id: string) => void; deleting: boolean; onToggleRole: (userId: string, newRole: string) => void; togglingRole: boolean }) {
-  const trialInfo = getTrialInfo(user.trial_started_at, user.stripe.subscribed);
-
-  const trialStart = user.trial_started_at ? new Date(user.trial_started_at) : null;
-  const trialEnd = trialStart ? new Date(trialStart.getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole, isSelf }: { user: AdminUser; onDelete: (id: string) => void; deleting: boolean; onToggleRole: (userId: string, newRole: string) => void; togglingRole: boolean; isSelf: boolean }) {
+  const [verPass, setVerPass] = useState(false);
+  const tipo = tipoDeUsuario(user);
+  const est = estadoPanel(user);
+  const acceso = accesoDe(user);
+  const nombre = user.full_name || user.company_name || user.email.split("@")[0];
 
   return (
     <ScrollArea className="flex-1">
       <div className="p-6 space-y-6">
         {/* User header */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-4">
-            <div className={`h-14 w-14 rounded-full flex items-center justify-center text-lg font-bold ${statusColor(trialInfo.status)}`}>
-              {(user.full_name || user.email)[0].toUpperCase()}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4 min-w-0">
+            <div className={`h-14 w-14 flex-shrink-0 rounded-full flex items-center justify-center text-lg font-bold border ${statusColor(est.estado)}`}>
+              {(nombre || "?")[0].toUpperCase()}
             </div>
-            <div>
-              <h2 className="font-display text-xl font-semibold tracking-[-0.03em]">{user.full_name || user.email.split("@")[0]}</h2>
+            <div className="min-w-0">
+              <h2 className="font-display text-xl font-semibold tracking-[-0.03em] truncate">{nombre}</h2>
               <p className="text-[15px] text-muted-foreground flex items-center gap-1.5">
                 <Mail className="h-3.5 w-3.5" /> {user.email}
               </p>
@@ -464,10 +457,11 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { 
                   <Building2 className="h-3.5 w-3.5" /> {user.company_name}
                 </p>
               )}
-              <div className="flex items-center gap-2 mt-2">
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${statusColor(trialInfo.status)}`}>
-                  <span className={`h-2 w-2 rounded-full ${statusDot(trialInfo.status)}`} />
-                  {trialInfo.label}
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border bg-card">{TIPO_LABEL[tipo]}</span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${statusColor(est.estado)}`}>
+                  <span className={`h-2 w-2 rounded-full ${statusDot(est.estado)}`} />
+                  {est.etiqueta}
                 </span>
                 {user.role === "admin" && (
                   <Badge className="bg-primary/10 text-primary border-primary/30">Admin</Badge>
@@ -476,105 +470,132 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole }: { 
             </div>
           </div>
 
-          <div className="flex gap-2">
-            {/* Toggle role button */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              disabled={togglingRole}
-              onClick={() => onToggleRole(user.id, user.role === "admin" ? "client" : "admin")}
-            >
-              <Shield className="h-3.5 w-3.5" />
-              {togglingRole ? "Cambiando…" : user.role === "admin" ? "Quitar Admin" : "Hacer Admin"}
-            </Button>
+          {!isSelf && (
+            <div className="flex gap-2 flex-shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={togglingRole}
+                onClick={() => onToggleRole(user.id, user.role === "admin" ? "client" : "admin")}
+              >
+                <Shield className="h-3.5 w-3.5" />
+                {togglingRole ? "Cambiando…" : user.role === "admin" ? "Quitar Admin" : "Hacer Admin"}
+              </Button>
 
-            {/* Delete button */}
-            {user.role !== "admin" && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
-                    <Trash2 className="h-3.5 w-3.5" /> Eliminar
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>¿Eliminar usuario?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Se eliminará permanentemente a <strong>{user.email}</strong> y todos sus datos. Esta acción no se puede deshacer.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      onClick={() => onDelete(user.id)}
-                      disabled={deleting}
-                    >
-                      {deleting ? "Eliminando…" : "Eliminar"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              {user.role !== "admin" && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
+                      <Trash2 className="h-3.5 w-3.5" /> Eliminar
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Eliminar usuario?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se eliminará permanentemente a <strong>{user.email}</strong> y todos sus datos. Esta acción no se puede deshacer.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={() => onDelete(user.id)}
+                        disabled={deleting}
+                      >
+                        {deleting ? "Eliminando…" : "Eliminar"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Credenciales */}
+        <div className="rounded-lg border p-4 space-y-3">
+          <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+            <KeyRound className="h-3.5 w-3.5" /> Credenciales
+          </h3>
+          <div className="grid grid-cols-[110px_1fr] gap-y-2 text-[15px] items-center">
+            <span className="text-muted-foreground">Correo</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="font-mono truncate">{user.email}</span>
+              <button onClick={() => copiar(user.email, "Correo")} className="text-muted-foreground hover:text-primary" title="Copiar correo">
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            </span>
+            <span className="text-muted-foreground">Contraseña</span>
+            {user.client_password ? (
+              <span className="flex items-center gap-2 min-w-0">
+                <span className="font-mono truncate">{verPass ? user.client_password : "••••••••••"}</span>
+                <button onClick={() => setVerPass((v) => !v)} className="text-muted-foreground hover:text-primary" title={verPass ? "Ocultar" : "Ver contraseña"}>
+                  {verPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+                <button onClick={() => copiar(user.client_password!, "Contraseña")} className="text-muted-foreground hover:text-primary" title="Copiar contraseña">
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ) : (
+              <span className="text-[13px] text-muted-foreground">
+                {user.provider && user.provider !== "email"
+                  ? `Entra con ${user.provider === "google" ? "Google" : user.provider}: no tiene contraseña propia.`
+                  : "La eligió la propia persona al registrarse. Se guarda cifrada, así que nadie (ni tú) puede verla."}
+              </span>
+            )}
+            <span className="text-muted-foreground">Acceso</span>
+            <span className="text-[13px] text-muted-foreground">
+              {user.email_confirmed ? "Correo confirmado" : "Correo sin confirmar"} · último acceso {user.last_sign_in_at ? fecha(user.last_sign_in_at) : "nunca"}
+            </span>
+            {user.contact_email && user.contact_email.toLowerCase() !== user.email.toLowerCase() && (
+              <>
+                <span className="text-muted-foreground">Contacto</span>
+                <span className="font-mono text-[13px] truncate">{user.contact_email}</span>
+              </>
             )}
           </div>
         </div>
 
         {/* Info cards */}
         <div className="grid grid-cols-2 gap-4">
-          {/* Registration */}
           <div className="rounded-lg border p-4 space-y-2">
             <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5" /> Registro
             </h3>
-            <p className="text-[15px]">
-              {new Date(user.created_at).toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" })}
-            </p>
-          </div>
-
-          {/* Trial */}
-          <div className={`rounded-lg border p-4 space-y-2 ${trialInfo.status === "expired" ? "border-red-500/30 bg-red-500/5" : trialInfo.status === "warning" ? "border-amber-500/30 bg-amber-500/5" : ""}`}>
-            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest">Trial</h3>
-            {trialStart ? (
-              <div className="space-y-1">
-                <p className="text-[15px]">Inicio: {trialStart.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
-                <p className="text-[15px]">Fin: {trialEnd?.toLocaleDateString("es", { day: "numeric", month: "short" })}</p>
-                <p className={`text-[15px] font-semibold ${trialInfo.status === "expired" ? "text-destructive" : trialInfo.status === "warning" ? "text-warning" : "text-success"}`}>
-                  {trialInfo.label}
-                </p>
-              </div>
-            ) : (
-              <p className="text-[15px] text-muted-foreground">Sin trial</p>
+            <p className="text-[15px]">{fecha(user.created_at, true)}</p>
+            {acceso.kind === "trialing" && (
+              <p className="text-[13px] text-warning">Prueba hasta el {fecha(acceso.trialEnd)}</p>
+            )}
+            {acceso.kind === "expired" && (
+              <p className="text-[13px] text-destructive">La prueba acabó el {fecha(acceso.trialEnd)}: no puede usar el panel hasta que pague</p>
             )}
           </div>
 
-          {/* Payment */}
-          <div className={`rounded-lg border p-4 space-y-2 ${user.stripe.subscribed ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}`}>
+          <div className={`rounded-lg border p-4 space-y-2 ${est.estado === "pago" ? "border-emerald-500/30 bg-emerald-500/5" : ""}`}>
             <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
-              <CreditCard className="h-3.5 w-3.5" /> Pago
+              <CreditCard className="h-3.5 w-3.5" /> Plan
             </h3>
-            {user.stripe.subscribed ? (
+            {est.estado === "pago" ? (
               <div className="space-y-1">
-                <p className="text-[15px] font-semibold text-success">✓ Suscripción activa</p>
-                <p className="text-[15px]">Plan: {getPlanName(user.stripe.product_id)}</p>
-                {user.stripe.subscription_end && (
-                  <p className="text-[15px] text-muted-foreground">
-                    Renueva: {new Date(user.stripe.subscription_end).toLocaleDateString("es", { day: "numeric", month: "short", year: "numeric" })}
-                  </p>
+                <p className="text-[15px] font-semibold text-success">{planLabel(user.plan.tier)} · {est.etiqueta}</p>
+                {user.plan.current_period_end && (
+                  <p className="text-[13px] text-muted-foreground">Renueva el {fecha(user.plan.current_period_end)}</p>
                 )}
               </div>
             ) : (
-              <p className="text-[15px] font-semibold text-destructive">✗ Sin suscripción</p>
+              <p className="text-[15px] text-muted-foreground">
+                {est.estado === "gratis" ? "Sin plan de pago (acceso gratuito)" : "Sin plan de pago"}
+              </p>
             )}
           </div>
 
-          {/* Usage */}
-          <div className="rounded-lg border p-4 space-y-2">
+          <div className="rounded-lg border p-4 space-y-2 col-span-2">
             <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest">Uso</h3>
-            <div className="space-y-1">
-              <p className="text-[15px]">{user.leads_count} leads</p>
-              <p className="text-[15px]">{user.accounts_count} cuentas email</p>
-            </div>
+            <p className="text-[15px]">
+              {user.leads_count.toLocaleString("es-ES")} leads · {user.accounts_count.toLocaleString("es-ES")} cuentas de correo · {user.clients_count} clientes creados
+            </p>
           </div>
         </div>
       </div>
