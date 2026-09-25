@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useReducer } from "react";
+import { contarColumnas, corregirVariablesEnTexto, type EstadisticaColumna } from "@/lib/variable-resolver";
 import { textToHtmlBody, htmlToPlainText } from "@/lib/mime-headers";
 import { replaceVariables } from "@/lib/personalize";
 import { Button } from "@/components/ui/button";
@@ -23,45 +24,7 @@ import { Plus, Trash2, Clock, GitBranch, Zap, Eye, ChevronRight, SendHorizonal, 
 interface Props { campaignId: string; }
 interface Variant { subject: string; body: string; tag_filter?: string }
 
-/* ── Variable auto-correction ───────────────────────────────────────
-   Maps mistyped {{variables}} to the real lead fields by normalizing
-   (lowercase, strip separators) + containment + edit distance. */
-const normVar = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-function levDist(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  if (!m) return n; if (!n) return m;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++)
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-  return dp[m][n];
-}
-type ValidVar = { key: string; norm: string };
-function bestVarMatch(typed: string, valid: ValidVar[]): ValidVar | null {
-  const nt = normVar(typed);
-  if (!nt) return null;
-  const exact = valid.find((v) => v.norm === nt);
-  if (exact) return exact;
-  const cont = valid.filter((v) => v.norm.length >= 3 && nt.length >= 3 && (v.norm.includes(nt) || nt.includes(v.norm)));
-  if (cont.length) { cont.sort((a, b) => Math.abs(a.norm.length - nt.length) - Math.abs(b.norm.length - nt.length)); return cont[0]; }
-  let best: ValidVar | null = null, bestD = Infinity;
-  for (const v of valid) { const d = levDist(nt, v.norm); if (d < bestD) { bestD = d; best = v; } }
-  const thr = Math.max(2, Math.floor(nt.length * 0.45));
-  return best && bestD <= thr ? best : null;
-}
-function correctVarsInText(text: string, valid: ValidVar[]): { text: string; changes: { from: string; to: string }[] } {
-  const changes: { from: string; to: string }[] = [];
-  const out = (text || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (full, inner) => {
-    const key = String(inner).trim();
-    if (valid.some((v) => v.key === key)) return full; // already a real field
-    const m = bestVarMatch(key, valid);
-    if (m && m.key !== key) { changes.push({ from: key, to: m.key }); return `{{${m.key}}}`; }
-    return full; // no confident match — leave it
-  });
-  return { text: out, changes };
-}
+/* La corrección de {{variables}} vive en src/lib/variable-resolver.ts (probada aparte). */
 
 // Variable replacement — the SAME function the engine and send-email use, so the preview
 // shows exactly what the lead receives (fallbacks included, never a raw {{placeholder}}).
@@ -152,6 +115,8 @@ export default function CampaignSequences({ campaignId }: Props) {
   const [expandOpen, setExpandOpen] = useState(false);
   const [correcting, setCorrecting] = useState(false);
   const [dynamicVars, setDynamicVars] = useState<{ label: string; tag: string }[]>([]);
+  // Cuántos leads de ESTA campaña tienen algo en cada columna: el corrector elige la que más tiene.
+  const [fieldStats, setFieldStats] = useState<EstadisticaColumna[]>([]);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   // Test email state
@@ -266,15 +231,13 @@ export default function CampaignSequences({ campaignId }: Props) {
       .select("lead_id, leads(email, custom_fields)")
       .eq("campaign_id", campaignId);
 
-    const keySet = new Set<string>();
-    keySet.add("email");
-    (campaignLeads || []).forEach((cl: any) => {
-      const fields = cl.leads?.custom_fields;
-      if (fields && typeof fields === "object") {
-        Object.keys(fields).forEach(k => keySet.add(k));
-      }
-    });
+    const filas = (campaignLeads || []).map((cl: any) => (cl.leads?.custom_fields && typeof cl.leads.custom_fields === "object") ? cl.leads.custom_fields : null);
+    const stats = contarColumnas(filas);
+    const conEmail = (campaignLeads || []).filter((cl: any) => cl.leads?.email).length;
+    setFieldStats([{ key: "email", llenos: conEmail }, ...stats.filter((x) => x.key !== "email")]);
 
+    // En el desplegable de variables salen primero las columnas con más datos; las vacías, al final.
+    const keySet = new Set<string>(["email", ...stats.map((x) => x.key)]);
     setDynamicVars(
       Array.from(keySet).map(k => ({ label: k, tag: `{{${k}}}` }))
     );
@@ -714,26 +677,25 @@ export default function CampaignSequences({ campaignId }: Props) {
     // lead email). They must be treated as valid so the fuzzy matcher never "corrects" them into
     // a lead field: "senderfirstname" CONTAINS "firstname" and was being rewritten to
     // {{first_name}} — the prospect's own name landed in the signature of every email.
-    const ENGINE_VARS = ["Email", "SenderFirstName", "SenderLastName", "SenderEmail"];
-    const valid: ValidVar[] = [
-      ...dynamicVars.map((v) => ({ key: v.label, norm: normVar(v.label) })),
-      ...ENGINE_VARS.map((k) => ({ key: k, norm: normVar(k) })),
-    ];
-    if (!valid.length) { toast.error("No hay variables de leads para comparar"); return; }
+    // (Las variables del remitente las excluye el propio corrector: _lib/variable-resolver_.)
+    if (!fieldStats.some((x) => x.key !== "email" && x.llenos > 0)) {
+      toast.error("Importa leads en esta campaña para poder corregir las variables");
+      return;
+    }
     setCorrecting(true);
     try {
       const allChanges: { from: string; to: string }[] = [];
       const updates: { id: string; subject: string; body: string; variants: Variant[] }[] = [];
       for (const step of steps) {
-        const subj = correctVarsInText(step.subject || "", valid);
-        const body = correctVarsInText(step.body || "", valid);
+        const subj = corregirVariablesEnTexto(step.subject || "", fieldStats);
+        const body = corregirVariablesEnTexto(step.body || "", fieldStats);
         const variants: Variant[] = [
           ...(Array.isArray(step.variants) ? step.variants : []),
           ...(Array.isArray(step.variants_off) ? step.variants_off : []),
         ];
         const newVariants = variants.map((vr) => {
-          const s = correctVarsInText(vr.subject || "", valid);
-          const b = correctVarsInText(vr.body || "", valid);
+          const s = corregirVariablesEnTexto(vr.subject || "", fieldStats);
+          const b = corregirVariablesEnTexto(vr.body || "", fieldStats);
           allChanges.push(...s.changes, ...b.changes);
           return { ...vr, subject: s.text, body: b.text };
         });

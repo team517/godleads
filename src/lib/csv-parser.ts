@@ -149,8 +149,8 @@ function isValidForColumn(header: string, value: string): boolean {
 
     case "company_short_description":
     case "description":
-      // Descriptions: max 500 chars
-      return v.length <= 500;
+      // Texto libre: ya viene RECORTADO por cleanCsvField (antes, pasar de 500 lo VACIABA entero).
+      return true;
 
     case "phone":
     case "telephone":
@@ -158,9 +158,20 @@ function isValidForColumn(header: string, value: string): boolean {
       return v.length <= 25 && /^[0-9+\-() ]+$/.test(v);
 
     default:
-      // Unknown columns: allow up to 500 chars
-      return v.length <= 500;
+      // Columnas libres (keywords, descripción SEO…): ya vienen recortadas por cleanCsvField.
+      return true;
   }
+}
+
+/** Columnas con forma fija (nombre, empresa, ciudad…): si el valor no encaja se deja vacío, porque
+ *  suele ser un dato desplazado. Todo lo demás es texto libre y sólo se recorta. */
+const COLUMNAS_ESTRICTAS = new Set(["email", "first_name", "last_name", "company_name", "company", "city", "location", "website", "url", "industry", "phone", "telephone"]);
+export const TEXTO_LIBRE_MAX = 1000;
+export function recortarEnPalabra(v: string, max: number): string {
+  if (v.length <= max) return v;
+  const corte = v.slice(0, max);
+  const espacio = corte.lastIndexOf(" ");
+  return (espacio > max * 0.6 ? corte.slice(0, espacio) : corte).trim() + "…";
 }
 
 /** Clean a single CSV field, preserving rich/HTML content (personalized_message
@@ -173,6 +184,10 @@ export function cleanCsvField(header: string, rawValue: string): string {
   // Strip ALL quote characters (straight, curly/smart, backticks) from plain fields
   val = val.replace(/["'‘’“”`«»]/g, "").trim();
   if (header === "email") val = val.replace(/[,\s]/g, "");
+  // Texto libre largo (descripción de la empresa, keywords…): se RECORTA en una palabra, nunca se
+  // vacía. Antes todo lo que pasaba de 500 caracteres se borraba entero: en un export real de
+  // Apollo se perdía la descripción de 4.898 de 6.852 empresas (25-09-2026).
+  if (!COLUMNAS_ESTRICTAS.has(header) && val.length > TEXTO_LIBRE_MAX) val = recortarEnPalabra(val, TEXTO_LIBRE_MAX);
   return isValidForColumn(header, val) ? val : "";
 }
 

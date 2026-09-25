@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { elegirColumnasPlantilla } from "@/lib/variable-resolver";
 import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -529,14 +530,18 @@ export default function CampaignLeads({ campaignId }: Props) {
         };
         const normalizeHeader = (h: string): string => aliasMap[h] || h;
 
+        // Para cada columna de la plantilla, la columna del CSV que MÁS DATOS tiene entre las que
+        // significan eso ("Company", "Company Name", "Company Name for Emails"…). Antes la última
+        // parecida pisaba a las demás aunque estuviera vacía. Lógica en src/lib/variable-resolver.
+        const origen = elegirColumnasPlantilla(result.headers, result.rows, TEMPLATE_COLUMNS, normalizeHeader);
         const rows = result.rows.map(row => {
           const obj: Record<string, string> = {};
-          Object.entries(row).forEach(([key, value]) => {
-            const normalized = normalizeHeader(key);
+          for (const col of ["email", ...TEMPLATE_COLUMNS]) {
+            const desde = origen[col];
             // Tildes rotas del CSV ("diseÃ±o y comunicaciÃ³n"): se arreglan AL IMPORTAR, porque
             // company_name acaba dentro del correo del cliente (24-09-2026: 20 leads así).
-            if (allowedKeys.has(normalized)) obj[normalized] = repairMojibakeBytes(value);
-          });
+            if (desde && allowedKeys.has(col)) obj[col] = repairMojibakeBytes(String(row[desde] ?? ""));
+          }
           return obj;
         }).filter(r => r.email?.trim());
 
