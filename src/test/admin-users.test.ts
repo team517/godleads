@@ -52,3 +52,12 @@ describe("coincideBusqueda", () => {
     expect(coincideBusqueda(base, "  ")).toBe(true);
   });
 });
+
+import { campanasActivas } from "@/lib/admin-users";
+describe("campanasActivas", () => {
+  it("sólo las que están en marcha; sin campañas → lista vacía", () => {
+    const c = (status: string) => ({ id: status, name: status, status, created_at: "", sent_today: null });
+    expect(campanasActivas({ campaigns: [c("active"), c("paused"), c("draft"), c("active")] }).length).toBe(2);
+    expect(campanasActivas({})).toEqual([]);
+  });
+});

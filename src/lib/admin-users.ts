@@ -33,7 +33,23 @@ export interface AdminUserRaw {
   leads_count: number;
   accounts_count: number;
   clients_count: number;
+  /** Activas primero. sent_today sólo viene en las activas (correos mandados hoy, hora de Madrid). */
+  campaigns?: AdminCampaign[];
   plan: { tier: string; status: string; current_period_end: string | null; stripe_customer_id: string | null };
+}
+
+export interface AdminCampaign {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+  sent_today: number | null;
+}
+
+export const ESTADO_CAMPANA: Record<string, string> = { active: "Activa", paused: "Pausada", draft: "Borrador", completed: "Terminada" };
+
+export function campanasActivas(u: Pick<AdminUserRaw, "campaigns">): AdminCampaign[] {
+  return (u.campaigns || []).filter((c) => c.status === "active");
 }
 
 export function tipoDeUsuario(u: Pick<AdminUserRaw, "email" | "role" | "is_client_manager" | "allowed_routes">): TipoUsuario {

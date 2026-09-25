@@ -10,18 +10,21 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Search, Users, Trash2, RefreshCw, Mail, Building2, Calendar, CreditCard, Shield, Loader2, KeyRound, Eye, EyeOff, Copy } from "lucide-react";
+import { Search, Users, Trash2, RefreshCw, Mail, Building2, Calendar, CreditCard, Shield, Loader2, KeyRound, Eye, EyeOff, Copy, Send } from "lucide-react";
 import { toast } from "sonner";
 import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
 import {
   type AdminUserRaw, type TipoUsuario, type EstadoPanel, TIPO_LABEL,
-  tipoDeUsuario, estadoPanel, coincideBusqueda, accesoDe,
+  tipoDeUsuario, estadoPanel, coincideBusqueda, accesoDe, campanasActivas, ESTADO_CAMPANA,
 } from "@/lib/admin-users";
 
 type AdminUser = AdminUserRaw;
 
-const FILTROS: { id: "todos" | TipoUsuario; label: string }[] = [
+type Filtro = "todos" | "con_campana" | TipoUsuario;
+
+const FILTROS: { id: Filtro; label: string }[] = [
   { id: "todos", label: "Todos" },
+  { id: "con_campana", label: "Con campaña activa" },
   { id: "registro", label: "Registro propio" },
   { id: "cliente", label: "Clientes" },
   { id: "invitado", label: "Acceso gratis" },
@@ -65,7 +68,7 @@ export default function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filtro, setFiltro] = useState<"todos" | TipoUsuario>("todos");
+  const [filtro, setFiltro] = useState<Filtro>("todos");
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -168,8 +171,10 @@ export default function AdminPanel() {
 
   const now = Date.now();
   const conTipo = users.map((u) => ({ u, tipo: tipoDeUsuario(u), est: estadoPanel(u, now) }));
-  const porTipo = (t: "todos" | TipoUsuario) => (t === "todos" ? conTipo.length : conTipo.filter((x) => x.tipo === t).length);
-  const filtered = conTipo.filter((x) => (filtro === "todos" || x.tipo === filtro) && coincideBusqueda(x.u, search));
+  const pasaFiltro = (x: (typeof conTipo)[number], f: Filtro) =>
+    f === "todos" || (f === "con_campana" ? campanasActivas(x.u).length > 0 : x.tipo === f);
+  const porTipo = (f: Filtro) => conTipo.filter((x) => pasaFiltro(x, f)).length;
+  const filtered = conTipo.filter((x) => pasaFiltro(x, filtro) && coincideBusqueda(x.u, search));
 
   const stats = {
     total: users.length,
@@ -270,6 +275,12 @@ export default function AdminPanel() {
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusColor(est.estado)}`}>
                             {est.etiqueta}
                           </span>
+                          {campanasActivas(u).length > 0 && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-success/10 text-success border-success/30">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              {campanasActivas(u).length === 1 ? "1 campaña activa" : `${campanasActivas(u).length} campañas activas`}
+                            </span>
+                          )}
                           {u.plan.tier !== "free" && (
                             <span className="text-[10px] font-semibold text-success">{planLabel(u.plan.tier)}</span>
                           )}
@@ -588,6 +599,40 @@ function UserDetail({ user, onDelete, deleting, onToggleRole, togglingRole, isSe
               <p className="text-[15px] text-muted-foreground">
                 {est.estado === "gratis" ? "Sin plan de pago (acceso gratuito)" : "Sin plan de pago"}
               </p>
+            )}
+          </div>
+
+          <div className="rounded-lg border p-4 space-y-2 col-span-2">
+            <h3 className="text-[10.5px] font-semibold text-muted-foreground uppercase tracking-widest flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5"><Send className="h-3.5 w-3.5" /> Campañas</span>
+              <span className="normal-case tracking-normal font-medium">
+                {campanasActivas(user).length} activas de {(user.campaigns || []).length}
+              </span>
+            </h3>
+            {(user.campaigns || []).length === 0 ? (
+              <p className="text-[15px] text-muted-foreground">No tiene ninguna campaña</p>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {(user.campaigns || []).map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-[15px] truncate">{c.name || "Sin nombre"}</span>
+                    <span className="flex items-center gap-2 flex-shrink-0">
+                      {c.status === "active" && c.sent_today !== null && (
+                        <span className="text-[13px] tabular-nums text-muted-foreground">
+                          {c.sent_today === 1 ? "1 enviado hoy" : `${c.sent_today.toLocaleString("es-ES")} enviados hoy`}
+                        </span>
+                      )}
+                      <span className={`inline-flex items-center rounded-md border px-2 py-[1px] text-[12px] font-semibold ${
+                        c.status === "active" ? "bg-success/10 text-success border-success/30"
+                          : c.status === "paused" ? "bg-warning/10 text-warning border-warning/30"
+                          : "bg-muted text-muted-foreground border-border"
+                      }`}>
+                        {ESTADO_CAMPANA[c.status] || c.status}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 

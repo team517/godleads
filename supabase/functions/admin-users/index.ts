@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import { sendSmtpReply, sendSmtpWithAttachments } from "../_shared/smtp.ts";
+import { zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
 import { buildCopyDoc } from "../_shared/report/buildCopyPdf.ts";
 import { ONEPULSO_LOGO_WHITE_DATAURL, ONEPULSO_LOGO_RATIO } from "../_shared/report/onepulsoLogoWhite.ts";
@@ -78,12 +79,33 @@ serve(async (req) => {
         if (lote.length < 1000) break;
       }
 
-      const [{ data: profiles }, { data: roles }, { data: ents }, { data: clientRows }] = await Promise.all([
+      const [{ data: profiles }, { data: roles }, { data: ents }, { data: clientRows }, { data: campRows }] = await Promise.all([
         supabase.from("profiles").select("user_id, full_name, company_name, contact_email, allowed_routes, is_client_manager, client_password"),
         supabase.from("user_roles").select("user_id, role"),
         supabase.from("user_entitlements").select("user_id, tier, status, current_period_end, stripe_customer_id"),
         supabase.from("clients").select("owner_user_id").is("archived_at", null),
+        supabase.from("campaigns").select("id, user_id, name, status, created_at"),
       ]);
+      // Campañas de cada usuario, y cuántos correos ha mandado HOY cada campaña activa (así se
+      // ve si "activa" de verdad está enviando). Día de Madrid, como el motor.
+      const hoyIso = zonedMidnightIso(new Date(), "Europe/Madrid");
+      const activas = (campRows || []).filter((c: any) => c.status === "active");
+      const enviadosHoy = new Map<string, number>();
+      await Promise.all(activas.map(async (c: any) => {
+        const { count } = await supabase.from("sent_emails").select("id", { count: "exact", head: true })
+          .eq("campaign_id", c.id).gte("sent_at", hoyIso);
+        enviadosHoy.set(c.id, count || 0);
+      }));
+      const ORDEN: Record<string, number> = { active: 0, paused: 1, draft: 2 };
+      const campMap = new Map<string, any[]>();
+      for (const c of campRows || []) {
+        const lista = campMap.get((c as any).user_id) || [];
+        lista.push({ id: c.id, name: c.name, status: c.status, created_at: c.created_at, sent_today: enviadosHoy.get(c.id) ?? null });
+        campMap.set((c as any).user_id, lista);
+      }
+      for (const lista of campMap.values()) {
+        lista.sort((a, b) => ((ORDEN[a.status] ?? 3) - (ORDEN[b.status] ?? 3)) || String(b.created_at).localeCompare(String(a.created_at)));
+      }
       const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const roleMap = new Map((roles || []).map((r: any) => [r.user_id, r.role]));
       const entMap = new Map((ents || []).map((e: any) => [e.user_id, e]));
@@ -117,6 +139,7 @@ serve(async (req) => {
           leads_count: leadCountMap.get(u.id) || 0,
           accounts_count: accountCountMap.get(u.id) || 0,
           clients_count: clientCount.get(u.id) || 0,
+          campaigns: campMap.get(u.id) || [],
           plan: {
             tier: e?.tier || "free",
             status: e?.status || "inactive",
