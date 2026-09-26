@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
+import { MAX_STEPS, asuntoParaPaso, esperaParaPaso, leerPasos, peticionSecuencia, sistemaSecuencia } from "../_shared/sequence-copy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,35 +11,21 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { context, variables, numSteps } = await req.json();
+    const { context, variables, numSteps, stepPosition, senderName } = await req.json();
     // Both reach the prompt verbatim, so bound what a caller can make us pay for.
-    const stepCount = Math.min(6, Math.max(1, Math.floor(Number(numSteps) || 3)));
+    const unico = Number(stepPosition) >= 1 ? Math.min(20, Math.floor(Number(stepPosition))) : null;
+    const stepCount = unico ? 1 : Math.min(MAX_STEPS, Math.max(1, Math.floor(Number(numSteps) || 3)));
     const ctx = String(context ?? "").slice(0, 8000);
+    const vars = (Array.isArray(variables) ? variables : []).map((v: unknown) => String(v).slice(0, 60)).slice(0, 40);
     // BYOK: platform key for agency/agency-clients, the user's own key otherwise.
     const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
     if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para usar la generación con IA.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (!ai.apiKey) throw new Error("AI key not configured");
 
-    const variableList = (variables || []).map((v: string) => `{{${v}}}`).join(", ");
-
-    const systemPrompt = `Eres un experto en cold email outreach en español. Generas secuencias de emails de ventas/prospección que son directos, personalizados y profesionales.
-
-REGLAS IMPORTANTES:
-- Escribe en español
-- Usa las variables proporcionadas de forma natural: ${variableList || "no hay variables disponibles"}
-- Cada email debe ser corto (3-5 líneas máximo)
-- El primer email es de presentación, los siguientes son follow-ups
-- NO uses emojis
-- Tono profesional pero cercano
-- Incluye un CTA claro en cada email
-- Los follow-ups deben hacer referencia al email anterior sin ser repetitivos
-- Usa saltos de línea entre párrafos
-
-Responde EXCLUSIVAMENTE con un JSON array con este formato exacto (sin markdown, sin backticks):
-[{"subject":"...","body":"...","delay_days":0},{"subject":"...","body":"...","delay_days":3}]
-
-El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
+    // El molde de los EJEMPLOS QUE FUNCIONAN (el mismo que usan el bot de support y "Crear campaña").
+    const systemPrompt = sistemaSecuencia({ variables: vars, firma: typeof senderName === "string" ? senderName.slice(0, 60) : null });
+    const userPrompt = peticionSecuencia(ctx, stepCount, unico);
 
     const response = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
@@ -48,9 +35,10 @@ El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
       },
       body: JSON.stringify({
         model: ai.model,
+        temperature: 0.5,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Genera una secuencia de ${stepCount} emails de cold outreach con este contexto:\n\n${ctx}\n\nVariables disponibles para personalizar: ${variableList || "ninguna"}` },
+          { role: "user", content: userPrompt },
         ],
       }),
     });
@@ -74,14 +62,14 @@ El primer step siempre tiene delay_days: 0. Los siguientes entre 2-7 días.`;
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
 
-    // Parse JSON from response - handle potential markdown wrapping
     let steps;
     try {
-      const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      steps = JSON.parse(cleaned);
+      const posInicial = unico ?? 1;
+      steps = leerPasos(content).slice(0, stepCount).map((st, i) => ({ subject: asuntoParaPaso(posInicial + i, st.subject), body: st.body, delay_days: esperaParaPaso(posInicial + i) }));
+      if (!steps.length) throw new Error("vacía");
     } catch {
-      console.error("Failed to parse AI response:", content);
-      throw new Error("Error al parsear la respuesta de IA");
+      console.error("Failed to parse AI response:", content.slice(0, 500));
+      throw new Error("La IA no ha devuelto los correos en el formato esperado. Prueba otra vez.");
     }
 
     return new Response(JSON.stringify({ steps }), {

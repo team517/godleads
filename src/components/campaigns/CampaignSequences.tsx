@@ -441,12 +441,19 @@ export default function CampaignSequences({ campaignId }: Props) {
     toast.success("Plantilla eliminada");
   };
 
+  /** Lo que escribe la IA sigue el molde ({{first_name}}, {{company_name}}); si en los leads de
+   *  esta campaña esas columnas se llaman distinto o están vacías, se apunta a la que tiene datos. */
+  const ajustarVariablesIA = (subject: string, body: string) => {
+    if (!fieldStats.some((x) => x.key !== "email" && x.llenos > 0)) return { subject, body };
+    return { subject: corregirVariablesEnTexto(subject, fieldStats).text, body: corregirVariablesEnTexto(body, fieldStats).text };
+  };
+
   const generateWithAI = async () => {
     if (!aiContext.trim()) { toast.error("Escribe el contexto de tu campaña"); return; }
     setAiGenerating(true);
     try {
       const { data, error } = await supabase.functions.invoke("generate-sequence", {
-        body: { context: aiContext, variables: aiSelectedVars, numSteps: parseInt(aiNumSteps) },
+        body: { context: aiContext, variables: aiSelectedVars.length ? aiSelectedVars : dynamicVars.map((v) => v.label), numSteps: parseInt(aiNumSteps) },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -458,11 +465,12 @@ export default function CampaignSequences({ campaignId }: Props) {
       await supabase.from("campaign_steps").delete().eq("campaign_id", campaignId);
 
       for (let i = 0; i < aiSteps.length; i++) {
+        const { subject, body } = ajustarVariablesIA(aiSteps[i].subject || "", aiSteps[i].body || "");
         await supabase.from("campaign_steps").insert({
           campaign_id: campaignId,
           step_order: i + 1,
-          subject: aiSteps[i].subject || "",
-          body: aiSteps[i].body || "",
+          subject,
+          body,
           delay_days: aiSteps[i].delay_days ?? (i === 0 ? 0 : 3),
           variants: [] as any,
         });
@@ -887,17 +895,17 @@ export default function CampaignSequences({ campaignId }: Props) {
     if (!aiOneContext.trim()) { toast.error("Cuéntale de qué va el correo"); return; }
     setAiOneRunning(true);
     try {
-      const position = (steps.findIndex((s) => s.id === selectedStep.id) || 0) + 1;
-      const role = position === 1 ? "primer email en frío" : `seguimiento número ${position - 1} (el prospecto no ha contestado)`;
+      const position = Math.max(0, steps.findIndex((s) => s.id === selectedStep.id)) + 1;
       const { data, error } = await supabase.functions.invoke("generate-sequence", {
-        body: { context: `${aiOneContext.trim()}\n\nEscribe SOLO el ${role}.`, variables: dynamicVars.map((v) => v.label), numSteps: 1 },
+        body: { context: aiOneContext.trim(), variables: dynamicVars.map((v) => v.label), numSteps: 1, stepPosition: position },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       const one = Array.isArray(data?.steps) ? data.steps[0] : null;
       if (!one) throw new Error("La IA no ha devuelto ningún correo");
-      if (one.subject) setCurrentSubject(one.subject);
-      if (one.body) setCurrentBody(one.body);
+      const ajustado = ajustarVariablesIA(one.subject || "", one.body || "");
+      if (position === 1 && ajustado.subject) setCurrentSubject(ajustado.subject);
+      if (ajustado.body) setCurrentBody(ajustado.body);
       setAiOneOpen(false);
       setAiOneContext("");
       toast.success("Correo escrito con IA");
@@ -1424,13 +1432,13 @@ export default function CampaignSequences({ campaignId }: Props) {
         <DialogHeader><DialogTitle>Escribir este correo con IA</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <p className="text-[13px] text-muted-foreground">
-            Cuéntale de qué va: qué vendes, a quién y qué quieres que haga el lead. Sólo se cambia ESTE paso, los demás se quedan como están.
+            Se escribe calcando los correos que mejor funcionan (el inicial o su follow-up, según la posición de este paso). Cuéntale qué vendes, a quién, tu resultado típico, qué demo puedes enseñar y, si quieres, tu enlace de reserva y quién firma. Sólo se cambia ESTE paso.
           </p>
           <Textarea
             value={aiOneContext}
             onChange={(e) => setAiOneContext(e.target.value)}
             rows={5}
-            placeholder="Ej.: vendemos mantenimiento informático a talleres de Valencia; el objetivo es una llamada de 10 minutos."
+            placeholder="Ej.: vendemos mantenimiento informático a talleres; conseguimos que no pierdan ni un día de trabajo por averías; demo: un plan de mantenimiento hecho para su taller; reserva: https://calendly.com/..."
           />
         </div>
         <DialogFooter>
@@ -1606,9 +1614,12 @@ export default function CampaignSequences({ campaignId }: Props) {
             <Textarea
               value={aiContext}
               onChange={e => setAiContext(e.target.value)}
-              placeholder="Ej: Somos una agencia de marketing digital. Queremos ofrecer nuestros servicios de SEO a empresas medianas que tengan web pero poco tráfico orgánico..."
+              placeholder="Ej: Hacemos SEO para empresas medianas con web pero poco tráfico. Con clientes similares conseguimos entre 30 y 50 contactos más al mes. Demo: una auditoría de su web. Reserva: https://calendly.com/... Firma: Laura"
               className="min-h-[120px] text-sm"
             />
+            <p className="text-xs text-muted-foreground">
+              Los correos se calcan de los que mejor funcionan: un primer correo cercano y dos follow-ups cortos con tu dato y tu demo. Si no dices quién firma, firma la persona de cada buzón que envía.
+            </p>
           </div>
 
           <div className="space-y-2">

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -192,7 +193,11 @@ REGLAS DE RESPUESTA:
 - Cuando analices campañas del usuario, sé **honesto y directo** — si algo no funciona, dilo claramente con la solución
 - Compara siempre con benchmarks de la industria (reply rate B2B SaaS: 3-8%, open rate saludable: 45-65%)
 - Estructura tus respuestas con secciones claras usando ## headers
-- Tienes acceso a las analíticas reales de las campañas del usuario. Úsalas para personalizar cada consejo.${analyticsContext}`;
+- Tienes acceso a las analíticas reales de las campañas del usuario. Úsalas para personalizar cada consejo.
+
+CUANDO ESCRIBAS CORREOS DE CAMPAÑA (el inicial, los follow-ups o variantes): NO uses AIDA/PAS ni tu propio estilo. Cálcalos de los EJEMPLOS QUE FUNCIONAN de abajo, que son los que de verdad consiguen respuestas: mismo orden de párrafos, mismo tono y mismas frases-ancla, cambiando sólo lo que es del usuario (oferta, método, dato, demo, firma y enlace de reserva si lo da). Si no sabes lo que vende, a quién o su dato de resultado, pregúntaselo antes. Aquí el correo va en un bloque de código en texto plano (un párrafo por línea en blanco), sin HTML; su asunto sí lo propones.
+
+${CAMPAIGN_COPY_SYSTEM}${analyticsContext}`;
 
     const response = await fetch(`${ai.baseUrl}/chat/completions`, {
       method: "POST",
