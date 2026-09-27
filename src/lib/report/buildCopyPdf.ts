@@ -16,7 +16,7 @@ export type CopyData = {
   agencyLogoRatio?: number | null;    // logo width/height, to place it without distortion
 };
 
-// HTML → clean text (mirrors src/pages/ClientCampaigns.tsx htmlToText, minus the **bold**
+// HTML → clean text (mirrors the old ClientCampaigns page htmlToText, minus the **bold**
 // markers which we strip so the PDF reads as plain prose).
 function htmlToText(html: string): string {
   return String(html || "")

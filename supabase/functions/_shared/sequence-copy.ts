@@ -12,6 +12,9 @@ import { CAMPAIGN_COPY_SYSTEM } from "./campaign-copy.ts";
 
 export const MAX_STEPS = 6;
 
+/** Cómo va el cuerpo de un paso guardado desde el editor o desde el chat. */
+export const FORMATO_TEXTO_PLANO = `FORMATO DE SALIDA (manda sobre el "FORMATO" del molde): el cuerpo es TEXTO PLANO para un cuadro de texto. Nada de HTML (<p>, <br>, <strong>). Cada párrafo del ejemplo, separado del siguiente por UNA línea en blanco. La despedida ("quedo atento" / "un saludo" / nombre) va en líneas seguidas, sin línea en blanco entre ellas.`;
+
 /** Qué ejemplo del molde calca el correo que va en esa posición (1 = el inicial). */
 export function ejemploParaPaso(posicion: number): string {
   if (posicion <= 1) return "STEP 1 (email inicial)";
@@ -56,7 +59,7 @@ VARIABLES DISPONIBLES en los leads de esta campaña: ${vars}. Usa {{first_name}}
 
 ASUNTO (cada correo lleva uno, nunca vacío): 3-6 palabras, minúscula inicial, con {{company_name}} o {{first_name}}, sin emojis ni exclamaciones. Estilo: "idea para {{company_name}}", "{{first_name}}, una propuesta", "caso real para {{company_name}}". Los follow-ups (posición 2 en adelante) van en el MISMO hilo que el primero ("Re: ..."), como en el ejemplo: su "subject" va VACÍO ("").
 
-FORMATO DE SALIDA (manda sobre el "FORMATO" del molde): el cuerpo es TEXTO PLANO para un cuadro de texto. Nada de HTML (<p>, <br>, <strong>). Cada párrafo del ejemplo, separado del siguiente por UNA línea en blanco. La despedida ("quedo atento" / "un saludo" / nombre) va en líneas seguidas, sin línea en blanco entre ellas.
+${FORMATO_TEXTO_PLANO}
 
 Responde EXCLUSIVAMENTE con un JSON array (sin markdown ni backticks):
 [{"subject":"...","body":"..."}]`;

@@ -19,7 +19,7 @@ const routeMap: Record<string, ImportThunk> = {
   "/ai-prompts":     () => import("@/pages/AIPrompts"),
   "/settings":       () => import("@/pages/SettingsPage"),
   "/onboarding":     () => import("@/pages/Onboarding"),
-  "/client-campaigns": () => import("@/pages/ClientCampaigns"),
+  "/modificaciones-ia": () => import("@/pages/ModificacionesIA"),
   // /godtube is NOT listed on purpose: it is an owner-only page whose chunk is
   // heavy, and prefetching it downloaded it for every user on every session.
   // The route still works — React.lazy loads the chunk when it is opened.

@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Rocket, Megaphone, CornerDownLeft } from "lucide-react";
+import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Rocket, Bot, CornerDownLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { puedeVerIaMod } from "@/lib/ia-mod-view";
 
 type ResultKind = "page" | "campaign" | "lead" | "account";
 interface SearchResult {
@@ -25,7 +26,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Entregabilidad", path: "/deliverability", keywords: "entregabilidad deliverability spam dkim", icon: ShieldCheck },
   { label: "IA", path: "/ai-prompts", keywords: "ia ai prompts inteligencia", icon: Brain },
   { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
-  { label: "Automatizar campaña", path: "/client-campaigns", keywords: "automatizar crear campana cliente ia mensajes variantes secuencia skills", icon: Megaphone },
+  { label: "Modificaciones IA", path: "/modificaciones-ia", keywords: "modificaciones ia pulsebot chat cliente mensajes variantes secuencia metricas campana automatizar", icon: Bot },
 ];
 
 const KIND_META: Record<ResultKind, { icon: any; label: string }> = {
@@ -63,9 +64,10 @@ export function GlobalSearch() {
     // Nav matches first (instant, no network).
     const lower = term.toLowerCase();
     const isOwner = (user?.email || "").toLowerCase() === "hello@onepulso.blog";
-    const OWNER_ONLY = new Set(["/onboarding", "/client-campaigns"]);
+    const OWNER_ONLY = new Set(["/onboarding"]);
     const navMatches: SearchResult[] = NAV
       .filter((n) => !OWNER_ONLY.has(n.path) || isOwner) // owner-only agency tools
+      .filter((n) => n.path !== "/modificaciones-ia" || puedeVerIaMod(user?.email))
       .filter((n) => n.label.toLowerCase().includes(lower) || n.keywords.includes(lower))
       .slice(0, 4)
       .map((n) => ({ kind: "page", id: n.path, title: n.label, subtitle: "Sección", to: n.path }));

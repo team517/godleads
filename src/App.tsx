@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SubscriptionProvider } from "@/contexts/SubscriptionContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
@@ -40,7 +40,7 @@ const Install = lazyWithRetry(() => import("./pages/Install"));
 const Community = lazyWithRetry(() => import("./pages/Community"));
 const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 const OnboardingPortal = lazyWithRetry(() => import("./pages/OnboardingPortal"));
-const ClientCampaigns = lazyWithRetry(() => import("./pages/ClientCampaigns"));
+const ModificacionesIA = lazyWithRetry(() => import("./pages/ModificacionesIA"));
 const CopyClientes = lazyWithRetry(() => import("./pages/CopyClientes"));
 const AutomationFlow = lazyWithRetry(() => import("./pages/AutomationFlow"));
 const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
@@ -98,7 +98,9 @@ const App = () => (
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/community" element={<Community />} />
                 <Route path="/onboarding" element={<Onboarding />} />
-                <Route path="/client-campaigns" element={<ClientCampaigns />} />
+                <Route path="/modificaciones-ia" element={<ModificacionesIA />} />
+                {/* "Automatizar campaña" se sustituyó por Modificaciones IA: los enlaces viejos llevan allí. */}
+                <Route path="/client-campaigns" element={<Navigate to="/modificaciones-ia" replace />} />
                 <Route path="/copy" element={<CopyClientes />} />
                 <Route path="/automatizacion" element={<AutomationFlow />} />
                 <Route path="/seguimiento" element={<Seguimiento />} />

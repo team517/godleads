@@ -13,6 +13,7 @@ const PAIRS: [string, string][] = [
   ["src/lib/reply-agent.ts", "supabase/functions/_shared/reply-agent.ts"],
   ["src/lib/personalize.ts", "supabase/functions/_shared/personalize.ts"],
   ["src/lib/mime-headers.ts", "supabase/functions/_shared/mime-headers.ts"],
+  ["src/lib/step-variants.ts", "supabase/functions/_shared/step-variants.ts"],
 ];
 
 describe("shared copies stay byte-identical", () => {

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ShieldCheck, Sparkles, Rocket, Megaphone, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 import { isAgencyAccount } from "@/lib/access";
+import { puedeVerIaMod } from "@/lib/ia-mod-view";
 import { clearKeepSession } from "@/components/KeepSessionBanner";
 import { prefetchRoute, prefetchAllRoutesOnIdle } from "@/lib/route-prefetch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,7 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
     { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
     { icon: Brain, label: "IA", path: "/ai-prompts" },
     { icon: Workflow, label: "Automatización", path: "/automatizacion" },
-    { icon: Megaphone, label: "Automatizar campaña", path: "/client-campaigns" },
+    { icon: Bot, label: "Modificaciones IA", path: "/modificaciones-ia" },
     { icon: FileText, label: "Copy", path: "/copy" },
   ] },
   { id: "health", title: "Salud de envío", items: [
@@ -99,8 +100,10 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     // Copy (enviar el copy de las campañas a cada cliente): agencia — owner, managers (support@) y equipo@.
     if (path === "/copy") return isOwner || isManager || userEmail === "equipo@onepulso.online";
     if (path === "/seguimiento") return isOwner;
-    // Onboarding + Automatizar campaña: the owner AND client-managers (e.g. support@).
-    if (path === "/onboarding" || path === "/client-campaigns") return isOwner || isManager;
+    // Onboarding: the owner AND client-managers (e.g. support@).
+    if (path === "/onboarding") return isOwner || isManager;
+    // Modificaciones IA (chat sobre la cuenta de un cliente): sólo hello@, support@ y equipo@.
+    if (path === "/modificaciones-ia") return puedeVerIaMod(userEmail);
     return true;
   };
 
