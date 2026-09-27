@@ -8,7 +8,9 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { origenPlantilla, planImportacion, variablesUsadas } from "../_shared/ia-mod.ts";
+import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES } from "../_shared/ia-mod.ts";
+import { aiClassifyReply, evidenceSupported, type AiVerdict } from "../_shared/ai-classify.ts";
+import { authorText, classifyMessage } from "../_shared/classify.ts";
 import { mergeLeadFields, fieldsChanged } from "../_shared/lead-merge.ts";
 
 const MAX_VUELTAS = 8;
@@ -120,7 +122,7 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
 
   const mensajes: any[] = [{ role: "system", content: system }, ...historial];
   const tarjetas: Tarjeta[] = [];
-  const ctx = { db, cliente, autor, tarjetas };
+  const ctx: Ctx = { db, cliente, autor, tarjetas, apiKey };
 
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     const ultima = vuelta === MAX_VUELTAS - 1 || Date.now() - inicio > PLAZO_MS - 25_000;
@@ -170,7 +172,12 @@ async function llamarModelo(apiKey: string, messages: any[], conHerramientas: bo
 
 /* ── Herramientas ──────────────────────────────────────────────────────────────────────── */
 
-interface Ctx { db: Db; cliente: Cliente; autor: string; tarjetas: Tarjeta[] }
+interface Ctx {
+  db: Db; cliente: Cliente; autor: string; tarjetas: Tarjeta[];
+  apiKey?: string;
+  /** Para las pruebas: sustituye a la IA que lee cada respuesta. */
+  clasificar?: (asunto: string | null, texto: string) => Promise<AiVerdict | null>;
+}
 
 async function campanaDelCliente(ctx: Ctx, id: unknown) {
   const { data } = await ctx.db.from("campaigns").select("id, name, status, user_id").eq("id", String(id || "")).maybeSingle();
@@ -371,6 +378,122 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
         categoria: (m.labels || []).filter((l: string) => l !== "IA").join(", "),
         texto: replyTextForClassification(m.body_text, m.body_html).slice(0, 600),
       }));
+    }
+
+    case "ver_cuentas": {
+      const { data, error } = await db.rpc("ia_client_accounts", { p_user: cliente.id });
+      if (error) throw new Error("No se pudieron leer las cuentas");
+      let filas = (data || []) as any[];
+      if (a.campaign_id) {
+        const camp = await campanaDelCliente(ctx, a.campaign_id);
+        filas = filas.filter((f) => (f.campanas || []).includes(camp.name));
+      }
+      const ahora = Date.now();
+      const cuentas = filas.map((f) => {
+        const salud = saludCuenta(f, ahora);
+        const fallo = explicarFallo(f.ultimo_fallo);
+        return {
+          email: f.email, nombre: f.nombre || "", proveedor: String(f.proveedor || "").replace(/^smtp\./, ""),
+          estado: salud.estado, motivo: salud.motivo,
+          enviados_24h: Number(f.enviados_24h || 0), fallidos_24h: Number(f.fallidos_24h || 0),
+          limite_diario: f.daily_limit ?? null, warmup: !!f.warmup_enabled, warmup_score: f.warmup_score ?? null,
+          campanas: f.campanas || [], en_campana_activa: Number(f.campanas_activas || 0) > 0,
+          ultimo_fallo: fallo ? `${fallo.texto}` : "", ultimo_envio: f.last_send_at,
+        };
+      });
+      const orden: Record<string, number> = { problema: 0, aviso: 1, ok: 2 };
+      cuentas.sort((x, y) => (orden[x.estado] - orden[y.estado]) || (Number(y.en_campana_activa) - Number(x.en_campana_activa)) || x.email.localeCompare(y.email));
+      const totales = {
+        total: cuentas.length,
+        ok: cuentas.filter((c) => c.estado === "ok").length,
+        avisos: cuentas.filter((c) => c.estado === "aviso").length,
+        problemas: cuentas.filter((c) => c.estado === "problema").length,
+        problemas_en_campana_activa: cuentas.filter((c) => c.estado === "problema" && c.en_campana_activa).length,
+        enviados_24h: cuentas.reduce((t, c) => t + c.enviados_24h, 0),
+        fallidos_24h: cuentas.reduce((t, c) => t + c.fallidos_24h, 0),
+      };
+      const visibles = a.solo_problemas ? cuentas.filter((c) => c.estado !== "ok") : cuentas;
+      ctx.tarjetas.push({ type: "cuentas", summary: `Cuentas de ${cliente.empresa || cliente.email}`, totales, cuentas: visibles.slice(0, 150) });
+      return { totales, cuentas_con_problema_o_aviso: cuentas.filter((c) => c.estado !== "ok").slice(0, 40), muestra_ok: cuentas.filter((c) => c.estado === "ok").slice(0, 10).map((c) => c.email) };
+    }
+
+    case "revisar_respuestas": {
+      const dias = entero(a.dias, 7, 1, 60);
+      const max = entero(a.max, 120, 1, 200);
+      const desde = new Date(Date.now() - dias * 86400000).toISOString();
+      let q = db.from("inbox_messages")
+        .select("id, from_email, from_name, subject, body_text, body_html, labels, received_at, campaign_id, lead_id")
+        .eq("user_id", cliente.id).eq("is_archived", false).eq("is_sent", false)
+        .or("is_warmup.is.null,is_warmup.eq.false")
+        .gte("received_at", desde)
+        .order("received_at", { ascending: false }).limit(600);
+      let campNombre = "";
+      if (a.campaign_id) { const camp = await campanaDelCliente(ctx, a.campaign_id); q = q.eq("campaign_id", camp.id); campNombre = camp.name; }
+      const { data: msgs, error } = await q;
+      if (error) throw new Error("No se pudo leer el Unibox");
+      // Sólo lo que responde a nuestras campañas (enlazado a campaña o a un lead), y de cada persona
+      // su último mensaje: es el que dice dónde está ahora.
+      const vistos = new Set<string>();
+      const porPersona: any[] = [];
+      for (const m of (msgs || []) as any[]) {
+        if (!m.campaign_id && !m.lead_id) continue;
+        const quien = String(m.from_email || "").toLowerCase();
+        if (!quien || vistos.has(quien)) continue;
+        vistos.add(quien);
+        porPersona.push(m);
+      }
+      const aLeer = porPersona.slice(0, max);
+      const { data: camps } = await db.from("campaigns").select("id, name").eq("user_id", cliente.id);
+      const nombreCamp = new Map(((camps || []) as any[]).map((c) => [c.id, c.name]));
+      const clasificar = ctx.clasificar || ((asunto: string | null, texto: string) => aiClassifyReply(ctx.apiKey || "", asunto, texto));
+      const inicio = Date.now();
+      const resultados: any[] = [];
+      // De 12 en 12 en paralelo y con tope de tiempo, para no comerse el turno entero.
+      for (let i = 0; i < aLeer.length; i += 12) {
+        if (Date.now() - inicio > 65_000) break;
+        const lote = aLeer.slice(i, i + 12);
+        const hechos = await Promise.all(lote.map(async (m) => {
+          const texto = authorText(replyTextForClassification(m.body_text, m.body_html)).trim().slice(0, 2500);
+          if (texto.replace(/\s+/g, "").length < 2) return null;
+          // Las autorrespuestas evidentes (fuera de oficina, vacaciones, rebotes) las resuelven las
+          // reglas, gratis y al instante; todo lo que escribe una persona lo lee la IA.
+          const v: AiVerdict | null = classifyMessage(m.subject, texto) === "out_of_office"
+            ? { category: "out_of_office", confidence: 1, reason: "respuesta automática", evidence: "" }
+            : await clasificar(m.subject, texto).catch(() => null);
+          const etiqueta = ((m.labels || []) as string[]).filter((l) => l !== "IA" && l !== "Importante")[0] || "";
+          const veredicto = v ? VEREDICTO_ES[v.category] || v.category : "Sin leer";
+          const citaOk = v ? evidenceSupported(v.evidence, texto) : false;
+          return {
+            nombre: m.from_name || "", email: m.from_email, empresa: String(m.from_email || "").split("@")[1] || "",
+            campana: nombreCamp.get(m.campaign_id) || "", fecha: m.received_at, asunto: m.subject || "",
+            veredicto, cita: v && citaOk ? v.evidence : "", motivo: v?.reason || "", confianza: v?.confidence ?? 0,
+            etiqueta, discrepa: !!etiqueta && veredicto !== "Sin leer" && etiqueta !== veredicto,
+            texto: texto.slice(0, 400),
+          };
+        }));
+        resultados.push(...hechos.filter(Boolean));
+      }
+      const cuenta = (v: string) => resultados.filter((r) => r.veredicto === v).length;
+      const totales = {
+        leidas: resultados.length, personas: porPersona.length,
+        interesados: cuenta("Interesado"), preguntas: cuenta("Pregunta"), derivados: cuenta("Derivado"),
+        no_interesados: cuenta("No interesado"), no_contactar: cuenta("No contactar"),
+        fuera_oficina: cuenta("Fuera de oficina"), neutras: cuenta("Neutral"),
+        etiqueta_distinta: resultados.filter((r) => r.discrepa).length,
+      };
+      const prioridad: Record<string, number> = { "Interesado": 0, "Pregunta": 1, "Derivado": 2 };
+      const calientes = resultados.filter((r) => r.veredicto in prioridad)
+        .sort((x, y) => (prioridad[x.veredicto] - prioridad[y.veredicto]) || String(y.fecha).localeCompare(String(x.fecha)));
+      ctx.tarjetas.push({
+        type: "respuestas", summary: `Respuestas leídas de ${cliente.empresa || cliente.email} (${dias} días)`,
+        dias, campana: campNombre, totales,
+        calientes: calientes.map(({ texto, ...r }) => r),
+        distintas: resultados.filter((r) => r.discrepa && !(r.veredicto in prioridad)).map(({ texto, ...r }) => r).slice(0, 15),
+      });
+      return {
+        dias, totales, sin_leer_por_tiempo: Math.max(0, aLeer.length - resultados.length),
+        calientes: calientes.map((r) => ({ nombre: r.nombre, email: r.email, campana: r.campana, veredicto: r.veredicto, cita: r.cita, etiqueta: r.etiqueta })),
+      };
     }
 
     case "leer_web": {

@@ -36,7 +36,16 @@ export const IA_MOD_TOOLS = [
     categoria: S("Interesado, Pregunta, No interesado, Fuera de oficina… vacío = todas"),
     limite: N("cuántas (máx. 20, por defecto 10)"),
   }),
-  fn("leer_web", "Lee el texto de una web pública (la del cliente, para entender qué vende).", { url: S("dominio o URL") }, ["url"]),
+  fn("ver_cuentas", "Cuentas de correo conectadas del cliente: estado, si pueden enviar (errores de contraseña, conexión, límites), si sincronizan el correo, enviados y fallos en 24 h, límite diario, warm-up y en qué campañas están. Se muestra al usuario como tarjeta. Nunca da contraseñas.", {
+    campaign_id: S("opcional: sólo las cuentas de esta campaña"),
+    solo_problemas: { type: "boolean", description: "true = sólo las que tienen algún problema" },
+  }),
+  fn("revisar_respuestas", "LEE una a una las respuestas reales de los leads (Unibox) y juzga con IA qué dice cada persona (interesado, pregunta, no interesado, derivado, fuera de oficina…), con la frase exacta que lo demuestra. No se fía de la etiqueta: la compara y avisa si no coincide. Úsala siempre que pregunten por interesados, respuestas buenas, a quién contestar o qué dicen los leads.", {
+    dias: N("cuántos días hacia atrás (por defecto 7, máx. 60)"),
+    campaign_id: S("opcional: sólo esta campaña"),
+    max: N("máximo de personas a leer (por defecto 120, máx. 200)"),
+  }),
+  fn("leer_web","Lee el texto de una web pública (la del cliente, para entender qué vende).", { url: S("dominio o URL") }, ["url"]),
   fn("guardar_nota", "Guarda en la memoria de ESTE cliente un dato que hay que recordar siempre (qué vende, a quién, quién firma, su dato de resultado, su enlace de reserva, preferencias de tono…).", {
     nota: S("una o dos frases"),
   }, ["nota"]),
@@ -134,7 +143,11 @@ ${campanas}
 
 ${extra}
 
-QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
+QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; ver sus cuentas de correo y si funcionan (ver_cuentas); leer de verdad cada respuesta del Unibox para saber quién está interesado (revisar_respuestas); leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
+
+INTERESADOS Y RESPUESTAS: si preguntan si hay interesados, quién ha respondido bien, a quién contestar o qué dicen los leads, llama a revisar_respuestas (no te bases sólo en ver_respuestas ni en las etiquetas). Luego di en 1-3 líneas cuántos interesados y preguntas hay y quiénes son los más calientes; la tarjeta enseña el resto. Si la IA ve interés donde la etiqueta dice otra cosa, dilo.
+
+CUENTAS DE CORREO: si preguntan por sus cuentas, buzones, envíos que fallan o por qué no envía, llama a ver_cuentas. Resume cuántas hay, cuántas funcionan y cuáles tienen problema y qué hacer (en lenguaje llano: "IONOS rechaza la contraseña al enviar: revisa o desbloquea el buzón"). Los errores de destinatario (dirección que no existe) no son culpa de la cuenta.
 
 ARCHIVOS ADJUNTOS (CSV): cuando el usuario adjunte uno verás "(Adjuntó el archivo …, id …)".
 - Si te pide meter/implementar/importar/subir esos leads en una campaña: llama YA a importar_leads (formato "plantilla" salvo que pida todas las columnas). NO preguntes antes ni ofrezcas opciones: la plantilla ya elige la mejor columna para cada variable (first_name, company_name, industry, city…). Si no dice la campaña y sólo hay una que encaje por nombre, usa esa; si hay dudas reales, pregunta sólo cuál.
@@ -240,6 +253,58 @@ export function origenPlantilla(rows: Record<string, unknown>[]): Record<string,
   const filas = rows.map((r) => Object.fromEntries(Object.entries(r || {}).map(([k, v]) => [k, v == null ? "" : String(v)])));
   return elegirColumnasPlantilla([...cab], filas, PLANTILLA_COLUMNAS, aliasPlantilla);
 }
+
+/* ── Cuentas de correo: salud en lenguaje llano ──────────────────────────────────────── */
+
+export type TipoFallo = "cuenta" | "destinatario" | "temporal" | "otro";
+
+/** Un error SMTP → de quién es la culpa y qué significa, en español llano. */
+export function explicarFallo(msg: string | null | undefined): { tipo: TipoFallo; texto: string } | null {
+  const m = String(msg || "").trim();
+  if (!m) return null;
+  const l = m.toLowerCase();
+  if (/\b535\b|auth(entication)? failed|authentication credentials|invalid credentials|username and password not accepted|login failed|\b534\b/.test(l)) {
+    return { tipo: "cuenta", texto: "El proveedor rechaza la contraseña al enviar (535): hay que revisar o desbloquear el buzón" };
+  }
+  if (/connection (refused|reset|closed)|timed? ?out|econnrefused|enotfound|getaddrinfo|tls|certificate/.test(l)) {
+    return { tipo: "cuenta", texto: "No se puede conectar con el servidor de envío" };
+  }
+  if (/quota|limit exceeded|too many (messages|recipients)|sending limit|\b452\b|daily user sending/.test(l)) {
+    return { tipo: "cuenta", texto: "El proveedor ha frenado el envío por límite o cuota" };
+  }
+  const codigo = (l.match(/\b([45]\d{2})\b/) || [])[1] || "";
+  if (codigo.startsWith("4") || /try again|temporar|greylist/.test(l)) {
+    return { tipo: "temporal", texto: "Error temporal del servidor; se reintenta solo" };
+  }
+  if (codigo.startsWith("55") || /recipient rejected|user unknown|no such user|mailbox (unavailable|not found)|does not exist/.test(l)) {
+    return { tipo: "destinatario", texto: "La dirección del lead no existe o no acepta correo (no es culpa de la cuenta)" };
+  }
+  return { tipo: "otro", texto: m.replace(/\s+/g, " ").slice(0, 140) };
+}
+
+export interface CuentaRaw {
+  email: string; status: string; last_error: string | null; last_sync: string | null;
+  fallidos_24h: number; ultimo_fallo: string | null; ultimo_fallo_at: string | null;
+}
+
+/** ¿Está bien esta cuenta? problema = no puede enviar o no sincroniza; aviso = conviene mirarla. */
+export function saludCuenta(c: CuentaRaw, now = Date.now()): { estado: "ok" | "aviso" | "problema"; motivo: string } {
+  if (c.status && c.status !== "connected") return { estado: "problema", motivo: `Estado "${c.status}": está desconectada` };
+  const fallo = explicarFallo(c.ultimo_fallo);
+  const recienteMs = c.ultimo_fallo_at ? now - Date.parse(c.ultimo_fallo_at) : Infinity;
+  if (c.fallidos_24h > 0 && fallo?.tipo === "cuenta" && recienteMs < 24 * 3600_000) return { estado: "problema", motivo: fallo.texto };
+  if (c.last_error && c.last_error.trim()) return { estado: "problema", motivo: `Error al leer el correo: ${c.last_error.trim().slice(0, 120)}` };
+  const syncMin = c.last_sync ? (now - Date.parse(c.last_sync)) / 60000 : Infinity;
+  if (syncMin > 60) return { estado: "aviso", motivo: c.last_sync ? `No sincroniza el correo desde hace ${Math.round(syncMin / 60)} h` : "Nunca ha sincronizado el correo" };
+  if (c.fallidos_24h >= 5 && fallo?.tipo === "temporal") return { estado: "aviso", motivo: `${c.fallidos_24h} fallos temporales en 24 h` };
+  return { estado: "ok", motivo: "" };
+}
+
+/** Categorías del clasificador → cómo se dicen en la plataforma. */
+export const VEREDICTO_ES: Record<string, string> = {
+  interested: "Interesado", question: "Pregunta", not_interested: "No interesado", no_contactar: "No contactar",
+  derivado: "Derivado", out_of_office: "Fuera de oficina", neutral: "Neutral",
+};
 
 /** Variables {{x}} que usan unos textos (sin las que rellena el motor). */
 export function variablesUsadas(textos: string[]): string[] {

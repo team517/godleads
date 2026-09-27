@@ -27,8 +27,25 @@ export type IaTarjeta =
       mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[];
       importacion?: ImportacionVista }
   | { type: "campanas"; campanas: CampanaVista[]; summary?: string }
+  | { type: "cuentas"; summary?: string; totales: CuentasTotales; cuentas: CuentaVista[] }
+  | { type: "respuestas"; summary?: string; dias: number; campana: string; totales: RespuestasTotales; calientes: RespuestaVista[]; distintas: RespuestaVista[] }
   | { type: "adjunto"; upload_id: string; nombre: string; tipo: "leads" | "tabla"; filas: number; descartadas?: number; columnas: string[]; summary?: string }
   | { type: "nota"; texto: string; summary?: string };
+
+export interface CuentasTotales { total: number; ok: number; avisos: number; problemas: number; problemas_en_campana_activa: number; enviados_24h: number; fallidos_24h: number }
+export interface CuentaVista {
+  email: string; nombre: string; proveedor: string; estado: "ok" | "aviso" | "problema"; motivo: string;
+  enviados_24h: number; fallidos_24h: number; limite_diario: number | null; warmup: boolean; warmup_score: number | null;
+  campanas: string[]; en_campana_activa: boolean; ultimo_fallo: string;
+}
+export interface RespuestasTotales {
+  leidas: number; personas: number; interesados: number; preguntas: number; derivados: number;
+  no_interesados: number; no_contactar: number; fuera_oficina: number; neutras: number; etiqueta_distinta: number;
+}
+export interface RespuestaVista {
+  nombre: string; email: string; empresa: string; campana: string; fecha: string; asunto: string;
+  veredicto: string; cita: string; motivo: string; etiqueta: string; discrepa: boolean;
+}
 
 export interface CampanaVista {
   id: string; nombre: string; estado: string; creada: string; mensajes: number; limite_diario: number | null; horario: string;
@@ -132,5 +149,6 @@ export const SUGERENCIAS: { id: string; texto: string; tono: "blue" | "violet" |
   { id: "mensajes", texto: "Enséñame los mensajes de su campaña activa", tono: "violet" },
   { id: "asuntos", texto: "Dame 5 asuntos con alta apertura para su primer correo", tono: "amber" },
   { id: "secuencia", texto: "Optimiza su secuencia de emails", tono: "indigo" },
-  { id: "respuestas", texto: "¿Qué están respondiendo sus leads? Dame ideas para mejorar", tono: "green" },
+  { id: "respuestas", texto: "¿Hay interesados esta semana? Lee sus respuestas", tono: "green" },
+  { id: "cuentas", texto: "¿Funcionan bien sus cuentas de correo?", tono: "blue" },
 ];

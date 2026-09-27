@@ -21,7 +21,11 @@ describe("herramientas", () => {
     for (const n of ESCRITURAS) expect(nombres).toContain(n);
   });
   it("no hay herramientas para activar campañas, borrar leads ni tocar cuentas", () => {
-    expect(nombres.some((n) => /activar|pausar|borrar_lead|eliminar_lead|cuenta/.test(n))).toBe(false);
+    expect(nombres.some((n) => /activar|pausar|borrar_lead|eliminar_lead/.test(n))).toBe(false);
+    // ver_cuentas sólo lee: ninguna herramienta que escribe toca cuentas de correo.
+    expect([...ESCRITURAS].some((n) => /cuenta/.test(n))).toBe(false);
+    expect(ESCRITURAS.has("ver_cuentas")).toBe(false);
+    expect(ESCRITURAS.has("revisar_respuestas")).toBe(false);
   });
   it("importar leads es de escritura (pasa por Confirmar)", () => {
     expect(ESCRITURAS.has("importar_leads")).toBe(true);

@@ -19,7 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SparkMark } from "@/components/SparkMark";
 import {
   ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, conversacionesRecientes, csvMetricas, diaCorto, haceCuanto, horaCorta,
-  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type VistaPaso,
+  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type RespuestaVista, type VistaPaso,
 } from "@/lib/ia-mod-view";
 import { decodificarArchivo, prepararCsv, trozos, type CsvPreparado } from "@/lib/ia-mod-csv";
 
@@ -43,7 +43,7 @@ const TONOS: Record<string, string> = {
   green: "bg-emerald-50 text-emerald-600",
 };
 const ICONOS_SUGERENCIA: Record<string, typeof BarChart3> = {
-  graficos: BarChart3, mensajes: Mail, asuntos: Lightbulb, secuencia: Workflow, respuestas: MessageSquareReply,
+  graficos: BarChart3, mensajes: Mail, asuntos: Lightbulb, secuencia: Workflow, respuestas: MessageSquareReply, cuentas: ListChecks,
 };
 
 function Insignia({ c, size = 32 }: { c: Pick<IaCliente, "company_name" | "full_name" | "email" | "brand_color">; size?: number }) {
@@ -639,6 +639,8 @@ function Tarjeta({ t, cambios, onCambio, onPedir }: {
 }) {
   if (t.type === "adjunto") return null;
   if (t.type === "campanas") return <TarjetaCampanas t={t} onPedir={onPedir} />;
+  if (t.type === "cuentas") return <TarjetaCuentas t={t} />;
+  if (t.type === "respuestas") return <TarjetaRespuestas t={t} />;
   if (t.type === "metricas") return <TarjetaMetricas t={t} onPedir={onPedir} />;
   if (t.type === "mensajes") return <TarjetaMensajes t={t} />;
   if (t.type === "nota") {
@@ -715,6 +717,135 @@ function TarjetaCambio({ t, estado, onCambio }: {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+const PUNTO_SALUD: Record<string, string> = { ok: "bg-emerald-500", aviso: "bg-amber-500", problema: "bg-red-500" };
+
+function Cifra({ k, v, color = "" }: { k: string; v: number; color?: string }) {
+  return (
+    <div className="rounded-xl border border-[#EEEAF8] bg-card px-3 py-2.5 text-center dark:border-border">
+      <p className={`text-[20px] font-bold tabular-nums leading-tight ${color}`}>{fmt(v)}</p>
+      <p className="text-[11.5px] text-muted-foreground">{k}</p>
+    </div>
+  );
+}
+
+function TarjetaCuentas({ t }: { t: Extract<IaTarjeta, { type: "cuentas" }> }) {
+  const [todas, setTodas] = useState(false);
+  const conProblema = t.cuentas.filter((c) => c.estado !== "ok");
+  const resto = t.cuentas.filter((c) => c.estado === "ok");
+  return (
+    <div className="max-w-[760px] space-y-3 rounded-2xl border border-[#ECE8F7] bg-card p-4 dark:border-border">
+      <p className="flex items-center gap-2 text-[15px] font-semibold"><Mail className="h-4 w-4 text-primary" /> Cuentas de correo</p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Cifra k="Cuentas" v={t.totales.total} />
+        <Cifra k="Funcionan bien" v={t.totales.ok} color="text-emerald-600" />
+        <Cifra k="Con problema" v={t.totales.problemas + t.totales.avisos} color={t.totales.problemas ? "text-red-600" : t.totales.avisos ? "text-amber-600" : ""} />
+        <Cifra k="Enviados en 24 h" v={t.totales.enviados_24h} />
+      </div>
+      {conProblema.length > 0 ? (
+        <div className="space-y-1.5">
+          {conProblema.map((c) => (
+            <div key={c.email} className={`rounded-xl border px-3 py-2 ${c.estado === "problema" ? "border-red-200 bg-red-50/60 dark:border-red-500/30 dark:bg-red-500/10" : "border-amber-200 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/10"}`}>
+              <p className="flex items-center gap-2 text-[14px] font-medium">
+                <span className={`h-2 w-2 flex-shrink-0 rounded-full ${PUNTO_SALUD[c.estado]}`} />
+                <span className="truncate">{c.email}</span>
+                {c.en_campana_activa && <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">en campaña activa</span>}
+              </p>
+              <p className="mt-0.5 pl-4 text-[13px] text-foreground/80">{c.motivo}</p>
+              {c.fallidos_24h > 0 && <p className="pl-4 text-[12px] text-muted-foreground">{c.fallidos_24h} {c.fallidos_24h === 1 ? "envío fallido" : "envíos fallidos"} en 24 h</p>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-[13.5px] text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-4 w-4" /> Todas las cuentas funcionan bien.</p>
+      )}
+      {resto.length > 0 && (
+        <div>
+          <button onClick={() => setTodas((v) => !v)} className="flex items-center gap-1 text-[13px] font-medium text-primary">
+            <ChevronDown className={`h-4 w-4 transition-transform ${todas ? "" : "-rotate-90"}`} /> {todas ? "Ocultar" : "Ver"} las {resto.length} que funcionan
+          </button>
+          {todas && (
+            <div className="mt-2 max-h-[320px] overflow-auto rounded-xl border border-[#EEEAF8] dark:border-border">
+              <table className="w-full text-[12.5px]">
+                <thead className="sticky top-0 bg-[#F6F4FD] text-left text-muted-foreground dark:bg-muted">
+                  <tr><th className="px-3 py-1.5 font-medium">Cuenta</th><th className="px-3 py-1.5 text-right font-medium">Enviados 24 h</th><th className="px-3 py-1.5 text-right font-medium">Límite/día</th><th className="px-3 py-1.5 font-medium">Campañas</th></tr>
+                </thead>
+                <tbody>
+                  {resto.map((c) => (
+                    <tr key={c.email} className="border-t border-[#EEEAF8] dark:border-border">
+                      <td className="max-w-[240px] truncate px-3 py-1.5">{c.email}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{fmt(c.enviados_24h)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{c.limite_diario ?? "—"}</td>
+                      <td className="max-w-[200px] truncate px-3 py-1.5 text-muted-foreground">{c.campanas.join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CHIP_VEREDICTO: Record<string, string> = {
+  "Interesado": "border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  "Pregunta": "border-sky-300 bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
+  "Derivado": "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300",
+};
+
+function FilaRespuesta({ r }: { r: RespuestaVista }) {
+  return (
+    <div className="rounded-xl border border-[#EEEAF8] bg-background px-3 py-2.5 dark:border-border">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[14px] font-semibold">{r.nombre || r.email.split("@")[0]}</span>
+        <span className="text-[12.5px] text-muted-foreground">{r.email}</span>
+        <span className={`ml-auto rounded-md border px-2 py-0.5 text-[11.5px] font-medium ${CHIP_VEREDICTO[r.veredicto] || "border-border bg-muted text-muted-foreground"}`}>{r.veredicto}</span>
+      </div>
+      {r.cita && <p className="mt-1 text-[13.5px] italic text-foreground/85">“{r.cita}”</p>}
+      <p className="mt-1 text-[12px] text-muted-foreground">
+        {[r.campana, haceCuanto(r.fecha)].filter(Boolean).join(" · ")}
+        {r.discrepa && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">la etiqueta decía: {r.etiqueta}</span>}
+      </p>
+    </div>
+  );
+}
+
+function TarjetaRespuestas({ t }: { t: Extract<IaTarjeta, { type: "respuestas" }> }) {
+  const [verDistintas, setVerDistintas] = useState(false);
+  return (
+    <div className="max-w-[760px] space-y-3 rounded-2xl border border-[#ECE8F7] bg-card p-4 dark:border-border">
+      <p className="flex items-center gap-2 text-[15px] font-semibold">
+        <MessageSquareReply className="h-4 w-4 text-primary" /> Respuestas leídas una a una
+        <span className="ml-auto text-[12px] font-normal text-muted-foreground">{t.campana || "todas las campañas"} · {t.dias} días</span>
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <Cifra k="Leídas" v={t.totales.leidas} />
+        <Cifra k="Interesados" v={t.totales.interesados} color="text-emerald-600" />
+        <Cifra k="Preguntas" v={t.totales.preguntas} color="text-sky-600" />
+        <Cifra k="No interesados" v={t.totales.no_interesados + t.totales.no_contactar} />
+        <Cifra k="Fuera de oficina" v={t.totales.fuera_oficina} />
+      </div>
+      {t.calientes.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-[13px] font-semibold">A quién contestar primero</p>
+          {t.calientes.map((r) => <FilaRespuesta key={r.email} r={r} />)}
+        </div>
+      ) : (
+        <p className="rounded-xl bg-muted/60 px-3 py-2 text-[13.5px] text-muted-foreground">Ninguna respuesta con interés o preguntas en este periodo.</p>
+      )}
+      {t.distintas.length > 0 && (
+        <div>
+          <button onClick={() => setVerDistintas((v) => !v)} className="flex items-center gap-1 text-[13px] font-medium text-primary">
+            <ChevronDown className={`h-4 w-4 transition-transform ${verDistintas ? "" : "-rotate-90"}`} /> {t.distintas.length} más con la etiqueta distinta a lo que dicen
+          </button>
+          {verDistintas && <div className="mt-2 space-y-1.5">{t.distintas.map((r) => <FilaRespuesta key={r.email} r={r} />)}</div>}
+        </div>
+      )}
     </div>
   );
 }
