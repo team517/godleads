@@ -63,7 +63,8 @@ export function ColdEmailChatbot() {
   // The Unibox reader lives bottom-right too — hide this floating bubble there
   // so it never covers the "Responder" button. Y en la bienvenida del primer acceso tampoco
   // pinta nada: esa pantalla es sólo cuatro preguntas.
-  const hideHere = location.pathname.startsWith("/unibox") || location.pathname.startsWith("/bienvenida");
+  // Modificaciones IA ya ES el chat de PulseBot: el botón flotante tapaba su panel derecho.
+  const hideHere = location.pathname.startsWith("/unibox") || location.pathname.startsWith("/bienvenida") || location.pathname.startsWith("/modificaciones-ia");
 
   useEffect(() => {
     if (scrollRef.current) {

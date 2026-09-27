@@ -67,7 +67,6 @@ export default function ModificacionesIA() {
   const [pensando, setPensando] = useState(false);
   const [texto, setTexto] = useState("");
   const [memoriaAbierta, setMemoriaAbierta] = useState(false);
-  const [selectorAbierto, setSelectorAbierto] = useState(false);
   const [menciones, setMenciones] = useState(false);
   const finRef = useRef<HTMLDivElement>(null);
   const entradaRef = useRef<HTMLTextAreaElement>(null);
@@ -83,7 +82,6 @@ export default function ModificacionesIA() {
 
   const abrir = useCallback(async (c: IaCliente) => {
     setSel(c);
-    setSelectorAbierto(false);
     setMensajes([]);
     setCampanas([]);
     setCargando(true);
@@ -109,7 +107,7 @@ export default function ModificacionesIA() {
   const enviar = async (contenido?: string) => {
     const t = (contenido ?? texto).trim();
     if (!t || pensando) return;
-    if (!sel) { setSelectorAbierto(true); return; }
+    if (!sel) return;
     setTexto("");
     const provisional: IaMensaje = { id: `tmp-${Date.now()}`, role: "user", content: t, cards: [], author_email: user?.email || null, created_at: new Date().toISOString() };
     setMensajes((m) => [...m, provisional]);
@@ -175,8 +173,19 @@ export default function ModificacionesIA() {
   if (!user) return null;
   if (!permitido) return <Navigate to="/dashboard" replace />;
 
+  const fondo = "-mx-1 rounded-2xl bg-[radial-gradient(1200px_500px_at_0%_0%,#F3EEFF_0%,transparent_60%),radial-gradient(900px_500px_at_100%_100%,#EAF4FF_0%,transparent_60%)] dark:bg-none p-1 sm:p-2";
+
+  // Primero se elige el cliente, en grande y a toda la pantalla; el chat viene después.
+  if (!sel) {
+    return (
+      <div className={fondo}>
+        <PantallaClientes clientes={clientes} recientes={recientes} onElegir={abrir} />
+      </div>
+    );
+  }
+
   return (
-    <div className="-mx-1 rounded-2xl bg-[radial-gradient(1200px_500px_at_0%_0%,#F3EEFF_0%,transparent_60%),radial-gradient(900px_500px_at_100%_100%,#EAF4FF_0%,transparent_60%)] dark:bg-none p-1 sm:p-2">
+    <div className={fondo}>
       <div className="flex gap-4 h-[calc(100dvh-120px)] min-h-[560px]">
         {/* ── Chat ─────────────────────────────────────────────────────── */}
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
@@ -197,9 +206,9 @@ export default function ModificacionesIA() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" className="h-10 gap-2 rounded-xl" onClick={() => setSelectorAbierto(true)}>
-                {sel ? <Insignia c={sel} size={22} /> : <Search className="h-4 w-4" />}
-                <span className="max-w-[160px] truncate">{sel ? nombreCliente(sel) : "Elegir cliente"}</span>
+              <Button variant="outline" className="h-10 gap-2 rounded-xl" onClick={() => setSel(null)} title="Cambiar de cliente">
+                <Insignia c={sel} size={22} />
+                <span className="max-w-[160px] truncate">{nombreCliente(sel)}</span>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
               {sel && (
@@ -214,9 +223,6 @@ export default function ModificacionesIA() {
           </header>
 
           <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
-            {!sel && (
-              <SelectorEnLinea clientes={clientes} onElegir={abrir} />
-            )}
             {sel && cargando && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
             {sel && !cargando && mensajes.length === 0 && (
               <Bienvenida cliente={sel} onSugerencia={enviar} />
@@ -320,20 +326,12 @@ export default function ModificacionesIA() {
                 </button>
               ))}
             </div>
-            <Button variant="outline" className="mt-3 w-full gap-1 rounded-xl" onClick={() => setSelectorAbierto(true)}>
+            <Button variant="outline" className="mt-3 w-full gap-1 rounded-xl" onClick={() => setSel(null)}>
               Ver todos los clientes <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </aside>
       </div>
-
-      {/* Elegir cliente */}
-      <Dialog open={selectorAbierto} onOpenChange={setSelectorAbierto}>
-        <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
-          <DialogHeader className="px-5 pt-5 pb-3"><DialogTitle>Elige un cliente</DialogTitle></DialogHeader>
-          <ListaClientes clientes={clientes} onElegir={abrir} seleccionado={sel?.id} alto="max-h-[60vh]" />
-        </DialogContent>
-      </Dialog>
 
       {/* Memoria */}
       <Dialog open={memoriaAbierta} onOpenChange={setMemoriaAbierta}>
@@ -362,55 +360,119 @@ function IconoAtajo({ titulo, onClick, disabled, children }: { titulo: string; o
   );
 }
 
-function ListaClientes({ clientes, onElegir, seleccionado, alto }: { clientes: IaCliente[] | null; onElegir: (c: IaCliente) => void; seleccionado?: string; alto: string }) {
+type Filtro = "todos" | "activas" | "recientes";
+
+/** Primera pantalla: elegir el cliente, grande y a todo el ancho. */
+function PantallaClientes({ clientes, recientes, onElegir }: { clientes: IaCliente[] | null; recientes: IaCliente[]; onElegir: (c: IaCliente) => void }) {
   const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState<Filtro>("todos");
+  const todos = useMemo(() => clientes || [], [clientes]);
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return (clientes || []).filter((c) => !q || [c.company_name, c.full_name, c.email].some((v) => (v || "").toLowerCase().includes(q)));
-  }, [clientes, busca]);
-  return (
-    <div>
-      <div className="px-5 pb-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por empresa, nombre o correo…" className="h-10 rounded-xl pl-9" autoFocus />
-        </div>
-      </div>
-      <div className={`${alto} overflow-y-auto border-t`}>
-        {clientes === null && <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
-        {clientes !== null && lista.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No hay clientes</p>}
-        {lista.map((c) => (
-          <button key={c.id} onClick={() => onElegir(c)}
-            className={`flex w-full items-center gap-3 border-b border-border/40 px-5 py-3 text-left transition-colors hover:bg-muted/50 ${seleccionado === c.id ? "bg-primary/5" : ""}`}>
-            <Insignia c={c} size={34} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-medium">{nombreCliente(c)}</span>
-              <span className="block truncate text-[12px] text-muted-foreground">{c.email} · {c.campaigns} campañas</span>
-            </span>
-            {c.active > 0 && (
-              <span className="flex-shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600">
-                {c.active} activa{c.active === 1 ? "" : "s"}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+    return todos
+      .filter((c) => filtro !== "activas" || c.active > 0)
+      .filter((c) => filtro !== "recientes" || !!c.last_chat_at)
+      .filter((c) => !q || [c.company_name, c.full_name, c.email].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [todos, busca, filtro]);
+  const filtros: { id: Filtro; label: string; n: number }[] = [
+    { id: "todos", label: "Todos", n: todos.length },
+    { id: "activas", label: "Con campaña activa", n: todos.filter((c) => c.active > 0).length },
+    { id: "recientes", label: "Con conversación", n: todos.filter((c) => c.last_chat_at).length },
+  ];
 
-function SelectorEnLinea({ clientes, onElegir }: { clientes: IaCliente[] | null; onElegir: (c: IaCliente) => void }) {
   return (
-    <div className="flex items-start gap-3">
-      <SparkMark size={40} className="rounded-xl" />
-      <div className="min-w-0 flex-1 max-w-2xl space-y-3">
-        <div className="rounded-2xl bg-[#F5F3FC] px-5 py-4 text-[15px] leading-relaxed dark:bg-muted">
-          <p>Hola, soy <strong className="font-bold">PulseBot</strong>, tu consultor de cold email y outreach B2B.</p>
-          <p className="mt-2">Elige el cliente con el que quieres trabajar y entro en la información de su cuenta para ayudarte.</p>
+    <div className="flex h-[calc(100dvh-120px)] min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
+      <div className="border-b border-[#F0EDF8] px-5 pb-5 pt-6 sm:px-8 dark:border-border">
+        <div className="flex items-center gap-4 sm:gap-5">
+          <span className="sm:hidden"><SparkMark size={52} className="rounded-2xl shadow-[0_6px_20px_-8px_rgba(110,88,241,0.55)]" /></span>
+          <span className="hidden sm:block"><SparkMark size={76} className="rounded-2xl shadow-[0_8px_24px_-8px_rgba(110,88,241,0.55)]" /></span>
+          <div className="min-w-0">
+            <h1 className="font-display text-[24px] sm:text-[32px] font-bold leading-tight tracking-[-0.03em] flex items-center gap-2">
+              PulseBot <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-[#8B5CF6] fill-[#8B5CF6]" />
+            </h1>
+            <p className="text-[15px] sm:text-[17px] text-muted-foreground">¿Con qué cliente quieres trabajar hoy?</p>
+            <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+              <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-500" /> En línea · entro en su cuenta y veo sus campañas, mensajes, métricas y respuestas
+            </p>
+          </div>
         </div>
-        <div className="overflow-hidden rounded-2xl border bg-card">
-          <ListaClientes clientes={clientes} onElegir={onElegir} alto="max-h-[46vh]" />
+        <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+            <Input value={busca} onChange={(e) => setBusca(e.target.value)} autoFocus
+              placeholder="Buscar cliente por empresa, nombre o correo…"
+              className="h-12 rounded-xl border-[#E6E1F5] bg-background pl-12 text-[16px] dark:border-border" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {filtros.map((f) => (
+              <button key={f.id} onClick={() => setFiltro(f.id)}
+                className={`h-10 rounded-xl border px-3.5 text-[14px] font-medium transition-colors ${filtro === f.id ? "border-primary bg-primary text-primary-foreground" : "border-[#E6E1F5] bg-background text-foreground/80 hover:border-primary/40 dark:border-border"}`}>
+                {f.label} <span className="ml-1 tabular-nums opacity-70">{f.n}</span>
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6 space-y-7">
+        {clientes === null && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}
+
+        {clientes !== null && !busca && filtro === "todos" && recientes.length > 0 && (
+          <section>
+            <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold"><Clock className="h-4 w-4 text-muted-foreground" /> Seguir donde lo dejaste</h2>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {recientes.slice(0, 4).map((c) => (
+                <button key={c.id} onClick={() => onElegir(c)}
+                  className="group flex w-full min-w-0 items-start gap-3 rounded-2xl border border-primary/20 bg-primary/[0.04] p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-[0_10px_30px_-14px_rgba(110,88,241,0.5)]">
+                  <Insignia c={c} size={44} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[16px] font-semibold">{nombreCliente(c)}</span>
+                    <span className="mt-0.5 block truncate text-[13px] text-muted-foreground">{c.last_chat_preview}</span>
+                    <span className="mt-1 block text-[12px] font-medium text-primary">{haceCuanto(c.last_chat_at!)}</span>
+                  </span>
+                  <ChevronRight className="mt-1 h-5 w-5 flex-shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {clientes !== null && (
+          <section>
+            <h2 className="mb-3 text-[15px] font-semibold">
+              {busca || filtro !== "todos" ? `${lista.length} cliente${lista.length === 1 ? "" : "s"}` : `Todos los clientes · ${todos.length}`}
+            </h2>
+            {lista.length === 0 ? (
+              <p className="rounded-2xl border border-dashed py-12 text-center text-[15px] text-muted-foreground">No hay clientes que coincidan</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {lista.map((c) => (
+                  <button key={c.id} onClick={() => onElegir(c)}
+                    className="group flex w-full min-w-0 flex-col rounded-2xl border border-[#ECE8F7] bg-background p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_10px_30px_-14px_rgba(49,42,99,0.35)] dark:border-border">
+                    <span className="flex items-center gap-3">
+                      <Insignia c={c} size={48} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[17px] font-semibold">{nombreCliente(c)}</span>
+                        <span className="block truncate text-[13px] text-muted-foreground">{c.email}</span>
+                      </span>
+                    </span>
+                    <span className="mt-3 flex flex-wrap items-center gap-2 text-[12px]">
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground">{c.campaigns} campaña{c.campaigns === 1 ? "" : "s"}</span>
+                      {c.active > 0 ? (
+                        <span className="flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {c.active} activa{c.active === 1 ? "" : "s"}
+                        </span>
+                      ) : (
+                        <span className="rounded-md px-2 py-0.5 text-muted-foreground">Sin campañas activas</span>
+                      )}
+                      {c.last_chat_at && <span className="ml-auto text-muted-foreground">{haceCuanto(c.last_chat_at)}</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
