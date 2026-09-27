@@ -26,8 +26,15 @@ export type IaTarjeta =
       asunto?: string; cuerpo?: string; espera_dias?: number; aviso?: string; activa?: boolean;
       mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[];
       importacion?: ImportacionVista }
+  | { type: "campanas"; campanas: CampanaVista[]; summary?: string }
   | { type: "adjunto"; upload_id: string; nombre: string; tipo: "leads" | "tabla"; filas: number; descartadas?: number; columnas: string[]; summary?: string }
   | { type: "nota"; texto: string; summary?: string };
+
+export interface CampanaVista {
+  id: string; nombre: string; estado: string; creada: string; mensajes: number; limite_diario: number | null; horario: string;
+  leads: number; leads_pendientes: number; enviados: number; contactados: number; respuestas: number;
+  interesados: number; rebotes: number; enviados_7d: number; respuestas_7d: number;
+}
 
 export interface ImportacionVista {
   archivo: string; nuevos: number; actualizados: number; invalidos: number; repetidos: number;

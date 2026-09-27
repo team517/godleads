@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import html2canvas from "html2canvas";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
@@ -609,8 +610,8 @@ function Burbuja({ m, cambios, onCambio, onPedir }: {
       <div className="min-w-0 flex-1 space-y-3">
         {m.content && (
           <div className="w-fit max-w-full rounded-2xl rounded-tl-md bg-[#F5F3FC] px-5 py-3.5 text-[15px] leading-relaxed dark:bg-muted">
-            <div className="max-w-none [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:marker:text-primary [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-bold [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-white/70 [&_code]:px-1 [&_code]:text-[13px] [&_pre]:my-2 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-lg [&_pre]:bg-white/80 [&_pre]:p-3 [&_pre]:text-[13px]">
-              <ReactMarkdown>{m.content}</ReactMarkdown>
+            <div className="max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5 [&_li]:marker:text-primary [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_strong]:font-bold [&_h1]:mb-1.5 [&_h1]:mt-4 [&_h1]:text-[17px] [&_h1]:font-bold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:text-[16px] [&_h2]:font-bold [&_h3]:mb-1 [&_h3]:mt-3.5 [&_h3]:text-[15px] [&_h3]:font-bold [&_h3]:text-[#3B3470] dark:[&_h3]:text-foreground [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-white/70 [&_code]:px-1 [&_code]:text-[13px] [&_pre]:my-2 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-lg [&_pre]:bg-white/80 [&_pre]:p-3 [&_pre]:text-[13px] [&_hr]:my-3 [&_hr]:border-[#E6E1F5]">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>{m.content}</ReactMarkdown>
             </div>
           </div>
         )}
@@ -621,10 +622,23 @@ function Burbuja({ m, cambios, onCambio, onPedir }: {
   );
 }
 
+/** Las tablas que escribe PulseBot, como tablas de verdad (con scroll lateral si no caben). */
+const MD: Components = {
+  table: ({ children }) => (
+    <div className="my-3 overflow-x-auto rounded-xl border border-[#E6E1F5] bg-white/80 dark:border-border dark:bg-card">
+      <table className="w-full border-collapse text-[13.5px]">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-[#F1EEFE] text-left text-[12.5px] text-[#4A4378] dark:bg-muted dark:text-muted-foreground">{children}</thead>,
+  th: ({ children }) => <th className="whitespace-nowrap px-3 py-2 font-semibold">{children}</th>,
+  td: ({ children }) => <td className="border-t border-[#EEEAF8] px-3 py-2 tabular-nums dark:border-border">{children}</td>,
+};
+
 function Tarjeta({ t, cambios, onCambio, onPedir }: {
   t: IaTarjeta; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void;
 }) {
   if (t.type === "adjunto") return null;
+  if (t.type === "campanas") return <TarjetaCampanas t={t} onPedir={onPedir} />;
   if (t.type === "metricas") return <TarjetaMetricas t={t} onPedir={onPedir} />;
   if (t.type === "mensajes") return <TarjetaMensajes t={t} />;
   if (t.type === "nota") {
@@ -701,6 +715,58 @@ function TarjetaCambio({ t, estado, onCambio }: {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+const ESTILO_ESTADO: Record<string, string> = {
+  active: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  paused: "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+  draft: "border-border bg-muted text-muted-foreground",
+};
+
+function TarjetaCampanas({ t, onPedir }: { t: Extract<IaTarjeta, { type: "campanas" }>; onPedir: (t: string) => void }) {
+  if (!t.campanas.length) {
+    return <div className="rounded-2xl border border-dashed p-4 text-[14px] text-muted-foreground">No tiene ninguna campaña.</div>;
+  }
+  return (
+    <div className="grid max-w-[760px] gap-3 sm:grid-cols-2">
+      {t.campanas.map((c) => {
+        const tasa = c.contactados ? (Math.round((c.respuestas / c.contactados) * 1000) / 10).toLocaleString("es-ES") : null;
+        const datos = [
+          { k: "Leads", v: fmt(c.leads), sub: c.leads_pendientes ? `${fmt(c.leads_pendientes)} por contactar` : "" },
+          { k: "Enviados", v: fmt(c.enviados), sub: c.enviados_7d ? `${fmt(c.enviados_7d)} en 7 días` : "" },
+          { k: "Respuestas", v: fmt(c.respuestas), sub: tasa ? `${tasa} % de respuesta` : "" },
+          { k: "Interesados", v: fmt(c.interesados), sub: "" },
+        ];
+        return (
+          <div key={c.id} className="rounded-2xl border border-[#ECE8F7] bg-card p-4 dark:border-border">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-[15px] font-bold">{c.nombre}</p>
+                <p className="text-[12px] text-muted-foreground">{c.mensajes} mensaje{c.mensajes === 1 ? "" : "s"} · {c.horario}</p>
+              </div>
+              <span className={`flex flex-shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] font-medium ${ESTILO_ESTADO[c.estado] || ESTILO_ESTADO.draft}`}>
+                {c.estado === "active" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+                {ESTADO_CAMPANA[c.estado] || c.estado}
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {datos.map((d) => (
+                <div key={d.k} className="rounded-lg bg-[#FBFAFE] px-2.5 py-2 dark:bg-muted/40">
+                  <p className="text-[11px] text-muted-foreground">{d.k}</p>
+                  <p className="text-[18px] font-bold tabular-nums leading-tight">{d.v}</p>
+                  {d.sub && <p className="text-[11px] text-muted-foreground">{d.sub}</p>}
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => onPedir(`Enséñame los mensajes de la campaña "${c.nombre}"`)} className="flex-1 rounded-lg border border-[#ECE8F7] px-2 py-1.5 text-[12.5px] font-medium hover:border-primary/40 hover:bg-primary/5 dark:border-border">Ver mensajes</button>
+              <button onClick={() => onPedir(`Métricas de los últimos 14 días de la campaña "${c.nombre}" en imagen`)} className="flex-1 rounded-lg border border-[#ECE8F7] px-2 py-1.5 text-[12.5px] font-medium hover:border-primary/40 hover:bg-primary/5 dark:border-border">Métricas</button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

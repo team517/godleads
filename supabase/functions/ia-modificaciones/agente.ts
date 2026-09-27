@@ -288,7 +288,7 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
       const nPasos = new Map<string, number>();
       for (const s of st || []) nPasos.set((s as any).campaign_id, (nPasos.get((s as any).campaign_id) || 0) + 1);
       const m = new Map((met || []).map((x: any) => [x.campaign_id, x]));
-      return (camps || []).map((c: any) => {
+      const lista = (camps || []).map((c: any) => {
         const x: any = m.get(c.id) || {};
         return {
           id: c.id, nombre: c.name, estado: c.status, creada: String(c.created_at).slice(0, 10),
@@ -301,6 +301,13 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
           enviados_7d: Number(x.sent_window || 0), respuestas_7d: Number(x.replies_window || 0),
         };
       });
+      // Tarjeta visual: las activas primero; el texto de la IA ya no tiene que repetir la tabla.
+      const orden: Record<string, number> = { active: 0, paused: 1, draft: 2 };
+      ctx.tarjetas.push({
+        type: "campanas", summary: `Campañas de ${cliente.empresa || cliente.email}`,
+        campanas: [...lista].sort((a, b) => ((orden[a.estado] ?? 3) - (orden[b.estado] ?? 3)) || b.enviados - a.enviados),
+      });
+      return lista;
     }
 
     case "ver_mensajes": {
