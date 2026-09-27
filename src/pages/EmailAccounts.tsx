@@ -244,22 +244,32 @@ export default function EmailAccounts() {
 
   // Configuración DNS: primero se ENSEÑA lo ya guardado (instantáneo, sin "comprobando"), y sólo
   // se vuelve a mirar el DNS de los dominios que faltan o que están viejos, y en segundo plano.
+  //
+  // Antes esto se CANCELABA cuando la lista de cuentas se recargaba (pasa siempre al entrar: primero
+  // la guardada y luego la nueva). Como los dominios ya estaban marcados como "pedidos", nunca se
+  // volvían a leer y toda la tabla se quedaba en "En cola…" aunque el DNS estuviera perfecto
+  // (Seo Innova, 28-09-2026: 76 de 76 dominios con SPF/DKIM/DMARC bien, todos en gris). Ahora sólo
+  // se para si se sale de la pantalla.
+  const pantallaVivaRef = useRef(true);
+  useEffect(() => () => { pantallaVivaRef.current = false; }, []);
   useEffect(() => {
     const domains = Array.from(new Set(accounts.map(a => domainOf(a.email)).filter(Boolean)));
     const pending = domains.filter(d => !requestedDomainsRef.current.has(d));
     if (pending.length === 0) return;
     pending.forEach(d => requestedDomainsRef.current.add(d));
-    let cancelled = false;
     const STALE_MS = 24 * 60 * 60 * 1000; // un veredicto de más de un día se reconfirma por detrás
 
     (async () => {
       // 1) Leer de una vez lo guardado y pintarlo ya. El DNS es público → una sola consulta.
-      let cached: Record<string, { spf?: string; dkim?: string; dmarc?: string; checked_at?: string }> = {};
+      const cached: Record<string, { spf?: string; dkim?: string; dmarc?: string; checked_at?: string }> = {};
       try {
-        const { data } = await (supabase as any).from("domain_auth").select("domain, spf, dkim, dmarc, checked_at").in("domain", pending);
-        for (const r of (data || []) as any[]) cached[r.domain] = r;
+        // De 200 en 200: con cientos de dominios, un solo `.in()` pasa del largo de URL de la API.
+        for (let i = 0; i < pending.length; i += 200) {
+          const { data } = await (supabase as any).from("domain_auth").select("domain, spf, dkim, dmarc, checked_at").in("domain", pending.slice(i, i + 200));
+          for (const r of (data || []) as any[]) cached[r.domain] = r;
+        }
       } catch { /* si la caché no responde, se comprueba todo en vivo como antes */ }
-      if (cancelled) return;
+      if (!pantallaVivaRef.current) return;
       if (Object.keys(cached).length) {
         setDomainAuth(prev => {
           const next = { ...prev };
@@ -279,13 +289,42 @@ export default function EmailAccounts() {
         return age > STALE_MS;
       });
       const CONC = 3; // olas pequeñas: no saturar el resolver DNS
-      for (let i = 0; i < toCheck.length && !cancelled; i += CONC) {
+      for (let i = 0; i < toCheck.length && pantallaVivaRef.current; i += CONC) {
         await Promise.all(toCheck.slice(i, i + CONC).map(d => checkDomainAuth(d)));
         if (i + CONC < toCheck.length) await new Promise(r => setTimeout(r, 150));
       }
     })();
-    return () => { cancelled = true; };
   }, [accounts, checkDomainAuth]);
+
+  // Arreglo automático: si un dominio sale SIN SPF, DKIM o DMARC, se configura solo en IONOS
+  // (configure-dns sólo añade lo que falta y no toca lo que ya está bien) y se vuelve a comprobar.
+  // Una vez al día por dominio, para no insistir con dominios que no están en IONOS.
+  const autoDnsHechoRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const leerHechos = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem("accounts:autoDns") || "{}"); } catch { return {}; } };
+    const hechos = leerHechos();
+    const rotos = Object.entries(domainAuth)
+      .filter(([d, a]) => a && !a.loading && !a.error && (a.spf === "fail" || a.dkim === "fail" || a.dmarc === "fail"))
+      .map(([d]) => d)
+      .filter((d) => hechos[d] !== hoy && !autoDnsHechoRef.current.has(d));
+    if (!rotos.length) return;
+    rotos.forEach((d) => autoDnsHechoRef.current.add(d));
+    (async () => {
+      for (const d of rotos) {
+        if (!pantallaVivaRef.current) return;
+        try {
+          const { data } = await supabase.functions.invoke("configure-dns", { body: { domain: d } });
+          const h = leerHechos(); h[d] = hoy;
+          try { localStorage.setItem("accounts:autoDns", JSON.stringify(h)); } catch { /* sin almacenamiento */ }
+          if (data?.ok && data.configured) {
+            setTimeout(() => recheckDomain(d), 5000);
+            setTimeout(() => recheckDomain(d), 20000);
+          }
+        } catch { /* se reintentará otro día */ }
+      }
+    })();
+  }, [domainAuth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const recheckDomain = (domain: string) => {
     const d = (domain || "").trim().toLowerCase();

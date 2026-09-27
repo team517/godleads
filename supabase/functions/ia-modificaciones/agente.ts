@@ -8,6 +8,7 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
+import { estadoCambiosTexto, textoParaResumir, RESUMEN_SISTEMA } from "../_shared/ia-mod.ts";
 import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES, resumenEtiquetas, tieneTag, seleccionarCuentas, limpiarEtiquetas, puedeSugerir, type FilaCuenta } from "../_shared/ia-mod.ts";
 import { aiClassifyReply, evidenceSupported, type AiVerdict } from "../_shared/ai-classify.ts";
 import { authorText, classifyMessage } from "../_shared/classify.ts";
@@ -93,9 +94,10 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
   const { data: estados } = await db.from("ia_mod_changes").select("id, status").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(300);
   const estadoDe = new Map(((estados || []) as any[]).map((e) => [e.id, e.status]));
   const ESTADO_TXT: Record<string, string> = { applied: "aplicado", pending: "PENDIENTE de Confirmar", undone: "deshecho", cancelled: "cancelado" };
+  const { data: recientes } = await db.from("ia_mod_changes").select("summary, status, created_at").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(15);
   const [{ data: filas }, { data: nota }, { data: camps }] = await Promise.all([
     db.from("ia_mod_messages").select("role, content, cards").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(40),
-    db.from("ia_mod_notes").select("notes").eq("client_user_id", cliente.id).maybeSingle(),
+    db.from("ia_mod_notes").select("notes, resumen").eq("client_user_id", cliente.id).maybeSingle(),
     db.from("campaigns").select("id, name, status, created_at").eq("user_id", cliente.id).order("created_at", { ascending: false }),
   ]);
   // Lo que se hizo en turnos anteriores va resumido detrás de cada respuesta, para que la IA
@@ -123,7 +125,9 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     notas: (nota as any)?.notes || "", instruccionesRespuestas: cliente.instrucciones, skills: cliente.skills,
     enlaceReserva: cliente.enlace,
     campanas: (camps || []).map((c: any) => ({ id: c.id, name: c.name, status: c.status })),
-    hoy: new Date().toLocaleDateString("es-ES", { timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", year: "numeric" }),
+    hoy: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+    resumen: (nota as any)?.resumen || "",
+    estadoCambios: estadoCambiosTexto(((recientes || []) as any[])),
   }, sugerir);
 
   const mensajes: any[] = [{ role: "system", content: system }, ...historial];
@@ -151,6 +155,51 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     }
   }
   return { texto: "He llegado al límite de pasos de este turno. Dime si sigo.", tarjetas };
+}
+
+/* ── Memoria larga sin llenar el almacenamiento ─────────────────────────────────────────
+   Los últimos mensajes van enteros al modelo; los anteriores se resumen en ia_mod_notes.resumen
+   (≤1.200 caracteres) cuando se acumulan 12 sin resumir, y al pasar de 300 mensajes por cliente se
+   borran los más viejos que ya están en el resumen. */
+const EN_CONTEXTO = 24;
+const MAX_MENSAJES = 300;
+
+export async function mantenerMemoria(db: Db, apiKey: string, clientId: string) {
+  const { data: nota } = await db.from("ia_mod_notes").select("resumen, resumen_hasta").eq("client_user_id", clientId).maybeSingle();
+  const { data: todos } = await db.from("ia_mod_messages").select("id, role, content, cards, created_at")
+    .eq("client_user_id", clientId).order("created_at", { ascending: false }).limit(MAX_MENSAJES + 200);
+  const lista = ((todos || []) as any[]);
+  const fuera = lista.slice(EN_CONTEXTO).reverse();                 // los que ya no van enteros, del más viejo al más nuevo
+  const hasta = (nota as any)?.resumen_hasta ? Date.parse((nota as any).resumen_hasta) : 0;
+  const sinResumir = fuera.filter((m) => Date.parse(m.created_at) > hasta);
+  if (apiKey && sinResumir.length >= 12) {
+    const anterior = String((nota as any)?.resumen || "");
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "deepseek-chat", temperature: 0.2, max_tokens: 700,
+        messages: [
+          { role: "system", content: RESUMEN_SISTEMA },
+          { role: "user", content: `${anterior ? `RESUMEN ANTERIOR:\n${anterior}\n\n` : ""}CONVERSACIÓN NUEVA A INTEGRAR:\n${textoParaResumir(sinResumir)}` },
+        ],
+      }),
+    }).catch(() => null);
+    const j = res && res.ok ? await res.json().catch(() => null) : null;
+    const resumen = String(j?.choices?.[0]?.message?.content || "").trim().slice(0, 1500);
+    if (resumen) {
+      await db.from("ia_mod_notes").upsert({
+        client_user_id: clientId, resumen, resumen_hasta: sinResumir[sinResumir.length - 1].created_at, updated_at: new Date().toISOString(),
+      }, { onConflict: "client_user_id" });
+    }
+  }
+  // Almacenamiento: por encima de 300 mensajes se borran los más viejos, pero sólo los ya resumidos.
+  if (lista.length > MAX_MENSAJES) {
+    const { data: n2 } = await db.from("ia_mod_notes").select("resumen_hasta").eq("client_user_id", clientId).maybeSingle();
+    const limite = (n2 as any)?.resumen_hasta ? Date.parse((n2 as any).resumen_hasta) : 0;
+    const borrar = lista.slice(MAX_MENSAJES).filter((m) => Date.parse(m.created_at) <= limite).map((m) => m.id);
+    for (let i = 0; i < borrar.length; i += 200) await db.from("ia_mod_messages").delete().in("id", borrar.slice(i, i + 200));
+  }
 }
 
 async function llamarModelo(apiKey: string, messages: any[], conHerramientas: boolean) {

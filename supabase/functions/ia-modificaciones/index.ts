@@ -7,7 +7,7 @@
 // Acciones: clients | history | campaigns | upload_start | upload_append | chat | confirm | cancel | undo | clear | save_notes
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { puedeUsarIaMod } from "../_shared/ia-mod.ts";
-import { aplicarPendiente, cargarCliente, conversar, deshacer, listarClientes } from "./agente.ts";
+import { aplicarPendiente, cargarCliente, conversar, deshacer, listarClientes, mantenerMemoria } from "./agente.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -136,6 +136,10 @@ Deno.serve(async (req) => {
         .select("id, role, content, cards, author_email, created_at").single();
       const ids = reply.tarjetas.map((t) => t.change_id).filter(Boolean) as string[];
       const { data: cambios } = ids.length ? await db.from("ia_mod_changes").select("id, status").in("id", ids) : { data: [] };
+      // Resumir lo viejo y podar, por detrás: la respuesta no espera a esto.
+      const memoria = mantenerMemoria(db, apiKey, clientId).catch((e) => console.error("memoria:", e));
+      const rt = (globalThis as any).EdgeRuntime;
+      if (rt?.waitUntil) rt.waitUntil(memoria); else await memoria;
       return json({ message: row, user_message: filaUsuario, changes: Object.fromEntries((cambios || []).map((c: any) => [c.id, c.status])) });
     }
 

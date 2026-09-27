@@ -174,7 +174,35 @@ export interface ContextoCliente {
   enlaceReserva: string;
   campanas: { id: string; name: string; status: string }[];
   hoy: string;
+  /** Lista de los últimos cambios con su estado REAL (aplicado / pendiente / deshecho). */
+  estadoCambios?: string;
+  /** Resumen de lo hablado antes de los mensajes que van enteros. */
+  resumen?: string;
 }
+
+const ESTADO_CAMBIO_TXT: Record<string, string> = { applied: "APLICADO", pending: "PENDIENTE (falta pulsar Confirmar)", undone: "DESHECHO", cancelled: "CANCELADO" };
+
+/** Los últimos cambios, del más reciente al más antiguo, con hora y estado real. */
+export function estadoCambiosTexto(cambios: { summary: string; status: string; created_at: string }[]): string {
+  if (!cambios.length) return "No hay cambios hechos todavía en esta cuenta.";
+  const pend = cambios.filter((c) => c.status === "pending").length;
+  const lineas = cambios.map((c) => {
+    const h = new Date(c.created_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    return `- ${h} · ${ESTADO_CAMBIO_TXT[c.status] || c.status} · ${c.summary}`;
+  });
+  return `${pend ? `Hay ${pend} cambio(s) PENDIENTE(S) de Confirmar.` : "No hay ningún cambio pendiente: todo lo de abajo marcado APLICADO ya está hecho."}\n${lineas.join("\n")}`;
+}
+
+/** Mensajes → texto compacto para resumir (sin tarjetas, recortando lo largo). */
+export function textoParaResumir(filas: { role: string; content: string; cards?: any[] | null }[]): string {
+  return filas.map((f) => {
+    const hechos = (f.cards || []).map((t: any) => t?.summary).filter(Boolean).join("; ");
+    const quien = f.role === "user" ? "Equipo" : "PulseBot";
+    return `${quien}: ${String(f.content || "").replace(/\s+/g, " ").slice(0, 600)}${hechos ? ` [hecho: ${hechos}]` : ""}`;
+  }).join("\n").slice(0, 14000);
+}
+
+export const RESUMEN_SISTEMA = `Resumes conversaciones entre el equipo de una agencia y su asistente PulseBot sobre la cuenta de un cliente. Devuelve un resumen en español de máximo 1.200 caracteres, en viñetas cortas, con SOLO lo que hay que recordar: decisiones tomadas, cambios hechos (campañas, mensajes, cuentas, etiquetas, ajustes), preferencias del equipo, datos del cliente y temas pendientes. Sin saludos ni relleno. Si te dan un resumen anterior, intégralo (no lo pierdas) y quita lo que ya no sea verdad.`;
 
 /** Marca con la que PulseBot propone algo por su cuenta ("¿qué te parece si…?"). */
 export const MARCA_IDEA = "**Idea:**";
@@ -201,6 +229,8 @@ export function sistemaIaMod(c: ContextoCliente, sugerir = false): string {
     ? c.campanas.map((x) => `- ${x.name} (${x.status}) · id ${x.id}`).join("\n")
     : "(no tiene campañas)";
   const extra = [
+    c.resumen && `LO QUE YA SE HABLÓ ANTES CON ESTE CLIENTE (resumen; lo reciente va en los mensajes):\n${c.resumen}`,
+    c.estadoCambios && `ESTADO REAL DE LOS CAMBIOS (míralo antes de decir si algo está aplicado o pendiente; nunca digas "si no lo has confirmado" si aquí pone APLICADO):\n${c.estadoCambios}`,
     c.notas && `MEMORIA DE ESTE CLIENTE (lo que el equipo ya te contó; respétalo):\n${c.notas}`,
     c.instruccionesRespuestas && `CÓMO RESPONDE ESTE CLIENTE A SUS LEADS (su contexto de negocio):\n${c.instruccionesRespuestas.slice(0, 2500)}`,
     c.skills && `CONOCIMIENTO DE CAMPAÑA DE ESTE CLIENTE:\n${c.skills.slice(0, 2500)}`,
