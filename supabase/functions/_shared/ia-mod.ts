@@ -36,8 +36,10 @@ export const IA_MOD_TOOLS = [
     categoria: S("Interesado, Pregunta, No interesado, Fuera de oficina… vacío = todas"),
     limite: N("cuántas (máx. 20, por defecto 10)"),
   }),
-  fn("ver_cuentas", "Cuentas de correo conectadas del cliente: estado, si pueden enviar (errores de contraseña, conexión, límites), si sincronizan el correo, enviados y fallos en 24 h, límite diario, warm-up y en qué campañas están. Se muestra al usuario como tarjeta. Nunca da contraseñas.", {
+  fn("ver_cuentas", "Cuentas de correo conectadas del cliente: estado, si pueden enviar (errores de contraseña, conexión, límites), si sincronizan el correo, enviados y fallos en 24 h, límite diario, warm-up, sus ETIQUETAS (tags) y en qué campañas están (añadidas a mano o por etiqueta). Resume qué cuentas lleva cada etiqueta y qué campañas la usan, y avisa de etiquetas mal puestas. Se muestra al usuario como tarjeta. Nunca da contraseñas.", {
     campaign_id: S("opcional: sólo las cuentas de esta campaña"),
+    tag: S("opcional: sólo las cuentas con esta etiqueta (no distingue mayúsculas)"),
+    email: S("opcional: buscar una cuenta concreta por su correo (o parte)"),
     solo_problemas: { type: "boolean", description: "true = sólo las que tienen algún problema" },
   }),
   fn("revisar_respuestas", "LEE una a una las respuestas reales de los leads (Unibox) y juzga con IA qué dice cada persona (interesado, pregunta, no interesado, derivado, fuera de oficina…), con la frase exacta que lo demuestra. No se fía de la etiqueta: la compara y avisa si no coincide. Úsala siempre que pregunten por interesados, respuestas buenas, a quién contestar o qué dicen los leads.", {
@@ -146,6 +148,8 @@ ${extra}
 QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; ver sus cuentas de correo y si funcionan (ver_cuentas); leer de verdad cada respuesta del Unibox para saber quién está interesado (revisar_respuestas); leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
 
 INTERESADOS Y RESPUESTAS: si preguntan si hay interesados, quién ha respondido bien, a quién contestar o qué dicen los leads, llama a revisar_respuestas (no te bases sólo en ver_respuestas ni en las etiquetas). Luego di en 1-3 líneas cuántos interesados y preguntas hay y quiénes son los más calientes; la tarjeta enseña el resto. Si la IA ve interés donde la etiqueta dice otra cosa, dilo.
+
+ETIQUETAS (TAGS) DE LAS CUENTAS: si preguntan qué etiqueta tiene una cuenta, qué cuentas llevan una etiqueta o qué cuentas usa una campaña, llama a ver_cuentas con email, tag o campaign_id y contesta EXACTO: el nombre de la etiqueta tal cual está escrito, cuántas cuentas la llevan y qué campañas la usan. Una campaña usa las cuentas añadidas a mano más las que tienen alguna de sus etiquetas escrita EXACTAMENTE igual (mayúsculas incluidas). Si hay avisos de etiquetas (mayúsculas distintas, etiqueta sin cuentas, dos campañas activas compartiendo buzones), dilos.
 
 CUENTAS DE CORREO: si preguntan por sus cuentas, buzones, envíos que fallan o por qué no envía, llama a ver_cuentas. Resume cuántas hay, cuántas funcionan y cuáles tienen problema y qué hacer (en lenguaje llano: "IONOS rechaza la contraseña al enviar: revisa o desbloquea el buzón"). Los errores de destinatario (dirección que no existe) no son culpa de la cuenta.
 
@@ -298,6 +302,54 @@ export function saludCuenta(c: CuentaRaw, now = Date.now()): { estado: "ok" | "a
   if (syncMin > 60) return { estado: "aviso", motivo: c.last_sync ? `No sincroniza el correo desde hace ${Math.round(syncMin / 60)} h` : "Nunca ha sincronizado el correo" };
   if (c.fallidos_24h >= 5 && fallo?.tipo === "temporal") return { estado: "aviso", motivo: `${c.fallidos_24h} fallos temporales en 24 h` };
   return { estado: "ok", motivo: "" };
+}
+
+/* ── Etiquetas (tags) de las cuentas ────────────────────────────────────────────────────
+   El motor usa en una campaña: las cuentas añadidas a mano (campaign_accounts) ∪ las cuentas
+   CONECTADAS cuyas etiquetas coinciden EXACTAMENTE (distingue mayúsculas) con account_tags. */
+
+const normTag = (t: string) => String(t || "").trim().toLowerCase();
+
+/** ¿La cuenta lleva esta etiqueta? (para buscar: sin distinguir mayúsculas ni espacios de más) */
+export const tieneTag = (tags: string[] | null | undefined, q: string) => (tags || []).some((t) => normTag(t) === normTag(q));
+
+export interface CampanaTags { name: string; status: string; account_tags: string[] | null }
+export interface CuentaTags { email: string; tags: string[]; estado: "ok" | "aviso" | "problema"; status?: string }
+
+export function resumenEtiquetas(cuentas: CuentaTags[], campanas: CampanaTags[]) {
+  const porTag = new Map<string, { tag: string; cuentas: number; ok: number; problemas: number }>();
+  for (const c of cuentas) {
+    for (const t of c.tags || []) {
+      const x = porTag.get(t) || { tag: t, cuentas: 0, ok: 0, problemas: 0 };
+      x.cuentas++;
+      if (c.estado === "ok") x.ok++; else x.problemas++;
+      porTag.set(t, x);
+    }
+  }
+  const etiquetas = [...porTag.values()]
+    .map((e) => ({ ...e, campanas: campanas.filter((c) => (c.account_tags || []).includes(e.tag)).map((c) => c.name) }))
+    .sort((a, b) => b.cuentas - a.cuentas || a.tag.localeCompare(b.tag));
+
+  const avisos: string[] = [];
+  for (const camp of campanas) {
+    for (const t of camp.account_tags || []) {
+      if (porTag.has(t)) continue;
+      const parecida = [...porTag.keys()].find((k) => normTag(k) === normTag(t));
+      avisos.push(parecida
+        ? `"${camp.name}" usa la etiqueta "${t}" pero las cuentas tienen "${parecida}" (cambian las mayúsculas): el motor no las usa.`
+        : `"${camp.name}" usa la etiqueta "${t}" y ninguna cuenta la tiene.`);
+    }
+  }
+  const activasPorTag = new Map<string, string[]>();
+  for (const camp of campanas.filter((c) => c.status === "active")) {
+    for (const t of camp.account_tags || []) activasPorTag.set(t, [...(activasPorTag.get(t) || []), camp.name]);
+  }
+  for (const [t, nombres] of activasPorTag) {
+    if (nombres.length > 1 && porTag.has(t)) {
+      avisos.push(`${nombres.map((n) => `"${n}"`).join(" y ")} están activas con la misma etiqueta "${t}": comparten los mismos ${porTag.get(t)!.cuentas} buzones y su límite diario.`);
+    }
+  }
+  return { etiquetas, avisos, sin_etiqueta: cuentas.filter((c) => !(c.tags || []).length).length };
 }
 
 /** Categorías del clasificador → cómo se dicen en la plataforma. */

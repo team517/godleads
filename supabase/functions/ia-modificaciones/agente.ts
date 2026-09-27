@@ -8,7 +8,7 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES } from "../_shared/ia-mod.ts";
+import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES, resumenEtiquetas, tieneTag } from "../_shared/ia-mod.ts";
 import { aiClassifyReply, evidenceSupported, type AiVerdict } from "../_shared/ai-classify.ts";
 import { authorText, classifyMessage } from "../_shared/classify.ts";
 import { mergeLeadFields, fieldsChanged } from "../_shared/lead-merge.ts";
@@ -381,26 +381,47 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
     }
 
     case "ver_cuentas": {
-      const { data, error } = await db.rpc("ia_client_accounts", { p_user: cliente.id });
+      const [{ data, error }, { data: campsTags }] = await Promise.all([
+        db.rpc("ia_client_accounts", { p_user: cliente.id }),
+        db.from("campaigns").select("id, name, status, account_tags").eq("user_id", cliente.id),
+      ]);
       if (error) throw new Error("No se pudieron leer las cuentas");
-      let filas = (data || []) as any[];
-      if (a.campaign_id) {
-        const camp = await campanaDelCliente(ctx, a.campaign_id);
-        filas = filas.filter((f) => (f.campanas || []).includes(camp.name));
-      }
       const ahora = Date.now();
-      const cuentas = filas.map((f) => {
+      const todas = ((data || []) as any[]).map((f) => {
         const salud = saludCuenta(f, ahora);
         const fallo = explicarFallo(f.ultimo_fallo);
         return {
           email: f.email, nombre: f.nombre || "", proveedor: String(f.proveedor || "").replace(/^smtp\./, ""),
-          estado: salud.estado, motivo: salud.motivo,
+          estado: salud.estado, motivo: salud.motivo, status: f.status,
           enviados_24h: Number(f.enviados_24h || 0), fallidos_24h: Number(f.fallidos_24h || 0),
           limite_diario: f.daily_limit ?? null, warmup: !!f.warmup_enabled, warmup_score: f.warmup_score ?? null,
-          campanas: f.campanas || [], en_campana_activa: Number(f.campanas_activas || 0) > 0,
+          tags: (f.tags || []) as string[],
+          campanas: (f.campanas || []) as string[],
+          campanas_directas: (f.campanas_directas || []) as string[],
+          campanas_por_tag: (f.campanas_por_tag || []) as string[],
+          en_campana_activa: Number(f.campanas_activas || 0) > 0,
           ultimo_fallo: fallo ? `${fallo.texto}` : "", ultimo_envio: f.last_send_at,
         };
       });
+      // Etiquetas y avisos se calculan sobre TODAS las cuentas del cliente, filtre lo que filtre.
+      const resumen = resumenEtiquetas(todas, (campsTags || []) as any[]);
+
+      let cuentas = todas;
+      const filtros: string[] = [];
+      if (a.campaign_id) {
+        const camp = await campanaDelCliente(ctx, a.campaign_id);
+        cuentas = cuentas.filter((c) => c.campanas.includes(camp.name));
+        filtros.push(`campaña "${camp.name}"`);
+      }
+      if (a.tag) {
+        cuentas = cuentas.filter((c) => tieneTag(c.tags, String(a.tag)));
+        filtros.push(`etiqueta "${String(a.tag).trim()}"`);
+      }
+      if (a.email) {
+        const q = String(a.email).trim().toLowerCase();
+        cuentas = cuentas.filter((c) => c.email.toLowerCase().includes(q));
+        filtros.push(`"${String(a.email).trim()}"`);
+      }
       const orden: Record<string, number> = { problema: 0, aviso: 1, ok: 2 };
       cuentas.sort((x, y) => (orden[x.estado] - orden[y.estado]) || (Number(y.en_campana_activa) - Number(x.en_campana_activa)) || x.email.localeCompare(y.email));
       const totales = {
@@ -413,8 +434,27 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
         fallidos_24h: cuentas.reduce((t, c) => t + c.fallidos_24h, 0),
       };
       const visibles = a.solo_problemas ? cuentas.filter((c) => c.estado !== "ok") : cuentas;
-      ctx.tarjetas.push({ type: "cuentas", summary: `Cuentas de ${cliente.empresa || cliente.email}`, totales, cuentas: visibles.slice(0, 150) });
-      return { totales, cuentas_con_problema_o_aviso: cuentas.filter((c) => c.estado !== "ok").slice(0, 40), muestra_ok: cuentas.filter((c) => c.estado === "ok").slice(0, 10).map((c) => c.email) };
+      const etiquetasVisibles = a.tag ? resumen.etiquetas.filter((e) => tieneTag([e.tag], String(a.tag))) : resumen.etiquetas;
+      ctx.tarjetas.push({
+        type: "cuentas", summary: `Cuentas de ${cliente.empresa || cliente.email}${filtros.length ? ` (${filtros.join(", ")})` : ""}`,
+        filtro: filtros.join(", "), totales, cuentas: visibles.slice(0, 150),
+        etiquetas: etiquetasVisibles.slice(0, 30), avisos_etiquetas: resumen.avisos, sin_etiqueta: resumen.sin_etiqueta,
+      });
+      const detalle = (c: typeof cuentas[number]) => ({
+        email: c.email, proveedor: c.proveedor, estado: c.estado, motivo: c.motivo, etiquetas: c.tags,
+        fallidos_24h: c.fallidos_24h, en_campana_activa: c.en_campana_activa,
+        campanas_a_mano: c.campanas_directas, campanas_por_etiqueta: c.campanas_por_tag,
+        enviados_24h: c.enviados_24h, limite_diario: c.limite_diario,
+      });
+      return {
+        filtro: filtros.join(", ") || "ninguno", totales,
+        etiquetas: etiquetasVisibles.slice(0, 40), avisos_etiquetas: resumen.avisos, cuentas_sin_etiqueta: resumen.sin_etiqueta,
+        // Si se busca algo concreto (una cuenta, una etiqueta, pocas cuentas), el detalle de todas.
+        cuentas: cuentas.length <= 25 ? cuentas.map(detalle) : undefined,
+        cuentas_con_problema_o_aviso: cuentas.filter((c) => c.estado !== "ok").slice(0, 40).map(detalle),
+        ...(a.tag && !cuentas.length ? { nota: `Ninguna cuenta tiene la etiqueta "${a.tag}". Etiquetas que existen: ${resumen.etiquetas.map((e) => e.tag).join(", ") || "ninguna"}` } : {}),
+        ...(a.email && !cuentas.length ? { nota: `No hay ninguna cuenta que contenga "${a.email}".` } : {}),
+      };
     }
 
     case "revisar_respuestas": {

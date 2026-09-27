@@ -27,7 +27,8 @@ export type IaTarjeta =
       mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[];
       importacion?: ImportacionVista }
   | { type: "campanas"; campanas: CampanaVista[]; summary?: string }
-  | { type: "cuentas"; summary?: string; totales: CuentasTotales; cuentas: CuentaVista[] }
+  | { type: "cuentas"; summary?: string; filtro?: string; totales: CuentasTotales; cuentas: CuentaVista[];
+      etiquetas?: EtiquetaVista[]; avisos_etiquetas?: string[]; sin_etiqueta?: number }
   | { type: "respuestas"; summary?: string; dias: number; campana: string; totales: RespuestasTotales; calientes: RespuestaVista[]; distintas: RespuestaVista[] }
   | { type: "adjunto"; upload_id: string; nombre: string; tipo: "leads" | "tabla"; filas: number; descartadas?: number; columnas: string[]; summary?: string }
   | { type: "nota"; texto: string; summary?: string };
@@ -37,7 +38,9 @@ export interface CuentaVista {
   email: string; nombre: string; proveedor: string; estado: "ok" | "aviso" | "problema"; motivo: string;
   enviados_24h: number; fallidos_24h: number; limite_diario: number | null; warmup: boolean; warmup_score: number | null;
   campanas: string[]; en_campana_activa: boolean; ultimo_fallo: string;
+  tags?: string[]; campanas_directas?: string[]; campanas_por_tag?: string[];
 }
+export interface EtiquetaVista { tag: string; cuentas: number; ok: number; problemas: number; campanas: string[] }
 export interface RespuestasTotales {
   leidas: number; personas: number; interesados: number; preguntas: number; derivados: number;
   no_interesados: number; no_contactar: number; fuera_oficina: number; neutras: number; etiqueta_distinta: number;

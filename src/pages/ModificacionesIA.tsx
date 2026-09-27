@@ -732,20 +732,64 @@ function Cifra({ k, v, color = "" }: { k: string; v: number; color?: string }) {
   );
 }
 
+function ChipTag({ t }: { t: string }) {
+  return <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[11.5px] font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300">{t}</span>;
+}
+
 function TarjetaCuentas({ t }: { t: Extract<IaTarjeta, { type: "cuentas" }> }) {
-  const [todas, setTodas] = useState(false);
+  const [todas, setTodas] = useState(t.cuentas.length <= 8);
   const conProblema = t.cuentas.filter((c) => c.estado !== "ok");
   const resto = t.cuentas.filter((c) => c.estado === "ok");
+  const una = t.cuentas.length === 1 ? t.cuentas[0] : null;
   return (
     <div className="max-w-[760px] space-y-3 rounded-2xl border border-[#ECE8F7] bg-card p-4 dark:border-border">
-      <p className="flex items-center gap-2 text-[15px] font-semibold"><Mail className="h-4 w-4 text-primary" /> Cuentas de correo</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <p className="flex items-center gap-2 text-[15px] font-semibold">
+        <Mail className="h-4 w-4 text-primary" /> Cuentas de correo
+        {t.filtro && <span className="truncate text-[12.5px] font-normal text-muted-foreground">· {t.filtro}</span>}
+      </p>
+      {una && (
+        <div className="space-y-1.5 rounded-xl border border-[#EEEAF8] bg-background p-3 text-[13.5px] dark:border-border">
+          <p className="flex items-center gap-2 font-semibold"><span className={`h-2 w-2 rounded-full ${PUNTO_SALUD[una.estado]}`} /> {una.email}</p>
+          <p className="flex flex-wrap items-center gap-1.5"><span className="text-muted-foreground">Etiquetas:</span> {(una.tags || []).length ? una.tags!.map((x) => <ChipTag key={x} t={x} />) : <span className="text-muted-foreground">ninguna</span>}</p>
+          <p><span className="text-muted-foreground">Campañas por etiqueta:</span> {(una.campanas_por_tag || []).join(", ") || "ninguna"}</p>
+          <p><span className="text-muted-foreground">Campañas añadida a mano:</span> {(una.campanas_directas || []).join(", ") || "ninguna"}</p>
+          <p className="text-muted-foreground">{fmt(una.enviados_24h)} enviados en 24 h · límite {una.limite_diario ?? "—"}/día{una.motivo ? ` · ${una.motivo}` : ""}</p>
+        </div>
+      )}
+      {!una && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Cifra k="Cuentas" v={t.totales.total} />
         <Cifra k="Funcionan bien" v={t.totales.ok} color="text-emerald-600" />
         <Cifra k="Con problema" v={t.totales.problemas + t.totales.avisos} color={t.totales.problemas ? "text-red-600" : t.totales.avisos ? "text-amber-600" : ""} />
         <Cifra k="Enviados en 24 h" v={t.totales.enviados_24h} />
-      </div>
-      {conProblema.length > 0 ? (
+      </div>}
+      {(t.avisos_etiquetas || []).length > 0 && (
+        <div className="space-y-1 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[13px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          {t.avisos_etiquetas!.map((a) => <p key={a}>• {a}</p>)}
+        </div>
+      )}
+      {(t.etiquetas || []).length > 0 && !una && (
+        <div className="space-y-1.5">
+          <p className="text-[13px] font-semibold">Etiquetas</p>
+          <div className="overflow-hidden rounded-xl border border-[#EEEAF8] dark:border-border">
+            <table className="w-full text-[12.5px]">
+              <thead className="bg-[#F6F4FD] text-left text-muted-foreground dark:bg-muted">
+                <tr><th className="px-3 py-1.5 font-medium">Etiqueta</th><th className="px-3 py-1.5 text-right font-medium">Cuentas</th><th className="px-3 py-1.5 font-medium">La usan</th></tr>
+              </thead>
+              <tbody>
+                {t.etiquetas!.map((e) => (
+                  <tr key={e.tag} className="border-t border-[#EEEAF8] dark:border-border">
+                    <td className="px-3 py-1.5"><ChipTag t={e.tag} /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{fmt(e.cuentas)}{e.problemas ? <span className="text-red-600"> · {e.problemas} con problema</span> : null}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">{e.campanas.join(", ") || "ninguna campaña"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!!t.sin_etiqueta && <p className="text-[12px] text-muted-foreground">{fmt(t.sin_etiqueta)} {t.sin_etiqueta === 1 ? "cuenta" : "cuentas"} sin etiqueta.</p>}
+        </div>
+      )}
+      {una ? null : conProblema.length > 0 ? (
         <div className="space-y-1.5">
           {conProblema.map((c) => (
             <div key={c.email} className={`rounded-xl border px-3 py-2 ${c.estado === "problema" ? "border-red-200 bg-red-50/60 dark:border-red-500/30 dark:bg-red-500/10" : "border-amber-200 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/10"}`}>
@@ -755,6 +799,7 @@ function TarjetaCuentas({ t }: { t: Extract<IaTarjeta, { type: "cuentas" }> }) {
                 {c.en_campana_activa && <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">en campaña activa</span>}
               </p>
               <p className="mt-0.5 pl-4 text-[13px] text-foreground/80">{c.motivo}</p>
+              {(c.tags || []).length > 0 && <p className="mt-1 flex flex-wrap gap-1 pl-4">{c.tags!.map((x) => <ChipTag key={x} t={x} />)}</p>}
               {c.fallidos_24h > 0 && <p className="pl-4 text-[12px] text-muted-foreground">{c.fallidos_24h} {c.fallidos_24h === 1 ? "envío fallido" : "envíos fallidos"} en 24 h</p>}
             </div>
           ))}
@@ -762,7 +807,7 @@ function TarjetaCuentas({ t }: { t: Extract<IaTarjeta, { type: "cuentas" }> }) {
       ) : (
         <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-[13.5px] text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-4 w-4" /> Todas las cuentas funcionan bien.</p>
       )}
-      {resto.length > 0 && (
+      {resto.length > 0 && !una && (
         <div>
           <button onClick={() => setTodas((v) => !v)} className="flex items-center gap-1 text-[13px] font-medium text-primary">
             <ChevronDown className={`h-4 w-4 transition-transform ${todas ? "" : "-rotate-90"}`} /> {todas ? "Ocultar" : "Ver"} las {resto.length} que funcionan
@@ -771,12 +816,13 @@ function TarjetaCuentas({ t }: { t: Extract<IaTarjeta, { type: "cuentas" }> }) {
             <div className="mt-2 max-h-[320px] overflow-auto rounded-xl border border-[#EEEAF8] dark:border-border">
               <table className="w-full text-[12.5px]">
                 <thead className="sticky top-0 bg-[#F6F4FD] text-left text-muted-foreground dark:bg-muted">
-                  <tr><th className="px-3 py-1.5 font-medium">Cuenta</th><th className="px-3 py-1.5 text-right font-medium">Enviados 24 h</th><th className="px-3 py-1.5 text-right font-medium">Límite/día</th><th className="px-3 py-1.5 font-medium">Campañas</th></tr>
+                  <tr><th className="px-3 py-1.5 font-medium">Cuenta</th><th className="px-3 py-1.5 font-medium">Etiquetas</th><th className="px-3 py-1.5 text-right font-medium">Enviados 24 h</th><th className="px-3 py-1.5 text-right font-medium">Límite/día</th><th className="px-3 py-1.5 font-medium">Campañas</th></tr>
                 </thead>
                 <tbody>
                   {resto.map((c) => (
                     <tr key={c.email} className="border-t border-[#EEEAF8] dark:border-border">
                       <td className="max-w-[240px] truncate px-3 py-1.5">{c.email}</td>
+                      <td className="px-3 py-1.5"><span className="flex flex-wrap gap-1">{(c.tags || []).map((x) => <ChipTag key={x} t={x} />)}</span></td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{fmt(c.enviados_24h)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{c.limite_diario ?? "—"}</td>
                       <td className="max-w-[200px] truncate px-3 py-1.5 text-muted-foreground">{c.campanas.join(", ") || "—"}</td>

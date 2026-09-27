@@ -98,3 +98,85 @@ describe("revisar_respuestas lee cada mensaje", () => {
     expect(r.calientes[0].cita).toBe("");
   });
 });
+
+import { resumenEtiquetas, tieneTag } from "../../supabase/functions/_shared/ia-mod";
+
+describe("etiquetas (tags) de las cuentas", () => {
+  const cuentas = [
+    { email: "a@seo.es", tags: ["campaña 1"], estado: "ok" as const },
+    { email: "b@seo.es", tags: ["campaña 1"], estado: "problema" as const },
+    { email: "c@seo.es", tags: ["campaña 2"], estado: "ok" as const },
+    { email: "d@seo.es", tags: ["chipsfinder SPAIN"], estado: "ok" as const },
+    { email: "e@seo.es", tags: [], estado: "ok" as const },
+  ];
+  const campanas = [
+    { name: "GRANDE", status: "active", account_tags: ["campaña 1"] },
+    { name: "LEAD GENERATION", status: "active", account_tags: ["campaña 1"] },
+    { name: "PYMES", status: "active", account_tags: ["campaña 2"] },
+    { name: "ESPAÑA", status: "draft", account_tags: ["CHIPSFINDER spain"] },
+    { name: "COCO", status: "active", account_tags: ["COCOCREATIVIDAD"] },
+  ];
+  const r = resumenEtiquetas(cuentas, campanas);
+
+  it("cuántas cuentas lleva cada etiqueta y qué campañas la usan", () => {
+    expect(r.etiquetas[0]).toMatchObject({ tag: "campaña 1", cuentas: 2, ok: 1, problemas: 1, campanas: ["GRANDE", "LEAD GENERATION"] });
+    expect(r.etiquetas.find((e) => e.tag === "campaña 2")).toMatchObject({ cuentas: 1, campanas: ["PYMES"] });
+    expect(r.sin_etiqueta).toBe(1);
+  });
+  it("avisa de mayúsculas distintas (el motor no las usa)", () => {
+    expect(r.avisos.some((a) => /ESPAÑA.*"CHIPSFINDER spain".*"chipsfinder SPAIN".*mayúsculas/.test(a))).toBe(true);
+  });
+  it("avisa de una etiqueta que ninguna cuenta tiene", () => {
+    expect(r.avisos.some((a) => /COCO.*"COCOCREATIVIDAD" y ninguna cuenta la tiene/.test(a))).toBe(true);
+  });
+  it("avisa de dos campañas activas que comparten los mismos buzones", () => {
+    expect(r.avisos.some((a) => /"GRANDE" y "LEAD GENERATION".*"campaña 1".*2 buzones/.test(a))).toBe(true);
+  });
+  it("buscar una etiqueta no distingue mayúsculas ni espacios", () => {
+    expect(tieneTag(["Campaña 1"], "  campaña 1 ")).toBe(true);
+    expect(tieneTag(["campaña 1"], "campaña 2")).toBe(false);
+  });
+});
+
+describe("ver_cuentas con etiquetas", () => {
+  const ahora = new Date().toISOString();
+  const fila = (email: string, tags: string[], porTag: string[], directas: string[] = []) => ({
+    email, status: "connected", proveedor: "smtp.ionos.es", daily_limit: 30, enviados_24h: 10, fallidos_24h: 0, ultimo_fallo: null,
+    ultimo_fallo_at: null, last_error: null, last_sync: ahora, tags, campanas: [...porTag, ...directas], campanas_por_tag: porTag, campanas_directas: directas, campanas_activas: porTag.length,
+  });
+  const filas = [
+    fila("juanjo@seoinnova-agency.com", ["campaña 1"], ["GRANDE", "LEAD GENERATION"]),
+    fila("juanjo@seoinnova-agency.es", ["campaña 1"], ["GRANDE", "LEAD GENERATION"]),
+    fila("juanjo@seoinnova-pymes.com", ["campaña 2"], ["PYMES"], ["PRUEBA"]),
+  ];
+  const campaigns = [
+    { id: "g", user_id: "cli-1", name: "GRANDE", status: "active", account_tags: ["campaña 1"] },
+    { id: "l", user_id: "cli-1", name: "LEAD GENERATION", status: "active", account_tags: ["campaña 1"] },
+    { id: "p", user_id: "cli-1", name: "PYMES", status: "active", account_tags: ["campaña 2"] },
+  ];
+  const nuevo = () => {
+    const db = crearDb({ campaigns }, [], { ia_client_accounts: filas });
+    return { db, cliente: { id: "cli-1", email: "info@seoinnova.es", nombre: "", empresa: "Seo Innova", instrucciones: "", skills: "", enlace: "" }, autor: "x", tarjetas: [] as any[] };
+  };
+
+  it("¿qué etiqueta tiene esta cuenta? → exacta, con sus campañas por etiqueta y a mano", async () => {
+    const ctx: any = nuevo();
+    const r: any = await ejecutar(ctx, "ver_cuentas", { email: "seoinnova-pymes" });
+    expect(r.cuentas).toHaveLength(1);
+    expect(r.cuentas[0]).toMatchObject({ email: "juanjo@seoinnova-pymes.com", etiquetas: ["campaña 2"], campanas_por_etiqueta: ["PYMES"], campanas_a_mano: ["PRUEBA"] });
+  });
+  it("¿qué cuentas llevan la etiqueta 'Campaña 1'? → sin distinguir mayúsculas", async () => {
+    const ctx: any = nuevo();
+    const r: any = await ejecutar(ctx, "ver_cuentas", { tag: "Campaña 1" });
+    expect(r.totales.total).toBe(2);
+    expect(r.etiquetas).toEqual([{ tag: "campaña 1", cuentas: 2, ok: 2, problemas: 0, campanas: ["GRANDE", "LEAD GENERATION"] }]);
+    expect(r.avisos_etiquetas.some((a: string) => /comparten/.test(a))).toBe(true);
+    expect(ctx.tarjetas[0]).toMatchObject({ type: "cuentas", filtro: 'etiqueta "Campaña 1"' });
+  });
+  it("una etiqueta que no existe → lo dice y enseña las que hay", async () => {
+    const ctx: any = nuevo();
+    const r: any = await ejecutar(ctx, "ver_cuentas", { tag: "campaña 9" });
+    expect(r.totales.total).toBe(0);
+    expect(r.nota).toMatch(/Ninguna cuenta tiene la etiqueta "campaña 9".*campaña 1, campaña 2/);
+  });
+});
