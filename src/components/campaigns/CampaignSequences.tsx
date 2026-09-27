@@ -505,22 +505,12 @@ export default function CampaignSequences({ campaignId }: Props) {
   };
 
   const deleteStep = async (id: string) => {
-    const { error } = await supabase.from("campaign_steps").delete().eq("id", id);
+    // El motor sigue a cada lead por POSICIÓN (current_step = pasos ya enviados): borrar la fila a
+    // secas dejaba a quien ya recibió este correo saltándose el siguiente. La RPC (sólo el dueño de
+    // la campaña) borra, renumera 1..n y retrocede a esos leads, todo en una transacción.
+    const { error } = await (supabase as any).rpc("campaign_step_delete", { p_step: id });
     if (error) { toast.error(error.message); return; }
     if (selectedStepId === id) setSelectedStepId(null);
-    // Renumber the remaining steps to 1..N so the sequence never shows gaps like
-    // "Paso 1 / Paso 3". Order-preserving, so in-flight leads (current_step is a
-    // 0-based index into the ordered steps) keep pointing at the same steps.
-    const remaining = steps
-      .filter((s) => s.id !== id)
-      .sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0));
-    await Promise.all(
-      remaining.map((s, i) =>
-        (s.step_order === i + 1)
-          ? Promise.resolve()
-          : supabase.from("campaign_steps").update({ step_order: i + 1 }).eq("id", s.id)
-      )
-    );
     toast.success("Paso eliminado");
     load();
   };

@@ -24,6 +24,7 @@ vi.mock("@/integrations/supabase/client", () => {
   return {
     supabase: {
       from: make,
+      rpc: vi.fn(async (fn: string, args: any) => { saved.push({ rpc: fn, args }); return { data: null, error: null }; }),
       functions: { invoke: vi.fn(async () => ({ data: {}, error: null })) },
       storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({}) }) },
     },
@@ -134,7 +135,10 @@ describe("Editor de secuencia", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /^Eliminar$/ })[0]);
     expect(await screen.findByText("¿Eliminar el paso 1?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(saved.some((x) => x.table === "campaign_steps" && x.deleted)).toBe(true));
+    // Se borra por la RPC (renumera y recoloca a los leads), nunca la fila a secas.
+    await waitFor(() => expect(saved.some((x) => x.rpc === "campaign_step_delete")).toBe(true));
+    expect(saved.find((x) => x.rpc === "campaign_step_delete").args).toEqual({ p_step: tables.campaign_steps[0].id });
+    expect(saved.some((x) => x.deleted)).toBe(false);
   });
 
   it("si se dice que no, el paso no se toca", async () => {
@@ -142,7 +146,7 @@ describe("Editor de secuencia", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /^Eliminar$/ })[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByText("¿Eliminar el paso 1?")).toBeNull());
-    expect(saved.some((x) => x.deleted)).toBe(false);
+    expect(saved.some((x) => x.deleted || x.rpc)).toBe(false);
   });
 
   it("apagar una variante la saca del envío, pero no la borra", async () => {
