@@ -175,3 +175,28 @@ describe("ver_campanas dice la verdad sobre cuentas y etiquetas", () => {
     expect(por("BORRADOR")).toMatchObject({ cuentas: 1, cuentas_a_mano: 1 });
   });
 });
+
+describe("crear campañas con las opciones del equipo y sus cuentas", () => {
+  it("nace con sólo texto, primer email sólo texto, sin límite por empresa, sin emparejar y manteniendo el hilo", async () => {
+    const { db, ctx } = montar();
+    db.t.email_accounts.forEach((a: any, i: number) => { a.tags = i < 2 ? ["NUEVA"] : ["campaña 1"]; });
+    const r: any = await ejecutar(ctx, "crear_campana", { nombre: "Nueva", etiquetas: ["NUEVA"], mensajes: [{ asunto: "idea para {{company_name}}", cuerpo: "Buenas {{first_name}}" }] });
+    const c = db.t.campaigns.find((x: any) => x.name === "Nueva");
+    expect(c).toMatchObject({ status: "draft", text_only_emails: true, first_email_text_only: true, domain_limit_enabled: false, provider_matching: false, break_thread_after: 0, stop_on_reply: true, account_tags: ["NUEVA"] });
+    expect(r.cuentas).toBe(2);
+  });
+  it("sin decir cuentas → coge las libres (las que no usa ninguna campaña activa)", async () => {
+    const { db, ctx } = montar();
+    db.t.email_accounts[4].tags = []; db.t.email_accounts[5].tags = [];
+    const r: any = await ejecutar(ctx, "crear_campana", { nombre: "Libre", cuentas_libres: true, mensajes: [{ asunto: "hola", cuerpo: "Buenas" }] });
+    expect(r.cuentas).toBe(2);
+    const c = db.t.campaigns.find((x: any) => x.name === "Libre");
+    expect(db.t.campaign_accounts.filter((x: any) => x.campaign_id === c.id).map((x: any) => x.account_id).sort()).toEqual(["acc-4", "acc-5"]);
+  });
+  it("'modifica eso' también sirve para las opciones de entregabilidad", async () => {
+    const { db, ctx } = montar();
+    const r: any = await ejecutar(ctx, "ajustar_campana", { campaign_id: "borrador", solo_texto: true, primer_email_solo_texto: true, romper_hilo_en: 0, emparejar_proveedor: false });
+    expect(r.hecho).toBe(true);
+    expect(db.t.campaigns.find((x: any) => x.id === "borrador")).toMatchObject({ text_only_emails: true, first_email_text_only: true, break_thread_after: 0, provider_matching: false });
+  });
+});

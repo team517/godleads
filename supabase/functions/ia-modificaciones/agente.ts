@@ -297,7 +297,16 @@ async function campanasActivasConTags(ctx: Ctx) {
 const listaCorreos = (fs: { email: string }[]) =>
   `${fs.length} cuenta${fs.length === 1 ? "" : "s"}: ${fs.slice(0, 4).map((f) => f.email).join(", ")}${fs.length > 4 ? ` y ${fs.length - 4} más` : ""}`;
 
-const CAMPOS_RAMPA = "id, tags, warmup_enabled, warmup_increment, warmup_limit, warmup_day, warmup_started_at";
+/** Opciones de entregabilidad con las que nacen las campañas que crea PulseBot (lo pidió el equipo). */
+export const OPCIONES_CAMPANA_NUEVA = {
+  text_only_emails: true,        // Enviar emails como sólo texto (sin HTML)
+  first_email_text_only: true,   // Enviar el primer email como sólo texto
+  domain_limit_enabled: false,   // Limitar emails por empresa: apagado
+  provider_matching: false,      // Emparejar proveedor: apagado
+  break_thread_after: 0,         // Romper hilo: mantener hilo siempre
+};
+
+const CAMPOS_RAMPA ="id, tags, warmup_enabled, warmup_increment, warmup_limit, warmup_day, warmup_started_at";
 
 /** Cómo estaban las cuentas antes (para deshacer). */
 async function fotoCuentas(db: Db, clientId: string, ids: string[]) {
@@ -751,6 +760,15 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       }
       if (a.limite_diario !== undefined) { cambios.daily_limit = entero(a.limite_diario, 100, 1, 20000); lineas.push(`Límite diario: ${cambios.daily_limit}`); }
       if (typeof a.parar_al_responder === "boolean") { cambios.stop_on_reply = a.parar_al_responder; lineas.push(`Parar al responder: ${a.parar_al_responder ? "sí" : "no"}`); }
+      if (typeof a.solo_texto === "boolean") { cambios.text_only_emails = a.solo_texto; lineas.push(`Emails sólo texto (sin HTML): ${a.solo_texto ? "sí" : "no"}`); }
+      if (typeof a.primer_email_solo_texto === "boolean") { cambios.first_email_text_only = a.primer_email_solo_texto; lineas.push(`Primer email sólo texto: ${a.primer_email_solo_texto ? "sí" : "no"}`); }
+      if (typeof a.limitar_por_empresa === "boolean") { cambios.domain_limit_enabled = a.limitar_por_empresa; lineas.push(`Limitar emails por empresa: ${a.limitar_por_empresa ? "sí" : "no"}`); }
+      if (a.limite_por_empresa !== undefined) { cambios.domain_daily_limit = entero(a.limite_por_empresa, 3, 1, 100); lineas.push(`Máximo por empresa al día: ${cambios.domain_daily_limit}`); }
+      if (typeof a.emparejar_proveedor === "boolean") { cambios.provider_matching = a.emparejar_proveedor; lineas.push(`Emparejar proveedor: ${a.emparejar_proveedor ? "sí" : "no"}`); }
+      if (a.romper_hilo_en !== undefined) {
+        cambios.break_thread_after = entero(a.romper_hilo_en, 0, 0, 10);
+        lineas.push(cambios.break_thread_after ? `Romper hilo en el follow-up ${cambios.break_thread_after}` : "Mantener hilo siempre");
+      }
       if (!Object.keys(cambios).length) return { error: "No hay ningún ajuste que cambiar" };
       return await guardarOAplicar(ctx, { kind: "campana_ajustes", payload: { campaign_id: camp.id, cambios }, summary: `Ajustes de "${camp.name}"`, lineas, pendiente: camp.status === "active", campaign_id: camp.id });
     }
@@ -952,14 +970,44 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
         .filter((m: any) => m.body);
       if (!lista.length) throw new Error("La campaña necesita al menos un mensaje con cuerpo");
       if (!lista[0].subject) throw new Error("El primer mensaje necesita asunto");
-      const { data: camp, error } = await db.from("campaigns").insert({ user_id: cliente.id, name: nombre, status: "draft", stop_on_reply: true }).select("id").single();
+      // Opciones con las que el equipo quiere TODAS las campañas que crea PulseBot (Entregabilidad):
+      // sólo texto, primer email sólo texto, sin límite por empresa, sin emparejar proveedor y
+      // manteniendo siempre el hilo. Queda en borrador: no envía hasta que alguien la active.
+      const tagsCampana = limpiarEtiquetas(a.etiquetas);
+      const { data: camp, error } = await db.from("campaigns").insert({
+        user_id: cliente.id, name: nombre, status: "draft", stop_on_reply: true,
+        ...OPCIONES_CAMPANA_NUEVA,
+        account_tags: tagsCampana,
+      }).select("id").single();
       if (error || !camp) throw new Error(`No se pudo crear la campaña: ${error?.message}`);
       const { error: e2 } = await db.from("campaign_steps").insert(lista.map((m: any, i: number) => ({ campaign_id: (camp as any).id, step_order: i + 1, subject: m.subject, body: m.body, delay_days: m.delay_days, variants: [] })));
       if (e2) { await db.from("campaigns").delete().eq("id", (camp as any).id); throw new Error(e2.message); }
-      const summary = `Campaña "${nombre}" creada en borrador con ${lista.length} mensajes`;
+      // Cuentas conectadas: las de sus etiquetas (ya puestas arriba) + las que se pidan por correo.
+      const filas = await filasCuentas(ctx);
+      const qs = (Array.isArray(a.cuentas) ? a.cuentas : []).map((e: unknown) => String(e).trim().toLowerCase()).filter(Boolean);
+      const aMano = filas.filter((f) =>
+        qs.some((q: string) => f.email.toLowerCase() === q || f.email.toLowerCase().includes(q))
+        // "cuentas libres": las conectadas que no usa ninguna campaña activa.
+        || (a.cuentas_libres && f.status === "connected" && !Number(f.campanas_activas || 0)),
+      ).map((f) => f.account_id);
+      if (aMano.length) await ponerDirectas(db, (camp as any).id, [], aMano);
+      const porEtiqueta = filas.filter((f) => f.status === "connected" && (f.tags || []).some((t) => tagsCampana.includes(t)) && !aMano.includes(f.account_id)).length;
+      const totalCuentas = aMano.length + porEtiqueta;
+      const summary = `Campaña "${nombre}" creada en borrador con ${lista.length} mensajes y ${totalCuentas} cuenta${totalCuentas === 1 ? "" : "s"}`;
       const id = await registrar(ctx, { kind: "campaign_create", campaign_id: (camp as any).id, summary, after: { id: (camp as any).id } });
-      tarjetaCambio(ctx, id, summary, false, { campaign_name: nombre, mensajes: lista.map((m: any, i: number) => ({ posicion: i + 1, asunto: m.subject, cuerpo: m.body, espera_dias: m.delay_days })) });
-      return { ok: true, campaign_id: (camp as any).id, nota: "En borrador: el cliente tiene que añadir leads y cuentas y activarla" };
+      tarjetaCambio(ctx, id, summary, false, {
+        campaign_name: nombre,
+        mensajes: lista.map((m: any, i: number) => ({ posicion: i + 1, asunto: m.subject, cuerpo: m.body, espera_dias: m.delay_days })),
+        lineas: [
+          `Cuentas: ${totalCuentas}${tagsCampana.length ? ` (etiquetas ${tagsCampana.map((t) => `"${t}"`).join(", ")})` : ""}${aMano.length ? ` · ${aMano.length} a mano` : ""}`,
+          "Opciones: sólo texto, primer email sólo texto, mantener hilo siempre, parar al responder",
+        ],
+      });
+      return {
+        ok: true, campaign_id: (camp as any).id, cuentas: totalCuentas,
+        opciones: "sólo texto, primer email sólo texto, sin límite por empresa, sin emparejar proveedor, mantener hilo siempre, parar al responder",
+        nota: totalCuentas ? "En borrador: falta añadir leads y activarla" : "En borrador y SIN cuentas: dile qué etiqueta o cuentas usar",
+      };
     }
   }
   if (ESCRITURAS.has(nombre)) throw new Error("Herramienta no disponible");

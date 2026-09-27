@@ -130,7 +130,7 @@ export const IA_MOD_TOOLS = [
     incremento: N("cuánto sube cada día de envío (p. ej. 2)"),
     maximo: N("tope diario al que llega (máx. 30)"),
   }, ["activar"]),
-  fn("ajustar_campana", "Cambia ajustes de envío de una campaña (NO la activa ni la pausa): slow ramp de campaña, horario, días de envío, límite diario y parar al responder. Si la campaña está ACTIVA queda pendiente de Confirmar. Se puede deshacer.", {
+  fn("ajustar_campana", "Cambia ajustes de envío de una campaña (NO la activa ni la pausa): slow ramp de campaña, horario, días de envío, límite diario, parar al responder y entregabilidad (sólo texto, primer email sólo texto, límite por empresa, emparejar proveedor, romper hilo). Si la campaña está ACTIVA queda pendiente de Confirmar. Se puede deshacer.", {
     campaign_id: S("id de la campaña"),
     slow_ramp: { type: "boolean", description: "activar/desactivar el slow ramp de la campaña" },
     slow_ramp_inicio: N("envíos al día por cuenta al empezar"),
@@ -140,9 +140,18 @@ export const IA_MOD_TOOLS = [
     dias: { type: "array", items: { type: "string" }, description: "días de envío: mon, tue, wed, thu, fri, sat, sun" },
     limite_diario: N("límite diario de la campaña"),
     parar_al_responder: { type: "boolean", description: "dejar de escribir a quien responde" },
+    solo_texto: { type: "boolean", description: "enviar emails como sólo texto (sin HTML)" },
+    primer_email_solo_texto: { type: "boolean", description: "enviar el primer email como sólo texto" },
+    limitar_por_empresa: { type: "boolean", description: "limitar cuántos correos van al mismo dominio al día" },
+    limite_por_empresa: N("máximo de correos al mismo dominio al día"),
+    emparejar_proveedor: { type: "boolean", description: "emparejar el proveedor del lead con el del buzón (Outlook→Outlook, Google→Google)" },
+    romper_hilo_en: N("0 = mantener hilo siempre; N = desde el follow-up N sale como email nuevo"),
   }, ["campaign_id"]),
-  fn("crear_campana", "Crea una campaña NUEVA en borrador (sin leads ni cuentas, no envía nada) con sus mensajes.", {
+  fn("crear_campana", "Crea una campaña NUEVA en borrador (no envía nada hasta que la activen) con sus mensajes y sus cuentas conectadas. Siempre nace con: emails sólo texto, primer email sólo texto, sin límite por empresa, sin emparejar proveedor, mantener hilo siempre y parar al responder.", {
     nombre: S("nombre de la campaña"),
+    etiquetas: { type: "array", items: { type: "string" }, description: "etiquetas de cuentas que usará (sus cuentas conectadas con esa etiqueta)" },
+    cuentas: { type: "array", items: { type: "string" }, description: "cuentas a añadir a mano (correo o parte)" },
+    cuentas_libres: { type: "boolean", description: "true = añadir las cuentas conectadas que no usa ninguna campaña activa" },
     mensajes: {
       type: "array",
       description: "los mensajes en orden",
@@ -211,6 +220,8 @@ ${extra}
 QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; ver sus cuentas de correo y si funcionan (ver_cuentas); leer de verdad cada respuesta del Unibox para saber quién está interesado (revisar_respuestas); leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. También puedes ORGANIZAR SUS CUENTAS: crear y poner o quitar etiquetas (organizar_cuentas), decidir qué cuentas y etiquetas usa cada campaña (conectar_cuentas_campana), activar o quitar el slow ramp de cuentas por etiqueta (slow_ramp_cuentas) y cambiar ajustes de envío de una campaña (ajustar_campana). NO puedes activar ni pausar campañas, ni borrar leads o cuentas, ni ver o cambiar contraseñas: si te lo piden, di que eso se hace desde su panel.
 
 INTERESADOS Y RESPUESTAS: si preguntan si hay interesados, quién ha respondido bien, a quién contestar o qué dicen los leads, llama a revisar_respuestas (no te bases sólo en ver_respuestas ni en las etiquetas). Luego di en 1-3 líneas cuántos interesados y preguntas hay y quiénes son los más calientes; la tarjeta enseña el resto. Si la IA ve interés donde la etiqueta dice otra cosa, dilo.
+
+CREAR CAMPAÑAS: crear_campana siempre la deja con emails sólo texto, primer email sólo texto, sin límite por empresa, sin emparejar proveedor, mantener hilo siempre y parar al responder; no hace falta que lo pidan. Conéctale siempre cuentas: las etiquetas o cuentas que diga el usuario; si no dice nada, usa cuentas_libres (las conectadas que no usa ninguna campaña activa). Si queda sin cuentas, dilo en una línea.
 
 ORGANIZAR CUENTAS: para repartir buzones entre campañas lo limpio es una etiqueta por campaña: 1) organizar_cuentas pone la etiqueta nueva a las cuentas elegidas (para "mitad y mitad" usa desde/cantidad sobre la misma selección) y, si deben dejar la anterior, quítala o usa solo_estas; 2) conectar_cuentas_campana hace que cada campaña use su etiqueta y quita las añadidas a mano que sobren. Mira antes ver_cuentas para saber cuántas hay y qué usa cada campaña. Haz los pasos en el mismo turno y luego resume en 1-2 líneas; si queda algo pendiente de Confirmar, dilo.
 Límites de slow ramp: máximo 30 al día por cuenta; un inicio típico es 5-10 y un incremento de 2-3.
