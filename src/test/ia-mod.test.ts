@@ -20,12 +20,17 @@ describe("herramientas", () => {
   it("todas las de escritura existen como herramienta", () => {
     for (const n of ESCRITURAS) expect(nombres).toContain(n);
   });
-  it("no hay herramientas para activar campañas, borrar leads ni tocar cuentas", () => {
-    expect(nombres.some((n) => /activar|pausar|borrar_lead|eliminar_lead/.test(n))).toBe(false);
-    // ver_cuentas sólo lee: ninguna herramienta que escribe toca cuentas de correo.
-    expect([...ESCRITURAS].some((n) => /cuenta/.test(n))).toBe(false);
+  it("nunca activa/pausa campañas, ni borra leads o cuentas, ni toca contraseñas", () => {
+    expect(nombres.some((n) => /activar_campana|pausar|borrar_lead|eliminar_lead|borrar_cuenta|eliminar_cuenta|password|contrasena/.test(n))).toBe(false);
+    // Ningún parámetro de ninguna herramienta permite cambiar credenciales ni el estado de una campaña.
+    const params = IA_MOD_TOOLS.flatMap((t) => Object.keys((t.function.parameters as any).properties || {}));
+    expect(params.some((p) => /password|imap|smtp|status|estado/.test(p))).toBe(false);
+    // Leer cuentas y respuestas no escribe nada.
     expect(ESCRITURAS.has("ver_cuentas")).toBe(false);
     expect(ESCRITURAS.has("revisar_respuestas")).toBe(false);
+  });
+  it("organizar cuentas, conectarlas, slow ramp y ajustes son de escritura (con Deshacer / Confirmar)", () => {
+    for (const n of ["organizar_cuentas", "conectar_cuentas_campana", "slow_ramp_cuentas", "ajustar_campana"]) expect(ESCRITURAS.has(n)).toBe(true);
   });
   it("importar leads es de escritura (pasa por Confirmar)", () => {
     expect(ESCRITURAS.has("importar_leads")).toBe(true);

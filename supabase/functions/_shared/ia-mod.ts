@@ -12,7 +12,7 @@ export const puedeUsarIaMod = (email: string | null | undefined) => IA_MOD_EMAIL
 /** Herramientas que cambian algo en la cuenta del cliente. */
 export const ESCRITURAS = new Set([
   "crear_mensaje", "editar_mensaje", "eliminar_mensaje", "crear_variante", "editar_variante", "eliminar_variante", "crear_campana",
-  "importar_leads",
+  "importar_leads", "organizar_cuentas", "conectar_cuentas_campana", "slow_ramp_cuentas", "ajustar_campana",
 ]);
 
 const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []) => ({
@@ -98,6 +98,49 @@ export const IA_MOD_TOOLS = [
       additionalProperties: { type: "string" },
     },
   }, ["upload_id", "campaign_id"]),
+  fn("organizar_cuentas", "Pone o quita ETIQUETAS (tags) a cuentas de correo del cliente, o crea una etiqueta nueva poniéndosela a unas cuentas. Sirve para organizar y repartir buzones entre campañas (p. ej. 38 cuentas con LEADGEN y 38 con PYMES usando desde/cantidad). Si el cambio afecta a una campaña ACTIVA, queda pendiente de Confirmar; si no, se aplica ya. Se puede deshacer.", {
+    emails: { type: "array", items: { type: "string" }, description: "correos concretos (o parte del correo)" },
+    con_etiqueta: S("cuentas que llevan esta etiqueta"),
+    de_campana: S("id de campaña: cuentas que usa ahora esa campaña"),
+    sin_etiqueta: { type: "boolean", description: "sólo cuentas sin ninguna etiqueta" },
+    todas: { type: "boolean", description: "todas las cuentas del cliente" },
+    desde: N("para repartir: saltar las N primeras (orden alfabético por correo)"),
+    cantidad: N("para repartir: coger sólo N cuentas"),
+    poner_etiquetas: { type: "array", items: { type: "string" }, description: "etiquetas a poner (escritas tal cual deben quedar)" },
+    quitar_etiquetas: { type: "array", items: { type: "string" }, description: "etiquetas a quitar" },
+    solo_estas: { type: "boolean", description: "true = las cuentas se quedan SOLO con poner_etiquetas (quita las demás)" },
+  }),
+  fn("conectar_cuentas_campana", "Decide qué cuentas usa una campaña: qué etiquetas usa (account_tags) y qué cuentas tiene añadidas a mano. Una campaña envía con las cuentas a mano + las que tengan alguna de sus etiquetas (escrita exactamente igual). Si la campaña está ACTIVA queda pendiente de Confirmar. Se puede deshacer.", {
+    campaign_id: S("id de la campaña"),
+    usar_etiquetas: { type: "array", items: { type: "string" }, description: "etiquetas que usará la campaña (sustituye a las que tenga). [] = ninguna" },
+    anadir_emails: { type: "array", items: { type: "string" }, description: "cuentas a añadir a mano" },
+    quitar_emails: { type: "array", items: { type: "string" }, description: "cuentas a quitar de las añadidas a mano" },
+    quitar_todas_a_mano: { type: "boolean", description: "quita todas las cuentas añadidas a mano (se queda sólo con las de sus etiquetas)" },
+  }, ["campaign_id"]),
+  fn("slow_ramp_cuentas", "Activa o desactiva el SLOW RAMP de cuentas (sube poco a poco lo que envía cada buzón al día): empieza en 'inicio', sube 'incremento' cada día de envío real, hasta 'maximo'. Se elige a qué cuentas con los mismos filtros (p. ej. con_etiqueta). Si afecta a cuentas de una campaña ACTIVA queda pendiente de Confirmar. Se puede deshacer.", {
+    emails: { type: "array", items: { type: "string" }, description: "correos concretos (o parte del correo)" },
+    con_etiqueta: S("cuentas que llevan esta etiqueta"),
+    de_campana: S("id de campaña: cuentas que usa ahora esa campaña"),
+    sin_etiqueta: { type: "boolean", description: "sólo cuentas sin ninguna etiqueta" },
+    todas: { type: "boolean", description: "todas las cuentas del cliente" },
+    desde: N("para repartir: saltar las N primeras (orden alfabético por correo)"),
+    cantidad: N("para repartir: coger sólo N cuentas"),
+    activar: { type: "boolean", description: "true = activar, false = desactivar" },
+    inicio: N("envíos al día el primer día (p. ej. 5)"),
+    incremento: N("cuánto sube cada día de envío (p. ej. 2)"),
+    maximo: N("tope diario al que llega (máx. 30)"),
+  }, ["activar"]),
+  fn("ajustar_campana", "Cambia ajustes de envío de una campaña (NO la activa ni la pausa): slow ramp de campaña, horario, días de envío, límite diario y parar al responder. Si la campaña está ACTIVA queda pendiente de Confirmar. Se puede deshacer.", {
+    campaign_id: S("id de la campaña"),
+    slow_ramp: { type: "boolean", description: "activar/desactivar el slow ramp de la campaña" },
+    slow_ramp_inicio: N("envíos al día por cuenta al empezar"),
+    slow_ramp_incremento: N("cuánto sube cada día de envío"),
+    hora_inicio: N("hora de empezar a enviar (0-23)"),
+    hora_fin: N("hora de dejar de enviar (1-24)"),
+    dias: { type: "array", items: { type: "string" }, description: "días de envío: mon, tue, wed, thu, fri, sat, sun" },
+    limite_diario: N("límite diario de la campaña"),
+    parar_al_responder: { type: "boolean", description: "dejar de escribir a quien responde" },
+  }, ["campaign_id"]),
   fn("crear_campana", "Crea una campaña NUEVA en borrador (sin leads ni cuentas, no envía nada) con sus mensajes.", {
     nombre: S("nombre de la campaña"),
     mensajes: {
@@ -124,7 +167,27 @@ export interface ContextoCliente {
   hoy: string;
 }
 
-export function sistemaIaMod(c: ContextoCliente): string {
+/** Marca con la que PulseBot propone algo por su cuenta ("¿qué te parece si…?"). */
+export const MARCA_IDEA = "**Idea:**";
+
+/**
+ * ¿Puede proponer una idea en esta respuesta? Sólo de vez en cuando: nunca en su primera
+ * respuesta y como mucho una cada 4 respuestas suyas (ni siempre ni casi siempre).
+ */
+export function puedeSugerir(respuestasAnteriores: string[]): boolean {
+  if (respuestasAnteriores.length < 1) return false;
+  let desdeUltima = 0;
+  for (let i = respuestasAnteriores.length - 1; i >= 0; i--) {
+    if (respuestasAnteriores[i].includes(MARCA_IDEA)) break;
+    desdeUltima++;
+  }
+  return desdeUltima >= 3;
+}
+
+const IDEAS_SI = `En ESTA respuesta puedes, si de verdad aporta, añadir UNA idea breve al final, en su propia línea, empezando exactamente por "${"**Idea:**"}" y en forma de pregunta ("¿Qué te parece si activamos el slow ramp en las 38 cuentas nuevas?"). Sólo si sale de algo que has visto en los datos (cuentas con fallos, campañas compartiendo buzones, una variable sin datos, pocas respuestas…). Si no hay nada claro, no pongas ninguna.`;
+const IDEAS_NO = `En ESTA respuesta NO añadas ideas ni propuestas propias: responde sólo a lo que te piden.`;
+
+export function sistemaIaMod(c: ContextoCliente, sugerir = false): string {
   const campanas = c.campanas.length
     ? c.campanas.map((x) => `- ${x.name} (${x.status}) · id ${x.id}`).join("\n")
     : "(no tiene campañas)";
@@ -145,9 +208,12 @@ ${campanas}
 
 ${extra}
 
-QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; ver sus cuentas de correo y si funcionan (ver_cuentas); leer de verdad cada respuesta del Unibox para saber quién está interesado (revisar_respuestas); leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
+QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; ver sus cuentas de correo y si funcionan (ver_cuentas); leer de verdad cada respuesta del Unibox para saber quién está interesado (revisar_respuestas); leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. También puedes ORGANIZAR SUS CUENTAS: crear y poner o quitar etiquetas (organizar_cuentas), decidir qué cuentas y etiquetas usa cada campaña (conectar_cuentas_campana), activar o quitar el slow ramp de cuentas por etiqueta (slow_ramp_cuentas) y cambiar ajustes de envío de una campaña (ajustar_campana). NO puedes activar ni pausar campañas, ni borrar leads o cuentas, ni ver o cambiar contraseñas: si te lo piden, di que eso se hace desde su panel.
 
 INTERESADOS Y RESPUESTAS: si preguntan si hay interesados, quién ha respondido bien, a quién contestar o qué dicen los leads, llama a revisar_respuestas (no te bases sólo en ver_respuestas ni en las etiquetas). Luego di en 1-3 líneas cuántos interesados y preguntas hay y quiénes son los más calientes; la tarjeta enseña el resto. Si la IA ve interés donde la etiqueta dice otra cosa, dilo.
+
+ORGANIZAR CUENTAS: para repartir buzones entre campañas lo limpio es una etiqueta por campaña: 1) organizar_cuentas pone la etiqueta nueva a las cuentas elegidas (para "mitad y mitad" usa desde/cantidad sobre la misma selección) y, si deben dejar la anterior, quítala o usa solo_estas; 2) conectar_cuentas_campana hace que cada campaña use su etiqueta y quita las añadidas a mano que sobren. Mira antes ver_cuentas para saber cuántas hay y qué usa cada campaña. Haz los pasos en el mismo turno y luego resume en 1-2 líneas; si queda algo pendiente de Confirmar, dilo.
+Límites de slow ramp: máximo 30 al día por cuenta; un inicio típico es 5-10 y un incremento de 2-3.
 
 ETIQUETAS (TAGS) DE LAS CUENTAS: si preguntan qué etiqueta tiene una cuenta, qué cuentas llevan una etiqueta o qué cuentas usa una campaña, llama a ver_cuentas con email, tag o campaign_id y contesta EXACTO: el nombre de la etiqueta tal cual está escrito, cuántas cuentas la llevan y qué campañas la usan. Una campaña usa las cuentas añadidas a mano más las que tienen alguna de sus etiquetas escrita EXACTAMENTE igual (mayúsculas incluidas). Si hay avisos de etiquetas (mayúsculas distintas, etiqueta sin cuentas, dos campañas activas compartiendo buzones), dilos.
 
@@ -177,6 +243,8 @@ FORMATO DE TUS RESPUESTAS (como ChatGPT: corto, claro y al grano):
 - Termina, si hace falta, con una pregunta o un siguiente paso concreto, en su propia línea.
 - NUNCA uses emojis ni símbolos decorativos. Nada de párrafos largos.
 
+IDEAS PROPIAS: {{IDEAS}}
+
 CÓMO ENVÍA EL MOTOR (datos ciertos, no los contradigas):
 - Los follow-ups salen SIEMPRE en el mismo hilo que el primer correo, con asunto "Re: <asunto del primero>": el asunto propio de un follow-up se ignora mientras la campaña no esté configurada para romper el hilo. Un follow-up con asunto NO rompe el hilo; como mucho, sugiere dejarlo vacío por orden.
 - La espera de cada paso cuenta desde el correo anterior y sólo en los días y horas de envío de la campaña.
@@ -188,7 +256,7 @@ VARIANTES: una variante cambia sólo el ángulo de la frase de oferta y del dato
 
 ${CAMPAIGN_COPY_SYSTEM}
 
-${FORMATO_TEXTO_PLANO}`;
+${FORMATO_TEXTO_PLANO}`.replace("{{IDEAS}}", sugerir ? IDEAS_SI : IDEAS_NO);
 }
 
 /* ── Importar leads de un CSV adjunto ────────────────────────────────────────────────────── */
@@ -351,6 +419,37 @@ export function resumenEtiquetas(cuentas: CuentaTags[], campanas: CampanaTags[])
   }
   return { etiquetas, avisos, sin_etiqueta: cuentas.filter((c) => !(c.tags || []).length).length };
 }
+
+export interface FilaCuenta {
+  account_id: string; email: string; status?: string; tags: string[] | null;
+  campanas?: string[] | null; campanas_activas?: number | null;
+  warmup_enabled?: boolean | null;
+}
+export interface Seleccion {
+  emails?: string[]; con_etiqueta?: string; de_campana_nombre?: string; sin_etiqueta?: boolean; todas?: boolean;
+  desde?: number; cantidad?: number;
+}
+
+/** Qué cuentas elige una selección (siempre en orden alfabético por correo, para poder repartir). */
+export function seleccionarCuentas(filas: FilaCuenta[], sel: Seleccion): FilaCuenta[] {
+  const hayFiltro = !!(sel.emails?.length || sel.con_etiqueta || sel.de_campana_nombre || sel.sin_etiqueta || sel.todas);
+  if (!hayFiltro) return [];
+  let out = [...filas].sort((a, b) => a.email.localeCompare(b.email));
+  if (sel.emails?.length) {
+    const qs = sel.emails.map((e) => String(e).trim().toLowerCase()).filter(Boolean);
+    out = out.filter((f) => qs.some((q) => f.email.toLowerCase() === q || f.email.toLowerCase().includes(q)));
+  }
+  if (sel.con_etiqueta) out = out.filter((f) => tieneTag(f.tags, sel.con_etiqueta!));
+  if (sel.sin_etiqueta) out = out.filter((f) => !(f.tags || []).length);
+  if (sel.de_campana_nombre) out = out.filter((f) => (f.campanas || []).includes(sel.de_campana_nombre!));
+  const desde = Math.max(0, Math.floor(Number(sel.desde) || 0));
+  const cantidad = sel.cantidad ? Math.max(0, Math.floor(Number(sel.cantidad))) : undefined;
+  return out.slice(desde, cantidad !== undefined ? desde + cantidad : undefined);
+}
+
+/** Etiquetas limpias (sin espacios de más, sin vacías, sin repetir). */
+export const limpiarEtiquetas = (xs: unknown): string[] =>
+  [...new Set((Array.isArray(xs) ? xs : []).map((x) => String(x ?? "").trim()).filter(Boolean))].slice(0, 20);
 
 /** Categorías del clasificador → cómo se dicen en la plataforma. */
 export const VEREDICTO_ES: Record<string, string> = {

@@ -25,7 +25,7 @@ export type IaTarjeta =
   | { type: "cambio" | "pendiente"; change_id: string; summary: string; campaign_name?: string; posicion?: number; letra?: string;
       asunto?: string; cuerpo?: string; espera_dias?: number; aviso?: string; activa?: boolean;
       mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[];
-      importacion?: ImportacionVista }
+      importacion?: ImportacionVista; lineas?: string[] }
   | { type: "campanas"; campanas: CampanaVista[]; summary?: string }
   | { type: "cuentas"; summary?: string; filtro?: string; totales: CuentasTotales; cuentas: CuentaVista[];
       etiquetas?: EtiquetaVista[]; avisos_etiquetas?: string[]; sin_etiqueta?: number }
@@ -65,6 +65,9 @@ export interface ImportacionVista {
 export interface IaMensaje {
   id: string; role: "user" | "assistant"; content: string; cards: IaTarjeta[]; author_email: string | null; created_at: string;
 }
+
+/** ¿Termina este mensaje con una idea de PulseBot? (la marca la pone el servidor en el prompt) */
+export const tieneIdea = (texto: string) => /\*\*Idea:\*\*/.test(texto || "");
 
 export const ESTADO_CAMPANA: Record<string, string> = { active: "Activa", paused: "Pausada", draft: "Borrador", completed: "Terminada" };
 

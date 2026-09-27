@@ -69,7 +69,8 @@ export function crearDb(inicial: Record<string, Fila[]>, bloqueados: string[] = 
       }
       if (this.op === "update") { for (const f of this.filas()) Object.assign(f, this.payload); return { data: null, error: null }; }
       if (this.op === "delete") { const fuera = new Set(this.filas()); t[this.nombre] = tabla(this.nombre).filter((f) => !fuera.has(f)); return { data: null, error: null }; }
-      const filas = this.filas().slice(0, this.lim);
+      // Como la base de datos real: se devuelven COPIAS, no los objetos guardados.
+      const filas = this.filas().slice(0, this.lim).map((f) => JSON.parse(JSON.stringify(f)));
       if (this.opts?.head) return { data: null, count: filas.length, error: null };
       if (this.unico) return { data: filas[0] ?? null, error: null };
       return { data: filas, count: filas.length, error: null };
@@ -79,6 +80,11 @@ export function crearDb(inicial: Record<string, Fila[]>, bloqueados: string[] = 
   return {
     t,
     from: (n: string) => new Q(n),
-    rpc: async (n: string) => (n in rpcs ? { data: rpcs[n], error: null } : { data: null, error: { message: "rpc no simulada" } }),
+    // Una RPC simulada puede ser un dato fijo o una función (args, tablas) → dato.
+    rpc: async (n: string, args: any) => {
+      if (!(n in rpcs)) return { data: null, error: { message: "rpc no simulada" } };
+      const r = rpcs[n];
+      return { data: typeof r === "function" ? r(args, t) : r, error: null };
+    },
   };
 }

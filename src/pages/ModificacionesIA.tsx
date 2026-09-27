@@ -19,7 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SparkMark } from "@/components/SparkMark";
 import {
   ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, conversacionesRecientes, csvMetricas, diaCorto, haceCuanto, horaCorta,
-  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type RespuestaVista, type VistaPaso,
+  nombreCliente, puedeVerIaMod, tieneIdea, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type RespuestaVista, type VistaPaso,
 } from "@/lib/ia-mod-view";
 import { decodificarArchivo, prepararCsv, trozos, type CsvPreparado } from "@/lib/ia-mod-csv";
 
@@ -280,8 +280,8 @@ export default function ModificacionesIA() {
             {sel && !cargando && mensajes.length === 0 && (
               <Bienvenida cliente={sel} onSugerencia={enviar} />
             )}
-            {mensajes.map((m) => (
-              <Burbuja key={m.id} m={m} cambios={cambios} onCambio={accionCambio} onPedir={enviar} />
+            {mensajes.map((m, i) => (
+              <Burbuja key={m.id} m={m} cambios={cambios} onCambio={accionCambio} onPedir={enviar} ultimo={i === mensajes.length - 1 && !pensando} />
             ))}
             {pensando && (
               <div className="flex items-start gap-3">
@@ -583,8 +583,8 @@ function Bienvenida({ cliente, onSugerencia }: { cliente: IaCliente; onSugerenci
   );
 }
 
-function Burbuja({ m, cambios, onCambio, onPedir }: {
-  m: IaMensaje; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void;
+function Burbuja({ m, cambios, onCambio, onPedir, ultimo = false }: {
+  m: IaMensaje; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void; ultimo?: boolean;
 }) {
   if (m.role === "user") {
     return (
@@ -616,6 +616,12 @@ function Burbuja({ m, cambios, onCambio, onPedir }: {
           </div>
         )}
         {(m.cards || []).map((t, i) => <Tarjeta key={i} t={t} cambios={cambios} onCambio={onCambio} onPedir={onPedir} />)}
+        {ultimo && tieneIdea(m.content) && (
+          <div className="flex gap-2">
+            <Button size="sm" className="gap-1.5 rounded-lg" onClick={() => onPedir("Sí, hazlo.")}><Check className="h-3.5 w-3.5" /> Sí, hazlo</Button>
+            <Button size="sm" variant="outline" className="rounded-lg" onClick={() => onPedir("Ahora no, gracias.")}>Ahora no</Button>
+          </div>
+        )}
         <p className="text-[12px] text-muted-foreground">{horaCorta(m.created_at)}</p>
       </div>
     </div>
@@ -632,6 +638,19 @@ const MD: Components = {
   thead: ({ children }) => <thead className="bg-[#F1EEFE] text-left text-[12.5px] text-[#4A4378] dark:bg-muted dark:text-muted-foreground">{children}</thead>,
   th: ({ children }) => <th className="whitespace-nowrap px-3 py-2 font-semibold">{children}</th>,
   td: ({ children }) => <td className="border-t border-[#EEEAF8] px-3 py-2 tabular-nums dark:border-border">{children}</td>,
+  // "**Idea:** ¿Qué te parece si…?" → recuadro de idea.
+  p: ({ children }) => {
+    const hijos = Array.isArray(children) ? children : [children];
+    const primero: any = hijos[0];
+    const esIdea = primero?.type === "strong" && String(primero?.props?.children ?? "").trim() === "Idea:";
+    if (!esIdea) return <p>{children}</p>;
+    return (
+      <div className="my-2 flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[14px] dark:border-amber-500/30 dark:bg-amber-500/10">
+        <Lightbulb className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+        <span>{hijos.slice(1)}</span>
+      </div>
+    );
+  },
 };
 
 function Tarjeta({ t, cambios, onCambio, onPedir }: {
@@ -698,6 +717,11 @@ function TarjetaCambio({ t, estado, onCambio }: {
             />
           )}
           {t.importacion && <ResumenImportacion r={t.importacion} />}
+          {(t.lineas || []).length > 0 && (
+            <ul className="space-y-1 rounded-xl border border-[#EEEAF8] bg-background px-3 py-2 text-[13px] dark:border-border">
+              {t.lineas!.map((l) => <li key={l} className="flex gap-2"><span className="text-primary">•</span><span>{l}</span></li>)}
+            </ul>
+          )}
           {t.aviso && <p className="text-[13px] text-muted-foreground">{t.aviso}</p>}
           {t.activa && estado === "applied" && <p className="text-[13px] text-muted-foreground">La campaña está activa: se usa desde el próximo envío.</p>}
         </div>

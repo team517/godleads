@@ -8,7 +8,7 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES, resumenEtiquetas, tieneTag } from "../_shared/ia-mod.ts";
+import { origenPlantilla, planImportacion, variablesUsadas, explicarFallo, saludCuenta, VEREDICTO_ES, resumenEtiquetas, tieneTag, seleccionarCuentas, limpiarEtiquetas, puedeSugerir, type FilaCuenta } from "../_shared/ia-mod.ts";
 import { aiClassifyReply, evidenceSupported, type AiVerdict } from "../_shared/ai-classify.ts";
 import { authorText, classifyMessage } from "../_shared/classify.ts";
 import { mergeLeadFields, fieldsChanged } from "../_shared/lead-merge.ts";
@@ -112,13 +112,16 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     return { role: f.role, content: f.content };
   }));
 
+  // Ideas propias sólo de vez en cuando (ver puedeSugerir).
+  // `filas` ya está en orden cronológico (historialParaModelo le dio la vuelta arriba).
+  const sugerir = puedeSugerir(((filas || []) as any[]).filter((f) => f.role === "assistant").map((f) => String(f.content || "")));
   const system = sistemaIaMod({
     nombre: cliente.nombre, empresa: cliente.empresa, email: cliente.email,
     notas: (nota as any)?.notes || "", instruccionesRespuestas: cliente.instrucciones, skills: cliente.skills,
     enlaceReserva: cliente.enlace,
     campanas: (camps || []).map((c: any) => ({ id: c.id, name: c.name, status: c.status })),
     hoy: new Date().toLocaleDateString("es-ES", { timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", year: "numeric" }),
-  });
+  }, sugerir);
 
   const mensajes: any[] = [{ role: "system", content: system }, ...historial];
   const tarjetas: Tarjeta[] = [];
@@ -261,6 +264,111 @@ export async function importarLeads(db: Db, clientId: string, campaignId: string
     }
   }
   return { nuevos, actualizados, saltados, invalidos: plan.invalidos, repetidos: plan.duplicados };
+}
+
+/** Filas de cuentas del cliente (con sus etiquetas y campañas), como las ve ver_cuentas. */
+async function filasCuentas(ctx: Ctx): Promise<FilaCuenta[]> {
+  const { data, error } = await ctx.db.rpc("ia_client_accounts", { p_user: ctx.cliente.id });
+  if (error) throw new Error("No se pudieron leer las cuentas");
+  return (data || []) as FilaCuenta[];
+}
+
+async function seleccionDe(ctx: Ctx, a: Record<string, any>) {
+  const camp = a.de_campana ? await campanaDelCliente(ctx, a.de_campana) : null;
+  return {
+    emails: Array.isArray(a.emails) ? a.emails.map(String) : undefined,
+    con_etiqueta: a.con_etiqueta ? String(a.con_etiqueta) : undefined,
+    de_campana_nombre: camp?.name, sin_etiqueta: !!a.sin_etiqueta, todas: !!a.todas,
+    desde: a.desde, cantidad: a.cantidad,
+  };
+}
+
+/** Campañas activas del cliente y qué etiquetas usan. */
+async function campanasActivasConTags(ctx: Ctx) {
+  const { data } = await ctx.db.from("campaigns").select("name, status, account_tags").eq("user_id", ctx.cliente.id).eq("status", "active");
+  const porTag = new Map<string, string[]>();
+  for (const c of (data || []) as any[]) for (const t of c.account_tags || []) porTag.set(t, [...(porTag.get(t) || []), c.name]);
+  return { nombres: new Set(((data || []) as any[]).map((c) => c.name)), porTag };
+}
+
+const listaCorreos = (fs: { email: string }[]) =>
+  `${fs.length} cuenta${fs.length === 1 ? "" : "s"}: ${fs.slice(0, 4).map((f) => f.email).join(", ")}${fs.length > 4 ? ` y ${fs.length - 4} más` : ""}`;
+
+const CAMPOS_RAMPA = "id, tags, warmup_enabled, warmup_increment, warmup_limit, warmup_day, warmup_started_at";
+
+/** Cómo estaban las cuentas antes (para deshacer). */
+async function fotoCuentas(db: Db, clientId: string, ids: string[]) {
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await db.from("email_accounts").select(CAMPOS_RAMPA).eq("user_id", clientId).in("id", ids.slice(i, i + 200));
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+/** Aplica un cambio de configuración (cuentas o campaña) y devuelve el "antes" para deshacer. */
+async function aplicarConfig(db: Db, clientId: string, kind: string, p: any): Promise<unknown> {
+  if (kind === "cuentas_tags") {
+    const antes = await fotoCuentas(db, clientId, p.ids);
+    for (let i = 0; i < p.ids.length; i += 500) {
+      const { error } = await db.rpc("ia_accounts_set_tags", { p_user: clientId, p_ids: p.ids.slice(i, i + 500), p_add: p.poner, p_remove: p.quitar, p_replace: !!p.solo });
+      if (error) throw new Error(`No se pudieron cambiar las etiquetas: ${error.message}`);
+    }
+    return antes;
+  }
+  if (kind === "cuentas_rampa") {
+    const antes = await fotoCuentas(db, clientId, p.ids);
+    const cambio = p.activar
+      ? { warmup_enabled: true, warmup_increment: p.incremento, warmup_limit: p.maximo, warmup_day: p.inicio, warmup_started_at: new Date().toISOString() }
+      : { warmup_enabled: false };
+    for (let i = 0; i < p.ids.length; i += 200) {
+      const { error } = await db.from("email_accounts").update(cambio).eq("user_id", clientId).in("id", p.ids.slice(i, i + 200));
+      if (error) throw new Error(`No se pudo cambiar el slow ramp: ${error.message}`);
+    }
+    return antes;
+  }
+  if (kind === "campana_cuentas") {
+    const { data: c } = await db.from("campaigns").select("account_tags").eq("id", p.campaign_id).single();
+    const { data: dir } = await db.from("campaign_accounts").select("account_id").eq("campaign_id", p.campaign_id);
+    const antes = { account_tags: (c as any)?.account_tags || [], directas: ((dir || []) as any[]).map((d) => d.account_id) };
+    const { error } = await db.from("campaigns").update({ account_tags: p.account_tags }).eq("id", p.campaign_id);
+    if (error) throw new Error(`No se pudo cambiar la campaña: ${error.message}`);
+    await ponerDirectas(db, p.campaign_id, antes.directas, p.directas);
+    return antes;
+  }
+  if (kind === "campana_ajustes") {
+    const campos = Object.keys(p.cambios || {});
+    const { data: c } = await db.from("campaigns").select(campos.join(", ")).eq("id", p.campaign_id).single();
+    const { error } = await db.from("campaigns").update(p.cambios).eq("id", p.campaign_id);
+    if (error) throw new Error(`No se pudo ajustar la campaña: ${error.message}`);
+    return Object.fromEntries(campos.map((k) => [k, (c as any)?.[k] ?? null]));
+  }
+  throw new Error("Cambio desconocido");
+}
+
+/** Deja en campaign_accounts exactamente estas cuentas. */
+async function ponerDirectas(db: Db, campaignId: string, actuales: string[], nuevas: string[]) {
+  const quitar = actuales.filter((id) => !nuevas.includes(id));
+  const poner = nuevas.filter((id) => !actuales.includes(id));
+  for (let i = 0; i < quitar.length; i += 200) {
+    await db.from("campaign_accounts").delete().eq("campaign_id", campaignId).in("account_id", quitar.slice(i, i + 200));
+  }
+  for (let i = 0; i < poner.length; i += 500) {
+    await db.from("campaign_accounts").insert(poner.slice(i, i + 500).map((account_id) => ({ campaign_id: campaignId, account_id })));
+  }
+}
+
+/** Aplica ya (con Deshacer) o deja pendiente de Confirmar, y pinta la tarjeta. */
+async function guardarOAplicar(ctx: Ctx, c: { kind: string; payload: any; summary: string; lineas: string[]; pendiente: boolean; campaign_id?: string; cuentasAntes?: number; cuentasDespues?: number }) {
+  if (c.pendiente) {
+    const id = await registrar(ctx, { kind: c.kind, campaign_id: c.campaign_id ?? null, summary: c.summary, payload: c.payload, status: "pending" });
+    tarjetaCambio(ctx, id, c.summary, true, { lineas: c.lineas, aviso: "Afecta a una campaña activa: pulsa Confirmar para aplicarlo." });
+    return { pendiente: true, change_id: id, resumen: c.summary, detalle: c.lineas, mensaje: "Pendiente de que el usuario pulse Confirmar" };
+  }
+  const antes = await aplicarConfig(ctx.db, ctx.cliente.id, c.kind, c.payload);
+  const id = await registrar(ctx, { kind: c.kind, campaign_id: c.campaign_id ?? null, summary: c.summary, payload: c.payload, before: antes, after: c.payload });
+  tarjetaCambio(ctx, id, c.summary, false, { lineas: c.lineas });
+  return { hecho: true, change_id: id, resumen: c.summary, detalle: c.lineas };
 }
 
 async function registrar(ctx: Ctx, c: {
@@ -536,6 +644,102 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       };
     }
 
+    case "organizar_cuentas":
+    case "slow_ramp_cuentas": {
+      const filas = await filasCuentas(ctx);
+      const sel = await seleccionDe(ctx, a);
+      const elegidas = seleccionarCuentas(filas, sel);
+      if (!elegidas.length) {
+        const tags = [...new Set(filas.flatMap((f) => f.tags || []))];
+        return { error: "Ninguna cuenta coincide con esa selección", cuentas_del_cliente: filas.length, etiquetas_que_existen: tags };
+      }
+      const activas = await campanasActivasConTags(ctx);
+      const ids = elegidas.map((f) => f.account_id);
+      let payload: any, summary: string, lineas: string[];
+      if (nombre === "organizar_cuentas") {
+        const poner = limpiarEtiquetas(a.poner_etiquetas), quitar = limpiarEtiquetas(a.quitar_etiquetas);
+        const solo = !!a.solo_estas;
+        if (!poner.length && !quitar.length) return { error: "Di qué etiquetas poner o quitar" };
+        payload = { ids, poner, quitar, solo };
+        summary = [poner.length && `Poner ${poner.map((t) => `"${t}"`).join(", ")}`, quitar.length && `quitar ${quitar.map((t) => `"${t}"`).join(", ")}`]
+          .filter(Boolean).join(" y ") + ` en ${ids.length} cuenta${ids.length === 1 ? "" : "s"}${solo ? " (sólo con esas etiquetas)" : ""}`;
+        const afectadas = new Set<string>(elegidas.flatMap((f) => f.campanas || []).filter((n) => activas.nombres.has(n)));
+        for (const t of poner) for (const c of activas.porTag.get(t) || []) afectadas.add(c);
+        lineas = [listaCorreos(elegidas), ...(afectadas.size ? [`Campañas activas afectadas: ${[...afectadas].join(", ")}`] : [])];
+        const pendiente = afectadas.size > 0;
+        return await guardarOAplicar(ctx, { kind: "cuentas_tags", payload, summary, lineas, pendiente });
+      }
+      const activar = a.activar !== false;
+      const inicio = entero(a.inicio, 5, 1, 30), incremento = entero(a.incremento, 2, 1, 10), maximo = entero(a.maximo, 30, 1, 30);
+      payload = { ids, activar, inicio: Math.min(inicio, maximo), incremento, maximo };
+      summary = activar
+        ? `Slow ramp en ${ids.length} cuenta${ids.length === 1 ? "" : "s"}: empieza en ${Math.min(inicio, maximo)}/día, +${incremento} por día de envío, hasta ${maximo}`
+        : `Quitar el slow ramp de ${ids.length} cuenta${ids.length === 1 ? "" : "s"}`;
+      const enActiva = elegidas.filter((f) => Number(f.campanas_activas || 0) > 0);
+      lineas = [listaCorreos(elegidas), ...(enActiva.length ? [`${enActiva.length} de ellas envían en campañas activas: su envío diario cambia desde el próximo envío`] : [])];
+      return await guardarOAplicar(ctx, { kind: "cuentas_rampa", payload, summary, lineas, pendiente: enActiva.length > 0 });
+    }
+
+    case "conectar_cuentas_campana": {
+      const camp = await campanaDelCliente(ctx, a.campaign_id);
+      const filas = await filasCuentas(ctx);
+      const { data: c } = await db.from("campaigns").select("account_tags").eq("id", camp.id).single();
+      const { data: directas } = await db.from("campaign_accounts").select("account_id").eq("campaign_id", camp.id);
+      const tagsAntes: string[] = (c as any)?.account_tags || [];
+      const directasAntes = new Set<string>(((directas || []) as any[]).map((d) => d.account_id));
+      const porCorreo = (lista: unknown) => {
+        const qs = (Array.isArray(lista) ? lista : []).map((e) => String(e).trim().toLowerCase()).filter(Boolean);
+        return filas.filter((f) => qs.some((q) => f.email.toLowerCase() === q || f.email.toLowerCase().includes(q))).map((f) => f.account_id);
+      };
+      const tagsDespues = Array.isArray(a.usar_etiquetas) ? limpiarEtiquetas(a.usar_etiquetas) : tagsAntes;
+      const directasDespues = new Set(a.quitar_todas_a_mano ? [] : directasAntes);
+      for (const id of porCorreo(a.quitar_emails)) directasDespues.delete(id);
+      for (const id of porCorreo(a.anadir_emails)) directasDespues.add(id);
+      const cuantas = (tags: string[], dir: Set<string>) =>
+        filas.filter((f) => dir.has(f.account_id) || (f.status === "connected" && (f.tags || []).some((t) => tags.includes(t)))).length;
+      const antes = cuantas(tagsAntes, directasAntes), despues = cuantas(tagsDespues, directasDespues);
+      const sinCuentasConTag = tagsDespues.filter((t) => !filas.some((f) => (f.tags || []).includes(t)));
+      const summary = `"${camp.name}" pasa de ${antes} a ${despues} cuentas`;
+      const lineas = [
+        `Etiquetas que usa: ${tagsDespues.length ? tagsDespues.map((t) => `"${t}"`).join(", ") : "ninguna"}${tagsDespues.join("|") !== tagsAntes.join("|") ? ` (antes: ${tagsAntes.length ? tagsAntes.map((t) => `"${t}"`).join(", ") : "ninguna"})` : ""}`,
+        `Cuentas añadidas a mano: ${directasDespues.size} (antes ${directasAntes.size})`,
+        ...(sinCuentasConTag.length ? [`Ninguna cuenta tiene todavía ${sinCuentasConTag.map((t) => `"${t}"`).join(", ")}`] : []),
+      ];
+      const payload = { campaign_id: camp.id, account_tags: tagsDespues, directas: [...directasDespues] };
+      return await guardarOAplicar(ctx, { kind: "campana_cuentas", payload, summary, lineas, pendiente: camp.status === "active", campaign_id: camp.id, cuentasAntes: antes, cuentasDespues: despues });
+    }
+
+    case "ajustar_campana": {
+      const camp = await campanaDelCliente(ctx, a.campaign_id);
+      const cambios: Record<string, unknown> = {};
+      const lineas: string[] = [];
+      const DIAS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+      const NOMBRE_DIA: Record<string, string> = { mon: "lun", tue: "mar", wed: "mié", thu: "jue", fri: "vie", sat: "sáb", sun: "dom" };
+      if (typeof a.slow_ramp === "boolean") { cambios.slow_ramp_enabled = a.slow_ramp; lineas.push(`Slow ramp de campaña: ${a.slow_ramp ? "activado" : "desactivado"}`); }
+      if (a.slow_ramp_inicio !== undefined) { cambios.slow_ramp_max = entero(a.slow_ramp_inicio, 2, 1, 30); lineas.push(`Empieza en ${cambios.slow_ramp_max} al día por cuenta`); }
+      if (a.slow_ramp_incremento !== undefined) { cambios.slow_ramp_increment = entero(a.slow_ramp_incremento, 2, 1, 10); lineas.push(`Sube ${cambios.slow_ramp_increment} por día de envío`); }
+      if (a.hora_inicio !== undefined) cambios.send_start_hour = entero(a.hora_inicio, 9, 0, 23);
+      if (a.hora_fin !== undefined) cambios.send_end_hour = entero(a.hora_fin, 18, 1, 24);
+      if (cambios.send_start_hour !== undefined || cambios.send_end_hour !== undefined) {
+        const { data: h } = await db.from("campaigns").select("send_start_hour, send_end_hour").eq("id", camp.id).single();
+        const ini = (cambios.send_start_hour ?? (h as any)?.send_start_hour ?? 9) as number, fin = (cambios.send_end_hour ?? (h as any)?.send_end_hour ?? 18) as number;
+        if (fin <= ini) return { error: "La hora de fin tiene que ser posterior a la de inicio" };
+        lineas.push(`Horario: de ${ini}:00 a ${fin}:00`);
+      }
+      if (Array.isArray(a.dias)) {
+        // En inglés (mon…) o en español (lunes, mar, miércoles…).
+        const ES: Record<string, string> = { lun: "mon", mar: "tue", mie: "wed", jue: "thu", vie: "fri", sab: "sat", dom: "sun" };
+        const pedidos = (a.dias as string[]).map((x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").slice(0, 3)).map((x) => ES[x] || x);
+        const dias = DIAS.filter((d) => pedidos.includes(d));
+        if (!dias.length) return { error: "Días no válidos (usa mon, tue, wed, thu, fri, sat, sun)" };
+        cambios.send_days = dias; lineas.push(`Días: ${dias.map((d) => NOMBRE_DIA[d]).join(", ")}`);
+      }
+      if (a.limite_diario !== undefined) { cambios.daily_limit = entero(a.limite_diario, 100, 1, 20000); lineas.push(`Límite diario: ${cambios.daily_limit}`); }
+      if (typeof a.parar_al_responder === "boolean") { cambios.stop_on_reply = a.parar_al_responder; lineas.push(`Parar al responder: ${a.parar_al_responder ? "sí" : "no"}`); }
+      if (!Object.keys(cambios).length) return { error: "No hay ningún ajuste que cambiar" };
+      return await guardarOAplicar(ctx, { kind: "campana_ajustes", payload: { campaign_id: camp.id, cambios }, summary: `Ajustes de "${camp.name}"`, lineas, pendiente: camp.status === "active", campaign_id: camp.id });
+    }
+
     case "leer_web": {
       const texto = await fetchWebsiteText(String(a.url || ""));
       return texto ? { texto } : { error: "No se ha podido leer esa web" };
@@ -789,6 +993,11 @@ export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
     }).eq("id", ch.id);
     return `${r.nuevos.length} leads añadidos${r.actualizados.length ? `, ${r.actualizados.length} actualizados` : ""}${r.saltados ? `, ${r.saltados} saltados por estar bloqueados` : ""}`;
   }
+  if (["cuentas_tags", "cuentas_rampa", "campana_cuentas", "campana_ajustes"].includes(ch.kind)) {
+    const antes = await aplicarConfig(db, ch.client_user_id, ch.kind, ch.payload || {});
+    await db.from("ia_mod_changes").update({ status: "applied", before: antes, after: ch.payload, resolved_at: ahora }).eq("id", ch.id);
+    return ch.summary;
+  }
   throw new Error("Este cambio no se puede confirmar");
 }
 
@@ -838,6 +1047,27 @@ export async function deshacer(db: Db, ch: any, clientId: string): Promise<strin
       return quitados < nuevos.length
         ? `Quitados ${quitados} leads; ${nuevos.length - quitados} ya habían recibido algún correo y se quedan en la campaña`
         : `Quitados los ${quitados} leads importados`;
+    }
+    case "cuentas_tags":
+    case "cuentas_rampa": {
+      const foto = Array.isArray(ch.before) ? ch.before : [];
+      for (let i = 0; i < foto.length; i += 300) {
+        const { error } = await db.rpc("ia_accounts_restore", { p_user: clientId, p_snapshot: foto.slice(i, i + 300) });
+        if (error) throw new Error(error.message);
+      }
+      return `Restauradas ${foto.length} cuentas como estaban`;
+    }
+    case "campana_cuentas": {
+      const b = ch.before || {};
+      await db.from("campaigns").update({ account_tags: b.account_tags || [] }).eq("id", ch.campaign_id);
+      const { data: dir } = await db.from("campaign_accounts").select("account_id").eq("campaign_id", ch.campaign_id);
+      await ponerDirectas(db, ch.campaign_id, ((dir || []) as any[]).map((d) => d.account_id), b.directas || []);
+      return;
+    }
+    case "campana_ajustes": {
+      const { error } = await db.from("campaigns").update(ch.before || {}).eq("id", ch.campaign_id);
+      if (error) throw new Error(error.message);
+      return;
     }
     case "campaign_create": {
       const id = ch.after?.id;
