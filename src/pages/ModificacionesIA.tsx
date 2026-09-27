@@ -946,6 +946,14 @@ function TarjetaCampanas({ t, onPedir }: { t: Extract<IaTarjeta, { type: "campan
               <div className="min-w-0">
                 <p className="truncate text-[15px] font-bold">{c.nombre}</p>
                 <p className="text-[12px] text-muted-foreground">{c.mensajes} mensaje{c.mensajes === 1 ? "" : "s"} · {c.horario}</p>
+                {c.cuentas !== undefined && (
+                  <p className={`mt-0.5 flex flex-wrap items-center gap-1 text-[12px] ${c.cuentas === 0 && c.estado === "active" ? "font-semibold text-red-600" : "text-muted-foreground"}`}>
+                    {c.cuentas} cuenta{c.cuentas === 1 ? "" : "s"}
+                    {(c.etiquetas_que_usa || []).length > 0 && <>· {(c.etiquetas_que_usa || []).map((x) => <ChipTag key={x} t={x} />)}</>}
+                    {!!c.cuentas_a_mano && <>· {c.cuentas_a_mano} a mano</>}
+                    {c.cuentas === 0 && c.estado === "active" && <>· activa sin cuentas: no envía</>}
+                  </p>
+                )}
               </div>
               <span className={`flex flex-shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] font-medium ${ESTILO_ESTADO[c.estado] || ESTILO_ESTADO.draft}`}>
                 {c.estado === "active" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}

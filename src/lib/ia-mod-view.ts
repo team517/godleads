@@ -54,6 +54,7 @@ export interface CampanaVista {
   id: string; nombre: string; estado: string; creada: string; mensajes: number; limite_diario: number | null; horario: string;
   leads: number; leads_pendientes: number; enviados: number; contactados: number; respuestas: number;
   interesados: number; rebotes: number; enviados_7d: number; respuestas_7d: number;
+  etiquetas_que_usa?: string[]; cuentas?: number; cuentas_a_mano?: number; cuentas_por_etiqueta?: number;
 }
 
 export interface ImportacionVista {

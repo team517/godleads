@@ -159,3 +159,19 @@ describe("ajustar una campaña", () => {
     expect(db.t.campaigns.find((x: any) => x.id === "grande").daily_limit).toBe(100);
   });
 });
+
+describe("ver_campanas dice la verdad sobre cuentas y etiquetas", () => {
+  it("etiquetas que usa cada campaña y cuántas cuentas (a mano ∪ etiqueta, como el motor)", async () => {
+    const { db, ctx } = montar();
+    db.t.email_accounts.slice(0, 3).forEach((a: any) => { a.tags = ["LEADGEN"]; });
+    db.t.email_accounts.slice(3).forEach((a: any) => { a.tags = ["PYMES"]; });
+    db.t.campaigns.find((c: any) => c.id === "leadgen").account_tags = ["LEADGEN"];
+    db.t.campaigns.find((c: any) => c.id === "grande").account_tags = [];
+    db.t.campaign_accounts.push({ id: "x", campaign_id: "borrador", account_id: "acc-5" });
+    const r: any = await ejecutar(ctx, "ver_campanas", {});
+    const por = (n: string) => r.find((c: any) => c.nombre === n);
+    expect(por("LEAD GENERATION")).toMatchObject({ etiquetas_que_usa: ["LEADGEN"], cuentas: 3, cuentas_a_mano: 0, cuentas_por_etiqueta: 3 });
+    expect(por("GRANDE")).toMatchObject({ etiquetas_que_usa: [], cuentas: 0 });
+    expect(por("BORRADOR")).toMatchObject({ cuentas: 1, cuentas_a_mano: 1 });
+  });
+});

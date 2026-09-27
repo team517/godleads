@@ -90,6 +90,9 @@ export async function cargarCliente(db: Db, id: string): Promise<Cliente | null>
 
 export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor: string): Promise<{ texto: string; tarjetas: Tarjeta[] }> {
   const inicio = Date.now();
+  const { data: estados } = await db.from("ia_mod_changes").select("id, status").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(300);
+  const estadoDe = new Map(((estados || []) as any[]).map((e) => [e.id, e.status]));
+  const ESTADO_TXT: Record<string, string> = { applied: "aplicado", pending: "PENDIENTE de Confirmar", undone: "deshecho", cancelled: "cancelado" };
   const [{ data: filas }, { data: nota }, { data: camps }] = await Promise.all([
     db.from("ia_mod_messages").select("role, content, cards").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(40),
     db.from("ia_mod_notes").select("notes").eq("client_user_id", cliente.id).maybeSingle(),
@@ -100,7 +103,7 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
   const historial = historialParaModelo((filas || []).reverse().map((f: any) => {
     const tarjetas = Array.isArray(f.cards) ? f.cards : [];
     if (f.role === "assistant" && tarjetas.length) {
-      return { role: f.role, content: `${f.content}\n\n(Hecho en ese turno: ${tarjetas.map((t: any) => t.summary || t.titulo || t.type).join("; ")})` };
+      return { role: f.role, content: `${f.content}\n\n(Tarjetas de ese turno, con su estado REAL ahora: ${tarjetas.map((t: any) => `${t.summary || t.titulo || t.type}${t.change_id ? ` [${ESTADO_TXT[estadoDe.get(t.change_id) || ""] || "?"}]` : ""}`).join("; ")})` };
     }
     const adjuntos = tarjetas.filter((t: any) => t.type === "adjunto");
     if (f.role === "user" && adjuntos.length) {
@@ -396,10 +399,19 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
   const { db, cliente } = ctx;
   switch (nombre) {
     case "ver_campanas": {
-      const [{ data: camps }, { data: met }] = await Promise.all([
-        db.from("campaigns").select("id, name, status, created_at, daily_limit, send_start_hour, send_end_hour, timezone, send_days, stop_on_reply").eq("user_id", cliente.id).order("created_at", { ascending: false }),
+      const [{ data: camps }, { data: met }, { data: ctas }] = await Promise.all([
+        db.from("campaigns").select("id, name, status, created_at, daily_limit, send_start_hour, send_end_hour, timezone, send_days, stop_on_reply, account_tags, slow_ramp_enabled").eq("user_id", cliente.id).order("created_at", { ascending: false }),
         db.rpc("ia_client_metrics", { p_user: cliente.id, p_days: 7 }),
+        db.rpc("ia_client_accounts", { p_user: cliente.id }),
       ]);
+      // Cuentas que usa cada campaña, con la regla del motor: a mano ∪ etiquetas exactas de cuentas conectadas.
+      const cuentasDe = (nombre: string) => {
+        const filasC = ((ctas || []) as any[]);
+        const aMano = filasC.filter((f) => (f.campanas_directas || []).includes(nombre)).length;
+        const porEtiqueta = filasC.filter((f) => f.status === "connected" && (f.campanas_por_tag || []).includes(nombre)).length;
+        const total = filasC.filter((f) => (f.campanas_directas || []).includes(nombre) || (f.status === "connected" && (f.campanas_por_tag || []).includes(nombre))).length;
+        return { aMano, porEtiqueta, total };
+      };
       const ids = (camps || []).map((c: any) => c.id);
       const { data: st } = ids.length ? await db.from("campaign_steps").select("campaign_id").in("campaign_id", ids) : { data: [] };
       const nPasos = new Map<string, number>();
@@ -409,6 +421,9 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
         const x: any = m.get(c.id) || {};
         return {
           id: c.id, nombre: c.name, estado: c.status, creada: String(c.created_at).slice(0, 10),
+          etiquetas_que_usa: c.account_tags || [], cuentas: cuentasDe(c.name).total,
+          cuentas_a_mano: cuentasDe(c.name).aMano, cuentas_por_etiqueta: cuentasDe(c.name).porEtiqueta,
+          slow_ramp_campana: !!c.slow_ramp_enabled,
           mensajes: nPasos.get(c.id) || 0, limite_diario: c.daily_limit,
           horario: `${c.send_start_hour ?? "?"}-${c.send_end_hour ?? "?"} (${c.timezone || "Europe/Madrid"})`,
           parar_al_responder: c.stop_on_reply,
