@@ -780,7 +780,10 @@ function ResumenImportacion({ r }: { r: ImportacionVista }) {
   const cols = Object.keys(r.ejemplo[0] || {}).slice(0, 5);
   return (
     <div className="space-y-2.5 rounded-xl border border-[#ECE8F7] bg-background p-3 dark:border-border">
-      <p className="flex items-center gap-2 text-[13px] text-muted-foreground"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {r.archivo}</p>
+      <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {r.archivo}
+        <span className="ml-auto rounded-md bg-muted px-2 py-0.5 text-[11px]">{r.formato === "todas" ? "Todas las columnas" : "Con plantilla"}</span>
+      </p>
       <div className="grid grid-cols-3 gap-2">
         {cifras.map((x) => (
           <div key={x.k} className="rounded-lg border border-[#EEEAF8] px-2 py-2 text-center dark:border-border">

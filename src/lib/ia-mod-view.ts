@@ -39,7 +39,7 @@ export interface CampanaVista {
 export interface ImportacionVista {
   archivo: string; nuevos: number; actualizados: number; invalidos: number; repetidos: number;
   columnas: string[]; variables_sin_columna: string[]; renombradas: Record<string, string>;
-  ejemplo: Record<string, string>[];
+  ejemplo: Record<string, string>[]; formato?: "plantilla" | "todas";
 }
 
 export interface IaMensaje {

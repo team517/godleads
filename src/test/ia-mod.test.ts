@@ -111,3 +111,14 @@ describe("importar leads de un CSV adjunto", () => {
     expect(variablesUsadas(["Buenas {{first_name}}", "Soy {{SenderFirstName}}, vi {{ company_name }} y {{first_name}}"])).toEqual(["company_name", "first_name"]);
   });
 });
+
+describe("PulseBot estilo ChatGPT", () => {
+  const s = sistemaIaMod({ nombre: "", empresa: "X", email: "x@x.es", notas: "", instruccionesRespuestas: "", skills: "", enlaceReserva: "", campanas: [], hoy: "hoy" });
+  it("respuestas cortas y sin ofrecer opciones cuando la orden es clara", () => {
+    expect(s).toMatch(/máximo ~90 palabras/);
+    expect(s).toMatch(/no ofrezcas opciones A\/B/);
+  });
+  it("si piden importar leads, importa ya con la plantilla", () => {
+    expect(s).toMatch(/llama YA a importar_leads \(formato "plantilla"/);
+  });
+});

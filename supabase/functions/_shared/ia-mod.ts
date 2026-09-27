@@ -3,6 +3,7 @@
 import { CAMPAIGN_COPY_SYSTEM } from "./campaign-copy.ts";
 import { FORMATO_TEXTO_PLANO } from "./sequence-copy.ts";
 import { readState, versionsOf, type Version } from "./step-variants.ts";
+import { elegirColumnasPlantilla, filasConPlantilla, PLANTILLA_COLUMNAS, aliasPlantilla } from "./variable-resolver.ts";
 
 /** Sólo estas cuentas pueden usar el chat (el propietario pidió: equipo, hello y support). */
 export const IA_MOD_EMAILS = ["hello@onepulso.blog", "support@onepulso.online", "equipo@onepulso.online"];
@@ -76,9 +77,10 @@ export const IA_MOD_TOOLS = [
     cuantas: N("cuántas filas enseñar (máx. 50, por defecto 10)"),
     campaign_id: S("opcional: id de una campaña para contar cuántos emails del archivo ya están en ella"),
   }, ["upload_id"]),
-  fn("importar_leads", "Prepara la importación de los leads de un CSV adjunto a una campaña del cliente. NO importa todavía: el usuario tiene que pulsar Confirmar. Los emails que ya están en la campaña se actualizan con las columnas nuevas en vez de duplicarse; los bloqueados se saltan solos.", {
+  fn("importar_leads", "Importa los leads de un CSV adjunto a una campaña del cliente. En campañas en borrador o pausadas se importan YA (se puede deshacer); en campañas ACTIVAS queda pendiente de que el usuario pulse Confirmar. Los emails que ya están se actualizan en vez de duplicarse; los bloqueados se saltan solos.", {
     upload_id: S("id del adjunto"),
     campaign_id: S("id de la campaña destino"),
+    formato: S("\"plantilla\" (por defecto: sólo email + columnas de la plantilla — first_name, company_name, organization_name, industry, city, website, company_short_description, personalized_message…, cada una sacada de la columna del CSV con más datos) o \"todas\" (todas las columnas del CSV)"),
     renombrar_columnas: {
       type: "object",
       description: "opcional: columna del CSV → nombre de variable que usan los mensajes (p. ej. {\"nombre\": \"first_name\", \"empresa\": \"company_name\"})",
@@ -134,19 +136,23 @@ ${extra}
 
 QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
 
-ARCHIVOS ADJUNTOS (CSV): cuando el usuario adjunte uno verás "(Adjuntó el archivo …, id …)". Míralo con ver_archivo antes de opinar. Para meter los leads en una campaña: 1) mira los mensajes de esa campaña (ver_mensajes) y qué variables usan ({{first_name}}, {{company_name}}…); 2) comprueba que el CSV tiene esas columnas con datos y, si se llaman distinto, pásalas en renombrar_columnas; 3) llama a importar_leads y dile al usuario cuántos entran, cuántos se actualizan y cuántos se descartan, y que pulse "Confirmar". Si la campaña está ACTIVA, avisa de que empezarán a recibir correos en los próximos envíos.
+ARCHIVOS ADJUNTOS (CSV): cuando el usuario adjunte uno verás "(Adjuntó el archivo …, id …)".
+- Si te pide meter/implementar/importar/subir esos leads en una campaña: llama YA a importar_leads (formato "plantilla" salvo que pida todas las columnas). NO preguntes antes ni ofrezcas opciones: la plantilla ya elige la mejor columna para cada variable (first_name, company_name, industry, city…). Si no dice la campaña y sólo hay una que encaje por nombre, usa esa; si hay dudas reales, pregunta sólo cuál.
+- Si además pide arreglar los mensajes o las variables, haz las dos cosas en el mismo turno (edita los mensajes y luego importa).
+- Después, en 1-3 líneas: cuántos entraron (o que falta pulsar Confirmar si la campaña está activa) y, si alguna variable de los mensajes no tiene datos en el archivo, dilo en una línea.
 
 CÓMO TRABAJAS:
 1. Nunca inventes datos: para hablar de campañas, mensajes, métricas o respuestas, llama antes a la herramienta. Los números salen SIEMPRE de las herramientas.
 2. Antes de cambiar un mensaje, míralo con ver_mensajes. Antes de escribir mensajes nuevos, entiende al cliente: su memoria, sus mensajes actuales, sus respuestas y, si hace falta, su web (dominio de su correo o de sus mensajes). Si falta algo esencial (qué vende, su dato de resultado, qué demo puede enseñar), pregúntalo antes de escribir.
-3. Si el usuario te pide un cambio claro, HAZLO con la herramienta (no te limites a proponerlo) y luego resume en 1-3 líneas qué has cambiado. Los cambios se pueden deshacer con un botón.
+3. Si el usuario te pide un cambio claro, HAZLO con la herramienta en ese mismo turno (no lo propongas, no preguntes "¿lo hago?", no ofrezcas opciones A/B) y luego resume en 1-3 líneas qué has hecho. Todo se puede deshacer con un botón. Sólo pregunta si de verdad falta un dato imprescindible, y entonces una sola pregunta.
 4. Borrar un mensaje o una variante, o meter un mensaje en medio de la secuencia, queda PENDIENTE: dile al usuario que pulse "Confirmar" en la tarjeta.
 5. Si la campaña está ACTIVA, avisa de que el cambio se aplica a los próximos envíos. Si añades un mensaje al final, los leads que ya terminaron la secuencia no lo recibirán.
 6. Para métricas llama a "metricas": la imagen con la gráfica sale sola; tú comenta en 2-4 líneas lo importante (tasa de respuesta = respuestas / contactados) y da un consejo concreto.
 7. Guarda con guardar_nota los datos del cliente que el equipo te cuente y que habrá que recordar.
 8. No repitas en el texto lo que ya enseña una tarjeta (campañas, mensajes, métricas, cambios): la tarjeta sale sola debajo de tu respuesta. Tú comenta lo importante y di qué harías.
 
-FORMATO DE TUS RESPUESTAS (siempre bien estructuradas, fáciles de leer de un vistazo):
+FORMATO DE TUS RESPUESTAS (como ChatGPT: corto, claro y al grano):
+- LARGO: normalmente 1-4 frases o hasta 5 viñetas (máximo ~90 palabras). Sólo te extiendes si te piden un análisis o detalle. Nunca expliques tu proceso ("he mirado…, luego…").
 - Empieza con 1 frase que responda directamente a lo que te han preguntado.
 - Si hay varias partes, usa títulos cortos con "### " y debajo listas con "- ". Frases cortas, una idea por punto.
 - Cifras clave en **negrita** (con punto de miles: 11.695). Nombres de campaña en **negrita**.
@@ -187,7 +193,8 @@ export interface PlanImportacion {
  * dentro del archivo, el resto de columnas (con valor) en custom_fields y con las columnas
  * renombradas a las variables que usan los mensajes.
  */
-export function planImportacion(rows: Record<string, unknown>[], renombrar?: Record<string, string> | null): PlanImportacion {
+export function planImportacion(rows: Record<string, unknown>[], renombrar?: Record<string, string> | null, formato: "plantilla" | "todas" = "todas"): PlanImportacion {
+  if (formato === "plantilla") rows = aPlantilla(rows);
   const mapa = new Map<string, string>();
   for (const [de, a] of Object.entries(renombrar || {})) {
     if (claveColumna(de) && claveColumna(a) && claveColumna(a) !== "email") mapa.set(claveColumna(de), claveColumna(a));
@@ -216,6 +223,22 @@ export function planImportacion(rows: Record<string, unknown>[], renombrar?: Rec
     filas.push({ email, custom_fields });
   }
   return { filas, invalidos, duplicados, columnas: [...columnas].sort() };
+}
+
+/** Filas crudas del adjunto → email + columnas de la plantilla (como "Importar con plantilla" en Leads). */
+export function aPlantilla(rows: Record<string, unknown>[]): Record<string, string>[] {
+  const cab = new Set<string>();
+  for (const r of rows.slice(0, 200)) for (const k of Object.keys(r || {})) cab.add(k);
+  const filas = rows.map((r) => Object.fromEntries(Object.entries(r || {}).map(([k, v]) => [k, v == null ? "" : String(v)])));
+  return filasConPlantilla([...cab], filas);
+}
+
+/** De qué columna del CSV sale cada columna de la plantilla (para explicarlo en una línea). */
+export function origenPlantilla(rows: Record<string, unknown>[]): Record<string, string | null> {
+  const cab = new Set<string>();
+  for (const r of rows.slice(0, 200)) for (const k of Object.keys(r || {})) cab.add(k);
+  const filas = rows.map((r) => Object.fromEntries(Object.entries(r || {}).map(([k, v]) => [k, v == null ? "" : String(v)])));
+  return elegirColumnasPlantilla([...cab], filas, PLANTILLA_COLUMNAS, aliasPlantilla);
 }
 
 /** Variables {{x}} que usan unos textos (sin las que rellena el motor). */

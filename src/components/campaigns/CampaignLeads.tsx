@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { elegirColumnasPlantilla } from "@/lib/variable-resolver";
+import { PLANTILLA_COLUMNAS, aliasPlantilla, elegirColumnasPlantilla } from "@/lib/variable-resolver";
 import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,7 @@ export default function CampaignLeads({ campaignId }: Props) {
   // Template columns — include personalized message columns so a ready-made
   // {{personalized_message}} (often full HTML) is imported entirely, not dropped.
   // organization_name es el nombre de empresa de Apollo/LinkedIn: se importa tal cual, además de company_name.
-  const TEMPLATE_COLUMNS = ["first_name", "industry", "city", "company_short_description", "company_name", "organization_name", "website", "personalized_message", "personalized_intro", "icebreaker"];
+  const TEMPLATE_COLUMNS = PLANTILLA_COLUMNAS;
 
   // CSV review state
   const parsedRowsRef = useRef<Record<string, string>[]>([]);
@@ -518,17 +518,7 @@ export default function CampaignLeads({ campaignId }: Props) {
         if ("error" in result) { toast.error(result.error); setImportingTemplate(false); return; }
 
         const allowedKeys = new Set(["email", ...TEMPLATE_COLUMNS]);
-        const aliasMap: Record<string, string> = {
-          firstname: "first_name", first: "first_name", nombre: "first_name",
-          company: "company_name", empresa: "company_name", companyname: "company_name",
-          organization: "organization_name", organisation: "organization_name", organizationname: "organization_name", organizacion: "organization_name", org: "organization_name",
-          ciudad: "city", town: "city",
-          industria: "industry", sector: "industry",
-          description: "company_short_description", company_description: "company_short_description",
-          short_description: "company_short_description", companydescription: "company_short_description",
-          web: "website", url: "website", sitio_web: "website",
-        };
-        const normalizeHeader = (h: string): string => aliasMap[h] || h;
+        const normalizeHeader = aliasPlantilla;
 
         // Para cada columna de la plantilla, la columna del CSV que MÁS DATOS tiene entre las que
         // significan eso ("Company", "Company Name", "Company Name for Emails"…). Antes la última

@@ -8,7 +8,7 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
-import { planImportacion, variablesUsadas } from "../_shared/ia-mod.ts";
+import { origenPlantilla, planImportacion, variablesUsadas } from "../_shared/ia-mod.ts";
 import { mergeLeadFields, fieldsChanged } from "../_shared/lead-merge.ts";
 
 const MAX_VUELTAS = 8;
@@ -217,14 +217,16 @@ async function emailsEnCampana(db: Db, campaignId: string, emails: string[]) {
 }
 
 /** Importa (lo llama "Confirmar"): nuevos → leads + campaign_leads; los que ya estaban se fusionan. */
-async function importarLeads(db: Db, clientId: string, campaignId: string, upload: any, renombrar: Record<string, string>) {
-  const plan = planImportacion(upload.rows || [], renombrar);
+export async function importarLeads(db: Db, clientId: string, campaignId: string, upload: any, renombrar: Record<string, string>, formato: "plantilla" | "todas" = "plantilla") {
+  const plan = planImportacion(upload.rows || [], renombrar, formato);
+  // Campaña sin leads: no hace falta buscar duplicados en cada lote.
+  const { count: yaHay } = await db.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId);
   const nuevos: string[] = [];
   const actualizados: { id: string; antes: Record<string, string> | null }[] = [];
   let saltados = 0;
   for (let i = 0; i < plan.filas.length; i += 500) {
     const lote = plan.filas.slice(i, i + 500);
-    const ya = await emailsEnCampana(db, campaignId, lote.map((f) => f.email));
+    const ya = yaHay ? await emailsEnCampana(db, campaignId, lote.map((f) => f.email)) : new Map();
     const insertar: any[] = [];
     for (const f of lote) {
       const hit = ya.get(f.email);
@@ -275,7 +277,7 @@ function tarjetaCambio(ctx: Ctx, change_id: string, summary: string, pendiente: 
 const asunto = (v: unknown) => String(v ?? "").trim().slice(0, 300);
 const cuerpo = (v: unknown) => cuerpoATexto(String(v ?? "")).slice(0, 12000);
 
-async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promise<unknown> {
+export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promise<unknown> {
   const { db, cliente } = ctx;
   switch (nombre) {
     case "ver_campanas": {
@@ -500,6 +502,7 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
         descartadas_al_leer: up.discarded,
         ...(plan ? { emails_validos: plan.filas.length, emails_invalidos: plan.invalidos, repetidos_en_el_archivo: plan.duplicados } : {}),
         ...(enCampana !== null ? { ya_en_la_campana: enCampana } : {}),
+        ...(up.kind === "leads" ? { plantilla_sale_de: Object.fromEntries(Object.entries(origenPlantilla(up.rows)).filter(([, v]) => v)) } : {}),
         desde, filas_mostradas: up.rows.slice(desde, desde + cuantas),
       };
     }
@@ -509,25 +512,48 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
       if (up.kind !== "leads") throw new Error("Ese archivo no tiene columna de email: no se pueden importar leads");
       const camp = await campanaDelCliente(ctx, a.campaign_id);
       const renombrar = a.renombrar_columnas && typeof a.renombrar_columnas === "object" ? a.renombrar_columnas as Record<string, string> : {};
-      const plan = planImportacion(up.rows, renombrar);
+      const formato: "plantilla" | "todas" = String(a.formato || "plantilla").toLowerCase().startsWith("tod") ? "todas" : "plantilla";
+      const plan = planImportacion(up.rows, renombrar, formato);
       if (!plan.filas.length) throw new Error("El archivo no tiene ningún email válido");
       const ya = await emailsEnCampana(db, camp.id, plan.filas.map((f) => f.email));
       const pasos = await pasosOrdenados(db, camp.id);
       const usadas = variablesUsadas(pasos.flatMap((p) => [p.subject, p.body, ...variantesDePaso(p).flatMap((v) => [v.asunto, v.cuerpo])]));
       const faltan = usadas.filter((v) => !plan.columnas.includes(v.toLowerCase()) && !plan.columnas.includes(v));
       const nuevos = plan.filas.length - ya.size;
+      const importacion = {
+        archivo: up.filename, nuevos, actualizados: ya.size, invalidos: plan.invalidos, repetidos: plan.duplicados,
+        columnas: plan.columnas, variables_sin_columna: faltan, renombradas: renombrar, formato,
+        ejemplo: plan.filas.slice(0, 3).map((f) => ({ email: f.email, ...f.custom_fields })),
+      };
+      // Borrador o pausada: importar no manda nada, así que se hace ya (y se puede deshacer). Activa:
+      // empezarían a recibir correos, así que espera a "Confirmar". Archivos enormes también van por
+      // Confirmar para que la importación tenga su propia petición y no se coma el tiempo del turno.
+      if (camp.status !== "active" && plan.filas.length <= 12000) {
+        const r = await importarLeads(db, cliente.id, camp.id, up, renombrar, formato);
+        const summary = `${r.nuevos.length} leads importados a "${camp.name}"${r.actualizados.length ? ` (${r.actualizados.length} actualizados)` : ""}`;
+        const id = await registrar(ctx, {
+          kind: "leads_import", campaign_id: camp.id, summary, payload: { upload_id: up.id, renombrar, formato },
+          after: { nuevos: r.nuevos, saltados: r.saltados, invalidos: r.invalidos, repetidos: r.repetidos },
+          before: { actualizados: r.actualizados },
+        });
+        tarjetaCambio(ctx, id, summary, false, {
+          campaign_name: camp.name, importacion: { ...importacion, nuevos: r.nuevos.length, actualizados: r.actualizados.length },
+          aviso: r.saltados ? `${r.saltados} no entraron porque están en la lista de bloqueados.` : "",
+        });
+        return {
+          hecho: true, importados: r.nuevos.length, actualizados: r.actualizados.length, bloqueados: r.saltados,
+          invalidos: plan.invalidos, repetidos: plan.duplicados, formato,
+          variables_de_los_mensajes: usadas, variables_sin_columna_en_el_csv: faltan,
+        };
+      }
       const summary = `Importar ${nuevos} leads nuevos de "${up.filename}" a "${camp.name}"${ya.size ? ` (y actualizar ${ya.size} que ya estaban)` : ""}`;
       const id = await registrar(ctx, {
         kind: "leads_import", campaign_id: camp.id, summary, status: "pending",
-        payload: { upload_id: up.id, renombrar },
+        payload: { upload_id: up.id, renombrar, formato },
       });
       tarjetaCambio(ctx, id, summary, true, {
         campaign_name: camp.name, activa: camp.status === "active",
-        importacion: {
-          archivo: up.filename, nuevos, actualizados: ya.size, invalidos: plan.invalidos, repetidos: plan.duplicados,
-          columnas: plan.columnas, variables_sin_columna: faltan, renombradas: renombrar,
-          ejemplo: plan.filas.slice(0, 3).map((f) => ({ email: f.email, ...f.custom_fields })),
-        },
+        importacion,
         aviso: camp.status === "active" ? "La campaña está activa: los leads nuevos empezarán a recibir correos en los próximos envíos." : "",
       });
       return {
@@ -592,7 +618,7 @@ export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
     if (!up || (up as any).client_user_id !== ch.client_user_id) throw new Error("El archivo ya no existe");
     const { data: camp } = await db.from("campaigns").select("id, user_id").eq("id", ch.campaign_id).maybeSingle();
     if (!camp || (camp as any).user_id !== ch.client_user_id) throw new Error("La campaña ya no existe");
-    const r = await importarLeads(db, ch.client_user_id, ch.campaign_id, up, ch.payload?.renombrar || {});
+    const r = await importarLeads(db, ch.client_user_id, ch.campaign_id, up, ch.payload?.renombrar || {}, ch.payload?.formato === "todas" ? "todas" : "plantilla");
     await db.from("ia_mod_changes").update({
       status: "applied", resolved_at: ahora,
       after: { nuevos: r.nuevos, saltados: r.saltados, invalidos: r.invalidos, repetidos: r.repetidos },
