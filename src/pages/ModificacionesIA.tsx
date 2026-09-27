@@ -5,7 +5,7 @@ import html2canvas from "html2canvas";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AtSign, BarChart3, Brain, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, Download, FileSpreadsheet,
-  Lightbulb, ListChecks, Loader2, Mail, MessageSquare, MessageSquareReply, Plus, Search, Send, Sparkles, Star, Undo2, Workflow,
+  Lightbulb, ListChecks, Loader2, Mail, MessageSquare, MessageSquareReply, Paperclip, Plus, Search, Send, Sparkles, Star, Undo2, Upload, Workflow, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,8 +18,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SparkMark } from "@/components/SparkMark";
 import {
   ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, conversacionesRecientes, csvMetricas, diaCorto, haceCuanto, horaCorta,
-  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type VistaPaso,
+  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type VistaPaso,
 } from "@/lib/ia-mod-view";
+import { decodificarArchivo, prepararCsv, trozos, type CsvPreparado } from "@/lib/ia-mod-csv";
 
 async function llamar<T = any>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke("ia-modificaciones", { body });
@@ -68,6 +69,10 @@ export default function ModificacionesIA() {
   const [texto, setTexto] = useState("");
   const [memoriaAbierta, setMemoriaAbierta] = useState(false);
   const [menciones, setMenciones] = useState(false);
+  const [adjunto, setAdjunto] = useState<{ nombre: string; datos: CsvPreparado } | null>(null);
+  const [subida, setSubida] = useState<number | null>(null);
+  const [arrastrando, setArrastrando] = useState(false);
+  const archivoRef = useRef<HTMLInputElement>(null);
   const finRef = useRef<HTMLDivElement>(null);
   const entradaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -82,6 +87,7 @@ export default function ModificacionesIA() {
 
   const abrir = useCallback(async (c: IaCliente) => {
     setSel(c);
+    setAdjunto(null);
     setMensajes([]);
     setCampanas([]);
     setCargando(true);
@@ -105,16 +111,24 @@ export default function ModificacionesIA() {
   useEffect(() => { finRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [mensajes, pensando]);
 
   const enviar = async (contenido?: string) => {
-    const t = (contenido ?? texto).trim();
+    const adj = contenido === undefined ? adjunto : null;
+    const t = (contenido ?? texto).trim() || (adj ? `Te adjunto el archivo ${adj.nombre}.` : "");
     if (!t || pensando) return;
     if (!sel) return;
     setTexto("");
-    const provisional: IaMensaje = { id: `tmp-${Date.now()}`, role: "user", content: t, cards: [], author_email: user?.email || null, created_at: new Date().toISOString() };
+    if (adj) setAdjunto(null);
+    const tarjetaAdjunto: IaTarjeta[] = adj ? [{
+      type: "adjunto", upload_id: "", nombre: adj.nombre, tipo: adj.datos.kind, filas: adj.datos.rows.length,
+      descartadas: adj.datos.descartadas, columnas: adj.datos.headers,
+    }] : [];
+    const provisional: IaMensaje = { id: `tmp-${Date.now()}`, role: "user", content: t, cards: tarjetaAdjunto, author_email: user?.email || null, created_at: new Date().toISOString() };
     setMensajes((m) => [...m, provisional]);
     setPensando(true);
     try {
-      const r = await llamar<{ message: IaMensaje; changes: Record<string, string> }>({ action: "chat", client_id: sel.id, message: t });
-      setMensajes((m) => [...m, r.message]);
+      const upload_id = adj ? await subirAdjunto(sel.id, adj) : undefined;
+      setSubida(null);
+      const r = await llamar<{ message: IaMensaje; user_message?: IaMensaje; changes: Record<string, string> }>({ action: "chat", client_id: sel.id, message: t, upload_id });
+      setMensajes((m) => [...m.map((x) => (x.id === provisional.id && r.user_message ? r.user_message : x)), r.message]);
       setCambios((c) => ({ ...c, ...(r.changes || {}) }));
       setClientes((cs) => (cs || []).map((c) => c.id === sel.id ? { ...c, last_chat_at: r.message.created_at, last_chat_preview: t.slice(0, 90) } : c));
       const tarjetas = r.message.cards || [];
@@ -127,18 +141,20 @@ export default function ModificacionesIA() {
     } catch (e: any) {
       toast.error(e.message || "La IA no ha podido responder");
       setMensajes((m) => m.filter((x) => x.id !== provisional.id));
-      setTexto(t);
+      setTexto(contenido === undefined ? (texto || t) : "");
+      if (adj) setAdjunto(adj);
     } finally {
       setPensando(false);
+      setSubida(null);
     }
   };
 
   const accionCambio = async (change_id: string, action: "confirm" | "cancel" | "undo") => {
     if (!sel) return;
     try {
-      const r = await llamar<{ status: string }>({ action, client_id: sel.id, change_id });
+      const r = await llamar<{ status: string; summary?: string | null }>({ action, client_id: sel.id, change_id });
       setCambios((c) => ({ ...c, [change_id]: r.status }));
-      toast.success(action === "confirm" ? "Hecho" : action === "undo" ? "Cambio deshecho" : "Cancelado");
+      toast.success(r.summary || (action === "confirm" ? "Hecho" : action === "undo" ? "Cambio deshecho" : "Cancelado"));
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -160,6 +176,32 @@ export default function ModificacionesIA() {
       setMemoriaAbierta(false);
       toast.success("Memoria guardada");
     } catch (e: any) { toast.error(e.message); }
+  };
+
+  const leerArchivo = async (f: File | undefined | null) => {
+    if (!f) return;
+    if (!/\.(csv|txt)$/i.test(f.name)) { toast.error("Adjunta un archivo .csv (si es Excel: Archivo → Guardar como → CSV)"); return; }
+    if (f.size > 15 * 1024 * 1024) { toast.error("El archivo pesa más de 15 MB; divídelo en varios"); return; }
+    const r = prepararCsv(decodificarArchivo(await f.arrayBuffer()));
+    if ("error" in r) { toast.error(r.error); return; }
+    if (r.kind === "leads" && r.rows.length === 0) { toast.error("Ninguna fila tiene un email válido"); return; }
+    setAdjunto({ nombre: f.name, datos: r });
+    setTimeout(() => entradaRef.current?.focus(), 30);
+  };
+
+  /** Sube el adjunto por trozos y devuelve su id. */
+  const subirAdjunto = async (clientId: string, a: { nombre: string; datos: CsvPreparado }): Promise<string> => {
+    const { upload_id } = await llamar<{ upload_id: string }>({
+      action: "upload_start", client_id: clientId, filename: a.nombre, kind: a.datos.kind,
+      headers: a.datos.headers, total: a.datos.rows.length, discarded: a.datos.descartadas,
+    });
+    const partes = trozos(a.datos.rows);
+    for (let i = 0; i < partes.length; i++) {
+      setSubida(Math.round((i / partes.length) * 100));
+      await llamar({ action: "upload_append", client_id: clientId, upload_id, rows: partes[i] });
+    }
+    setSubida(100);
+    return upload_id;
   };
 
   const mencionar = (nombre: string) => {
@@ -188,7 +230,11 @@ export default function ModificacionesIA() {
     <div className={fondo}>
       <div className="flex gap-4 h-[calc(100dvh-120px)] min-h-[560px]">
         {/* ── Chat ─────────────────────────────────────────────────────── */}
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
+        <section
+          onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setArrastrando(true); } }}
+          onDragLeave={(e) => { if (e.currentTarget === e.target) setArrastrando(false); }}
+          onDrop={(e) => { e.preventDefault(); setArrastrando(false); leerArchivo(e.dataTransfer.files?.[0]); }}
+          className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0EDF8] px-4 py-3 sm:px-5 sm:py-4 dark:border-border">
             <div className="flex items-center gap-4 min-w-0">
               <span className="sm:hidden"><SparkMark size={44} className="rounded-xl shadow-[0_6px_20px_-8px_rgba(110,88,241,0.55)]" /></span>
@@ -222,6 +268,12 @@ export default function ModificacionesIA() {
             </div>
           </header>
 
+          {arrastrando && (
+            <div className="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-primary">
+              <Upload className="h-8 w-8" />
+              <p className="text-[16px] font-semibold">Suelta aquí el CSV</p>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
             {sel && cargando && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
             {sel && !cargando && mensajes.length === 0 && (
@@ -246,7 +298,30 @@ export default function ModificacionesIA() {
 
           {/* Barra de escribir */}
           <div className="border-t border-[#F0EDF8] px-4 py-3 sm:px-5 dark:border-border">
+            {adjunto && (
+              <div className="mb-2 flex w-fit max-w-full items-center gap-2.5 rounded-xl border border-primary/25 bg-primary/5 py-2 pl-3 pr-2">
+                <FileSpreadsheet className="h-5 w-5 flex-shrink-0 text-emerald-600" />
+                <span className="min-w-0">
+                  <span className="block truncate text-[14px] font-medium">{adjunto.nombre}</span>
+                  <span className="block text-[12px] text-muted-foreground">
+                    {adjunto.datos.kind === "leads"
+                      ? `${adjunto.datos.rows.length.toLocaleString("es-ES")} leads con email válido${adjunto.datos.descartadas ? ` · ${adjunto.datos.descartadas.toLocaleString("es-ES")} ${adjunto.datos.descartadas === 1 ? "fila" : "filas"} sin email válido` : ""}`
+                      : `${adjunto.datos.rows.length.toLocaleString("es-ES")} filas · sin columna de email (sólo para analizar)`}
+                    {" · "}{adjunto.datos.headers.length} columnas
+                  </span>
+                </span>
+                <button onClick={() => setAdjunto(null)} className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Quitar archivo"><X className="h-4 w-4" /></button>
+              </div>
+            )}
+            {subida !== null && (
+              <p className="mb-2 flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Subiendo el archivo… {subida} %</p>
+            )}
+            <input ref={archivoRef} type="file" accept=".csv,.txt,text/csv" className="hidden"
+              onChange={(e) => { leerArchivo(e.target.files?.[0]); e.target.value = ""; }} />
             <div className="flex items-end gap-2">
+              <div className="pb-1.5">
+                <IconoAtajo titulo="Adjuntar CSV (leads o cualquier tabla)" onClick={() => archivoRef.current?.click()} disabled={pensando}><Paperclip className="h-5 w-5" /></IconoAtajo>
+              </div>
               <div className="hidden sm:flex items-center gap-0.5 pb-1.5">
                 <IconoAtajo titulo="Métricas en imagen" onClick={() => enviar("Métricas de los últimos 14 días en imagen")} disabled={pensando}><BarChart3 className="h-5 w-5" /></IconoAtajo>
                 <Popover open={menciones} onOpenChange={setMenciones}>
@@ -278,7 +353,7 @@ export default function ModificacionesIA() {
                 className="min-h-[52px] max-h-40 flex-1 resize-none rounded-xl border-[#E6E1F5] bg-background px-4 py-3.5 text-[15px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/40 dark:border-border"
                 disabled={pensando}
               />
-              <Button onClick={() => enviar()} disabled={pensando || !texto.trim()} className="h-[52px] w-[52px] flex-shrink-0 rounded-xl p-0 shadow-[0_6px_18px_-6px_rgba(110,88,241,0.7)]" aria-label="Enviar">
+              <Button onClick={() => enviar()} disabled={pensando || (!texto.trim() && !adjunto)} className="h-[52px] w-[52px] flex-shrink-0 rounded-xl p-0 shadow-[0_6px_18px_-6px_rgba(110,88,241,0.7)]" aria-label="Enviar">
                 {pensando ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
               </Button>
             </div>
@@ -515,6 +590,12 @@ function Burbuja({ m, cambios, onCambio, onPedir }: {
       <div className="flex flex-col items-end">
         <div className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground whitespace-pre-wrap shadow-[0_6px_18px_-10px_rgba(110,88,241,0.8)]">
           {m.content}
+          {(m.cards || []).filter((t) => t.type === "adjunto").map((t, i) => t.type === "adjunto" && (
+            <span key={i} className="mt-2 flex items-center gap-2 rounded-lg bg-white/15 px-2.5 py-1.5 text-[13px]">
+              <FileSpreadsheet className="h-4 w-4 flex-shrink-0" />
+              <span className="truncate">{t.nombre} · {t.filas.toLocaleString("es-ES")} {t.tipo === "leads" ? "leads" : "filas"}</span>
+            </span>
+          ))}
         </div>
         <p className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
           {m.author_email ? `${m.author_email.split("@")[0]} · ` : ""}{horaCorta(m.created_at)} <CheckCheck className="h-3.5 w-3.5 text-primary" />
@@ -543,6 +624,7 @@ function Burbuja({ m, cambios, onCambio, onPedir }: {
 function Tarjeta({ t, cambios, onCambio, onPedir }: {
   t: IaTarjeta; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void;
 }) {
+  if (t.type === "adjunto") return null;
   if (t.type === "metricas") return <TarjetaMetricas t={t} onPedir={onPedir} />;
   if (t.type === "mensajes") return <TarjetaMensajes t={t} />;
   if (t.type === "nota") {
@@ -599,6 +681,7 @@ function TarjetaCambio({ t, estado, onCambio }: {
               asunto={t.asunto} cuerpo={t.cuerpo}
             />
           )}
+          {t.importacion && <ResumenImportacion r={t.importacion} />}
           {t.aviso && <p className="text-[13px] text-muted-foreground">{t.aviso}</p>}
           {t.activa && estado === "applied" && <p className="text-[13px] text-muted-foreground">La campaña está activa: se usa desde el próximo envío.</p>}
         </div>
@@ -618,6 +701,48 @@ function TarjetaCambio({ t, estado, onCambio }: {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function ResumenImportacion({ r }: { r: ImportacionVista }) {
+  const cifras = [
+    { k: "Nuevos", v: r.nuevos, c: "text-emerald-600" },
+    { k: "Ya estaban (se actualizan)", v: r.actualizados, c: "text-sky-600" },
+    { k: "Descartados", v: r.invalidos + r.repetidos, c: "text-muted-foreground" },
+  ];
+  const cols = Object.keys(r.ejemplo[0] || {}).slice(0, 5);
+  return (
+    <div className="space-y-2.5 rounded-xl border border-[#ECE8F7] bg-background p-3 dark:border-border">
+      <p className="flex items-center gap-2 text-[13px] text-muted-foreground"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {r.archivo}</p>
+      <div className="grid grid-cols-3 gap-2">
+        {cifras.map((x) => (
+          <div key={x.k} className="rounded-lg border border-[#EEEAF8] px-2 py-2 text-center dark:border-border">
+            <p className={`text-[20px] font-bold tabular-nums ${x.c}`}>{x.v.toLocaleString("es-ES")}</p>
+            <p className="text-[11px] text-muted-foreground">{x.k}</p>
+          </div>
+        ))}
+      </div>
+      {Object.keys(r.renombradas || {}).length > 0 && (
+        <p className="text-[12px] text-muted-foreground">Columnas renombradas: {Object.entries(r.renombradas).map(([a, b]) => `${a} → ${b}`).join(", ")}</p>
+      )}
+      {r.variables_sin_columna.length > 0 && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+          Los mensajes usan {r.variables_sin_columna.map((v) => `{{${v}}}`).join(", ")} y el archivo no tiene esa columna: esos leads recibirán el texto de respaldo.
+        </p>
+      )}
+      {cols.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead><tr className="text-left text-muted-foreground">{cols.map((c) => <th key={c} className="py-1 pr-3 font-medium">{c}</th>)}</tr></thead>
+            <tbody>
+              {r.ejemplo.map((f, i) => (
+                <tr key={i} className="border-t border-border/60">{cols.map((c) => <td key={c} className="max-w-[180px] truncate py-1 pr-3">{f[c]}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

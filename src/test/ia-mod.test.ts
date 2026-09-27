@@ -20,8 +20,12 @@ describe("herramientas", () => {
   it("todas las de escritura existen como herramienta", () => {
     for (const n of ESCRITURAS) expect(nombres).toContain(n);
   });
-  it("no hay herramientas para activar campañas ni tocar leads o cuentas", () => {
-    expect(nombres.some((n) => /activar|pausar|lead|cuenta/.test(n))).toBe(false);
+  it("no hay herramientas para activar campañas, borrar leads ni tocar cuentas", () => {
+    expect(nombres.some((n) => /activar|pausar|borrar_lead|eliminar_lead|cuenta/.test(n))).toBe(false);
+  });
+  it("importar leads es de escritura (pasa por Confirmar)", () => {
+    expect(ESCRITURAS.has("importar_leads")).toBe(true);
+    expect(nombres).toContain("ver_archivo");
   });
 });
 
@@ -79,5 +83,31 @@ describe("utilidades", () => {
   });
   it("resultados largos se recortan", () => {
     expect(paraModelo({ t: "x".repeat(50) }, 20)).toMatch(/recortado/);
+  });
+});
+
+import { planImportacion, variablesUsadas } from "../../supabase/functions/_shared/ia-mod";
+describe("importar leads de un CSV adjunto", () => {
+  it("email válido y en minúsculas, sin repetidos, columnas vacías fuera", () => {
+    const p = planImportacion([
+      { email: "Ana@Acme.com", nombre: "Ana", empresa: "Acme", ciudad: "" },
+      { email: "ana@acme.com", nombre: "Otra" },
+      { email: "no-es-email", nombre: "X" },
+      { email: "luis@beta.es", Nombre: "Luis" },
+    ]);
+    expect(p.filas).toEqual([
+      { email: "ana@acme.com", custom_fields: { nombre: "Ana", empresa: "Acme" } },
+      { email: "luis@beta.es", custom_fields: { nombre: "Luis" } },
+    ]);
+    expect(p.duplicados).toBe(1);
+    expect(p.invalidos).toBe(1);
+  });
+  it("renombra columnas a las variables de los mensajes, sin pisar el email", () => {
+    const p = planImportacion([{ email: "a@b.es", nombre: "Ana", empresa: "Acme" }], { nombre: "first_name", Empresa: "company_name", email: "x" });
+    expect(p.filas[0].custom_fields).toEqual({ first_name: "Ana", company_name: "Acme" });
+    expect(p.columnas).toEqual(["company_name", "first_name"]);
+  });
+  it("variables que usan los mensajes, sin las del motor", () => {
+    expect(variablesUsadas(["Buenas {{first_name}}", "Soy {{SenderFirstName}}, vi {{ company_name }} y {{first_name}}"])).toEqual(["company_name", "first_name"]);
   });
 });

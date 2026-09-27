@@ -11,6 +11,7 @@ export const puedeUsarIaMod = (email: string | null | undefined) => IA_MOD_EMAIL
 /** Herramientas que cambian algo en la cuenta del cliente. */
 export const ESCRITURAS = new Set([
   "crear_mensaje", "editar_mensaje", "eliminar_mensaje", "crear_variante", "editar_variante", "eliminar_variante", "crear_campana",
+  "importar_leads",
 ]);
 
 const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []) => ({
@@ -69,6 +70,21 @@ export const IA_MOD_TOOLS = [
     step_id: S("id del paso"),
     letra: S("B, C, D…"),
   }, ["step_id", "letra"]),
+  fn("ver_archivo", "Lee un archivo CSV que el usuario ha adjuntado en el chat: columnas, cuántas filas, emails válidos y descartados, duplicados, y las filas que pidas.", {
+    upload_id: S("id del adjunto (sale en el mensaje del usuario)"),
+    desde: N("primera fila (0 por defecto)"),
+    cuantas: N("cuántas filas enseñar (máx. 50, por defecto 10)"),
+    campaign_id: S("opcional: id de una campaña para contar cuántos emails del archivo ya están en ella"),
+  }, ["upload_id"]),
+  fn("importar_leads", "Prepara la importación de los leads de un CSV adjunto a una campaña del cliente. NO importa todavía: el usuario tiene que pulsar Confirmar. Los emails que ya están en la campaña se actualizan con las columnas nuevas en vez de duplicarse; los bloqueados se saltan solos.", {
+    upload_id: S("id del adjunto"),
+    campaign_id: S("id de la campaña destino"),
+    renombrar_columnas: {
+      type: "object",
+      description: "opcional: columna del CSV → nombre de variable que usan los mensajes (p. ej. {\"nombre\": \"first_name\", \"empresa\": \"company_name\"})",
+      additionalProperties: { type: "string" },
+    },
+  }, ["upload_id", "campaign_id"]),
   fn("crear_campana", "Crea una campaña NUEVA en borrador (sin leads ni cuentas, no envía nada) con sus mensajes.", {
     nombre: S("nombre de la campaña"),
     mensajes: {
@@ -116,7 +132,9 @@ ${campanas}
 
 ${extra}
 
-QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador. NO puedes activar ni pausar campañas, ni tocar leads, cuentas de correo ni ajustes: si te lo piden, di que eso se hace desde su panel.
+QUÉ PUEDES HACER: ver sus campañas, sus mensajes, sus métricas y sus respuestas; leer su web; guardar notas en su memoria; crear, editar y borrar mensajes y variantes; crear campañas nuevas en borrador; leer los CSV que te adjunten e importar sus leads a una campaña. NO puedes activar ni pausar campañas, ni borrar leads, ni tocar cuentas de correo o ajustes: si te lo piden, di que eso se hace desde su panel.
+
+ARCHIVOS ADJUNTOS (CSV): cuando el usuario adjunte uno verás "(Adjuntó el archivo …, id …)". Míralo con ver_archivo antes de opinar. Para meter los leads en una campaña: 1) mira los mensajes de esa campaña (ver_mensajes) y qué variables usan ({{first_name}}, {{company_name}}…); 2) comprueba que el CSV tiene esas columnas con datos y, si se llaman distinto, pásalas en renombrar_columnas; 3) llama a importar_leads y dile al usuario cuántos entran, cuántos se actualizan y cuántos se descartan, y que pulse "Confirmar". Si la campaña está ACTIVA, avisa de que empezarán a recibir correos en los próximos envíos.
 
 CÓMO TRABAJAS:
 1. Nunca inventes datos: para hablar de campañas, mensajes, métricas o respuestas, llama antes a la herramienta. Los números salen SIEMPRE de las herramientas.
@@ -128,13 +146,79 @@ CÓMO TRABAJAS:
 7. Guarda con guardar_nota los datos del cliente que el equipo te cuente y que habrá que recordar.
 8. Responde breve y con formato limpio (markdown sencillo). No pegues los mensajes enteros en el texto si ya los enseña una tarjeta.
 
-CÓMO SE ESCRIBEN LOS MENSAJES (obligatorio en todo lo que crees o edites): se calcan de los EJEMPLOS QUE FUNCIONAN. Cada posición calca su ejemplo: posición 1 = STEP 1, posición 2 = STEP 2, posición 3 o más = STEP 3. Cambia sólo lo que es del cliente (oferta, método, dato, demo, firma y enlace de reserva si lo tiene). Esperas: 0 en el primero, 2 días en el segundo, 3 en los siguientes. Los follow-ups van en el mismo hilo: su asunto va vacío.
+CÓMO ENVÍA EL MOTOR (datos ciertos, no los contradigas):
+- Los follow-ups salen SIEMPRE en el mismo hilo que el primer correo, con asunto "Re: <asunto del primero>": el asunto propio de un follow-up se ignora mientras la campaña no esté configurada para romper el hilo. Un follow-up con asunto NO rompe el hilo; como mucho, sugiere dejarlo vacío por orden.
+- La espera de cada paso cuenta desde el correo anterior y sólo en los días y horas de envío de la campaña.
+- Si la campaña ya tiene sus esperas (p. ej. 2 días entre correos), RESPÉTALAS: las eligió el equipo. El 0/2/3 es sólo el valor por defecto para mensajes nuevos.
+
+CÓMO SE ESCRIBEN LOS MENSAJES (obligatorio en todo lo que crees o edites): se calcan de los EJEMPLOS QUE FUNCIONAN. Cada posición calca su ejemplo: posición 1 = STEP 1, posición 2 = STEP 2, posición 3 o más = STEP 3. Cambia sólo lo que es del cliente (oferta, método, dato, demo, firma y enlace de reserva si lo tiene). Esperas por defecto: 0 en el primero, 2 días en el segundo, 3 en los siguientes (pero si la campaña ya usa otras, copia las suyas). En los follow-ups que crees, deja el asunto vacío.
 FIRMA: si los mensajes actuales del cliente firman con un nombre, usa ese mismo. Si no hay ninguno, usa {{SenderFirstName}} (el motor pone el nombre de cada buzón que envía).
 VARIANTES: una variante cambia sólo el ángulo de la frase de oferta y del dato; el molde, las frases-ancla y la pregunta final no cambian.
 
 ${CAMPAIGN_COPY_SYSTEM}
 
 ${FORMATO_TEXTO_PLANO}`;
+}
+
+/* ── Importar leads de un CSV adjunto ────────────────────────────────────────────────────── */
+
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Nombre de columna como lo guarda el importador de la plataforma (minúsculas y guiones bajos). */
+export const claveColumna = (c: string) => String(c || "").trim().toLowerCase().replace(/\s+/g, "_");
+
+export interface PlanImportacion {
+  filas: { email: string; custom_fields: Record<string, string> }[];
+  invalidos: number;
+  duplicados: number;
+  columnas: string[];
+}
+
+/**
+ * Filas del adjunto → leads listos para importar: email en minúsculas y válido, sin repetidos
+ * dentro del archivo, el resto de columnas (con valor) en custom_fields y con las columnas
+ * renombradas a las variables que usan los mensajes.
+ */
+export function planImportacion(rows: Record<string, unknown>[], renombrar?: Record<string, string> | null): PlanImportacion {
+  const mapa = new Map<string, string>();
+  for (const [de, a] of Object.entries(renombrar || {})) {
+    if (claveColumna(de) && claveColumna(a) && claveColumna(a) !== "email") mapa.set(claveColumna(de), claveColumna(a));
+  }
+  const vistos = new Set<string>();
+  const columnas = new Set<string>();
+  let invalidos = 0, duplicados = 0;
+  const filas: PlanImportacion["filas"] = [];
+  for (const r of rows || []) {
+    if (!r || typeof r !== "object") { invalidos++; continue; }
+    const email = String((r as any).email ?? "").trim().toLowerCase().replace(/[,\s]/g, "");
+    if (!EMAIL_OK.test(email)) { invalidos++; continue; }
+    if (vistos.has(email)) { duplicados++; continue; }
+    vistos.add(email);
+    const custom_fields: Record<string, string> = {};
+    for (const [k, v] of Object.entries(r)) {
+      const clave = claveColumna(k);
+      if (clave === "email" || v === null || v === undefined) continue;
+      const valor = String(v).trim();
+      if (!valor) continue;
+      const destino = mapa.get(clave) || clave;
+      // Si dos columnas acaban con el mismo nombre, gana la que ya tenía valor.
+      if (!custom_fields[destino]) custom_fields[destino] = valor;
+      columnas.add(destino);
+    }
+    filas.push({ email, custom_fields });
+  }
+  return { filas, invalidos, duplicados, columnas: [...columnas].sort() };
+}
+
+/** Variables {{x}} que usan unos textos (sin las que rellena el motor). */
+export function variablesUsadas(textos: string[]): string[] {
+  const motor = new Set(["email", "senderfirstname", "senderlastname", "senderemail"]);
+  const out = new Set<string>();
+  for (const t of textos) for (const m of String(t || "").matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+    const v = m[1].trim();
+    if (!motor.has(v.toLowerCase())) out.add(v);
+  }
+  return [...out].sort();
 }
 
 /** Letra → hueco de la variante (B = 1, C = 2…). null si no es una letra de variante. */

@@ -24,8 +24,16 @@ export type IaTarjeta =
       summary?: string }
   | { type: "cambio" | "pendiente"; change_id: string; summary: string; campaign_name?: string; posicion?: number; letra?: string;
       asunto?: string; cuerpo?: string; espera_dias?: number; aviso?: string; activa?: boolean;
-      mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[] }
+      mensajes?: { posicion: number; asunto: string; cuerpo: string; espera_dias: number }[];
+      importacion?: ImportacionVista }
+  | { type: "adjunto"; upload_id: string; nombre: string; tipo: "leads" | "tabla"; filas: number; descartadas?: number; columnas: string[]; summary?: string }
   | { type: "nota"; texto: string; summary?: string };
+
+export interface ImportacionVista {
+  archivo: string; nuevos: number; actualizados: number; invalidos: number; repetidos: number;
+  columnas: string[]; variables_sin_columna: string[]; renombradas: Record<string, string>;
+  ejemplo: Record<string, string>[];
+}
 
 export interface IaMensaje {
   id: string; role: "user" | "assistant"; content: string; cards: IaTarjeta[]; author_email: string | null; created_at: string;

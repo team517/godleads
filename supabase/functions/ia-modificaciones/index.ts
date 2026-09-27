@@ -4,7 +4,7 @@
 // QUE FUNCIONAN. Todo cambio queda en ia_mod_changes con el antes y el después (se puede
 // deshacer); borrar o meter un mensaje en medio espera a que el usuario pulse "Confirmar".
 //
-// Acciones: clients | history | campaigns | chat | confirm | cancel | undo | clear | save_notes
+// Acciones: clients | history | campaigns | upload_start | upload_append | chat | confirm | cancel | undo | clear | save_notes
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { puedeUsarIaMod } from "../_shared/ia-mod.ts";
 import { aplicarPendiente, cargarCliente, conversar, deshacer, listarClientes } from "./agente.ts";
@@ -82,25 +82,61 @@ Deno.serve(async (req) => {
         return json({ status: "applied", summary: r });
       }
       if ((ch as any).status !== "applied") return json({ error: "Sólo se puede deshacer un cambio aplicado" }, 409);
-      await deshacer(db, ch as any, clientId);
+      const nota = await deshacer(db, ch as any, clientId);
       await db.from("ia_mod_changes").update({ status: "undone", resolved_at: new Date().toISOString() }).eq("id", (ch as any).id);
-      return json({ status: "undone" });
+      return json({ status: "undone", summary: nota || null });
+    }
+
+    // Adjuntar un CSV: se crea el adjunto y luego se le añaden las filas por trozos.
+    if (action === "upload_start") {
+      const headers = (Array.isArray(body.headers) ? body.headers : []).map((h: unknown) => String(h).slice(0, 80)).slice(0, 120);
+      const kind = body.kind === "tabla" ? "tabla" : "leads";
+      if (kind === "leads" && !headers.includes("email")) return json({ error: "El archivo no tiene columna de email" }, 400);
+      const esperadas = Math.max(0, Math.min(25000, Math.floor(Number(body.total) || 0)));
+      const { data, error } = await db.from("ia_mod_uploads").insert({
+        client_user_id: clientId, author_email: email, filename: String(body.filename || "archivo.csv").slice(0, 160),
+        kind, headers, expected_rows: esperadas, discarded: Math.max(0, Math.floor(Number(body.discarded) || 0)),
+      }).select("id").single();
+      if (error) return json({ error: error.message }, 500);
+      return json({ upload_id: (data as any).id });
+    }
+    if (action === "upload_append") {
+      const filas = Array.isArray(body.rows) ? body.rows.slice(0, 2500) : [];
+      const { data: up } = await db.from("ia_mod_uploads").select("id, client_user_id, author_email").eq("id", String(body.upload_id || "")).maybeSingle();
+      if (!up || (up as any).client_user_id !== clientId) return json({ error: "Adjunto no encontrado" }, 404);
+      const { data: n, error } = await db.rpc("ia_mod_upload_append", { p_id: (up as any).id, p_rows: filas });
+      if (error) return json({ error: error.message }, 400);
+      return json({ row_count: n });
     }
 
     if (action === "chat") {
-      const texto = String(body.message || "").trim().slice(0, 6000);
+      const uploadId = body.upload_id ? String(body.upload_id) : "";
+      let adjunto: Record<string, unknown> | null = null;
+      if (uploadId) {
+        const { data: up } = await db.from("ia_mod_uploads").select("id, client_user_id, filename, kind, headers, row_count, expected_rows, discarded").eq("id", uploadId).maybeSingle();
+        if (!up || (up as any).client_user_id !== clientId) return json({ error: "Adjunto no encontrado" }, 404);
+        if ((up as any).expected_rows && (up as any).row_count < (up as any).expected_rows) return json({ error: "El archivo no se ha terminado de subir; vuelve a adjuntarlo" }, 400);
+        adjunto = {
+          type: "adjunto", upload_id: (up as any).id, nombre: (up as any).filename, tipo: (up as any).kind,
+          filas: (up as any).row_count, descartadas: (up as any).discarded, columnas: (up as any).headers,
+          summary: `Archivo ${(up as any).filename}`,
+        };
+      }
+      const texto = (String(body.message || "").trim() || (adjunto ? `Te adjunto el archivo ${adjunto.nombre}.` : "")).slice(0, 6000);
       if (!texto) return json({ error: "Mensaje vacío" }, 400);
       const apiKey = Deno.env.get("DEEPSEEK_API_KEY") || "";
       if (!apiKey) return json({ error: "Falta la clave de IA de la plataforma" }, 500);
 
-      await db.from("ia_mod_messages").insert({ client_user_id: clientId, author_email: email, role: "user", content: texto });
+      const { data: filaUsuario } = await db.from("ia_mod_messages")
+        .insert({ client_user_id: clientId, author_email: email, role: "user", content: texto, cards: adjunto ? [adjunto] : [] })
+        .select("id, role, content, cards, author_email, created_at").single();
       const reply = await conversar(db, apiKey, cliente, email);
       const { data: row } = await db.from("ia_mod_messages")
         .insert({ client_user_id: clientId, author_email: "ia", role: "assistant", content: reply.texto, cards: reply.tarjetas })
         .select("id, role, content, cards, author_email, created_at").single();
       const ids = reply.tarjetas.map((t) => t.change_id).filter(Boolean) as string[];
       const { data: cambios } = ids.length ? await db.from("ia_mod_changes").select("id, status").in("id", ids) : { data: [] };
-      return json({ message: row, changes: Object.fromEntries((cambios || []).map((c: any) => [c.id, c.status])) });
+      return json({ message: row, user_message: filaUsuario, changes: Object.fromEntries((cambios || []).map((c: any) => [c.id, c.status])) });
     }
 
     return json({ error: "Acción desconocida" }, 400);

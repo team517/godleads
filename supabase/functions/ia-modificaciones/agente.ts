@@ -8,6 +8,8 @@ import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
 import { fetchWebsiteText } from "../_shared/web-text.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
+import { planImportacion, variablesUsadas } from "../_shared/ia-mod.ts";
+import { mergeLeadFields, fieldsChanged } from "../_shared/lead-merge.ts";
 
 const MAX_VUELTAS = 8;
 const PLAZO_MS = 115_000;
@@ -93,12 +95,20 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
   ]);
   // Lo que se hizo en turnos anteriores va resumido detrás de cada respuesta, para que la IA
   // recuerde qué cambió sin volver a leer todas las herramientas.
-  const historial = historialParaModelo((filas || []).reverse().map((f: any) => ({
-    role: f.role,
-    content: f.role === "assistant" && Array.isArray(f.cards) && f.cards.length
-      ? `${f.content}\n\n(Hecho en ese turno: ${f.cards.map((t: any) => t.summary || t.titulo || t.type).join("; ")})`
-      : f.content,
-  })));
+  const historial = historialParaModelo((filas || []).reverse().map((f: any) => {
+    const tarjetas = Array.isArray(f.cards) ? f.cards : [];
+    if (f.role === "assistant" && tarjetas.length) {
+      return { role: f.role, content: `${f.content}\n\n(Hecho en ese turno: ${tarjetas.map((t: any) => t.summary || t.titulo || t.type).join("; ")})` };
+    }
+    const adjuntos = tarjetas.filter((t: any) => t.type === "adjunto");
+    if (f.role === "user" && adjuntos.length) {
+      const nota = adjuntos.map((t: any) =>
+        `(Adjuntó el archivo "${t.nombre}", id ${t.upload_id}: ${t.filas} filas${t.tipo === "leads" ? ` con email válido (${t.descartadas || 0} descartadas al leerlo)` : " (sin columna de email)"}; columnas: ${(t.columnas || []).join(", ")})`,
+      ).join("\n");
+      return { role: f.role, content: `${f.content}\n\n${nota}` };
+    }
+    return { role: f.role, content: f.content };
+  }));
 
   const system = sistemaIaMod({
     nombre: cliente.nombre, empresa: cliente.empresa, email: cliente.email,
@@ -182,6 +192,66 @@ async function pasoDelCliente(ctx: Ctx, stepId: unknown) {
   const pasos = await pasosOrdenados(ctx.db, camp.id);
   const posicion = pasos.findIndex((p) => p.id === (st as any).id) + 1;
   return { st: st as any, camp, posicion, total: pasos.length };
+}
+
+async function adjuntoDelCliente(ctx: Ctx, id: unknown) {
+  const { data } = await ctx.db.from("ia_mod_uploads").select("*").eq("id", String(id || "")).maybeSingle();
+  if (!data || (data as any).client_user_id !== ctx.cliente.id) throw new Error("Ese archivo no existe o no es de este cliente");
+  return data as { id: string; filename: string; kind: string; headers: string[]; rows: Record<string, unknown>[]; row_count: number; discarded: number };
+}
+
+/** De estos emails, cuáles están ya en la campaña (email → lead). */
+async function emailsEnCampana(db: Db, campaignId: string, emails: string[]) {
+  const out = new Map<string, { id: string; custom_fields: Record<string, string> | null }>();
+  for (let i = 0; i < emails.length; i += 200) {
+    const { data } = await db.from("campaign_leads")
+      .select("lead_id, leads!inner(id, email, custom_fields)")
+      .eq("campaign_id", campaignId)
+      .in("leads.email", emails.slice(i, i + 200));
+    for (const h of (data || []) as any[]) {
+      const l = h.leads;
+      if (l?.email) out.set(String(l.email).toLowerCase(), { id: l.id, custom_fields: l.custom_fields || null });
+    }
+  }
+  return out;
+}
+
+/** Importa (lo llama "Confirmar"): nuevos → leads + campaign_leads; los que ya estaban se fusionan. */
+async function importarLeads(db: Db, clientId: string, campaignId: string, upload: any, renombrar: Record<string, string>) {
+  const plan = planImportacion(upload.rows || [], renombrar);
+  const nuevos: string[] = [];
+  const actualizados: { id: string; antes: Record<string, string> | null }[] = [];
+  let saltados = 0;
+  for (let i = 0; i < plan.filas.length; i += 500) {
+    const lote = plan.filas.slice(i, i + 500);
+    const ya = await emailsEnCampana(db, campaignId, lote.map((f) => f.email));
+    const insertar: any[] = [];
+    for (const f of lote) {
+      const hit = ya.get(f.email);
+      if (!hit) { insertar.push({ user_id: clientId, email: f.email, custom_fields: f.custom_fields, is_campaign_only: true }); continue; }
+      const fusion = mergeLeadFields(hit.custom_fields, f.custom_fields);
+      if (fieldsChanged(hit.custom_fields, fusion)) {
+        const { error } = await db.from("leads").update({ custom_fields: fusion }).eq("id", hit.id).eq("user_id", clientId);
+        if (!error) actualizados.push({ id: hit.id, antes: hit.custom_fields });
+      }
+    }
+    if (insertar.length) {
+      // El trigger de la blocklist se salta los bloqueados sin error: vuelven menos filas.
+      const { data, error } = await db.from("leads").insert(insertar).select("id");
+      if (error) throw new Error(`No se pudieron guardar los leads: ${error.message}`);
+      const ids = (data || []).map((d: any) => d.id);
+      saltados += insertar.length - ids.length;
+      if (ids.length) {
+        const { error: e2 } = await db.from("campaign_leads").upsert(
+          ids.map((id: string) => ({ campaign_id: campaignId, lead_id: id })),
+          { onConflict: "campaign_id,lead_id", ignoreDuplicates: true },
+        );
+        if (e2) throw new Error(`No se pudieron añadir a la campaña: ${e2.message}`);
+        nuevos.push(...ids);
+      }
+    }
+  }
+  return { nuevos, actualizados, saltados, invalidos: plan.invalidos, repetidos: plan.duplicados };
 }
 
 async function registrar(ctx: Ctx, c: {
@@ -318,7 +388,8 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
       const datos = {
         subject: asunto(a.asunto),
         body: cuerpo(a.cuerpo),
-        delay_days: entero(a.espera_dias, pos === 1 ? 0 : pos === 2 ? 2 : 3, 0, 60),
+        // Sin espera indicada: la que ya usa la campaña en sus follow-ups (el equipo la eligió).
+        delay_days: entero(a.espera_dias, pos === 1 ? 0 : (pasos.length > 1 ? Number(pasos[pasos.length - 1].delay_days) || 2 : 2), 0, 60),
       };
       if (!datos.body) throw new Error("El mensaje no tiene cuerpo");
       if (pos <= n) {
@@ -407,6 +478,58 @@ async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promi
       return { pendiente: true, change_id: id, mensaje: "Pendiente de que el usuario pulse Confirmar" };
     }
 
+    case "ver_archivo": {
+      const up = await adjuntoDelCliente(ctx, a.upload_id);
+      const desde = entero(a.desde, 0, 0, Math.max(0, up.row_count - 1));
+      const cuantas = entero(a.cuantas, 10, 1, 50);
+      const plan = up.kind === "leads" ? planImportacion(up.rows) : null;
+      let enCampana: number | null = null;
+      if (a.campaign_id && plan) {
+        const camp = await campanaDelCliente(ctx, a.campaign_id);
+        enCampana = (await emailsEnCampana(db, camp.id, plan.filas.map((f) => f.email))).size;
+      }
+      return {
+        archivo: up.filename, tipo: up.kind, filas: up.row_count, columnas: up.headers,
+        descartadas_al_leer: up.discarded,
+        ...(plan ? { emails_validos: plan.filas.length, emails_invalidos: plan.invalidos, repetidos_en_el_archivo: plan.duplicados } : {}),
+        ...(enCampana !== null ? { ya_en_la_campana: enCampana } : {}),
+        desde, filas_mostradas: up.rows.slice(desde, desde + cuantas),
+      };
+    }
+
+    case "importar_leads": {
+      const up = await adjuntoDelCliente(ctx, a.upload_id);
+      if (up.kind !== "leads") throw new Error("Ese archivo no tiene columna de email: no se pueden importar leads");
+      const camp = await campanaDelCliente(ctx, a.campaign_id);
+      const renombrar = a.renombrar_columnas && typeof a.renombrar_columnas === "object" ? a.renombrar_columnas as Record<string, string> : {};
+      const plan = planImportacion(up.rows, renombrar);
+      if (!plan.filas.length) throw new Error("El archivo no tiene ningún email válido");
+      const ya = await emailsEnCampana(db, camp.id, plan.filas.map((f) => f.email));
+      const pasos = await pasosOrdenados(db, camp.id);
+      const usadas = variablesUsadas(pasos.flatMap((p) => [p.subject, p.body, ...variantesDePaso(p).flatMap((v) => [v.asunto, v.cuerpo])]));
+      const faltan = usadas.filter((v) => !plan.columnas.includes(v.toLowerCase()) && !plan.columnas.includes(v));
+      const nuevos = plan.filas.length - ya.size;
+      const summary = `Importar ${nuevos} leads nuevos de "${up.filename}" a "${camp.name}"${ya.size ? ` (y actualizar ${ya.size} que ya estaban)` : ""}`;
+      const id = await registrar(ctx, {
+        kind: "leads_import", campaign_id: camp.id, summary, status: "pending",
+        payload: { upload_id: up.id, renombrar },
+      });
+      tarjetaCambio(ctx, id, summary, true, {
+        campaign_name: camp.name, activa: camp.status === "active",
+        importacion: {
+          archivo: up.filename, nuevos, actualizados: ya.size, invalidos: plan.invalidos, repetidos: plan.duplicados,
+          columnas: plan.columnas, variables_sin_columna: faltan, renombradas: renombrar,
+          ejemplo: plan.filas.slice(0, 3).map((f) => ({ email: f.email, ...f.custom_fields })),
+        },
+        aviso: camp.status === "active" ? "La campaña está activa: los leads nuevos empezarán a recibir correos en los próximos envíos." : "",
+      });
+      return {
+        pendiente: true, change_id: id, nuevos, ya_estaban: ya.size, invalidos: plan.invalidos, repetidos: plan.duplicados,
+        variables_de_los_mensajes: usadas, variables_sin_columna_en_el_csv: faltan,
+        mensaje: "Pendiente de que el usuario pulse Confirmar",
+      };
+    }
+
     case "crear_campana": {
       const nombre = String(a.nombre || "").trim().slice(0, 200) || "Nueva campaña";
       const lista = (Array.isArray(a.mensajes) ? a.mensajes : []).slice(0, 8)
@@ -457,10 +580,23 @@ export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
     await db.from("ia_mod_changes").update({ status: "applied", before: { variants: estado.variants, variants_off: estado.off }, after: { variants: next.variants, variants_off: next.off }, resolved_at: ahora }).eq("id", ch.id);
     return ch.summary;
   }
+  if (ch.kind === "leads_import") {
+    const { data: up } = await db.from("ia_mod_uploads").select("*").eq("id", ch.payload?.upload_id).maybeSingle();
+    if (!up || (up as any).client_user_id !== ch.client_user_id) throw new Error("El archivo ya no existe");
+    const { data: camp } = await db.from("campaigns").select("id, user_id").eq("id", ch.campaign_id).maybeSingle();
+    if (!camp || (camp as any).user_id !== ch.client_user_id) throw new Error("La campaña ya no existe");
+    const r = await importarLeads(db, ch.client_user_id, ch.campaign_id, up, ch.payload?.renombrar || {});
+    await db.from("ia_mod_changes").update({
+      status: "applied", resolved_at: ahora,
+      after: { nuevos: r.nuevos, saltados: r.saltados, invalidos: r.invalidos, repetidos: r.repetidos },
+      before: { actualizados: r.actualizados },
+    }).eq("id", ch.id);
+    return `${r.nuevos.length} leads añadidos${r.actualizados.length ? `, ${r.actualizados.length} actualizados` : ""}${r.saltados ? `, ${r.saltados} saltados por estar bloqueados` : ""}`;
+  }
   throw new Error("Este cambio no se puede confirmar");
 }
 
-export async function deshacer(db: Db, ch: any, clientId: string) {
+export async function deshacer(db: Db, ch: any, clientId: string): Promise<string | void> {
   switch (ch.kind) {
     case "step_insert": {
       const { error } = await db.rpc("ia_step_delete", { p_step: ch.after?.id || ch.step_id });
@@ -486,6 +622,26 @@ export async function deshacer(db: Db, ch: any, clientId: string) {
       if (error) throw new Error(error.message);
       await db.from("campaign_steps").update({ variants_off: b.variants_off ?? null, attachments: b.attachments ?? null }).eq("id", nuevo);
       return;
+    }
+    case "leads_import": {
+      const nuevos: string[] = Array.isArray(ch.after?.nuevos) ? ch.after.nuevos : [];
+      let quitados = 0;
+      for (let i = 0; i < nuevos.length; i += 300) {
+        const lote = nuevos.slice(i, i + 300);
+        const { data: sinEnviar } = await db.from("campaign_leads").select("lead_id")
+          .eq("campaign_id", ch.campaign_id).in("lead_id", lote).eq("current_step", 0).in("status", ["pending"]);
+        const ids = (sinEnviar || []).map((x: any) => x.lead_id);
+        if (!ids.length) continue;
+        await db.from("campaign_leads").delete().eq("campaign_id", ch.campaign_id).in("lead_id", ids);
+        await db.from("leads").delete().in("id", ids).eq("user_id", clientId).eq("is_campaign_only", true);
+        quitados += ids.length;
+      }
+      for (const u of (Array.isArray(ch.before?.actualizados) ? ch.before.actualizados : [])) {
+        await db.from("leads").update({ custom_fields: u.antes || {} }).eq("id", u.id).eq("user_id", clientId);
+      }
+      return quitados < nuevos.length
+        ? `Quitados ${quitados} leads; ${nuevos.length - quitados} ya habían recibido algún correo y se quedan en la campaña`
+        : `Quitados los ${quitados} leads importados`;
     }
     case "campaign_create": {
       const id = ch.after?.id;
