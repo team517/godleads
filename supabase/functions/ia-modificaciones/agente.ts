@@ -32,6 +32,14 @@ export async function listarClientes(db: Db) {
     if ((data?.users || []).length < 1000) break;
   }
   const { data: camps } = await db.from("campaigns").select("user_id, status").in("user_id", ids);
+  // Última conversación de cada cliente, para "Conversaciones recientes".
+  const { data: ultimos } = await db.from("ia_mod_messages").select("client_user_id, content, role, created_at")
+    .in("client_user_id", ids).order("created_at", { ascending: false }).limit(1500);
+  const ultimo = new Map<string, { at: string; texto: string }>();
+  for (const m of ultimos || []) {
+    const id = (m as any).client_user_id;
+    if (!ultimo.has(id)) ultimo.set(id, { at: (m as any).created_at, texto: String((m as any).content || "").replace(/\s+/g, " ").slice(0, 90) });
+  }
   const cuenta = new Map<string, { total: number; activas: number }>();
   for (const c of camps || []) {
     const x = cuenta.get((c as any).user_id) || { total: 0, activas: 0 };
@@ -48,6 +56,8 @@ export async function listarClientes(db: Db) {
       brand_color: p.brand_color || null,
       campaigns: cuenta.get(p.user_id)?.total || 0,
       active: cuenta.get(p.user_id)?.activas || 0,
+      last_chat_at: ultimo.get(p.user_id)?.at || null,
+      last_chat_preview: ultimo.get(p.user_id)?.texto || "",
     }))
     .sort((a: any, b: any) => (a.company_name || a.full_name || a.email).localeCompare(b.company_name || b.full_name || b.email, "es"));
 }

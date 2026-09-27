@@ -4,7 +4,7 @@
 // QUE FUNCIONAN. Todo cambio queda en ia_mod_changes con el antes y el después (se puede
 // deshacer); borrar o meter un mensaje en medio espera a que el usuario pulse "Confirmar".
 //
-// Acciones: clients | history | chat | confirm | cancel | undo | clear | save_notes
+// Acciones: clients | history | campaigns | chat | confirm | cancel | undo | clear | save_notes
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { puedeUsarIaMod } from "../_shared/ia-mod.ts";
 import { aplicarPendiente, cargarCliente, conversar, deshacer, listarClientes } from "./agente.ts";
@@ -50,6 +50,11 @@ Deno.serve(async (req) => {
         notes: (nota as any)?.notes || "",
         changes: Object.fromEntries((cambios || []).map((c: any) => [c.id, c.status])),
       });
+    }
+
+    if (action === "campaigns") {
+      const { data } = await db.from("campaigns").select("id, name, status").eq("user_id", clientId).order("created_at", { ascending: false });
+      return json({ campaigns: data || [] });
     }
 
     if (action === "clear") {

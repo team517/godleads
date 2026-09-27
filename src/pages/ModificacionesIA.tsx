@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import html2canvas from "html2canvas";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
-  ArrowUp, Bot, Brain, Check, ChevronDown, Copy, Download, Loader2, MessageSquarePlus, Search, Sparkles, Undo2, X,
+  AtSign, BarChart3, Brain, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Copy, Download, FileSpreadsheet,
+  Lightbulb, ListChecks, Loader2, Mail, MessageSquare, MessageSquareReply, Plus, Search, Send, Sparkles, Star, Undo2, Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,10 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SparkMark } from "@/components/SparkMark";
 import {
-  ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, diaCorto, horaMensaje, nombreCliente, puedeVerIaMod,
-  type IaCliente, type IaMensaje, type IaTarjeta, type VistaPaso,
+  ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, conversacionesRecientes, csvMetricas, diaCorto, haceCuanto, horaCorta,
+  nombreCliente, puedeVerIaMod, type IaCliente, type IaMensaje, type IaTarjeta, type VistaPaso,
 } from "@/lib/ia-mod-view";
 
 async function llamar<T = any>(body: Record<string, unknown>): Promise<T> {
@@ -31,42 +33,74 @@ async function llamar<T = any>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
+const TONOS: Record<string, string> = {
+  blue: "bg-sky-50 text-sky-600",
+  violet: "bg-violet-50 text-violet-600",
+  amber: "bg-amber-50 text-amber-500",
+  indigo: "bg-indigo-50 text-indigo-600",
+  green: "bg-emerald-50 text-emerald-600",
+};
+const ICONOS_SUGERENCIA: Record<string, typeof BarChart3> = {
+  graficos: BarChart3, mensajes: Mail, asuntos: Lightbulb, secuencia: Workflow, respuestas: MessageSquareReply,
+};
+
+function Insignia({ c, size = 32 }: { c: Pick<IaCliente, "company_name" | "full_name" | "email" | "brand_color">; size?: number }) {
+  return (
+    <span
+      className="flex-shrink-0 rounded-lg flex items-center justify-center font-semibold text-white"
+      style={{ background: c.brand_color || "#6E58F1", width: size, height: size, fontSize: Math.round(size * 0.42) }}
+    >
+      {nombreCliente(c as IaCliente)[0]?.toUpperCase()}
+    </span>
+  );
+}
+
 export default function ModificacionesIA() {
   const { user } = useAuth();
   const [clientes, setClientes] = useState<IaCliente[] | null>(null);
-  const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<IaCliente | null>(null);
   const [mensajes, setMensajes] = useState<IaMensaje[]>([]);
   const [cambios, setCambios] = useState<Record<string, string>>({});
   const [notas, setNotas] = useState("");
+  const [campanas, setCampanas] = useState<{ id: string; name: string; status: string }[]>([]);
   const [cargando, setCargando] = useState(false);
   const [pensando, setPensando] = useState(false);
   const [texto, setTexto] = useState("");
   const [memoriaAbierta, setMemoriaAbierta] = useState(false);
+  const [selectorAbierto, setSelectorAbierto] = useState(false);
+  const [menciones, setMenciones] = useState(false);
   const finRef = useRef<HTMLDivElement>(null);
+  const entradaRef = useRef<HTMLTextAreaElement>(null);
 
   const permitido = puedeVerIaMod(user?.email);
 
-  useEffect(() => {
-    if (!permitido) return;
+  const cargarClientes = useCallback(() => {
     llamar<{ clients: IaCliente[] }>({ action: "clients" })
       .then((r) => setClientes(r.clients))
-      .catch((e) => { toast.error(e.message); setClientes([]); });
-  }, [permitido]);
+      .catch((e) => { toast.error(e.message); setClientes((c) => c ?? []); });
+  }, []);
+  useEffect(() => { if (permitido) cargarClientes(); }, [permitido, cargarClientes]);
 
   const abrir = useCallback(async (c: IaCliente) => {
     setSel(c);
+    setSelectorAbierto(false);
     setMensajes([]);
+    setCampanas([]);
     setCargando(true);
     try {
-      const r = await llamar<{ messages: IaMensaje[]; notes: string; changes: Record<string, string> }>({ action: "history", client_id: c.id });
-      setMensajes(r.messages || []);
-      setNotas(r.notes || "");
-      setCambios(r.changes || {});
+      const [h, k] = await Promise.all([
+        llamar<{ messages: IaMensaje[]; notes: string; changes: Record<string, string> }>({ action: "history", client_id: c.id }),
+        llamar<{ campaigns: { id: string; name: string; status: string }[] }>({ action: "campaigns", client_id: c.id }),
+      ]);
+      setMensajes(h.messages || []);
+      setNotas(h.notes || "");
+      setCambios(h.changes || {});
+      setCampanas(k.campaigns || []);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
       setCargando(false);
+      setTimeout(() => entradaRef.current?.focus(), 50);
     }
   }, []);
 
@@ -74,7 +108,8 @@ export default function ModificacionesIA() {
 
   const enviar = async (contenido?: string) => {
     const t = (contenido ?? texto).trim();
-    if (!t || !sel || pensando) return;
+    if (!t || pensando) return;
+    if (!sel) { setSelectorAbierto(true); return; }
     setTexto("");
     const provisional: IaMensaje = { id: `tmp-${Date.now()}`, role: "user", content: t, cards: [], author_email: user?.email || null, created_at: new Date().toISOString() };
     setMensajes((m) => [...m, provisional]);
@@ -83,8 +118,13 @@ export default function ModificacionesIA() {
       const r = await llamar<{ message: IaMensaje; changes: Record<string, string> }>({ action: "chat", client_id: sel.id, message: t });
       setMensajes((m) => [...m, r.message]);
       setCambios((c) => ({ ...c, ...(r.changes || {}) }));
-      if ((r.message.cards || []).some((k) => k.type === "nota")) {
+      setClientes((cs) => (cs || []).map((c) => c.id === sel.id ? { ...c, last_chat_at: r.message.created_at, last_chat_preview: t.slice(0, 90) } : c));
+      const tarjetas = r.message.cards || [];
+      if (tarjetas.some((k) => k.type === "nota")) {
         llamar<{ notes: string }>({ action: "history", client_id: sel.id }).then((h) => setNotas(h.notes || "")).catch(() => {});
+      }
+      if (tarjetas.some((k) => k.type === "cambio" && /Campaña/.test(k.summary))) {
+        llamar<{ campaigns: typeof campanas }>({ action: "campaigns", client_id: sel.id }).then((k) => setCampanas(k.campaigns || [])).catch(() => {});
       }
     } catch (e: any) {
       toast.error(e.message || "La IA no ha podido responder");
@@ -124,162 +164,185 @@ export default function ModificacionesIA() {
     } catch (e: any) { toast.error(e.message); }
   };
 
-  const lista = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return (clientes || []).filter((c) => !q || [c.company_name, c.full_name, c.email].some((v) => (v || "").toLowerCase().includes(q)));
-  }, [clientes, busca]);
+  const mencionar = (nombre: string) => {
+    setMenciones(false);
+    setTexto((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}la campaña "${nombre}" `);
+    setTimeout(() => entradaRef.current?.focus(), 30);
+  };
+
+  const recientes = useMemo(() => conversacionesRecientes(clientes || []), [clientes]);
 
   if (!user) return null;
   if (!permitido) return <Navigate to="/dashboard" replace />;
 
   return (
-    <div className="flex flex-col gap-4 pb-6">
-      <div className="px-1">
-        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] flex items-center gap-2">
-          <Bot className="h-6 w-6 text-primary" /> Modificaciones IA
-        </h1>
-        <p className="text-[15px] text-muted-foreground mt-1">
-          Elige un cliente y habla con PulseBot: ve sus campañas, mensajes, métricas y respuestas, y crea o cambia sus mensajes calcando los que mejor funcionan.
-        </p>
-      </div>
+    <div className="-mx-1 rounded-2xl bg-[radial-gradient(1200px_500px_at_0%_0%,#F3EEFF_0%,transparent_60%),radial-gradient(900px_500px_at_100%_100%,#EAF4FF_0%,transparent_60%)] dark:bg-none p-1 sm:p-2">
+      <div className="flex gap-4 h-[calc(100dvh-120px)] min-h-[560px]">
+        {/* ── Chat ─────────────────────────────────────────────────────── */}
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0EDF8] px-4 py-3 sm:px-5 sm:py-4 dark:border-border">
+            <div className="flex items-center gap-4 min-w-0">
+              <span className="sm:hidden"><SparkMark size={44} className="rounded-xl shadow-[0_6px_20px_-8px_rgba(110,88,241,0.55)]" /></span>
+              <span className="hidden sm:block"><SparkMark size={60} className="rounded-2xl shadow-[0_6px_20px_-8px_rgba(110,88,241,0.55)]" /></span>
+              <div className="min-w-0">
+                <h1 className="font-display text-[22px] sm:text-[26px] font-bold leading-tight tracking-[-0.03em] flex items-center gap-1.5">
+                  PulseBot <Sparkles className="h-5 w-5 text-[#8B5CF6] fill-[#8B5CF6]" />
+                </h1>
+                <p className="text-[14px] sm:text-[15px] text-muted-foreground">Experto en Cold Email & Outreach</p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  En línea ·{" "}
+                  {sel ? <>trabajando sobre <strong className="font-semibold text-foreground">{nombreCliente(sel)}</strong></> : "elige un cliente para empezar"}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" className="h-10 gap-2 rounded-xl" onClick={() => setSelectorAbierto(true)}>
+                {sel ? <Insignia c={sel} size={22} /> : <Search className="h-4 w-4" />}
+                <span className="max-w-[160px] truncate">{sel ? nombreCliente(sel) : "Elegir cliente"}</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </Button>
+              {sel && (
+                <Button variant="outline" className="h-10 gap-1.5 rounded-xl" onClick={() => setMemoriaAbierta(true)}>
+                  <Brain className="h-4 w-4 text-primary" /> <span className="hidden sm:inline">Memoria</span>
+                </Button>
+              )}
+              <Button variant="outline" className="h-10 gap-1.5 rounded-xl text-primary hover:text-primary" onClick={nuevaConversacion} disabled={!sel || pensando || !mensajes.length}>
+                <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Nueva conversación</span>
+              </Button>
+            </div>
+          </header>
 
-      <div className="flex h-[calc(100dvh-210px)] min-h-[520px] rounded-lg border bg-card overflow-hidden">
-        {/* Clientes */}
-        <aside className={`${sel ? "hidden md:flex" : "flex"} w-full md:w-[290px] flex-shrink-0 flex-col border-r bg-muted/20`}>
-          <div className="p-3 border-b bg-card">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar cliente…" className="pl-9 h-8 text-sm bg-muted/40 border-0 focus-visible:ring-1" />
+          <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
+            {!sel && (
+              <SelectorEnLinea clientes={clientes} onElegir={abrir} />
+            )}
+            {sel && cargando && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
+            {sel && !cargando && mensajes.length === 0 && (
+              <Bienvenida cliente={sel} onSugerencia={enviar} />
+            )}
+            {mensajes.map((m) => (
+              <Burbuja key={m.id} m={m} cambios={cambios} onCambio={accionCambio} onPedir={enviar} />
+            ))}
+            {pensando && (
+              <div className="flex items-start gap-3">
+                <SparkMark size={40} className="rounded-xl" />
+                <div className="rounded-2xl bg-[#F5F3FC] px-4 py-3 text-[15px] text-muted-foreground flex items-center gap-2 dark:bg-muted">
+                  <span className="flex gap-1">
+                    {[0, 150, 300].map((d) => <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60" style={{ animationDelay: `${d}ms` }} />)}
+                  </span>
+                  PulseBot está mirando la cuenta y trabajando…
+                </div>
+              </div>
+            )}
+            <div ref={finRef} />
+          </div>
+
+          {/* Barra de escribir */}
+          <div className="border-t border-[#F0EDF8] px-4 py-3 sm:px-5 dark:border-border">
+            <div className="flex items-end gap-2">
+              <div className="hidden sm:flex items-center gap-0.5 pb-1.5">
+                <IconoAtajo titulo="Métricas en imagen" onClick={() => enviar("Métricas de los últimos 14 días en imagen")} disabled={pensando}><BarChart3 className="h-5 w-5" /></IconoAtajo>
+                <Popover open={menciones} onOpenChange={setMenciones}>
+                  <PopoverTrigger asChild>
+                    <button type="button" title="Mencionar una campaña" disabled={!sel} className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-primary disabled:opacity-40">
+                      <AtSign className="h-5 w-5" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-72 p-1">
+                    <p className="px-2 py-1.5 text-[12px] font-medium text-muted-foreground">Campañas de {sel ? nombreCliente(sel) : ""}</p>
+                    {campanas.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">No tiene campañas</p>}
+                    {campanas.map((c) => (
+                      <button key={c.id} onClick={() => mencionar(c.name)} className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-muted">
+                        <span className="truncate">{c.name}</span>
+                        <span className={`flex-shrink-0 text-[11px] ${c.status === "active" ? "text-emerald-600" : "text-muted-foreground"}`}>{ESTADO_CAMPANA[c.status] || c.status}</span>
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+                <IconoAtajo titulo="Ideas para mejorar" onClick={() => enviar("Revisa sus campañas y dame las 3 mejoras que más respuestas darían")} disabled={pensando}><Sparkles className="h-5 w-5" /></IconoAtajo>
+              </div>
+              <Textarea
+                ref={entradaRef}
+                value={texto}
+                onChange={(e) => setTexto(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
+                placeholder={sel ? `Pregunta sobre ${nombreCliente(sel)}, pide un mensaje, pide ideas…` : "Elige un cliente para empezar…"}
+                rows={1}
+                className="min-h-[52px] max-h-40 flex-1 resize-none rounded-xl border-[#E6E1F5] bg-background px-4 py-3.5 text-[15px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/40 dark:border-border"
+                disabled={pensando}
+              />
+              <Button onClick={() => enviar()} disabled={pensando || !texto.trim()} className="h-[52px] w-[52px] flex-shrink-0 rounded-xl p-0 shadow-[0_6px_18px_-6px_rgba(110,88,241,0.7)]" aria-label="Enviar">
+                {pensando ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+              </Button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto">
-            {clientes === null && (
-              <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
-            )}
-            {clientes !== null && lista.length === 0 && (
-              <p className="p-6 text-center text-sm text-muted-foreground">No hay clientes</p>
-            )}
-            {lista.map((c) => {
-              const activo = sel?.id === c.id;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => abrir(c)}
-                  className={`w-full text-left px-4 py-3 border-b border-border/30 border-l-2 transition-colors ${activo ? "bg-primary/8 border-l-primary" : "border-l-transparent hover:bg-muted/50"}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span
-                      className="h-8 w-8 flex-shrink-0 rounded-md flex items-center justify-center text-[13px] font-semibold text-white"
-                      style={{ background: c.brand_color || "#6E58F1" }}
-                    >
-                      {nombreCliente(c)[0]?.toUpperCase()}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium truncate">{nombreCliente(c)}</span>
-                      <span className="block text-xs text-muted-foreground truncate">{c.email}</span>
-                    </span>
-                    {c.active > 0 && (
-                      <span className="flex-shrink-0 rounded border border-success/30 bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                        {c.active} activa{c.active === 1 ? "" : "s"}
-                      </span>
-                    )}
-                  </div>
+        </section>
+
+        {/* ── Panel derecho ─────────────────────────────────────────────── */}
+        <aside className="hidden xl:flex w-[300px] flex-shrink-0 flex-col gap-4 overflow-y-auto">
+          <div className="rounded-2xl border border-[#ECE8F7] bg-card/90 p-4 shadow-[0_8px_30px_-16px_rgba(49,42,99,0.18)] dark:border-border">
+            <h2 className="mb-3 flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]">
+              <Sparkles className="h-4 w-4 text-primary" /> Sugerencias
+            </h2>
+            <div className="space-y-2">
+              {SUGERENCIAS.map((s) => {
+                const Icono = ICONOS_SUGERENCIA[s.id] || Sparkles;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => enviar(s.texto)}
+                    disabled={pensando}
+                    className="flex w-full items-center gap-3 rounded-xl border border-[#EEEAF8] bg-background px-3 py-2.5 text-left text-[14px] leading-snug transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50 dark:border-border"
+                  >
+                    <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${TONOS[s.tono]}`}><Icono className="h-4 w-4" /></span>
+                    {s.texto}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#ECE8F7] bg-card/90 p-4 shadow-[0_8px_30px_-16px_rgba(49,42,99,0.18)] dark:border-border">
+            <h2 className="mb-2 flex items-center gap-2 font-display text-[17px] font-semibold tracking-[-0.02em]">
+              <Clock className="h-4 w-4 text-muted-foreground" /> Conversaciones recientes
+            </h2>
+            {recientes.length === 0 && <p className="py-3 text-[13px] text-muted-foreground">Todavía no hay conversaciones.</p>}
+            <div className="space-y-0.5">
+              {recientes.map((c) => (
+                <button key={c.id} onClick={() => abrir(c)} className={`flex w-full items-start gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted/60 ${sel?.id === c.id ? "bg-primary/5" : ""}`}>
+                  <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground"><MessageSquare className="h-4 w-4" /></span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[14px] font-medium">{nombreCliente(c)}</span>
+                    <span className="block truncate text-[12px] text-muted-foreground">{c.last_chat_preview}</span>
+                    <span className="block text-[12px] text-muted-foreground">{haceCuanto(c.last_chat_at!)}</span>
+                  </span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
+            <Button variant="outline" className="mt-3 w-full gap-1 rounded-xl" onClick={() => setSelectorAbierto(true)}>
+              Ver todos los clientes <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         </aside>
-
-        {/* Chat */}
-        <section className={`${sel ? "flex" : "hidden md:flex"} flex-1 min-w-0 flex-col`}>
-          {!sel ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground p-6 text-center">
-              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center"><Bot className="h-8 w-8 text-primary" /></div>
-              <p className="text-[15px] font-medium text-foreground">Selecciona un cliente para empezar</p>
-              <p className="text-xs max-w-sm">PulseBot entra en la información de su cuenta (sin tocar su sesión) y trabaja sólo sobre ese cliente.</p>
-            </div>
-          ) : (
-            <>
-              <header className="flex items-center justify-between gap-3 border-b px-4 py-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <button className="md:hidden text-muted-foreground" onClick={() => setSel(null)} aria-label="Volver a clientes"><X className="h-4 w-4" /></button>
-                  <span className="h-9 w-9 flex-shrink-0 rounded-md flex items-center justify-center font-semibold text-white" style={{ background: sel.brand_color || "#6E58F1" }}>
-                    {nombreCliente(sel)[0]?.toUpperCase()}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[15px] font-semibold truncate">{nombreCliente(sel)}</p>
-                    <p className="text-xs text-muted-foreground truncate">{sel.email} · {sel.campaigns} campañas{sel.active ? ` · ${sel.active} activas` : ""}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setMemoriaAbierta(true)}>
-                    <Brain className="h-3.5 w-3.5" /> Memoria
-                  </Button>
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={nuevaConversacion} disabled={pensando || !mensajes.length}>
-                    <MessageSquarePlus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Nueva conversación</span>
-                  </Button>
-                </div>
-              </header>
-
-              <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5 bg-muted/10">
-                {cargando && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
-                {!cargando && mensajes.length === 0 && (
-                  <div className="mx-auto max-w-xl text-center space-y-4 pt-8">
-                    <p className="text-[15px] text-muted-foreground">
-                      Pregunta lo que quieras de <strong className="text-foreground">{nombreCliente(sel)}</strong> o pídele cambios. Lo que borre o meta en medio de una secuencia te lo pedirá confirmar, y todo cambio se puede deshacer.
-                    </p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {SUGERENCIAS.map((s) => (
-                        <button key={s} onClick={() => enviar(s)} className="rounded-full border bg-card px-3 py-1.5 text-[13px] text-foreground/80 hover:border-primary/40 hover:text-primary transition-colors">
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {mensajes.map((m) => (
-                  <Burbuja key={m.id} m={m} cambios={cambios} onCambio={accionCambio} />
-                ))}
-                {pensando && (
-                  <div className="flex items-start gap-3">
-                    <Avatar />
-                    <div className="rounded-lg border bg-card px-4 py-3 text-[14px] text-muted-foreground flex items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> PulseBot está mirando la cuenta y trabajando…
-                    </div>
-                  </div>
-                )}
-                <div ref={finRef} />
-              </div>
-
-              <div className="border-t bg-card p-3">
-                <div className="flex items-end gap-2 rounded-lg border bg-background px-3 py-2 focus-within:ring-1 focus-within:ring-primary/40">
-                  <Textarea
-                    value={texto}
-                    onChange={(e) => setTexto(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
-                    placeholder={`Escribe a PulseBot sobre ${nombreCliente(sel)}…`}
-                    rows={1}
-                    className="min-h-[40px] max-h-40 resize-none border-0 p-1 shadow-none focus-visible:ring-0 text-[15px]"
-                    disabled={pensando}
-                  />
-                  <Button size="icon" className="h-9 w-9 flex-shrink-0" onClick={() => enviar()} disabled={pensando || !texto.trim()} aria-label="Enviar">
-                    {pensando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
-                  </Button>
-                </div>
-                <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">Intro para enviar · Mayús + Intro para salto de línea</p>
-              </div>
-            </>
-          )}
-        </section>
       </div>
 
+      {/* Elegir cliente */}
+      <Dialog open={selectorAbierto} onOpenChange={setSelectorAbierto}>
+        <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-5 pt-5 pb-3"><DialogTitle>Elige un cliente</DialogTitle></DialogHeader>
+          <ListaClientes clientes={clientes} onElegir={abrir} seleccionado={sel?.id} alto="max-h-[60vh]" />
+        </DialogContent>
+      </Dialog>
+
+      {/* Memoria */}
       <Dialog open={memoriaAbierta} onOpenChange={setMemoriaAbierta}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>Memoria de {sel ? nombreCliente(sel) : "este cliente"}</DialogTitle></DialogHeader>
           <p className="text-[13px] text-muted-foreground">
             Lo que PulseBot debe recordar siempre de este cliente: qué vende, a quién, quién firma, su dato de resultado, su enlace de reserva, el tono… Él también la va completando cuando le cuentas cosas.
           </p>
-          <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={10} placeholder="- Vende placas solares a naves industriales&#10;- Firma Simone&#10;- Dato: ahorran entre un 30 y un 40 % en la factura" />
+          <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={10} placeholder={"- Vende placas solares a naves industriales\n- Firma Simone\n- Dato: ahorran entre un 30 y un 40 % en la factura"} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setMemoriaAbierta(false)}>Cancelar</Button>
             <Button onClick={guardarMemoria}>Guardar</Button>
@@ -290,49 +353,139 @@ export default function ModificacionesIA() {
   );
 }
 
-function Avatar() {
+function IconoAtajo({ titulo, onClick, disabled, children }: { titulo: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
-    <span className="h-8 w-8 flex-shrink-0 rounded-full bg-primary/10 flex items-center justify-center">
-      <Sparkles className="h-4 w-4 text-primary" />
-    </span>
+    <button type="button" title={titulo} aria-label={titulo} onClick={onClick} disabled={disabled}
+      className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-primary disabled:opacity-40">
+      {children}
+    </button>
   );
 }
 
-function Burbuja({ m, cambios, onCambio }: { m: IaMensaje; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void }) {
-  if (m.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-lg bg-primary px-4 py-2.5 text-[15px] text-primary-foreground whitespace-pre-wrap">
-          {m.content}
-          <p className="mt-1 text-[11px] opacity-70 text-right">{m.author_email?.split("@")[0]} · {horaMensaje(m.created_at)}</p>
+function ListaClientes({ clientes, onElegir, seleccionado, alto }: { clientes: IaCliente[] | null; onElegir: (c: IaCliente) => void; seleccionado?: string; alto: string }) {
+  const [busca, setBusca] = useState("");
+  const lista = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return (clientes || []).filter((c) => !q || [c.company_name, c.full_name, c.email].some((v) => (v || "").toLowerCase().includes(q)));
+  }, [clientes, busca]);
+  return (
+    <div>
+      <div className="px-5 pb-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por empresa, nombre o correo…" className="h-10 rounded-xl pl-9" autoFocus />
         </div>
       </div>
-    );
-  }
-  return (
-    <div className="flex items-start gap-3">
-      <Avatar />
-      <div className="min-w-0 flex-1 space-y-3">
-        {m.content && (
-          <div className="rounded-lg border bg-card px-4 py-3 text-[15px] leading-relaxed">
-            <div className="max-w-none [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-bold [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:text-[13px] [&_pre]:my-2 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:text-[13px]">
-              <ReactMarkdown>{m.content}</ReactMarkdown>
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">PulseBot · {horaMensaje(m.created_at)}</p>
-          </div>
-        )}
-        {(m.cards || []).map((t, i) => <Tarjeta key={i} t={t} cambios={cambios} onCambio={onCambio} />)}
+      <div className={`${alto} overflow-y-auto border-t`}>
+        {clientes === null && <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>}
+        {clientes !== null && lista.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">No hay clientes</p>}
+        {lista.map((c) => (
+          <button key={c.id} onClick={() => onElegir(c)}
+            className={`flex w-full items-center gap-3 border-b border-border/40 px-5 py-3 text-left transition-colors hover:bg-muted/50 ${seleccionado === c.id ? "bg-primary/5" : ""}`}>
+            <Insignia c={c} size={34} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px] font-medium">{nombreCliente(c)}</span>
+              <span className="block truncate text-[12px] text-muted-foreground">{c.email} · {c.campaigns} campañas</span>
+            </span>
+            {c.active > 0 && (
+              <span className="flex-shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600">
+                {c.active} activa{c.active === 1 ? "" : "s"}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );
 }
 
-function Tarjeta({ t, cambios, onCambio }: { t: IaTarjeta; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void }) {
-  if (t.type === "metricas") return <TarjetaMetricas t={t} />;
+function SelectorEnLinea({ clientes, onElegir }: { clientes: IaCliente[] | null; onElegir: (c: IaCliente) => void }) {
+  return (
+    <div className="flex items-start gap-3">
+      <SparkMark size={40} className="rounded-xl" />
+      <div className="min-w-0 flex-1 max-w-2xl space-y-3">
+        <div className="rounded-2xl bg-[#F5F3FC] px-5 py-4 text-[15px] leading-relaxed dark:bg-muted">
+          <p>Hola, soy <strong className="font-bold">PulseBot</strong>, tu consultor de cold email y outreach B2B.</p>
+          <p className="mt-2">Elige el cliente con el que quieres trabajar y entro en la información de su cuenta para ayudarte.</p>
+        </div>
+        <div className="overflow-hidden rounded-2xl border bg-card">
+          <ListaClientes clientes={clientes} onElegir={onElegir} alto="max-h-[46vh]" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Bienvenida({ cliente, onSugerencia }: { cliente: IaCliente; onSugerencia: (t: string) => void }) {
+  return (
+    <div className="flex items-start gap-3">
+      <SparkMark size={40} className="rounded-xl" />
+      <div className="min-w-0 max-w-2xl space-y-3">
+        <div className="rounded-2xl bg-[#F5F3FC] px-5 py-4 text-[15px] leading-relaxed dark:bg-muted">
+          <p>Hola, soy <strong className="font-bold">PulseBot</strong>. Ya estoy dentro de la cuenta de <strong className="font-bold">{nombreCliente(cliente)}</strong>.</p>
+          <p className="mt-2">Puedo ayudarte a:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 marker:text-primary">
+            <li>Analizar sus campañas y enseñarte gráficos que puedes descargar</li>
+            <li>Escribir y mejorar sus mensajes, calcando los que mejor funcionan</li>
+            <li>Crear variantes A/B y follow-ups</li>
+            <li>Leer lo que responden sus leads y proponer mejoras</li>
+            <li>Recordar lo importante de este cliente</li>
+          </ul>
+          <p className="mt-2">¿En qué puedo ayudarte hoy?</p>
+        </div>
+        <div className="flex flex-wrap gap-2 xl:hidden">
+          {SUGERENCIAS.map((s) => (
+            <button key={s.id} onClick={() => onSugerencia(s.texto)} className="rounded-full border bg-card px-3 py-1.5 text-[13px] text-foreground/80 hover:border-primary/40 hover:text-primary transition-colors">
+              {s.texto}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Burbuja({ m, cambios, onCambio, onPedir }: {
+  m: IaMensaje; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void;
+}) {
+  if (m.role === "user") {
+    return (
+      <div className="flex flex-col items-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground whitespace-pre-wrap shadow-[0_6px_18px_-10px_rgba(110,88,241,0.8)]">
+          {m.content}
+        </div>
+        <p className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
+          {m.author_email ? `${m.author_email.split("@")[0]} · ` : ""}{horaCorta(m.created_at)} <CheckCheck className="h-3.5 w-3.5 text-primary" />
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-3">
+      <SparkMark size={40} className="rounded-xl" />
+      <div className="min-w-0 flex-1 space-y-3">
+        {m.content && (
+          <div className="w-fit max-w-full rounded-2xl rounded-tl-md bg-[#F5F3FC] px-5 py-3.5 text-[15px] leading-relaxed dark:bg-muted">
+            <div className="max-w-none [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:marker:text-primary [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-bold [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-white/70 [&_code]:px-1 [&_code]:text-[13px] [&_pre]:my-2 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-lg [&_pre]:bg-white/80 [&_pre]:p-3 [&_pre]:text-[13px]">
+              <ReactMarkdown>{m.content}</ReactMarkdown>
+            </div>
+          </div>
+        )}
+        {(m.cards || []).map((t, i) => <Tarjeta key={i} t={t} cambios={cambios} onCambio={onCambio} onPedir={onPedir} />)}
+        <p className="text-[12px] text-muted-foreground">{horaCorta(m.created_at)}</p>
+      </div>
+    </div>
+  );
+}
+
+function Tarjeta({ t, cambios, onCambio, onPedir }: {
+  t: IaTarjeta; cambios: Record<string, string>; onCambio: (id: string, a: "confirm" | "cancel" | "undo") => void; onPedir: (t: string) => void;
+}) {
+  if (t.type === "metricas") return <TarjetaMetricas t={t} onPedir={onPedir} />;
   if (t.type === "mensajes") return <TarjetaMensajes t={t} />;
   if (t.type === "nota") {
     return (
-      <div className="flex items-center gap-2 rounded-md border border-dashed bg-card px-3 py-2 text-[13px] text-muted-foreground">
+      <div className="flex w-fit items-center gap-2 rounded-xl border border-dashed border-primary/30 bg-primary/5 px-3 py-2 text-[13px] text-muted-foreground">
         <Brain className="h-3.5 w-3.5 text-primary" /> Guardado en la memoria: <span className="text-foreground">{t.texto}</span>
       </div>
     );
@@ -342,10 +495,10 @@ function Tarjeta({ t, cambios, onCambio }: { t: IaTarjeta; cambios: Record<strin
 
 function Correo({ asunto, cuerpo, cabecera }: { asunto?: string; cuerpo?: string; cabecera?: string }) {
   return (
-    <div className="rounded-md border bg-background">
-      {cabecera && <p className="border-b px-3 py-1.5 text-[12px] font-medium text-muted-foreground">{cabecera}</p>}
-      <div className="px-3 py-2.5">
-        <p className="text-[13px]"><span className="text-muted-foreground">Asunto: </span>{asunto ? <strong className="font-semibold">{asunto}</strong> : <span className="italic text-muted-foreground">mismo hilo (Re: del primero)</span>}</p>
+    <div className="rounded-xl border border-[#ECE8F7] bg-background dark:border-border">
+      {cabecera && <p className="flex items-center gap-1.5 border-b border-[#F0EDF8] px-4 py-2 text-[12px] font-medium text-muted-foreground dark:border-border"><Mail className="h-3.5 w-3.5" /> {cabecera}</p>}
+      <div className="px-4 py-3">
+        <p className="text-[13px]"><span className="text-muted-foreground">Asunto: </span>{asunto ? <strong className="font-bold">{asunto}</strong> : <span className="italic text-muted-foreground">mismo hilo (Re: del primero)</span>}</p>
         <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed">{cuerpo}</p>
       </div>
     </div>
@@ -358,16 +511,19 @@ function TarjetaCambio({ t, estado, onCambio }: {
   const [trabajando, setTrabajando] = useState(false);
   const [abierto, setAbierto] = useState(true);
   const hacer = async (a: "confirm" | "cancel" | "undo") => { setTrabajando(true); await onCambio(t.change_id, a); setTrabajando(false); };
-  const color = estado === "applied" ? "border-success/30 bg-success/5" : estado === "pending" ? "border-warning/40 bg-warning/5" : "border-border bg-card";
+  const marco = estado === "applied" ? "border-emerald-200 bg-emerald-50/50" : estado === "pending" ? "border-amber-200 bg-amber-50/50" : "border-[#ECE8F7] bg-card";
   return (
-    <div className={`rounded-lg border ${color} p-3 space-y-2`}>
+    <div className={`rounded-2xl border ${marco} p-4 space-y-3 dark:border-border dark:bg-card`}>
       <div className="flex items-center justify-between gap-2">
-        <button className="flex items-center gap-2 text-left text-[14px] font-medium min-w-0" onClick={() => setAbierto((v) => !v)}>
-          <ChevronDown className={`h-4 w-4 flex-shrink-0 transition-transform ${abierto ? "" : "-rotate-90"}`} />
+        <button className="flex items-center gap-2 text-left text-[15px] font-semibold min-w-0" onClick={() => setAbierto((v) => !v)}>
+          <span className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg ${estado === "pending" ? "bg-amber-100 text-amber-600" : estado === "applied" ? "bg-emerald-100 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+            {estado === "pending" ? <ListChecks className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+          </span>
           <span className="truncate">{t.summary}</span>
+          <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${abierto ? "" : "-rotate-90"}`} />
         </button>
-        <span className={`flex-shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium ${
-          estado === "applied" ? "border-success/30 text-success" : estado === "pending" ? "border-warning/40 text-warning" : "text-muted-foreground"
+        <span className={`flex-shrink-0 rounded-md border px-2 py-0.5 text-[12px] font-medium ${
+          estado === "applied" ? "border-emerald-300 text-emerald-700" : estado === "pending" ? "border-amber-300 text-amber-700" : "text-muted-foreground"
         }`}>{ESTADO_CAMBIO[estado] || estado}</span>
       </div>
       {abierto && (
@@ -381,21 +537,21 @@ function TarjetaCambio({ t, estado, onCambio }: {
               asunto={t.asunto} cuerpo={t.cuerpo}
             />
           )}
-          {t.aviso && <p className="text-[12px] text-muted-foreground">{t.aviso}</p>}
-          {t.activa && estado === "applied" && <p className="text-[12px] text-muted-foreground">La campaña está activa: se usa desde el próximo envío.</p>}
+          {t.aviso && <p className="text-[13px] text-muted-foreground">{t.aviso}</p>}
+          {t.activa && estado === "applied" && <p className="text-[13px] text-muted-foreground">La campaña está activa: se usa desde el próximo envío.</p>}
         </div>
       )}
       <div className="flex gap-2">
         {estado === "pending" && (
           <>
-            <Button size="sm" className="gap-1.5" disabled={trabajando} onClick={() => hacer("confirm")}>
+            <Button size="sm" className="gap-1.5 rounded-lg" disabled={trabajando} onClick={() => hacer("confirm")}>
               {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Confirmar
             </Button>
-            <Button size="sm" variant="outline" disabled={trabajando} onClick={() => hacer("cancel")}>Cancelar</Button>
+            <Button size="sm" variant="outline" className="rounded-lg" disabled={trabajando} onClick={() => hacer("cancel")}>Cancelar</Button>
           </>
         )}
         {estado === "applied" && (
-          <Button size="sm" variant="outline" className="gap-1.5" disabled={trabajando} onClick={() => hacer("undo")}>
+          <Button size="sm" variant="outline" className="gap-1.5 rounded-lg bg-background" disabled={trabajando} onClick={() => hacer("undo")}>
             {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />} Deshacer
           </Button>
         )}
@@ -407,19 +563,20 @@ function TarjetaCambio({ t, estado, onCambio }: {
 function TarjetaMensajes({ t }: { t: Extract<IaTarjeta, { type: "mensajes" }> }) {
   const [abierto, setAbierto] = useState(true);
   return (
-    <div className="rounded-lg border bg-card p-3 space-y-2">
+    <div className="rounded-2xl border border-[#ECE8F7] bg-card p-4 space-y-3 dark:border-border">
       <button className="flex w-full items-center justify-between gap-2 text-left" onClick={() => setAbierto((v) => !v)}>
-        <span className="flex items-center gap-2 text-[14px] font-medium min-w-0">
-          <ChevronDown className={`h-4 w-4 flex-shrink-0 transition-transform ${abierto ? "" : "-rotate-90"}`} />
+        <span className="flex items-center gap-2 text-[15px] font-semibold min-w-0">
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Mail className="h-4 w-4" /></span>
           <span className="truncate">{t.campaign_name}</span>
+          <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${abierto ? "" : "-rotate-90"}`} />
         </span>
-        <span className="flex-shrink-0 text-[12px] text-muted-foreground">{ESTADO_CAMPANA[t.status] || t.status} · {t.steps.length} mensajes</span>
+        <span className="flex-shrink-0 text-[13px] text-muted-foreground">{ESTADO_CAMPANA[t.status] || t.status} · {t.steps.length} mensajes</span>
       </button>
       {abierto && t.steps.map((p: VistaPaso) => (
         <div key={p.step_id} className="space-y-2">
           <Correo cabecera={`Mensaje ${p.posicion}${p.posicion > 1 ? ` · a los ${p.espera_dias} días` : ""}`} asunto={p.asunto} cuerpo={p.cuerpo} />
           {p.variantes.map((v) => (
-            <div key={v.letra} className="ml-4">
+            <div key={v.letra} className="ml-5">
               <Correo cabecera={`Variante ${v.letra}${v.encendida ? "" : " · apagada"}`} asunto={v.asunto} cuerpo={v.cuerpo} />
             </div>
           ))}
@@ -431,18 +588,18 @@ function TarjetaMensajes({ t }: { t: Extract<IaTarjeta, { type: "mensajes" }> })
 
 // "6.424" y no "6424": el español no agrupa los números de 4 cifras por defecto.
 const fmt = (n: number) => Number(n || 0).toLocaleString("es-ES", { useGrouping: "always" } as unknown as Intl.NumberFormatOptions);
+const pct = (n: number) => `${(Math.round(n * 10) / 10).toLocaleString("es-ES")} %`;
 
-function TarjetaMetricas({ t }: { t: Extract<IaTarjeta, { type: "metricas" }> }) {
+function TarjetaMetricas({ t, onPedir }: { t: Extract<IaTarjeta, { type: "metricas" }>; onPedir: (t: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [ocupado, setOcupado] = useState(false);
   const datos = t.serie.map((d) => ({ dia: diaCorto(d.day), Envíos: d.sends, Respuestas: d.replies }));
+  const tot = t.totales;
   const tiles = [
-    { k: `Envíos (${t.dias} días)`, v: fmt(t.totales.enviados_periodo) },
-    { k: `Respuestas (${t.dias} días)`, v: fmt(t.totales.respuestas_periodo) },
-    { k: "Contactados en total", v: fmt(t.totales.contactados) },
-    { k: "Respuestas en total", v: fmt(t.totales.respuestas) },
-    { k: "Tasa de respuesta", v: `${t.totales.tasa_respuesta.toLocaleString("es-ES")} %` },
-    { k: "Interesados", v: fmt(t.totales.interesados) },
+    { k: `Envíos en ${t.dias} días`, v: fmt(tot.enviados_periodo), sub: `${fmt(tot.enviados)} en total`, icono: Mail, color: "text-[#6E58F1]", fondo: "bg-[#F1EEFE]", tinte: "bg-white" },
+    { k: "Contactados", v: fmt(tot.contactados), sub: `${fmt(tot.rebotes)} rebotes`, icono: Send, color: "text-emerald-600", fondo: "bg-emerald-100/70", tinte: "bg-emerald-50/40" },
+    { k: "Respuestas", v: fmt(tot.respuestas), sub: `${pct(tot.tasa_respuesta)} de respuesta`, icono: MessageSquareReply, color: "text-sky-600", fondo: "bg-sky-100/70", tinte: "bg-sky-50/40" },
+    { k: "Interesados", v: fmt(tot.interesados), sub: tot.respuestas ? `${pct((tot.interesados / tot.respuestas) * 100)} de las respuestas` : "—", icono: Star, color: "text-orange-500", fondo: "bg-orange-100/70", tinte: "bg-orange-50/40" },
   ];
 
   const imagen = async (): Promise<Blob | null> => {
@@ -450,17 +607,17 @@ function TarjetaMetricas({ t }: { t: Extract<IaTarjeta, { type: "metricas" }> })
     const canvas = await html2canvas(ref.current, { backgroundColor: "#FFFFFF", scale: 2, useCORS: true });
     return await new Promise((r) => canvas.toBlob((b) => r(b), "image/png"));
   };
+  const bajar = (blob: Blob, nombre: string) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nombre;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  const base = `metricas-${t.titulo.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w-]+/g, "-").toLowerCase()}-${t.dias}d`;
   const descargar = async () => {
     setOcupado(true);
-    try {
-      const b = await imagen();
-      if (!b) return;
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(b);
-      a.download = `metricas-${t.titulo.replace(/[^\w-]+/g, "-").toLowerCase()}-${t.dias}d.png`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    } finally { setOcupado(false); }
+    try { const b = await imagen(); if (b) bajar(b, `${base}.png`); } finally { setOcupado(false); }
   };
   const copiar = async () => {
     setOcupado(true);
@@ -473,41 +630,68 @@ function TarjetaMetricas({ t }: { t: Extract<IaTarjeta, { type: "metricas" }> })
       toast.error("Tu navegador no deja copiar imágenes; usa Descargar");
     } finally { setOcupado(false); }
   };
+  const csv = () => bajar(new Blob([csvMetricas(t)], { type: "text/csv;charset=utf-8" }), `${base}.csv`);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {/* Lo que va dentro de ref es la "foto": colores fijos para que salga igual en tema oscuro. */}
-      <div ref={ref} className="rounded-lg border border-[#E6E1F5] bg-white p-5 text-[#1B1535] max-w-[720px]">
+      <div ref={ref} className="max-w-[760px] rounded-2xl border border-[#ECE8F7] bg-white p-5 text-[#1B1535]">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-[12px] font-medium uppercase tracking-wide text-[#6E58F1]">Métricas · últimos {t.dias} días</p>
-            <p className="mt-0.5 font-display text-[20px] font-semibold tracking-[-0.02em]">{t.titulo}</p>
+            <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6E58F1]">Rendimiento · últimos {t.dias} días</p>
+            <p className="mt-0.5 font-display text-[20px] font-bold tracking-[-0.02em]">{t.titulo}</p>
             <p className="text-[13px] text-[#6B6485]">{t.subtitulo}</p>
           </div>
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[#6E58F1]"><SparkMark className="h-4 w-4" /> OnePulso</span>
+          <span className="flex items-center gap-1.5 text-[14px] font-bold text-[#1B1535]"><SparkMark size={24} className="rounded-md" /> OnePulso</span>
         </div>
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {tiles.map((x) => (
-            <div key={x.k} className="rounded-md border border-[#EEEAF8] bg-[#FBFAFE] px-3 py-2">
-              <p className="text-[11px] text-[#6B6485]">{x.k}</p>
-              <p className="text-[19px] font-semibold tabular-nums">{x.v}</p>
-            </div>
-          ))}
+
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {tiles.map((x) => {
+            const Icono = x.icono;
+            return (
+              <div key={x.k} className={`flex flex-col items-center rounded-xl border border-[#EEEAF8] ${x.tinte} px-3 py-3 text-center`}>
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full ${x.fondo} ${x.color}`}><Icono className="h-[18px] w-[18px]" /></span>
+                <p className="mt-2 text-[22px] font-bold tabular-nums leading-none">{x.v}</p>
+                <p className="mt-1 text-[12px] text-[#6B6485]">{x.k}</p>
+                <p className={`mt-1 text-[12px] font-semibold ${x.color}`}>{x.sub}</p>
+              </div>
+            );
+          })}
         </div>
-        <div className="mt-4 h-[220px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={datos} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#EEEAF8" vertical={false} />
-              <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "#6B6485" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-              <YAxis yAxisId="e" tick={{ fontSize: 11, fill: "#6B6485" }} tickLine={false} axisLine={false} allowDecimals={false} />
-              <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: "#6B6485" }} tickLine={false} axisLine={false} allowDecimals={false} />
-              <Tooltip />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar yAxisId="e" dataKey="Envíos" fill="#C9BEFA" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-              <Bar yAxisId="r" dataKey="Respuestas" fill="#6E58F1" radius={[3, 3, 0, 0]} isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
+
+        <div className="mt-4 rounded-xl border border-[#EEEAF8] p-3">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[14px] font-semibold">Tendencia de rendimiento</p>
+            <span className="flex items-center gap-4 text-[12px] text-[#6B6485]">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#7C5CF5]" /> Envíos</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#10B981]" /> Respuestas</span>
+            </span>
+          </div>
+          <div className="h-[210px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={datos} margin={{ top: 8, right: 4, left: -14, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gEnvios" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#7C5CF5" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="#7C5CF5" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gResp" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10B981" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="#10B981" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#EEEAF8" vertical={false} />
+                <XAxis dataKey="dia" tick={{ fontSize: 11, fill: "#6B6485" }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={18} />
+                <YAxis yAxisId="e" tick={{ fontSize: 11, fill: "#6B6485" }} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v) => fmt(v)} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: "#10B981" }} tickLine={false} axisLine={false} allowDecimals={false} width={30} />
+                <Tooltip formatter={(v: number) => fmt(v)} />
+                <Area yAxisId="e" type="monotone" dataKey="Envíos" stroke="#7C5CF5" strokeWidth={2.5} fill="url(#gEnvios)" dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+                <Area yAxisId="r" type="monotone" dataKey="Respuestas" stroke="#10B981" strokeWidth={2.5} fill="url(#gResp)" dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
+
         {t.campanas.length > 0 && (
           <table className="mt-4 w-full text-[12px]">
             <thead>
@@ -525,7 +709,7 @@ function TarjetaMetricas({ t }: { t: Extract<IaTarjeta, { type: "metricas" }> })
                   <td className="py-1.5 pr-2">{c.nombre} <span className="text-[#6B6485]">· {ESTADO_CAMPANA[c.estado] || c.estado}</span></td>
                   <td className="py-1.5 text-right tabular-nums">{fmt(c.enviados_periodo)}</td>
                   <td className="py-1.5 text-right tabular-nums">{fmt(c.respuestas_periodo)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{c.contactados ? `${(Math.round((c.respuestas / c.contactados) * 1000) / 10).toLocaleString("es-ES")} %` : "—"}</td>
+                  <td className="py-1.5 text-right tabular-nums">{c.contactados ? pct((c.respuestas / c.contactados) * 100) : "—"}</td>
                   <td className="py-1.5 text-right tabular-nums">{fmt(c.interesados)}</td>
                 </tr>
               ))}
@@ -533,14 +717,22 @@ function TarjetaMetricas({ t }: { t: Extract<IaTarjeta, { type: "metricas" }> })
           </table>
         )}
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={descargar} disabled={ocupado}>
-          {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Descargar imagen
-        </Button>
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={copiar} disabled={ocupado}>
-          <Copy className="h-3.5 w-3.5" /> Copiar imagen
-        </Button>
+
+      <div className="grid max-w-[760px] grid-cols-2 gap-2 sm:grid-cols-4">
+        <AccionMetricas onClick={descargar} disabled={ocupado} icono={ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4 text-[#6E58F1]" />}>Descargar imagen</AccionMetricas>
+        <AccionMetricas onClick={copiar} disabled={ocupado} icono={<Copy className="h-4 w-4 text-sky-600" />}>Copiar imagen</AccionMetricas>
+        <AccionMetricas onClick={csv} icono={<FileSpreadsheet className="h-4 w-4 text-emerald-600" />}>Exportar CSV</AccionMetricas>
+        <AccionMetricas onClick={() => onPedir(`Con estas métricas de ${t.titulo}, ¿qué me recomiendas para conseguir más respuestas e interesados?`)} icono={<Lightbulb className="h-4 w-4 text-amber-500" />}>Recomendaciones</AccionMetricas>
       </div>
     </div>
+  );
+}
+
+function AccionMetricas({ onClick, disabled, icono, children }: { onClick: () => void; disabled?: boolean; icono: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="flex items-center justify-center gap-2 rounded-xl border border-[#ECE8F7] bg-card px-3 py-2.5 text-[13px] sm:text-[14px] font-medium text-[#3B3470] transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50 dark:border-border dark:text-foreground">
+      {icono} {children}
+    </button>
   );
 }
