@@ -53,9 +53,10 @@ export async function reconectarCuentas(admin: any): Promise<{ probadas: number;
       const c = cola.shift()!;
       probadas++;
       const smtp = await probarSmtp(c.smtp_host, Number(c.smtp_port) || 465, c.smtp_username || c.email, c.smtp_password || "");
-      // "error" puede venir de la lectura (IMAP): si envía bien, se comprueba también que lee.
+      // "error" puede venir de la lectura (IMAP) y "pending" nunca se ha comprobado: si envía bien,
+      // se comprueba también que lee.
       let res = smtp;
-      if (smtp.ok && c.status === "error" && c.imap_host) {
+      if (smtp.ok && c.status !== "auth_failed" && c.imap_host) {
         res = await probarImap(c.imap_host, Number(c.imap_port) || 993, c.imap_username || c.email, c.imap_password || "");
       }
       const t = Date.now();

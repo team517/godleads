@@ -6,7 +6,9 @@
 // verificaciones en masa, bloqueos que luego se levantan…). Ahora se vuelve a probar sola, cada vez
 // más espaciado para no insistir, y en cuanto funciona vuelve a "connected".
 
-export const ESTADOS_DESCONECTADOS = ["error", "auth_failed"];
+/** "pending" = subida pero nunca comprobada (p. ej. tras volver a subir cuentas): también se prueba,
+ *  y si entra queda conectada. Si falla, su estado NO se toca (sólo se apunta el intento). */
+export const ESTADOS_DESCONECTADOS = ["error", "auth_failed", "pending"];
 /** Cuántas cuentas se prueban en cada pasada (cada 5 min) y cuántas a la vez: no agobiar al proveedor. */
 export const POR_PASADA = 20;
 export const A_LA_VEZ = 5;
