@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { reconectarCuentas } from "./reconectar.ts";
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH MONITOR — runs every 5 min (pg_cron). Reads a single SQL snapshot
@@ -87,6 +90,21 @@ serve(async (req) => {
   if (!cronOrServiceAuthorised(req, reqBody)) return unauthorized(corsHeaders);
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    // Reconexión automática: las cuentas caídas se vuelven a probar solas (antes de cualquier
+    // guarda de avisos: reconectar no depende de que las alertas estén activas). Va en segundo
+    // plano para no retrasar la respuesta al cron; con {"reconnect_only": true} se espera y se
+    // devuelve el resultado (para comprobarlo a mano).
+    const reconexion = reconectarCuentas(admin).catch((e) => {
+      console.error("[reconectar] fallo:", String((e as any)?.message || e));
+      return { probadas: 0, reconectadas: [], siguen: 0, error: String((e as any)?.message || e) };
+    });
+    if (reqBody?.reconnect_only) {
+      const r = await reconexion;
+      return new Response(JSON.stringify({ ok: true, reconexion: { ...r, reconectadas: r.reconectadas.length } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(reconexion);
+
     const { data: metrics, error: mErr } = await admin.rpc("health_metrics");
     if (mErr) return new Response(JSON.stringify({ ok: false, error: mErr.message }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
