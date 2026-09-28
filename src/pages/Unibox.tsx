@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { cuentaPuedeEnviar, cuentasAlternativas, esErrorDeCuenta, type CuentaEnvio } from "@/lib/reply-account";
 import { formatDistanceToNow, addDays, addWeeks, startOfTomorrow, format, nextMonday } from "date-fns";
 import { es } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -1536,6 +1537,9 @@ export default function Unibox() {
   const [aiPrompts, setAiPrompts] = useState<any[]>([]);
   const [accountsMap, setAccountsMap] = useState<Record<string, string[]>>({});
   const [accountEmailMap, setAccountEmailMap] = useState<Record<string, string>>({});
+  // Responder desde otra cuenta si la del hilo no puede enviar (IONOS la bloquea con 535, etc.).
+  const [cuentasEnvio, setCuentasEnvio] = useState<CuentaEnvio[]>([]);
+  const [replyFromId, setReplyFromId] = useState<string | null>(null);
   // ── Signature manager (also reachable from Email Accounts) ──
   const [sigAccounts, setSigAccounts] = useState<{ id: string; email: string; tags: string[]; signature_html?: string }[]>([]);
   const [sigOpen, setSigOpen] = useState(false);
@@ -1867,7 +1871,7 @@ export default function Unibox() {
     const loadAI = async () => {
       const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }, { data: managersData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
-        supabase.from("email_accounts").select("id, email, tags, signature_html").eq("user_id", user.id),
+        supabase.from("email_accounts").select("id, email, tags, signature_html, status, first_name").eq("user_id", user.id),
         (supabase as any).from("campaigns").select("id, name, manager_id").eq("user_id", user.id).order("name"),
         (supabase as any).from("unibox_folders").select("*").eq("user_id", user.id).order("created_at"),
         (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
@@ -1895,6 +1899,7 @@ export default function Unibox() {
         (accounts || []).map((a: any) => String(a.email || "").split("@")[1]?.toLowerCase().trim() || "").filter(Boolean),
       ));
       setSigAccounts((accounts || []).map((a: any) => ({ id: a.id, email: a.email, tags: a.tags || [], signature_html: a.signature_html || "" })));
+      setCuentasEnvio((accounts || []).map((a: any) => ({ id: a.id, email: a.email, status: a.status, first_name: a.first_name })));
       setTcxAccounts(tcx);
     };
     loadAI();
@@ -3071,6 +3076,13 @@ export default function Unibox() {
    * con typeof porque también se usa como onClick (allí llega un MouseEvent).
    * Devuelve true solo si el correo ha salido de verdad.
    */
+  const cuentaOrigen = selected ? cuentasEnvio.find((c) => c.id === selected.account_id) : undefined;
+  const origenBloqueado = !!cuentaOrigen && !cuentaPuedeEnviar(cuentaOrigen);
+  const alternativasEnvio = selected && origenBloqueado ? cuentasAlternativas(selected.account_id, cuentasEnvio) : [];
+  useEffect(() => {
+    setReplyFromId(origenBloqueado && alternativasEnvio[0] ? alternativasEnvio[0].id : null);
+  }, [selected?.id, origenBloqueado]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleReply = async (bodyOverride?: string): Promise<boolean> => {
     const usingOverride = typeof bodyOverride === "string";
     const bodyToSend = usingOverride ? bodyOverride : getReply();
@@ -3094,7 +3106,8 @@ export default function Unibox() {
       const finalBody = bodyToSend;
       // The sending account's RICH signature (logo/colours/badges) is sent as a SEPARATE
       // field so send-email keeps it intact (the strict body sanitizer would flatten it).
-      const acctSignature = (sigAccounts.find((a) => a.id === selected.account_id)?.signature_html || "").trim();
+      const cuentaEnvioId = replyFromId || selected.account_id;
+      const acctSignature = (sigAccounts.find((a) => a.id === cuentaEnvioId)?.signature_html || "").trim();
 
       // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
       // (its Message-ID is exactly what the recipient's client matches to thread),
@@ -3145,7 +3158,7 @@ export default function Unibox() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
-          account_id: selected.account_id,
+          account_id: cuentaEnvioId,
           to_email: selected.from_email,
           subject: replySubject,
           body: finalBody,
@@ -3167,6 +3180,19 @@ export default function Unibox() {
       // Only celebrate a REAL success. Any non-2xx, missing body, or error field
       // means the mail did NOT go out — say so and keep the draft for a retry.
       if (!resp.ok || !result || result.error) {
+        // Si es la CUENTA la que no puede enviar (535 de IONOS…), se marca como bloqueada y se
+        // propone otra que funcione: el borrador se queda y basta con pulsar Responder otra vez.
+        if (esErrorDeCuenta(result?.error)) {
+          setCuentasEnvio((prev) => prev.map((c) => (c.id === cuentaEnvioId ? { ...c, status: "auth_failed" } : c)));
+          const alt = cuentasAlternativas(cuentaEnvioId, cuentasEnvio.map((c) => (c.id === cuentaEnvioId ? { ...c, status: "auth_failed" } : c)))[0];
+          if (alt) {
+            setReplyFromId(alt.id);
+            toast.error(`${accountEmailMap[cuentaEnvioId] || "Esta cuenta"} no puede enviar (el proveedor la rechaza). He elegido ${alt.email}: pulsa Responder otra vez para enviarlo desde ahí.`);
+          } else {
+            toast.error(`${accountEmailMap[cuentaEnvioId] || "Esta cuenta"} no puede enviar y no hay otra cuenta conectada para responder.`);
+          }
+          return false;
+        }
         toast.error(result?.error || `No se pudo enviar la respuesta (HTTP ${resp.status}). El correo NO ha salido — revisa la cuenta e inténtalo de nuevo.`);
         return false;
       }
@@ -4067,6 +4093,25 @@ export default function Unibox() {
                       and the "Responder" button. The editor scrolls inside; if drafts/suggestions
                       still push it over, the footer itself scrolls. */}
                   <div className="flex-shrink-0 max-h-[72dvh] overflow-y-auto border-t border-border/60 bg-card px-3 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4 md:pt-3 md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+                  {(origenBloqueado || (replyFromId && replyFromId !== selected.account_id)) && (
+                    <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                      <p className="font-medium">
+                        {accountEmailMap[selected.account_id] || "La cuenta de este hilo"} no puede enviar ahora (el proveedor la rechaza).
+                        {alternativasEnvio.length || replyFromId ? " La respuesta saldrá desde otra cuenta, en el mismo hilo:" : " No hay otra cuenta conectada para responder."}
+                      </p>
+                      {(alternativasEnvio.length > 0 || replyFromId) && (
+                        <select
+                          value={replyFromId || ""}
+                          onChange={(e) => setReplyFromId(e.target.value || null)}
+                          className="mt-1.5 w-full rounded-md border border-amber-300 bg-background px-2 py-1 text-[12px] text-foreground dark:border-amber-500/40"
+                        >
+                          {cuentasAlternativas(selected.account_id, cuentasEnvio).map((c) => (
+                            <option key={c.id} value={c.id}>{c.email}{c.first_name ? ` (${c.first_name})` : ""}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2 text-[10px] md:text-xs text-muted-foreground">
                       <Send className="h-3 w-3 flex-shrink-0" />
