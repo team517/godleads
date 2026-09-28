@@ -30,3 +30,12 @@ export function cuentasAlternativas(originalId: string, cuentas: CuentaEnvio[], 
     .sort((a, b) => puntos(b) - puntos(a) || a.email.localeCompare(b.email))
     .slice(0, max);
 }
+
+/**
+ * Desde qué cuenta sale la respuesta: SIEMPRE la original del hilo si puede enviar (p. ej. porque
+ * se ha reconectado sola), aunque antes se hubiera elegido otra; si no, la elegida.
+ */
+export function cuentaParaResponder(originalId: string, estadoOriginal: string | null | undefined, elegidaId: string | null): string {
+  if (cuentaPuedeEnviar({ status: estadoOriginal })) return originalId;
+  return elegidaId || originalId;
+}

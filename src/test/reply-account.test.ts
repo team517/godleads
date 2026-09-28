@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cuentaPuedeEnviar, cuentasAlternativas, esErrorDeCuenta, marcaDeDominio } from "@/lib/reply-account";
+import { cuentaParaResponder, cuentaPuedeEnviar, cuentasAlternativas, esErrorDeCuenta, marcaDeDominio } from "@/lib/reply-account";
 
 describe("responder desde otra cuenta si la del hilo está bloqueada", () => {
   it("reconoce el 535 de IONOS como error de la cuenta, no los de la red", () => {
@@ -23,5 +23,15 @@ describe("responder desde otra cuenta si la del hilo está bloqueada", () => {
     expect(marcaDeDominio("juanjo@seoinnova-agency.com")).toBe("seoinnova");
     expect(cuentaPuedeEnviar({ status: "connected" })).toBe(true);
     expect(cuentaPuedeEnviar({ status: "auth_failed" })).toBe(false);
+  });
+});
+
+describe("si la cuenta original vuelve a estar conectada, se responde desde ella", () => {
+  it("original conectada gana a la elegida", () => {
+    expect(cuentaParaResponder("orig", "connected", "otra")).toBe("orig");
+  });
+  it("original bloqueada: sale desde la elegida", () => {
+    expect(cuentaParaResponder("orig", "auth_failed", "otra")).toBe("otra");
+    expect(cuentaParaResponder("orig", "error", null)).toBe("orig");
   });
 });

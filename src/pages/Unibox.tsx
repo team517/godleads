@@ -24,7 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { cuentaPuedeEnviar, cuentasAlternativas, esErrorDeCuenta, type CuentaEnvio } from "@/lib/reply-account";
+import { cuentaParaResponder, cuentaPuedeEnviar, cuentasAlternativas, esErrorDeCuenta, type CuentaEnvio } from "@/lib/reply-account";
 import { formatDistanceToNow, addDays, addWeeks, startOfTomorrow, format, nextMonday } from "date-fns";
 import { es } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -3083,6 +3083,22 @@ export default function Unibox() {
     setReplyFromId(origenBloqueado && alternativasEnvio[0] ? alternativasEnvio[0].id : null);
   }, [selected?.id, origenBloqueado]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Estado FRESCO de la cuenta del hilo: las cuentas caídas se reconectan solas (monitor de salud),
+  // y en cuanto vuelve a estar conectada la respuesta tiene que salir otra vez desde ella.
+  const estadoFrescoOrigen = useCallback(async (accountId: string): Promise<string | null> => {
+    const { data } = await supabase.from("email_accounts").select("status").eq("id", accountId).maybeSingle();
+    const status = (data as { status?: string } | null)?.status ?? null;
+    if (status) setCuentasEnvio((prev) => prev.map((c) => (c.id === accountId && c.status !== status ? { ...c, status } : c)));
+    return status;
+  }, []);
+  useEffect(() => {
+    const id = selected?.account_id;
+    if (!id) return;
+    void estadoFrescoOrigen(id);
+    const t = window.setInterval(() => void estadoFrescoOrigen(id), 60_000);
+    return () => window.clearInterval(t);
+  }, [selected?.account_id, estadoFrescoOrigen]);
+
   const handleReply = async (bodyOverride?: string): Promise<boolean> => {
     const usingOverride = typeof bodyOverride === "string";
     const bodyToSend = usingOverride ? bodyOverride : getReply();
@@ -3106,7 +3122,14 @@ export default function Unibox() {
       const finalBody = bodyToSend;
       // The sending account's RICH signature (logo/colours/badges) is sent as a SEPARATE
       // field so send-email keeps it intact (the strict body sanitizer would flatten it).
-      const cuentaEnvioId = replyFromId || selected.account_id;
+      // Justo antes de enviar se vuelve a mirar la cuenta original: si ya está conectada, sale desde ella.
+      const estadoOrigen = replyFromId && replyFromId !== selected.account_id
+        ? await estadoFrescoOrigen(selected.account_id)
+        : null;
+      const cuentaEnvioId = replyFromId && replyFromId !== selected.account_id
+        ? cuentaParaResponder(selected.account_id, estadoOrigen, replyFromId)
+        : selected.account_id;
+      if (cuentaEnvioId === selected.account_id && replyFromId) setReplyFromId(null);
       const acctSignature = (sigAccounts.find((a) => a.id === cuentaEnvioId)?.signature_html || "").trim();
 
       // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
