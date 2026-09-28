@@ -27,7 +27,8 @@ import { Plus, Upload, Download, CheckCircle, XCircle, Mail, Trash2, RefreshCw, 
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { applyInChunks, type BulkProgress } from "@/lib/bulk-apply";
+import { applyInChunks, chunk, type BulkProgress } from "@/lib/bulk-apply";
+import { campanasActivasQueUsan, mensajeBloqueo, type CampanaBorrado, type EnlaceDirecto } from "@/lib/account-delete";
 import { toast } from "sonner";
 
 const PROVIDER_PRESETS: Record<string, { imap_host: string; imap_port: string; smtp_host: string; smtp_port: string; label: string; help: string }> = {
@@ -1090,8 +1091,31 @@ export default function EmailAccounts() {
     loadAccounts();
   };
 
+  /** Sólo se borran cuentas cuyas campañas estén pausadas. Devuelve false (y avisa) si alguna
+   *  está en una campaña activa. */
+  const puedeBorrar = async (ids: string[]): Promise<boolean> => {
+    if (!user) return false;
+    const { data: camps, error } = await supabase.from("campaigns")
+      .select("id, name, status, account_tags").eq("user_id", user.id).eq("status", "active");
+    if (error) { toast.error(`No se pudo comprobar las campañas: ${error.message}`); return false; }
+    if (!camps?.length) return true;
+    const activas = new Set(camps.map((c) => c.id));
+    const directas: EnlaceDirecto[] = [];
+    for (const batch of chunk(ids, 100)) {
+      const { data, error: e } = await supabase.from("campaign_accounts").select("campaign_id, account_id").in("account_id", batch);
+      if (e) { toast.error(`No se pudo comprobar las campañas: ${e.message}`); return false; }
+      for (const d of data || []) if (activas.has(d.campaign_id)) directas.push(d);
+    }
+    const bloqueos = campanasActivasQueUsan(ids, accounts, camps as CampanaBorrado[], directas);
+    if (bloqueos.length) { toast.error(mensajeBloqueo(bloqueos), { duration: 9000 }); return false; }
+    return true;
+  };
+
+  const AVISO_BORRADO = "\n\nSi más adelante vuelves a subir la misma cuenta, recupera sola sus etiquetas, campañas, leads, slow ramp, firma y respuestas del Unibox.";
+
   const handleDelete = async (id: string) => {
-    if (!window.confirm("¿Estás seguro de que quieres eliminar esta cuenta?")) return;
+    if (!(await puedeBorrar([id]))) return;
+    if (!window.confirm(`¿Seguro que quieres eliminar esta cuenta?${AVISO_BORRADO}`)) return;
     const { error } = await supabase.from("email_accounts").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Cuenta eliminada");
@@ -1101,20 +1125,37 @@ export default function EmailAccounts() {
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
-    if (!window.confirm(`¿Estás seguro de que quieres eliminar ${count} cuenta(s)? Esta acción no se puede deshacer.`)) return;
-    // Por tandas (la URL de `.in(...)` se rompe entre 600 y 900 uuids) y contando fallos: así un
-    // fallo se ve y no se anuncia "eliminadas" con las cuentas todavía ahí.
-    const res = await applyInChunks(
-      Array.from(selectedIds),
-      async (batch) => await supabase.from("email_accounts").delete().in("id", batch),
-    );
-    if (res.failed > 0) {
-      toast.error(`No se pudo aplicar en ${res.failed} de ${res.total} cuenta(s). Vuelve a intentarlo.`);
-      loadAccounts();
-      return;
+    if (!(await puedeBorrar(Array.from(selectedIds)))) return;
+    if (!window.confirm(`¿Seguro que quieres eliminar ${count} cuenta(s)?${AVISO_BORRADO}`)) return;
+    // Borrar una cuenta también guarda su copia y quita sus correos del Unibox: con tandas grandes
+    // la base de datos cortaba por tiempo (8 s) y quedaban cuentas a medias. Tandas de 5 y, lo que
+    // quede, se reintenta solo de una en una — el usuario pulsa una vez y se borra todo.
+    const ids = Array.from(selectedIds);
+    const toastId = toast.loading(`Eliminando ${count} cuenta(s)…`);
+    const borrar = async (batch: string[]) => await supabase.from("email_accounts").delete().in("id", batch);
+    await applyInChunks(ids, borrar, (p) => toast.loading(`Eliminando… ${p.done}/${p.total}`, { id: toastId }), { size: 5, parallel: 3 });
+    const quedan = async () => {
+      const vivas: string[] = [];
+      for (const batch of chunk(ids, 100)) {
+        const { data } = await supabase.from("email_accounts").select("id").in("id", batch);
+        vivas.push(...(data || []).map((r) => r.id));
+      }
+      return vivas;
+    };
+    let pendientes = await quedan();
+    if (pendientes.length) {
+      await applyInChunks(pendientes, borrar, undefined, { size: 1, parallel: 2 });
+      pendientes = await quedan();
     }
-    toast.success(`${count} cuenta(s) eliminada(s)`);
-    setSelectedIds(new Set());
+    if (pendientes.length) {
+      toast.error(`Se han eliminado ${count - pendientes.length} de ${count}; ${pendientes.length} no se pudieron borrar. Vuelve a pulsar Eliminar para terminar.`, { id: toastId });
+      setSelectedIds(new Set(pendientes));
+    } else {
+      toast.success(`${count} cuenta(s) eliminada(s)`, { id: toastId });
+      setSelectedIds(new Set());
+    }
+    const borradas = new Set(ids.filter((id) => !pendientes.includes(id)));
+    setAccounts((prev) => prev.filter((a) => !borradas.has(a.id)));
     loadAccounts();
   };
 
