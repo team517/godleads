@@ -1,3 +1,4 @@
+import { ASUNTO_ARRANQUE, introEmailHtml } from "@/lib/intro-email";
 import { useAuth } from "@/contexts/AuthContext";
 import { CAMPAIGN_COPY_RULES } from "@/lib/campaign-copy";
 import { Navigate } from "react-router-dom";
@@ -118,11 +119,13 @@ REGLAS INNEGOCIABLES:
   formName: "",
   onboarding: `Tu trabajo: arrancar la relación con un cliente nuevo y mantener las fases actualizadas EN SILENCIO (el cliente no recibe notificaciones de cambios internos de estado).
 
-AL ARRANCAR, envía un correo de bienvenida que contenga:
+AL ARRANCAR, envía un correo firmado como "el asistente de OnePulso" ("Muy buenas, soy el asistente de OnePulso…") que contenga:
 1. El enlace del Google Form de briefing (preguntas para construir la campaña).
-2. El enlace del panel de onboarding, explicando que ahí ve en tiempo real qué hacemos y el timeline conjunto de objetivos.
-3. Qué pasa después y cuándo: 14 días de implementación, luego campaña activa.
-El correo va al grano: bienvenida breve, los dos enlaces con una línea cada uno, y qué necesitamos ahora (rellenar el Form). Nada de mensajes largos de agradecimiento.
+2. El acceso al onboarding, donde ve en directo cómo avanza su proyecto.
+3. Sus credenciales para entrar en la plataforma (acceso, usuario y contraseña).
+4. Que para hablar con el asistente que lleva su campaña escriba a equipo@onepulso.online.
+5. Que quedamos atentos a su respuesta del formulario para poder crear la campaña.
+El correo va al grano, sin mensajes largos de agradecimiento.
 
 SEGUIMIENTO:
 - Si no ha rellenado el Form a las 48h → recordatorio corto y amable. Segundo recordatorio a los 4 días. No insistas más: escala.
@@ -266,7 +269,6 @@ async function sendIntroEmail(accountId: string, to: string, subject: string, ht
   });
   return resp.json().catch(() => ({ error: "bad response" }));
 }
-const escHtml = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // Loads + downscales a PNG to a data URL (for the copy PDF logo). Mirrors ClientPortal.
 async function loadPngDataUrl(url: string, maxW = 340): Promise<{ dataUrl: string; ratio: number } | null> {
   try {
@@ -281,27 +283,6 @@ async function loadPngDataUrl(url: string, maxW = 340): Promise<{ dataUrl: strin
     ctx.drawImage(img, 0, 0, w, h);
     return { dataUrl: canvas.toDataURL("image/png"), ratio };
   } catch { return null; }
-}
-
-function introEmailHtml(opts: { name: string; company: string; formUrl: string; onboardingUrl: string; color: string; email?: string; password?: string; loginUrl?: string }) {
-  const hi = opts.name ? `Hola ${escHtml(opts.name)}` : (opts.company ? `Hola ${escHtml(opts.company)}` : "Hola");
-  const c = opts.color || "#6E58F1";
-  const creds = (opts.email && opts.password) ? `<p style="margin:20px 0;padding:12px 14px;background:#f5f5fb;border-radius:10px;font-size:14px;line-height:1.7">
-  <b>Tus accesos a la plataforma:</b><br/>
-  Entrar: <a href="${escHtml(opts.loginUrl || "")}" style="color:${c}">${escHtml(opts.loginUrl || "")}</a><br/>
-  Usuario: <b>${escHtml(opts.email!)}</b><br/>
-  Contraseña: <b>${escHtml(opts.password!)}</b>
-</p>` : "";
-  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:#1a1a1a;line-height:1.6">
-  <p>${hi} 👋</p>
-  <p>¡Encantados de empezar! Para preparar tu campaña necesitamos que respondas unas preguntas rápidas:</p>
-  <p style="margin:20px 0"><a href="${escHtml(opts.formUrl)}" style="background:${c};color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Responder el formulario →</a></p>
-  <p>Y aquí tienes tu <b>portal de seguimiento</b>, donde podrás ver el progreso de tu proyecto <b>en directo</b>:</p>
-  <p style="margin:20px 0"><a href="${escHtml(opts.onboardingUrl)}" style="border:1px solid ${c};color:${c};text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Ver mi proyecto en directo →</a></p>
-  ${creds}
-  <p>En cuanto respondas el formulario, nos ponemos con tu campaña. Cualquier duda, responde a este correo.</p>
-  <p>Un saludo,<br/>El equipo de OnePulso</p>
-</div>`;
 }
 
 export default function AutomationFlow() {
@@ -627,7 +608,7 @@ export default function AutomationFlow() {
         if (!fromAcc) { const { data: sa } = await supabase.functions.invoke("automation-view", { body: { action: "send_account" } }); fromAcc = (sa as any)?.account_id || null; fromEmail = (sa as any)?.email || fromEmail; }
         if (!fromAcc) { updateFlowClient(flowId, { emailStatus: "failed", emailError: "sin cuenta de envío" }); toast.error("Flujo arrancado, pero no hay cuenta de envío (Onboarding → Avisos)."); return; }
         const html = introEmailHtml({ name: cl.full_name || "", company, formUrl, onboardingUrl, color: cl.brand_color || "", email, password: cl.client_password || "", loginUrl: `${window.location.origin}/auth` });
-        const r = await sendIntroEmail(fromAcc, email, "Empezamos con tu campaña 🚀", html);
+        const r = await sendIntroEmail(fromAcc, email, ASUNTO_ARRANQUE, html);
         if (r?.success) { const formStep = formNodeIdx(nodes); updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: formStep }); syncOnboarding(cl.id, formStep); toast.success(`Correo enviado desde ${fromEmail}`); }
         else { updateFlowClient(flowId, { emailStatus: "failed", emailError: r?.error || "error de envío" }); toast.error(`No se pudo enviar el correo: ${r?.error || "error"}`); }
       } catch (e) { updateFlowClient(flowId, { emailStatus: "failed", emailError: String(e) }); }
@@ -1298,7 +1279,7 @@ export default function AutomationFlow() {
                 return;
               }
               const html = introEmailHtml({ name: data.name, company: data.company, formUrl, onboardingUrl, color: data.brandColor, email: data.email.toLowerCase(), password, loginUrl: `${window.location.origin}/auth` });
-              const r = await sendIntroEmail(fromAcc, data.email, "Empezamos con tu campaña 🚀", html);
+              const r = await sendIntroEmail(fromAcc, data.email, ASUNTO_ARRANQUE, html);
               if (r?.success) {
                 const formStep = formNodeIdx(nodes);
                 updateFlowClient(flowId, { emailStatus: "sent", emailFrom: fromEmail, step: formStep });
