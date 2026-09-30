@@ -431,6 +431,69 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
     hsl(var(--background));
 }
 
+/* ── Editor de campaña (diseño del 30-09-2026): tarjeta por correo, versiones A/B a la
+   derecha con interruptor verde y barra de herramientas flotante. ── */
+.seq2-surface {
+  background:
+    radial-gradient(circle at 10% 20%, rgba(131,103,255,.08), transparent 30%),
+    radial-gradient(circle at 90% 10%, rgba(65,198,255,.10), transparent 32%),
+    radial-gradient(circle at 80% 85%, rgba(203,99,255,.07), transparent 30%),
+    #f7f8fd;
+}
+.dark .seq2-surface { background: radial-gradient(circle at 10% 20%, rgba(131,103,255,.12), transparent 30%), hsl(var(--background)); }
+.seq2-card {
+  background: rgba(255,255,255,.9);
+  border: 1px solid #e8eaf5;
+  border-radius: 22px;
+  box-shadow: 0 10px 30px rgba(82,94,170,.05);
+}
+.seq2-card-on { border-color: #d9d4ff; box-shadow: 0 14px 38px rgba(98,86,255,.10); }
+.dark .seq2-card { background: hsl(var(--card)); border-color: hsl(var(--border)); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.dark .seq2-card-on { border-color: hsl(var(--primary) / .55); }
+.seq2-field { background: #fff; border: 1px solid #e3e6f2; border-radius: 16px; transition: border-color .15s, box-shadow .15s; }
+.seq2-field:focus-within { border-color: #b9aeff; box-shadow: 0 0 0 4px rgba(118,92,255,.08); }
+.dark .seq2-field { background: hsl(var(--background)); border-color: hsl(var(--border)); }
+.seq2-square {
+  display: grid; place-items: center; height: 54px; width: 54px; flex-shrink: 0;
+  background: #fff; border: 1px solid #e3e6f2; border-radius: 16px; color: #1f2547;
+  box-shadow: 0 4px 12px rgba(82,94,170,.06); transition: border-color .15s, color .15s, transform .15s;
+}
+.seq2-square:hover { border-color: #b9aeff; color: #5b45e0; }
+.seq2-square:active { transform: scale(.97); }
+.seq2-spark { color: #6a4cff; }
+.dark .seq2-square { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+.dark .seq2-spark { color: #b3a6ff; }
+.seq2-chip {
+  display: flex; align-items: center; height: 54px; border-radius: 16px;
+  background: #fff; border: 1px solid #e3e6f2; color: #111633; transition: background .15s, color .15s, border-color .15s;
+}
+.seq2-chip-on { background: #111633; border-color: #111633; color: #fff; }
+.dark .seq2-chip { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+.dark .seq2-chip-on { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+.seq2-switch { position: relative; display: inline-block; height: 26px; width: 46px; flex-shrink: 0; border-radius: 999px; background: #cfd3e3; transition: background .2s; }
+.seq2-switch > span { position: absolute; top: 3px; left: 3px; height: 20px; width: 20px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .2s; }
+.seq2-switch-on { background: #22c55e; }
+.seq2-switch-on > span { transform: translateX(20px); }
+.seq2-toolbar {
+  gap: 2px; padding: 8px 10px; border-radius: 20px; background: rgba(255,255,255,.96);
+  border: 1px solid #e6e8f4; box-shadow: 0 14px 40px rgba(40,46,110,.14); backdrop-filter: blur(14px);
+}
+.dark .seq2-toolbar { background: hsl(var(--card) / .96); border-color: hsl(var(--border)); box-shadow: 0 14px 40px rgba(0,0,0,.5); }
+.seq2-tool { display: grid; place-items: center; height: 42px; width: 46px; border-radius: 12px; color: #2a3052; transition: background .15s, color .15s; }
+.seq2-tool:hover { background: #f1efff; color: #5b45e0; }
+.seq2-tool:disabled { opacity: .5; pointer-events: none; }
+.dark .seq2-tool { color: hsl(var(--foreground)); }
+.dark .seq2-tool:hover { background: hsl(var(--muted)); }
+.seq2-sep { height: 24px; width: 1px; flex-shrink: 0; background: #e6e8f4; }
+@media (max-width: 640px) {
+  .seq2-toolbar { padding: 6px; }
+  .seq2-tool { width: 36px; height: 38px; flex-shrink: 0; }
+  .seq2-sep { display: none; }
+  .seq2-square, .seq2-chip { height: 48px; }
+  .seq2-square { width: 48px; }
+}
+.dark .seq2-sep { background: hsl(var(--border)); }
+
 .soft-card {
   background: rgba(255,255,255,.82);
   border: 1px solid rgba(132,145,220,.23);

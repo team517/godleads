@@ -14,8 +14,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
 import CampaignDetail from "@/components/campaigns/CampaignDetail";
-import CampaignReportBar from "@/components/campaigns/CampaignReportBar";
-import CampaignSendsChart from "@/components/campaigns/CampaignSendsChart";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 import CampaignsTable from "@/components/campaigns/CampaignsTable";
@@ -27,7 +25,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   completed: { label: "Completada", variant: "secondary" },
 };
 
-function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: () => void }) {
+function EditableCampaignName({ campaign, onSaved, compact }: { campaign: any; onSaved: () => void; compact?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(campaign.name);
   const status = statusConfig[campaign.status] || statusConfig.draft;
@@ -61,9 +59,9 @@ function EditableCampaignName({ campaign, onSaved }: { campaign: any; onSaved: (
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <h1 className="font-display text-lg sm:text-2xl font-semibold tracking-[-0.03em] truncate">{campaign.name}</h1>
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5 text-muted-foreground" /></Button>
-      <Badge variant={status.variant}>{status.label}</Badge>
+      <h1 className={compact ? "max-w-[46vw] truncate font-display text-[17px] font-semibold tracking-[-0.02em] sm:max-w-[320px] sm:text-[19px]" : "font-display text-lg sm:text-2xl font-semibold tracking-[-0.03em] truncate"}>{campaign.name}</h1>
+      <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Cambiar el nombre" onClick={() => setEditing(true)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+      {!compact && <Badge variant={status.variant}>{status.label}</Badge>}
     </div>
   );
 }
@@ -421,29 +419,13 @@ export default function Campaigns() {
   if (selectedCampaign) {
     const status = statusConfig[selectedCampaign.status] || statusConfig.draft;
     return (
-      <div className="space-y-4 sm:space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => setSelectedId(null)}>
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-            <div className="min-w-0">
-              <EditableCampaignName campaign={selectedCampaign} onSaved={load} />
-            </div>
-          </div>
-          <Button
-            variant={selectedCampaign.status === "active" ? "secondary" : "default"}
-            size="sm"
-            className="gap-1.5 self-end sm:self-auto"
-            onClick={() => handleStatusToggle(selectedCampaign)}
-          >
-            {selectedCampaign.status === "active" ? <><Pause className="h-4 w-4" /> Pausar</> : <><Play className="h-4 w-4" /> {selectedCampaign.status === "draft" ? "Lanzar" : "Reanudar"}</>}
-          </Button>
-        </div>
-        <CampaignReportBar campaign={selectedCampaign} metrics={metricsFor(selectedCampaign.id)} />
-        <CampaignSendsChart campaignId={selectedCampaign.id} />
-        <CampaignDetail campaignId={selectedCampaign.id} />
-      </div>
+      <CampaignDetail
+        campaign={selectedCampaign}
+        nameSlot={<EditableCampaignName campaign={selectedCampaign} onSaved={load} compact />}
+        metrics={metricsFor(selectedCampaign.id)}
+        onBack={() => setSelectedId(null)}
+        onToggleStatus={() => handleStatusToggle(selectedCampaign)}
+      />
     );
   }
 

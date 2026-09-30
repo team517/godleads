@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CampaignSequences from "@/components/campaigns/CampaignSequences";
 import { ConfirmProvider } from "@/hooks/useConfirm";
 
-/* El editor de la secuencia con el diseño nuevo: el raíl (Paso 1 · Esperar · Paso 2), la tarjeta
- * de cada correo y la barra de formato. Lo que se comprueba aquí es que lo que se toca en la
+/* El editor de la secuencia con el diseño del 30-09-2026: número de cada paso, una tarjeta por
+ * correo, "Esperar" entre correos, versiones A/B a la derecha y la barra de herramientas flotante. Lo que se comprueba aquí es que lo que se toca en la
  * pantalla acaba guardado tal cual en campaign_steps. */
 
 let tables: Record<string, any[]>;
@@ -55,22 +55,33 @@ const renderEditor = async () => {
 };
 
 describe("Editor de secuencia", () => {
-  it("pinta el raíl con los pasos y la espera entre ellos", async () => {
+  it("pinta cada paso con su número y la espera entre ellos", async () => {
     await renderEditor();
-    expect(screen.getByText("Email inicial")).toBeInTheDocument();
-    expect(screen.getAllByText("Esperar").length).toBeGreaterThanOrEqual(2);   // el raíl y la tarjeta
     expect(screen.getByText("Paso 2")).toBeInTheDocument();
-    expect(screen.getByText("Seguimiento")).toBeInTheDocument();
-    expect(screen.getByText("2 pasos")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("Esperar")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Déjalo vacío para usar el asunto del paso anterior")).toBeInTheDocument();
+    // La barra flotante con las herramientas del correo abierto.
+    for (const name of ["Formato", "Atajos", "Insertar enlace", "Adjuntar archivo", "Escribir con IA", "Insertar variable", "Enlace de reserva", "Vista previa"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
   });
 
-  it("el primer paso se abre solo y el segundo se abre al hacer clic", async () => {
+  it("el primer paso se abre solo y el segundo se abre al entrar en él", async () => {
     await renderEditor();
-    expect(screen.getByDisplayValue("Una idea para {{company_name}}")).toBeInTheDocument();
-    // El segundo está cerrado: su cuerpo se lee, pero no es un campo.
-    expect(screen.queryByDisplayValue("¿Pudiste verlo?")).toBeNull();
-    fireEvent.click(screen.getByText("¿Pudiste verlo?"));
-    await waitFor(() => expect(screen.getByDisplayValue("¿Pudiste verlo?")).toBeInTheDocument());
+    expect(screen.getByDisplayValue("Una idea para {{company_name}}").id).toBe("seq-subject-editor");
+    // Los dos correos se ven enteros; las herramientas actúan sobre el abierto.
+    const segundo = screen.getByDisplayValue("¿Pudiste verlo?");
+    expect(segundo.id).toBe("");
+    fireEvent.focus(segundo);
+    await waitFor(() => expect(screen.getByDisplayValue("¿Pudiste verlo?").id).toBe("seq-body-editor"));
+  });
+
+  it("escribir en un paso cerrado lo abre y se guarda en ese paso", async () => {
+    await renderEditor();
+    fireEvent.change(screen.getByDisplayValue("¿Pudiste verlo?"), { target: { value: "¿Lo viste, Marta?" } });
+    await waitFor(() => expect(lastFor("campaign_steps", "body")).toBe("¿Lo viste, Marta?"));
   });
 
   it("escribir el asunto y el cuerpo se guarda", async () => {
@@ -103,7 +114,8 @@ describe("Editor de secuencia", () => {
     await renderEditor();
     const body = screen.getByDisplayValue("Hola, ¿hablamos?") as HTMLTextAreaElement;
     body.setSelectionRange(0, 4);                       // "Hola"
-    fireEvent.click(screen.getByTitle("Negrita"));
+    fireEvent.click(screen.getByRole("button", { name: "Formato" }));
+    fireEvent.click(await screen.findByTitle("Negrita"));
     await waitFor(() => expect(lastFor("campaign_steps", "body")).toBe("<b>Hola</b>, ¿hablamos?"));
   });
 
@@ -111,7 +123,8 @@ describe("Editor de secuencia", () => {
     await renderEditor();
     const body = screen.getByDisplayValue("Hola, ¿hablamos?") as HTMLTextAreaElement;
     body.setSelectionRange(0, 0);
-    fireEvent.click(screen.getByTitle("Lista"));
+    fireEvent.click(screen.getByRole("button", { name: "Formato" }));
+    fireEvent.click(await screen.findByTitle("Lista"));
     await waitFor(() => expect(lastFor("campaign_steps", "body")).toBe("• Hola, ¿hablamos?"));
   });
 
@@ -130,7 +143,7 @@ describe("Editor de secuencia", () => {
     expect(screen.getByText("Semanas")).toBeInTheDocument();
   });
 
-  it("un paso se puede eliminar desde su raíl, y se pregunta antes", async () => {
+  it("un paso se puede eliminar desde su número, y se pregunta antes", async () => {
     await renderEditor();
     fireEvent.click(screen.getAllByRole("button", { name: /^Eliminar$/ })[0]);
     expect(await screen.findByText("¿Eliminar el paso 1?")).toBeInTheDocument();
