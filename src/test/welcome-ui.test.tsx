@@ -27,6 +27,12 @@ vi.mock("react-router-dom", async () => {
   return { ...real, useNavigate: () => (to: string, opts?: any) => navigated.push([to, opts]) };
 });
 
+// "Construyendo tu portal" sin esperas ni descargas de las páginas del panel.
+vi.mock("@/lib/portal-build", async () => {
+  const real = await vi.importActual<typeof import("@/lib/portal-build")>("@/lib/portal-build");
+  return { ...real, PASO_MIN_MS: 0, pasosDelPortal: (g: () => Promise<unknown>) => real.pasosDelPortal(g, {}) };
+});
+
 const renderPage = () => render(<MemoryRouter><Welcome /></MemoryRouter>);
 
 beforeEach(() => {
@@ -83,6 +89,8 @@ describe("Bienvenida (primer acceso)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Conseguir leads/ }));
     fireEvent.click(screen.getByRole("button", { name: /Entrar en OnePulso/ }));
 
+    expect(await screen.findByText(/Construyendo/)).toBeInTheDocument();
+    expect(screen.getByText("Creando tu espacio de leads")).toBeInTheDocument();
     await waitFor(() => expect(saved).not.toBeNull());
     expect(saved.source).toBe("linkedin");
     expect(saved.website).toBe("https://acme.es/precios");

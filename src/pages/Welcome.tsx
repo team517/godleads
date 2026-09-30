@@ -11,6 +11,8 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { Wordmark } from "@/components/Wordmark";
 import { SourceMark } from "@/components/welcome/BrandMarks";
 import { markWelcomeDone } from "@/hooks/useWelcomeGate";
+import PortalBuilding from "@/components/welcome/PortalBuilding";
+import { pasosDelPortal, type PasoPortal } from "@/lib/portal-build";
 import { GOALS, MAX_GOALS, SOURCES, normalizeWebsite, toggleGoal } from "@/lib/first-run";
 import { cn } from "@/lib/utils";
 
@@ -125,9 +127,22 @@ export default function Welcome() {
     [profile.allowed_routes],
   );
 
-  const finish = async () => {
-    if (!user) return;
+  // Al terminar (o al omitir) se enseña "Construyendo tu portal": su primer paso guarda las
+  // respuestas y los siguientes precargan cada sección del panel. Después, dentro.
+  const [pasos, setPasos] = useState<PasoPortal[] | null>(null);
+  const finish = () => {
+    if (!user || pasos) return;
     setSaving(true);
+    setPasos(pasosDelPortal(guardar));
+  };
+  const entrar = () => {
+    if (!user) return;
+    markWelcomeDone(user.id);
+    navigate(home, { replace: true });
+  };
+
+  const guardar = async () => {
+    if (!user) return;
     const { error } = await (supabase as any).from("user_onboarding").upsert({
       user_id: user.id,
       source,
@@ -140,8 +155,6 @@ export default function Welcome() {
     setSaving(false);
     // Aunque el guardado falle, nadie se queda encerrado en la bienvenida.
     if (error) toast.error("No hemos podido guardar tus respuestas, pero ya puedes entrar.");
-    markWelcomeDone(user.id);
-    navigate(home, { replace: true });
   };
 
   const next = () => {
@@ -149,7 +162,7 @@ export default function Welcome() {
       const raw = website.trim();
       if (raw && !normalizeWebsite(raw)) { setWebsiteError(true); return; }
     }
-    if (stepIndex === STEPS.length - 1) { void finish(); return; }
+    if (stepIndex === STEPS.length - 1) { finish(); return; }
     setStepIndex((i) => i + 1);
   };
 
@@ -158,6 +171,12 @@ export default function Welcome() {
   return (
     <div className="soft-hero relative min-h-[100dvh] overflow-x-hidden">
       <Backdrop />
+
+      {pasos ? (
+        <main className="relative z-[2] mx-auto w-[min(1050px,92%)] pt-9 sm:pt-[52px]">
+          <PortalBuilding pasos={pasos} onDone={entrar} />
+        </main>
+      ) : (
 
       <main className="relative z-[2] mx-auto w-[min(1050px,90%)] pb-20 pt-9 sm:pt-[60px]">
         {/* Progreso */}
@@ -189,7 +208,7 @@ export default function Welcome() {
                   <ArrowLeft className="h-4 w-4" /> Atrás
                 </button>
               )}
-              <button type="button" onClick={() => void finish()} className="text-[15px] font-semibold text-[#9aa2c8] transition-colors hover:text-[#6245ff]">
+              <button type="button" onClick={finish} className="text-[15px] font-semibold text-[#9aa2c8] transition-colors hover:text-[#6245ff]">
                 Omitir
               </button>
             </div>
@@ -318,6 +337,7 @@ export default function Welcome() {
           <Wordmark className="h-4" colorClassName="text-[#6E58F1]" />
         </footer>
       </main>
+      )}
     </div>
   );
 }

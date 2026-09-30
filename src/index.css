@@ -983,10 +983,13 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 /* Bienvenida del primer acceso: las piezas que flotan alrededor y el camino de puntos. */
 @keyframes wvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
 @keyframes wvDash { to { stroke-dashoffset: -220; } }
+/* Construyendo tu portal: la baldosa de la chispa respira mientras carga. */
+@keyframes pbBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+.pb-breathe { animation: pbBreathe 2.6s ease-in-out infinite; }
 .wv-float { animation: wvFloat 7s ease-in-out infinite; }
 .wv-dash { stroke-dasharray: 3 8; stroke-linecap: round; animation: wvDash 16s linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .page-enter, .stagger > *, tbody.rows-in > tr, main table > tbody > tr, .live-dot, .chip-pop, .skeleton-shimmer, .topbar-sheen::after, .wv-float, .wv-dash { animation: none !important; }
+  .page-enter, .stagger > *, tbody.rows-in > tr, main table > tbody > tr, .live-dot, .chip-pop, .skeleton-shimmer, .topbar-sheen::after, .wv-float, .wv-dash, .pb-breathe { animation: none !important; }
   .lift, .collapse-grid { transition: none !important; }
 }
