@@ -24,6 +24,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import EmptyShowcase from "@/components/EmptyShowcase";
+import { useNavigate } from "react-router-dom";
 import { formatDistanceToNow, addDays, addWeeks, startOfTomorrow, format, nextMonday } from "date-fns";
 import { es } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -1440,6 +1442,7 @@ const MAIL_PLAIN = MAIL_PAPER + " whitespace-pre-wrap break-words text-[15px] le
 
 export default function Unibox() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   // Instant re-entry: seed from the session cache so coming back to the Unibox
   // paints the last known list immediately; loadMessages refreshes in background.
@@ -3550,14 +3553,18 @@ export default function Unibox() {
       </div>
 
       {messages.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-md border border-border/60 bg-card py-20">
-          <InboxIcon className="h-12 w-12 text-muted-foreground/40 mb-4 dark:text-muted-foreground/60" />
-          <h3 className="font-display font-semibold tracking-[-0.03em] mb-2">Bandeja vacía</h3>
-          <p className="text-sm text-muted-foreground mb-4">Sincroniza para traer mensajes de tus cuentas.</p>
-          <Button onClick={handleSync} disabled={syncing} size="sm" className="gap-2">
-            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Actualizando…" : "Actualizar"}
-          </Button>
-        </div>
+        <EmptyShowcase
+          variant="unibox"
+          className="flex-1"
+          title="No tienes mensajes todavía"
+          text="Aquí verás todas las respuestas y conversaciones de tus campañas de cold email."
+          cta={{ label: "Lanzar tu primera campaña", onClick: () => navigate("/campaigns") }}
+          secondary={
+            <button type="button" onClick={handleSync} disabled={syncing} className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline disabled:opacity-60">
+              <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Buscando mensajes…" : "¿Ya tienes cuentas conectadas? Buscar mensajes ahora"}
+            </button>
+          }
+        />
       ) : (
         <>
         <div className="flex min-h-0 flex-1 gap-0 overflow-hidden rounded-md border border-border/60 bg-card shadow-rest">

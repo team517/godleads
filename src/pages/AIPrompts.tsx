@@ -22,6 +22,7 @@ import {
   type AgentCard, type AgentKind, type AgentStatus, type PromptRow,
 } from "@/lib/agents-view";
 import { cn } from "@/lib/utils";
+import EmptyShowcase from "@/components/EmptyShowcase";
 
 /* Agentes IA (antes "Asistente IA", 30-09-2026) con el diseño del propietario: una tarjeta por
    agente con su estado, etiquetas, la gráfica de su actividad de los últimos 14 días y dos cifras.
@@ -328,6 +329,18 @@ export default function AIPrompts() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton-shimmer h-[300px] rounded-[20px] bg-muted/60" />)}
         </div>
+      ) : cards.length === 0 ? (
+        <EmptyShowcase
+          variant="agents"
+          title="Aún no tienes agentes"
+          text="Crea tu primer agente de IA y deja que conteste a tus leads por ti, con tu objetivo y tu tono."
+          cta={{ label: "Crear agente", onClick: () => setCreatingRule(true) }}
+          secondary={
+            <button type="button" onClick={() => { setEditingPrompt(null); setAssistantOpen(true); }} className="font-semibold text-primary hover:underline">
+              o crea un asistente que sugiera respuestas en el Unibox
+            </button>
+          }
+        />
       ) : shown.length === 0 && filtering ? (
         <div className="rounded-[20px] border border-dashed border-border px-6 py-14 text-center text-[15px] text-muted-foreground">Ningún agente coincide con la búsqueda.</div>
       ) : view === "grid" ? (

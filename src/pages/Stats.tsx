@@ -4,11 +4,14 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
+import EmptyShowcase from "@/components/EmptyShowcase";
 
 type Daily = { day: string; label: string; full: string; envios: number; nuevos: number; followups: number; respuestas: number };
 
 export default function Stats() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = useState({ sent: 0, contacted: 0, delivered: 0, opened: 0, replied: 0, bounced: 0, failed: 0 });
   const [daily, setDaily] = useState<Daily[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +105,24 @@ export default function Stats() {
   const totalFollowups = daily.reduce((s, p) => s + p.followups, 0);
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
+
+  // Sin ningún envío todavía: la pantalla vacía del diseño en vez de gráficas a cero.
+  if (!loadError && stats.sent === 0 && daily.every((p) => !p.envios && !p.respuestas && !p.nuevos && !p.followups)) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Estadísticas</h1>
+          <p className="text-[15px] text-muted-foreground">Mide el rendimiento de tus campañas, agentes y oportunidades.</p>
+        </div>
+        <EmptyShowcase
+          variant="analytics"
+          title="Aún no hay datos en Estadísticas"
+          text="Lanza tu primera campaña y empieza a ver aquí el rendimiento de tus emails, leads y oportunidades."
+          cta={{ label: "Crear campaña", onClick: () => navigate("/campaigns") }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

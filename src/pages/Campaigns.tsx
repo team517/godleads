@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
 import CampaignDetail from "@/components/campaigns/CampaignDetail";
+import EmptyShowcase from "@/components/EmptyShowcase";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 import CampaignsTable from "@/components/campaigns/CampaignsTable";
@@ -475,13 +476,27 @@ export default function Campaigns() {
       )}
 
       {campaigns.length === 0 && !loadError ? (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <Send className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-display font-semibold tracking-[-0.03em] mb-2">Aún no hay campañas</h3>
-            <p className="text-[15px] text-muted-foreground">Crea tu primera campaña de cold email.</p>
-          </CardContent>
-        </Card>
+        <div className="space-y-5">
+          {/* La tabla vacía, como en el diseño: sus columnas y filas en gris. */}
+          <div aria-hidden className="hidden overflow-hidden rounded-[20px] border border-[#eceef7] bg-card/70 dark:border-border md:block">
+            <div className="grid grid-cols-[40px_2fr_1.2fr_1fr_1.2fr_1.2fr_1.4fr] gap-6 border-b border-[#eef0f8] px-6 py-3.5 text-[12.5px] font-semibold uppercase tracking-wide text-[#4b5382] dark:border-border dark:text-muted-foreground">
+              <span className="h-4 w-4 rounded border border-[#d9dcea]" />
+              {["Nombre", "Tipo", "Estado", "Actividad", "Resultados", "Creado"].map((h) => <span key={h}>{h}</span>)}
+            </div>
+            {[0, 1, 2, 3].map((r) => (
+              <div key={r} className="grid grid-cols-[40px_2fr_1.2fr_1fr_1.2fr_1.2fr_1.4fr] items-center gap-6 border-b border-[#f1f2f9] px-6 py-3.5 last:border-0 dark:border-border">
+                <span className="h-4 w-4 rounded border border-[#d9dcea]" />
+                {[70, 80, 70, 80, 75, 90].map((w, c) => <span key={c} className="h-5 rounded-full bg-[#eef0f8] dark:bg-muted" style={{ width: `${w - (r % 2) * 8}%` }} />)}
+              </div>
+            ))}
+          </div>
+          <EmptyShowcase
+            variant="campaigns"
+            title="Aún no tienes campañas"
+            text="Crea tu primera campaña de cold email y empieza a generar oportunidades."
+            cta={{ label: "Crear campaña", onClick: () => setShowCreate(true) }}
+          />
+        </div>
       ) : campaigns.length === 0 ? null : (
         <>
         {/* Desktop (≥ md): Smartlead-style table. Mobile keeps the cards below. */}
