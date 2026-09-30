@@ -118,7 +118,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, on
         </div>
 
         {/* Pestañas */}
-        <nav className="order-last flex w-full justify-center gap-1 overflow-x-auto lg:order-none lg:w-auto lg:flex-1" aria-label="Secciones de la campaña">
+        <nav className="order-last flex w-full justify-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] lg:order-none lg:w-auto lg:flex-1 lg:overflow-visible [&::-webkit-scrollbar]:hidden" aria-label="Secciones de la campaña">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -131,7 +131,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, on
               )}
             >
               {t.label}
-              {tab === t.id && <span className="absolute inset-x-3 -bottom-[11px] h-[3px] rounded-full bg-primary" />}
+              {tab === t.id && <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-full bg-primary lg:-bottom-[11px]" />}
             </button>
           ))}
         </nav>
