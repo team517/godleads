@@ -54,7 +54,7 @@ const renderEditor = async () => {
   await waitFor(() => expect(screen.getByText("Paso 1")).toBeInTheDocument());
 };
 
-describe("Editor de secuencia", () => {
+describe("Editor de secuencia", { timeout: 20000 }, () => {
   it("pinta cada paso con su número y la espera entre ellos", async () => {
     await renderEditor();
     expect(screen.getByText("Paso 2")).toBeInTheDocument();

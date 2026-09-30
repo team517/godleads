@@ -19,7 +19,7 @@ import {
 } from "./types";
 
 /** Normaliza la fila cruda de Supabase al tipo del cliente. */
-function rowToAgent(row: Record<string, unknown>): ReplyAgent {
+export function rowToAgent(row: Record<string, unknown>): ReplyAgent {
   return {
     ...(row as unknown as ReplyAgent),
     account_tags: (row.account_tags as string[]) || [],

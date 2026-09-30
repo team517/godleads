@@ -27,7 +27,7 @@ const SECTIONS = [
   { path: "/unibox", label: "Unibox" },
   { path: "/stats", label: "Estadísticas" },
   { path: "/deliverability", label: "Entregabilidad" },
-  { path: "/ai-prompts", label: "IA" },
+  { path: "/ai-prompts", label: "Agentes" },
 ];
 const DEFAULT_ROUTES = ["/dashboard", "/email-accounts", "/campaigns", "/leads", "/unibox"];
 

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, Brain, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   { id: "ai", title: "Equipo IA", items: [
     { icon: Sparkles, label: "Personalización", path: "/personalizacion" },
-    { icon: Brain, label: "IA", path: "/ai-prompts" },
+    { icon: BotMessageSquare, label: "Agentes", path: "/ai-prompts" },
     { icon: Workflow, label: "Automatización", path: "/automatizacion" },
     { icon: Bot, label: "Modificaciones IA", path: "/modificaciones-ia" },
     { icon: FileText, label: "Copy", path: "/copy" },

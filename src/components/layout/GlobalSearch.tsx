@@ -24,7 +24,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Unibox", path: "/unibox", keywords: "unibox bandeja mensajes respuestas inbox", icon: Inbox },
   { label: "Estadísticas", path: "/stats", keywords: "estadisticas stats metricas analytics", icon: BarChart3 },
   { label: "Entregabilidad", path: "/deliverability", keywords: "entregabilidad deliverability spam dkim", icon: ShieldCheck },
-  { label: "IA", path: "/ai-prompts", keywords: "ia ai prompts inteligencia", icon: Brain },
+  { label: "Agentes IA", path: "/ai-prompts", keywords: "agentes ia ai prompts inteligencia respuestas asistente", icon: Brain },
   { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
   { label: "Modificaciones IA", path: "/modificaciones-ia", keywords: "modificaciones ia pulsebot chat cliente mensajes variantes secuencia metricas campana automatizar", icon: Bot },
 ];
