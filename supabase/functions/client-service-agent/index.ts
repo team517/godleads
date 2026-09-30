@@ -385,6 +385,9 @@ Devuelve solo el texto del email, sin comillas ni markdown.`;
     // Saneado: quita comillas envolventes, markdown, líneas "Asunto:", separadores y placeholders sobrantes.
     text = stripEmojis(text).replace(/^\s*["'`]+|["'`]+\s*$/g, "").replace(/\*\*/g, "").replace(/^\s*-{3,}\s*$/gm, "")
       .replace(/^\s*asunto\s*:.*$/gim, "").replace(/\[tu nombre\]/gi, "Equipo de OnePulso").replace(/\n{3,}/g, "\n\n").trim();
+    // strict: quien programa el correo solo (Seguimiento → "Volver a programar") prefiere un error a
+    // que salga el texto genérico de respaldo.
+    if (!text && input.strict) return new Response(JSON.stringify({ error: "La IA no devolvió propuesta" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     return new Response(JSON.stringify({ reply: text || "Hola, retomo el hilo por si te viene bien que lo veamos. ¿Te va bien una llamada corta esta semana?\n\nUn saludo,\nEquipo de OnePulso" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 

@@ -135,7 +135,8 @@ serve(async (req) => {
         }
         results.push({ id: f.id, error: r.error, attempt }); continue;
       }
-      await admin.from("follow_ups").update({ status: "sent", sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", f.id);
+      // sent_message_id: el siguiente follow-up ("Volver a programar") contesta a ESTE mensaje.
+      await admin.from("follow_ups").update({ status: "sent", sent_at: new Date().toISOString(), updated_at: new Date().toISOString(), sent_message_id: r.msgId || null }).eq("id", f.id);
       // Record in sent_emails so it appears in the conversation timeline.
       try { await admin.from("sent_emails").insert({ user_id: f.owner_id, account_id: acct.id, to_email: f.contact_email, subject, body: toHtml(f.body || ""), status: "sent", sent_at: new Date().toISOString(), smtp_message_id: r.msgId || null }); } catch { /* non-fatal */ }
       sent++; results.push({ id: f.id, ok: true });

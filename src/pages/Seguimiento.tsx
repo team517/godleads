@@ -8,7 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { CalendarClock, Search, Sparkles, Send, Loader2, Mail, User, X, Clock, RefreshCw, ArrowLeft, MessageSquare } from "lucide-react";
+import { CalendarClock, Search, Sparkles, Send, Loader2, Mail, User, X, Clock, RefreshCw, ArrowLeft, MessageSquare, History, CornerDownRight } from "lucide-react";
+import { PISTA_VARIACION, fechaReprogramacion, hiloTrasUltimo, ultimosEnvios, type EnvioReciente, type FollowUp } from "@/lib/seguimiento-log";
 
 // Seguimiento — busca EN VIVO (IMAP) los distintos hilos con una persona, importa SOLO el que
 // eliges, responde y programa follow-ups en un calendario semanal con arrastrar. Los follow-ups
@@ -50,10 +51,65 @@ export default function Seguimiento() {
 
   const loadFollowups = async () => {
     try { const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["scheduled", "sent", "error"]).order("scheduled_at", { ascending: true }).limit(200); setFollowups((data as any[]) || []); } catch { /* */ }
+    void loadEnvios(); // el registro de últimos envíos se pone al día con el calendario
   };
   const loadSegThreads = async () => {
     try { const { data } = await (supabase as any).from("seg_threads").select("*").order("last_imported_at", { ascending: false }).limit(100); setSegThreads((data as any[]) || []); } catch { /* */ }
   };
+  // ── Registro de últimos envíos + "Volver a programar follow-up" ──
+  const [envios, setEnvios] = useState<FollowUp[]>([]);
+  const [respondio, setRespondio] = useState<Record<string, string>>({}); // contacto → última respuesta
+  const [reprogramando, setReprogramando] = useState<string | null>(null);
+  const loadEnvios = async () => {
+    try {
+      const { data } = await (supabase as any).from("follow_ups").select("*").in("status", ["sent", "scheduled"]).order("updated_at", { ascending: false }).limit(400);
+      const rows = ((data as FollowUp[]) || []);
+      setEnvios(rows);
+      // ¿Ha contestado alguien DESPUÉS de nuestro último envío? (en cualquier buzón del owner)
+      const regs = ultimosEnvios(rows);
+      const contactos = regs.map((e) => e.ultimo.contact_email.toLowerCase());
+      if (!contactos.length) { setRespondio({}); return; }
+      const desde = regs.reduce((min, e) => Math.min(min, Date.parse(e.ultimo.sent_at || e.ultimo.scheduled_at)), Date.now());
+      const { data: resp } = await (supabase as any).from("inbox_messages").select("from_email, received_at")
+        .eq("is_sent", false).in("from_email", contactos).gt("received_at", new Date(desde).toISOString())
+        .order("received_at", { ascending: false }).limit(500);
+      const map: Record<string, string> = {};
+      for (const r of (resp as any[]) || []) { const k = String(r.from_email || "").toLowerCase(); if (!map[k]) map[k] = r.received_at; }
+      setRespondio(map);
+    } catch { /* */ }
+  };
+  const registro: EnvioReciente[] = ultimosEnvios(envios);
+  const reprogramar = async (e: EnvioReciente) => {
+    const u = e.ultimo;
+    const k = u.contact_email.toLowerCase();
+    const r = respondio[k];
+    if (r && Date.parse(r) > Date.parse(u.sent_at || u.scheduled_at)
+      && !window.confirm(`${u.contact_name || u.contact_email} ya te respondió el ${fmt(r)}. ¿Programar otro follow-up igualmente?`)) return;
+    setReprogramando(u.id);
+    try {
+      const historial = [...e.anteriores].reverse().concat(u)
+        .map((f) => ({ role: "assistant", text: cleanBody(f.body).slice(0, 900) }));
+      const { data, error } = await supabase.functions.invoke("client-service-agent", {
+        body: { action: "followup", strict: true, contact_name: u.contact_name || u.contact_email, history: historial, hint: PISTA_VARIACION },
+      });
+      const cuerpo = String((data as any)?.reply || "").trim();
+      if (error || !cuerpo) { toast.error((data as any)?.error || "La IA no pudo preparar la variación. Inténtalo otra vez."); return; }
+      const cuando = fechaReprogramacion(u.sent_at);
+      const hilo = hiloTrasUltimo(u);
+      const { data: nuevo, error: insErr } = await (supabase as any).from("follow_ups").insert({
+        account_id: (u as any).account_id || TEAM_ACCOUNT, contact_email: u.contact_email, contact_name: u.contact_name || null,
+        subject: u.subject || "Seguimiento", body: cuerpo, scheduled_at: cuando.toISOString(),
+        in_reply_to: hilo.inReplyTo || null, references_hdr: hilo.references || null,
+      }).select("*").single();
+      if (insErr || !nuevo) { toast.error(`No se pudo programar: ${insErr?.message || "error"}`); return; }
+      toast.success(`Follow-up programado para ${fmt(cuando.toISOString())} (variación del último). Ábrelo en el calendario para revisarlo.`);
+      setCalMonth({ y: cuando.getFullYear(), m: cuando.getMonth() });
+      await loadFollowups();
+      setFuDetail(nuevo);
+    } catch (err: any) { toast.error(`No se pudo programar: ${err?.message || err}`); }
+    finally { setReprogramando(null); }
+  };
+
   useEffect(() => { loadFollowups(); loadSegThreads(); const iv = setInterval(() => { loadFollowups(); loadSegThreads(); }, 60000); return () => clearInterval(iv); }, []);
   const hasFu = (email: string) => followups.some((f) => f.status === "scheduled" && (f.contact_email || "").toLowerCase() === (email || "").toLowerCase());
   const deleteSegThread = async (t: any) => {
@@ -351,6 +407,46 @@ export default function Seguimiento() {
           </Card>
         </div>
       )}
+
+      {/* Registro de los últimos envíos → volver a programar un follow-up (variación del último) */}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="flex items-center gap-2 text-sm"><History className="h-4 w-4 text-primary" /> Últimos envíos <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{registro.length}</span></CardTitle>
+          <p className="text-xs text-muted-foreground">A quién le has escrito por última vez. "Volver a programar" crea con IA una variación del último mensaje y la pone en el calendario (3 días laborables después, misma hora, en el mismo hilo).</p>
+        </CardHeader>
+        <CardContent className="space-y-1.5">
+          {registro.length === 0 ? <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Todavía no has enviado ningún follow-up.</p>
+            : registro.map((e) => {
+              const u = e.ultimo;
+              const r = respondio[u.contact_email.toLowerCase()];
+              const contesto = !!r && Date.parse(r) > Date.parse(u.sent_at || u.scheduled_at);
+              return (
+                <div key={u.id} className="flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+                      <span className="truncate">{u.contact_name || u.contact_email}</span>
+                      {u.contact_name && <span className="truncate text-xs font-normal text-muted-foreground">{u.contact_email}</span>}
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{e.enviados} {e.enviados === 1 ? "envío" : "envíos"}</span>
+                      {contesto && <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">Respondió {fmt(r)}</span>}
+                      {e.programado && <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"><Clock className="h-3 w-3" /> programado {fmt(e.programado.scheduled_at)}</span>}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">Enviado {fmt(u.sent_at || u.scheduled_at)} · {u.subject || "(sin asunto)"}</p>
+                    <p className="mt-0.5 flex gap-1 text-xs text-muted-foreground"><CornerDownRight className="mt-0.5 h-3 w-3 shrink-0" /><span className="line-clamp-2">{cleanBody(u.body)}</span></p>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    {e.programado ? (
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setFuDetail(e.programado)}><CalendarClock className="h-4 w-4" /> Ver programado</Button>
+                    ) : (
+                      <Button size="sm" className="gap-1.5" disabled={reprogramando !== null} onClick={() => reprogramar(e)}>
+                        {reprogramando === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Volver a programar follow-up
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+        </CardContent>
+      </Card>
 
       {/* Calendario del MES con arrastrar */}
       <Card>
