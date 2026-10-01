@@ -426,19 +426,27 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
       const aiSteps = data.steps;
       if (!Array.isArray(aiSteps) || aiSteps.length === 0) throw new Error("No se generaron pasos");
 
-      // Delete existing steps and create new ones
-      await supabase.from("campaign_steps").delete().eq("campaign_id", campaignId);
-
-      for (let i = 0; i < aiSteps.length; i++) {
-        const { subject, body } = ajustarVariablesIA(aiSteps[i].subject || "", aiSteps[i].body || "");
-        await supabase.from("campaign_steps").insert({
+      // Se prepara TODA la secuencia antes de tocar nada y se guarda de una vez: si la IA devuelve
+      // algo inservible o el guardado falla, la campaña no se queda sin correos ni a medias.
+      const nuevos = aiSteps.map((st: any, i: number) => {
+        const { subject, body } = ajustarVariablesIA(st.subject || "", st.body || "");
+        return {
           campaign_id: campaignId,
           step_order: i + 1,
           subject,
           body,
-          delay_days: aiSteps[i].delay_days ?? (i === 0 ? 0 : 3),
+          delay_days: st.delay_days ?? (i === 0 ? 0 : 3),
           variants: [] as any,
-        });
+        };
+      });
+      if (nuevos.some((n: { body: string }) => !n.body.trim())) throw new Error("La IA ha devuelto un correo vacío. Vuelve a intentarlo.");
+      await flushSaves();
+      const anteriores = steps.map((x) => x.id);
+      const { error: insErr } = await supabase.from("campaign_steps").insert(nuevos);
+      if (insErr) throw insErr;
+      if (anteriores.length) {
+        const { error: delErr } = await supabase.from("campaign_steps").delete().in("id", anteriores);
+        if (delErr) throw delErr;
       }
 
       toast.success(`${aiSteps.length} pasos generados con IA`);
@@ -984,8 +992,8 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
           <p className="mt-5 font-display text-[19px] font-semibold text-foreground">Todavía no hay ningún correo</p>
           <p className="mt-1.5 text-[14.5px] text-muted-foreground">Empieza por el primer email y añade los seguimientos que quieras.</p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
-            <button onClick={addStep} className="soft-ai-btn inline-flex items-center gap-2 text-[15px]"><Plus className="h-4 w-4" /> Crear primer paso</button>
-            <button onClick={() => setShowAiGenerate(true)} className="seq2-square inline-flex h-[46px] w-auto items-center gap-2 px-5 text-[15px] font-semibold"><Sparkles className="h-4 w-4 text-primary" /> Generar con IA</button>
+            <button type="button" onClick={addStep} className="inline-flex h-12 items-center gap-2 whitespace-nowrap rounded-[14px] bg-gradient-to-r from-[#6a4cff] to-[#7b5cff] px-6 text-[15px] font-semibold text-white shadow-[0_8px_20px_rgba(106,76,255,.35)] transition hover:brightness-110 active:scale-[.98]"><Plus className="h-[18px] w-[18px]" /> Crear primer paso</button>
+            <button type="button" onClick={() => setShowAiGenerate(true)} className="inline-flex h-12 items-center gap-2 whitespace-nowrap rounded-[14px] border border-[#e3e6f2] bg-card px-6 text-[15px] font-semibold text-foreground transition-colors hover:border-primary/60 active:scale-[.98] dark:border-border"><Sparkles className="h-[18px] w-[18px] text-primary" /> Generar con IA</button>
           </div>
         </div>
       ) : (
