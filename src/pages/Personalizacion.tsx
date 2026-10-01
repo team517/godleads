@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
+import { crearTrabajo, leerResultados, leerTrabajo } from "@/lib/personalization-store";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -107,6 +108,8 @@ export default function Personalizacion() {
   const [prog, setProg] = useState({ done: 0, ok: 0, failed: 0, total: 0 });
   const [results, setResults] = useState<ResultsMap>({});
   const [starting, setStarting] = useState(false);
+  // Subida de los leads al servidor, por tandas (un CSV grande no cabe en una sola petición).
+  const [subida, setSubida] = useState<{ hechas: number; total: number } | null>(null);
 
   const running = jobStatus === "pending" || jobStatus === "running";
   const okCount = prog.ok || Object.values(results).filter((r) => r.message && !r.error).length;
@@ -169,6 +172,7 @@ export default function Personalizacion() {
         .from("personalization_csv_jobs")
         .select("id, filename, prompt, provider, email_column, columns, status, total, done, ok, failed")
         .eq("user_id", user.id)
+        .neq("status", "uploading")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -184,14 +188,10 @@ export default function Personalizacion() {
       setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
       // 2) Heavy: rows + results (for the download / send-to-campaign). Loaded after so the
       // multi-MB payload never blocks the progress from appearing.
-      const { data: heavy } = await (supabase as any)
-        .from("personalization_csv_jobs")
-        .select("rows, results")
-        .eq("id", d.id)
-        .maybeSingle();
+      const heavy = await leerTrabajo(supabase, d.id).catch(() => null);
       if (!heavy || !alive) return;
-      setRows(Array.isArray((heavy as any).rows) ? (heavy as any).rows : []);
-      setResults((heavy as any).results || {});
+      setRows(heavy.rows as Row[]);
+      setResults(heavy.results);
     })();
     return () => { alive = false; };
   }, [user]);
@@ -228,10 +228,11 @@ export default function Personalizacion() {
     setColumns(Array.isArray(d.columns) ? d.columns : []);
     setJobStatus(d.status || "");
     setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
-    const { data: heavy } = await (supabase as any)
-      .from("personalization_csv_jobs").select("rows, results").eq("id", id).maybeSingle();
-    setRows(Array.isArray((heavy as any)?.rows) ? (heavy as any).rows : []);
-    setResults((heavy as any)?.results || {});
+    try {
+      const heavy = await leerTrabajo(supabase, id);
+      setRows(heavy.rows as Row[]);
+      setResults(heavy.results);
+    } catch (e: any) { toast.error(`No se pudieron cargar sus leads: ${e?.message || e}`); return; }
     toast.success(`Abierta: ${d.filename || "personalización"}`);
   };
 
@@ -254,7 +255,7 @@ export default function Personalizacion() {
   // ── Poll the running job for progress; nudge the processor so it doesn't wait for the cron ──
   useEffect(() => {
     if (!jobId) return;
-    if (jobStatus === "completed" || jobStatus === "error" || jobStatus === "cancelled") return;
+    if (jobStatus === "completed" || jobStatus === "error" || jobStatus === "cancelled" || jobStatus === "uploading") return;
     let alive = true;
     let timer: any;
     let fails = 0;
@@ -277,8 +278,8 @@ export default function Personalizacion() {
       setJobStatus(d.status);
       setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
       if (d.status === "completed" || d.status === "error") {
-        const { data: full } = await (supabase as any).from("personalization_csv_jobs").select("results").eq("id", jobId).maybeSingle();
-        if (full && alive) setResults((full as any).results || {});
+        const full = await leerResultados(supabase, jobId).catch(() => null);
+        if (full && alive) setResults(full);
         return;
       }
       kickProcessor();
@@ -351,17 +352,23 @@ export default function Personalizacion() {
     if (!prompt.trim()) { toast.error("Escribe un prompt"); return; }
     if (!user) return;
     setStarting(true);
-    // Fresh job every run (regenerate = new job).
-    const { data, error } = await (supabase as any).from("personalization_csv_jobs").insert({
-      user_id: user.id, filename, prompt, provider, email_column: emailColumn,
-      columns, rows, results: {}, status: "pending", total: rows.length, done: 0, ok: 0, failed: 0,
-    }).select("id").single();
-    setStarting(false);
-    if (error || !data) { toast.error(`No se pudo iniciar: ${error?.message}`); return; }
+    // Fresh job every run (regenerate = new job). Los leads se suben por tandas: con miles de
+    // filas, una sola petición de decenas de MB se cortaba ("Failed to fetch").
+    let id = "";
+    try {
+      id = await crearTrabajo(supabase,
+        { user_id: user.id, filename, prompt, provider, email_column: emailColumn, columns },
+        rows, (hechas, total) => setSubida({ hechas, total }));
+    } catch (e: any) {
+      setStarting(false); setSubida(null);
+      toast.error(`No se pudo iniciar: ${e?.message || e}. Comprueba la conexión y vuelve a intentarlo.`);
+      return;
+    }
+    setStarting(false); setSubida(null);
     setResults({});
     setProg({ done: 0, ok: 0, failed: 0, total: rows.length });
     setJobStatus("pending");
-    setJobId((data as any).id);
+    setJobId(id);
     toast.success("Generando en el servidor — puedes cerrar la página, sigue solo.");
   };
 
@@ -372,12 +379,13 @@ export default function Personalizacion() {
     // refresh reads "cancelled" and does not resume.
     setJobStatus("cancelled");
     await (supabase as any).from("personalization_csv_jobs").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", jobId);
-    const { data } = await (supabase as any).from("personalization_csv_jobs").select("results, done, ok, failed, total").eq("id", jobId).maybeSingle();
+    const { data } = await (supabase as any).from("personalization_csv_jobs").select("done, ok, failed, total").eq("id", jobId).maybeSingle();
     if (data) {
       const d = data as any;
-      setResults(d.results || {});
       setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
     }
+    const parciales = await leerResultados(supabase, jobId).catch(() => null);
+    if (parciales) setResults(parciales);
     toast.success("Parado. Puedes descargar/enviar lo generado hasta ahora.");
   };
 
@@ -403,8 +411,7 @@ export default function Personalizacion() {
   const ensureResults = async (): Promise<ResultsMap> => {
     if (Object.keys(results).length) return results;
     if (!jobId) return {};
-    const { data } = await (supabase as any).from("personalization_csv_jobs").select("results").eq("id", jobId).maybeSingle();
-    const r = ((data as any)?.results || {}) as ResultsMap;
+    const r = (await leerResultados(supabase, jobId)) as ResultsMap;
     setResults(r);
     return r;
   };
@@ -788,6 +795,7 @@ export default function Personalizacion() {
                     const when = h.created_at ? new Date(h.created_at) : null;
                     const state = h.status === "completed" ? { cls: "soft-state-good", txt: "Completada" }
                       : h.status === "running" || h.status === "pending" ? { cls: "soft-state-wait", txt: "En curso" }
+                      : h.status === "uploading" ? { cls: "soft-state-wait", txt: "Subiendo leads" }
                       : h.status === "cancelled" ? { cls: "soft-state-wait", txt: "Parada" }
                       : { cls: "soft-state-bad", txt: "Con errores" };
                     return (
@@ -900,7 +908,8 @@ export default function Personalizacion() {
             <div className="flex flex-wrap gap-2">
               {!running ? (
                 <Button size="sm" className="gap-2" onClick={handleRun} disabled={!rows.length || starting}>
-                  {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {prog.done > 0 ? "Regenerar todo" : "Generar todo"}
+                  {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{" "}
+                  {subida ? `Subiendo leads… ${subida.hechas.toLocaleString("es-ES")} de ${subida.total.toLocaleString("es-ES")}` : prog.done > 0 ? "Regenerar todo" : "Generar todo"}
                 </Button>
               ) : (
                 <Button size="sm" variant="outline" className="gap-2" onClick={handleStop}><Loader2 className="h-4 w-4 animate-spin" /> Parar</Button>
