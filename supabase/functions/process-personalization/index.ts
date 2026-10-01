@@ -112,6 +112,10 @@ serve(async (req) => {
     const done = Object.keys(results).length;
     if (done >= total) {
       await db.from("personalization_csv_jobs").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", job.id).neq("status", "cancelled");
+    } else {
+      // Tanda terminada y quedan leads: se SUELTA el trabajo (pending) para que la siguiente pasada
+      // lo coja ya. Si se quedara en "running" habría que esperar los 2 min de "parado".
+      await db.from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "running");
     }
     return new Response(JSON.stringify({ ok: true, job_id: job.id, processed, done, total }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
