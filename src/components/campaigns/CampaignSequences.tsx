@@ -19,7 +19,7 @@ import {
   readState, removeSlot, versionsOf, writeSlot, type VariantState,
 } from "@/lib/step-variants";
 import { toast } from "sonner";
-import { Plus, Trash2, Clock, GitBranch, Zap, Eye, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Braces, Mail, PowerOff, Save, FileText, Link2, Sparkles, WandSparkles, ShieldCheck, Tag, Maximize2, Paperclip, Type, Image as ImageIcon, UserRound, CalendarDays, Code2 } from "lucide-react";
+import { Plus, Trash2, Clock, GitBranch, Zap, Eye, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Braces, Mail, PowerOff, Save, FileText, Link2, Sparkles, WandSparkles, ShieldCheck, Tag, Maximize2, Paperclip, Type, Image as ImageIcon, CalendarDays, Code2 } from "lucide-react";
 
 interface Props {
   campaignId: string;
@@ -1382,7 +1382,7 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                 <button type="button" className="seq2-tool text-primary" title="Escribir este correo con IA" aria-label="Escribir con IA" onClick={() => setAiOneOpen(true)}><Sparkles className="h-5 w-5" /></button>
                 <span className="seq2-sep" />
                 <Popover>
-                  <PopoverTrigger asChild><button type="button" className="seq2-tool" title="Insertar variable del lead" aria-label="Insertar variable"><UserRound className="h-5 w-5" /></button></PopoverTrigger>
+                  <PopoverTrigger asChild><button type="button" className="seq2-tool" title="Insertar variable del lead" aria-label="Insertar variable"><Braces className="h-5 w-5" /></button></PopoverTrigger>
                   <PopoverContent side="top" className="w-56 p-1" align="center">
                     <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variable del lead</p>
                     {dynamicVars.length === 0 && <p className="px-3 py-2 text-[12px] text-muted-foreground">Importa leads para ver sus variables.</p>}
