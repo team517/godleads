@@ -17,11 +17,14 @@ const MAX_ROWS = 120;
  *  5 leads puede tardar más de un minuto si la IA va lenta; con 60 s otro proceso lo daba por
  *  muerto y se ponía a generar los mismos leads a la vez. */
 const STALE_MS = 120_000;
+/** Pasadas en las que se reintenta un lead al que le falla la IA antes de darlo por error. Cada
+ *  pasada ya hace 3 intentos seguidos, así que un lead sólo queda en error tras 12 intentos. */
+const MAX_INTENTOS = 4;
 /** Lo que hace falta del trabajo para procesarlo — SIN sus celdas pesadas (rows / results). */
 const JOB_COLS = "id, user_id, prompt, provider, storage, total, done, ok, failed";
 
 type Results = Record<string, { message: string; error?: string }>;
-type Fila = { idx: number; data: Record<string, any> };
+type Fila = { idx: number; data: Record<string, any>; attempts?: number };
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 serve(async (req) => {
@@ -58,8 +61,10 @@ serve(async (req) => {
 
     if (porFilas) {
       // Cada lead es una fila: se piden sólo los que faltan, y sólo los de esta tanda.
-      const { data, error } = await db.from("personalization_csv_rows").select("idx, data")
-        .eq("job_id", job.id).eq("done", false).order("idx", { ascending: true }).limit(MAX_ROWS);
+      // Primero los que nunca se han intentado; los que fallaron, después (no frenan al resto).
+      const { data, error } = await db.from("personalization_csv_rows").select("idx, data, attempts")
+        .eq("job_id", job.id).eq("done", false)
+        .order("attempts", { ascending: true }).order("idx", { ascending: true }).limit(MAX_ROWS);
       if (error) throw new Error(error.message);
       pendientes = (data || []) as Fila[];
     } else {
@@ -100,16 +105,22 @@ serve(async (req) => {
       const chunk = pendientes.slice(i, i + CONCURRENCY);
       // UN lead = UNA llamada a la IA con SUS datos; el resultado se guarda en SU fila / su idx.
       const settled = await Promise.allSettled(chunk.map((r) => gen(promptForLead(job.prompt, r.data))));
-      const salidas = settled.map((s, j) => ({
-        idx: chunk[j].idx,
-        message: s.status === "fulfilled" ? s.value : "",
-        error: s.status === "fulfilled" ? null : String((s as PromiseRejectedResult).reason).slice(0, 200),
-      }));
+      const salidas = settled.map((s, j) => {
+        const intentos = (chunk[j].attempts || 0) + 1;
+        const error = s.status === "fulfilled" ? null : String((s as PromiseRejectedResult).reason).slice(0, 200);
+        return {
+          idx: chunk[j].idx, intentos,
+          message: s.status === "fulfilled" ? s.value : "",
+          error,
+          // Un fallo NO cierra el lead: se queda pendiente y se reintenta en otra pasada.
+          cerrado: !error || intentos >= MAX_INTENTOS,
+        };
+      });
       if (porFilas) {
         await Promise.all(salidas.map((o) =>
-          db.from("personalization_csv_rows").update({ message: o.message, error: o.error, done: true }).eq("job_id", job.id).eq("idx", o.idx)));
-        done += salidas.length;
-        failed += salidas.filter((o) => o.error).length;
+          db.from("personalization_csv_rows").update({ message: o.message, error: o.error, done: o.cerrado, attempts: o.intentos }).eq("job_id", job.id).eq("idx", o.idx)));
+        done += salidas.filter((o) => o.cerrado).length;
+        failed += salidas.filter((o) => o.cerrado && o.error).length;
         ok = done - failed;
       } else {
         for (const o of salidas) results[String(o.idx)] = o.error ? { message: "", error: o.error } : { message: o.message };

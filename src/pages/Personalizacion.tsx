@@ -14,7 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
-import { crearTrabajo, leerResultados, leerTrabajo } from "@/lib/personalization-store";
+import { crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos } from "@/lib/personalization-store";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -406,6 +406,23 @@ export default function Personalizacion() {
     await (supabase as any).from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", jobId);
     kickProcessor();
     toast.success("Reanudando generación en el servidor — sigue donde se quedó.");
+  };
+
+  // Los leads que quedaron en error (tras los reintentos automáticos) se vuelven a generar.
+  const [retrying, setRetrying] = useState(false);
+  const retryFailed = async () => {
+    if (!jobId || retrying) return;
+    setRetrying(true);
+    try {
+      const n = await reintentarFallidos(supabase, jobId);
+      if (!n) { toast.info("No hay mensajes con error que reintentar."); return; }
+      setProg((p) => ({ ...p, done: Math.max(0, p.done - n), failed: Math.max(0, p.failed - n) }));
+      setResults({});
+      setJobStatus("pending"); // reactiva el sondeo y el empuje al procesador
+      kickProcessor();
+      toast.success(`Reintentando ${n} mensaje(s) que habían fallado.`);
+    } catch (e: any) { toast.error(`No se pudo reintentar: ${e?.message || e}`); }
+    finally { setRetrying(false); }
   };
 
   const ensureResults = async (): Promise<ResultsMap> => {
@@ -913,6 +930,11 @@ export default function Personalizacion() {
                 </Button>
               ) : (
                 <Button size="sm" variant="outline" className="gap-2" onClick={handleStop}><Loader2 className="h-4 w-4 animate-spin" /> Parar</Button>
+              )}
+              {!running && prog.failed > 0 && (
+                <Button size="sm" variant="outline" className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10" onClick={retryFailed} disabled={retrying}>
+                  {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Reintentar los {prog.failed} con error
+                </Button>
               )}
               <Button size="sm" variant="outline" className="gap-2" onClick={downloadCsv} disabled={okCount === 0}><Download className="h-4 w-4" /> Descargar CSV</Button>
               <Button size="sm" variant="secondary" className="gap-2" onClick={openSend} disabled={okCount === 0}><Send className="h-4 w-4" /> Enviar a campaña</Button>

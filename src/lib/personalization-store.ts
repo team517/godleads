@@ -128,3 +128,30 @@ export async function leerResultados(db: any, id: string): Promise<Resultados> {
   for (const f of filas) results[String(f.idx)] = f.error ? { message: "", error: f.error } : { message: f.message || "" };
   return results;
 }
+
+/**
+ * Vuelve a poner en cola los leads que quedaron en error (tras todos los reintentos automáticos)
+ * y reanuda el trabajo. Devuelve cuántos ha vuelto a encolar.
+ */
+export async function reintentarFallidos(db: any, id: string): Promise<number> {
+  const { data: job } = await db.from("personalization_csv_jobs").select("storage").eq("id", id).maybeSingle();
+  if (!job) return 0;
+  let n = 0;
+  if (job.storage === "rows") {
+    const { data, error } = await db.from("personalization_csv_rows")
+      .update({ done: false, attempts: 0, error: null, message: null })
+      .eq("job_id", id).not("error", "is", null).select("idx");
+    if (error) throw new Error(error.message);
+    n = (data || []).length;
+  } else {
+    const { data } = await db.from("personalization_csv_jobs").select("results").eq("id", id).maybeSingle();
+    const results: Resultados = { ...(data?.results || {}) };
+    for (const k of Object.keys(results)) if (results[k]?.error) { delete results[k]; n++; }
+    if (n) {
+      const { error } = await db.from("personalization_csv_jobs").update({ results }).eq("id", id);
+      if (error) throw new Error(error.message);
+    }
+  }
+  if (n) await db.from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", id);
+  return n;
+}

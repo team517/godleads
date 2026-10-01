@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TANDA_BYTES, crearTrabajo, leerResultados, leerTrabajo, trocear, type Fila } from "@/lib/personalization-store";
+import { TANDA_BYTES, crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos, trocear, type Fila } from "@/lib/personalization-store";
 
 /* Un CSV de miles de leads ya no viaja en una sola petición ("Failed to fetch"): se sube por
    tandas pequeñas y se lee por páginas. Base de datos de mentira, lo justo para estas consultas. */
@@ -17,13 +17,14 @@ function fakeDb(opts: { failRows?: boolean } = {}) {
       delete() { st.op = "delete"; return q; },
       select(cols: string) { st.cols = cols; st.op = st.op || "select"; return q; },
       eq(k: string, v: any) { st.filtros.push([k, v]); return q; },
+      not(k: string, _op: string, _v: any) { st.noNulos = [...(st.noNulos || []), k]; return q; },
       order() { return q; },
       range(a: number, b: number) { st.rango = [a, b]; return q; },
       single() { return q.then((r: any) => r); },
       maybeSingle() { return q.then((r: any) => ({ ...r, data: Array.isArray(r.data) ? (r.data[0] ?? null) : r.data })); },
       then(res: any, rej: any) { return Promise.resolve(run()).then(res, rej); },
     };
-    const pasa = (r: any) => st.filtros.every(([k, v]: [string, any]) => r[k] === v);
+    const pasa = (r: any) => st.filtros.every(([k, v]: [string, any]) => r[k] === v) && (st.noNulos || []).every((k: string) => r[k] != null);
     const run = () => {
       const data = tabla === "personalization_csv_jobs" ? jobs : filas;
       if (st.op === "insert") { const row = { id: `job-${jobs.length + 1}`, ...st.payload }; jobs.push(row); peticiones.push({ tabla, op: "insert", bytes: JSON.stringify(st.payload).length, n: 1 }); return { data: row, error: null }; }
@@ -33,7 +34,7 @@ function fakeDb(opts: { failRows?: boolean } = {}) {
         for (const r of st.payload) if (!filas.some((f) => f.job_id === r.job_id && f.idx === r.idx)) filas.push({ message: null, error: null, done: false, ...r });
         return { data: null, error: null };
       }
-      if (st.op === "update") { data.filter(pasa).forEach((r: any) => Object.assign(r, st.payload)); return { data: null, error: null }; }
+      if (st.op === "update") { const tocadas = data.filter(pasa); tocadas.forEach((r: any) => Object.assign(r, st.payload)); return { data: tocadas, error: null }; }
       if (st.op === "delete") { for (let i = data.length - 1; i >= 0; i--) if (pasa(data[i])) data.splice(i, 1); return { data: null, error: null }; }
       let out = data.filter(pasa).sort((a: any, b: any) => (a.idx ?? 0) - (b.idx ?? 0));
       if (st.rango) out = out.slice(st.rango[0], st.rango[1] + 1);
@@ -93,6 +94,21 @@ describe("personalización: subida y lectura de CSV grandes", () => {
     expect(results["1234"]).toEqual({ message: "Hola Lead 1234" });
     expect(results["7"]).toEqual({ message: "", error: "DeepSeek 500" });
     expect(await leerResultados(db, id)).toEqual(results);
+  });
+
+  it("los que quedaron en error se vuelven a encolar y el trabajo se reanuda", async () => {
+    const { db, jobs, filas } = fakeDb();
+    const id = await crearTrabajo(db, base, csv(10));
+    filas.forEach((f) => Object.assign(f, { done: true, message: "ok", attempts: 1 }));
+    Object.assign(filas[3], { message: "", error: "DeepSeek 500", attempts: 4 });
+    Object.assign(filas[8], { message: "", error: "timeout", attempts: 4 });
+    jobs[0].status = "completed";
+    expect(await reintentarFallidos(db, id)).toBe(2);
+    expect(filas[3]).toMatchObject({ done: false, attempts: 0, error: null });
+    expect(filas[8]).toMatchObject({ done: false, attempts: 0, error: null });
+    expect(filas[0]).toMatchObject({ done: true, message: "ok" });          // los buenos no se tocan
+    expect(jobs[0].status).toBe("pending");
+    expect(await reintentarFallidos(db, id)).toBe(0);                          // ya no queda ninguno
   });
 
   it("los trabajos antiguos (todo dentro del trabajo) se siguen leyendo", async () => {
