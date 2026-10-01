@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
+import PromptWizard from "@/components/personalizacion/PromptWizard";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -94,6 +95,7 @@ export default function Personalizacion() {
   // Saved prompt library (stored in the browser).
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(() => loadSavedPrompts());
   const [promptsOpen, setPromptsOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [newPromptName, setNewPromptName] = useState("");
 
   const [previewing, setPreviewing] = useState(false);
@@ -836,9 +838,15 @@ export default function Personalizacion() {
           <CardContent className="p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold"><Wand2 className="h-4 w-4 text-primary" /> 2 · Prompt de personalización</div>
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setPromptsOpen(true)}>
-                <BookMarked className="h-3.5 w-3.5" /> Prompts guardados{savedPrompts.length > 0 ? ` (${savedPrompts.length})` : ""}
-              </Button>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <button type="button" onClick={() => setWizardOpen(true)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-gradient-to-r from-[#6a4cff] to-[#a24bf5] px-2.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(106,76,255,.3)] transition hover:brightness-110">
+                  <Sparkles className="h-3.5 w-3.5" /> Crear prompt con IA
+                </button>
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setPromptsOpen(true)}>
+                  <BookMarked className="h-3.5 w-3.5" /> Prompts guardados{savedPrompts.length > 0 ? ` (${savedPrompts.length})` : ""}
+                </Button>
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {columns.map((c) => (
@@ -905,6 +913,13 @@ export default function Personalizacion() {
       )}
 
       {/* Saved prompts dialog */}
+      <PromptWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        columns={columns}
+        onAccept={(nuevo) => { setPrompt(nuevo); setPreview(""); toast.success("Prompt escrito. Revísalo y pulsa la vista previa para ver un correo de ejemplo."); }}
+      />
+
       <Dialog open={promptsOpen} onOpenChange={setPromptsOpen}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display flex items-center gap-2"><BookMarked className="h-5 w-5 text-primary" /> Prompts guardados</DialogTitle></DialogHeader>
