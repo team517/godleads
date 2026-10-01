@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { PERSONALIZE_SYSTEM, applyMapping, generatePersonalized } from "../_shared/personalize-ai.ts";
+import { PERSONALIZE_SYSTEM, promptForLead, generatePersonalized } from "../_shared/personalize-ai.ts";
 import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
 
 const corsHeaders = {
@@ -62,7 +62,7 @@ serve(async (req) => {
       const chunk = rows.slice(i, i + CONCURRENCY);
       const settled = await Promise.allSettled(
         chunk.map(async (r) => {
-          const userPrompt = applyMapping(prompt, r.data || {});
+          const userPrompt = promptForLead(prompt, r.data || {});
           const message = await gen(userPrompt);
           return { index: r.index, message };
         })

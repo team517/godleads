@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { PERSONALIZE_SYSTEM, applyMapping, generatePersonalized } from "../_shared/personalize-ai.ts";
+import { PERSONALIZE_SYSTEM, promptForLead, generatePersonalized } from "../_shared/personalize-ai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,8 +22,10 @@ serve(async (req) => {
   const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
 
   try {
-    // Claim ONE job: pending, or a running one that stalled (>90s) → resumable.
-    const staleIso = new Date(Date.now() - 60_000).toISOString();
+    // Claim ONE job: pending, or a running one that stalled (>2 min) → resumable. Un grupo de 5
+    // leads puede tardar más de un minuto si la IA va lenta; con 60 s otro proceso lo daba por
+    // muerto y se ponía a generar los mismos leads a la vez.
+    const staleIso = new Date(Date.now() - 120_000).toISOString();
     let jobsQuery = db
       .from("personalization_csv_jobs")
       .select("*")
@@ -37,7 +39,14 @@ serve(async (req) => {
 
     // Claim it (bump updated_at so a concurrent tick skips it). `.neq(cancelled)` so a Stop
     // that landed between the SELECT and here is never overwritten back to running.
-    await db.from("personalization_csv_jobs").update({ status: "running", updated_at: new Date().toISOString() }).eq("id", job.id).neq("status", "cancelled");
+    // La reserva es ATÓMICA: sólo la consigue UN proceso (el cron y el botón de la página pueden
+    // llegar a la vez). Antes los dos se quedaban el trabajo y cada lead se generaba dos veces.
+    const { data: claimed } = await db.from("personalization_csv_jobs")
+      .update({ status: "running", updated_at: new Date().toISOString() })
+      .eq("id", job.id)
+      .or(`status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`)
+      .select("id");
+    if (!claimed?.length) return new Response(JSON.stringify({ ok: true, idle: true, taken: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const provider = job.provider === "claude" && claudeKey ? "claude" : "deepseek";
     if (provider === "deepseek" && !deepseekKey) {
@@ -78,7 +87,8 @@ serve(async (req) => {
       const chunk = pending.slice(i, i + CONCURRENCY);
       const settled = await Promise.allSettled(chunk.map(async (r) => {
         const { __idx, ...data } = r;
-        const msg = await gen(applyMapping(job.prompt, data));
+        // UN lead = UNA llamada a la IA con SUS datos; el resultado se guarda por su __idx.
+        const msg = await gen(promptForLead(job.prompt, data));
         return { idx: __idx, message: msg };
       }));
       settled.forEach((s, j) => {

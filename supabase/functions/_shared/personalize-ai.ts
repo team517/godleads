@@ -30,6 +30,43 @@ export function applyMapping(prompt: string, data: Record<string, string>): stri
   });
 }
 
+/** ¿Cuántos datos de ESTE lead han entrado en el prompt a través de sus variables? */
+export function datosUsados(prompt: string, data: Record<string, string>): number {
+  const norm = (s: string) => String(s).toLowerCase().replace(/[\s_.\-]/g, "");
+  const normMap: Record<string, string> = {};
+  for (const k of Object.keys(data)) normMap[norm(k)] = data[k];
+  let n = 0;
+  prompt.replace(/\{\{?\s*([^{}]+?)\s*\}?\}/g, (_m, rawKey) => {
+    const key = String(rawKey).trim();
+    const v = key in data ? data[key] : normMap[norm(key)];
+    if (v != null && String(v).trim()) n++;
+    return "";
+  });
+  return n;
+}
+
+const COLUMNAS_SIN_INTERES = new Set(["id", "index", "__idx"]);
+
+/**
+ * El prompt de UN lead. Con variables ({first_name}, {{empresa}}…) se sustituyen por sus datos y
+ * no se añade nada más. Si el prompt no mete NINGÚN dato de este lead (no lleva variables, están
+ * mal escritas o el lead las tiene vacías), se le añaden sus datos al final: así la personalización
+ * es siempre 1 a 1 y nunca sale el mismo texto genérico para todos.
+ */
+export function promptForLead(prompt: string, data: Record<string, string>): string {
+  const mapped = applyMapping(prompt, data);
+  if (datosUsados(prompt, data) > 0) return mapped;
+  const lineas: string[] = [];
+  for (const [k, v] of Object.entries(data)) {
+    const val = String(v ?? "").replace(/\s+/g, " ").trim();
+    if (!val || COLUMNAS_SIN_INTERES.has(k.toLowerCase())) continue;
+    lineas.push(`- ${k}: ${val.slice(0, 400)}`);
+    if (lineas.length >= 30) break;
+  }
+  if (!lineas.length) return mapped;
+  return `${mapped}\n\nDATOS DE ESTE LEAD (personaliza para él usando sólo los que vengan al caso; no los copies como lista):\n${lineas.join("\n")}`;
+}
+
 /** Strip code fences, leading fillers ("Aquí tienes:"), and wrapping quotes. */
 export function cleanOutput(text: string): string {
   return (text || "")
