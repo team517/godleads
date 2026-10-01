@@ -8,6 +8,19 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/** Cuántas personalizaciones lleva a la vez una misma pasada (cada una con 5 leads en vuelo). */
+const MAX_JOBS = 4;
+const CONCURRENCY = 5;
+const MAX_MS = 90_000;
+const MAX_ROWS = 120;
+/** Un trabajo "running" sin avanzar en este tiempo se da por parado y se puede retomar. Un grupo de
+ *  5 leads puede tardar más de un minuto si la IA va lenta; con 60 s otro proceso lo daba por
+ *  muerto y se ponía a generar los mismos leads a la vez. */
+const STALE_MS = 120_000;
+
+type Results = Record<string, { message: string; error?: string }>;
+const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const reqBody = await req.json().catch(() => ({}));
@@ -21,69 +34,38 @@ serve(async (req) => {
   const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
   const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
 
-  try {
-    // Claim ONE job: pending, or a running one that stalled (>2 min) → resumable. Un grupo de 5
-    // leads puede tardar más de un minuto si la IA va lenta; con 60 s otro proceso lo daba por
-    // muerto y se ponía a generar los mismos leads a la vez.
-    const staleIso = new Date(Date.now() - 120_000).toISOString();
-    let jobsQuery = db
-      .from("personalization_csv_jobs")
-      .select("*")
-      .or(`status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`)
-      .order("updated_at", { ascending: true })
-      .limit(1);
-    if (onlyUser) jobsQuery = jobsQuery.eq("user_id", onlyUser);
-    const { data: jobs } = await jobsQuery;
-    const job = jobs?.[0];
-    if (!job) return new Response(JSON.stringify({ ok: true, idle: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-    // Claim it (bump updated_at so a concurrent tick skips it). `.neq(cancelled)` so a Stop
-    // that landed between the SELECT and here is never overwritten back to running.
-    // La reserva es ATÓMICA: sólo la consigue UN proceso (el cron y el botón de la página pueden
-    // llegar a la vez). Antes los dos se quedaban el trabajo y cada lead se generaba dos veces.
-    const { data: claimed } = await db.from("personalization_csv_jobs")
-      .update({ status: "running", updated_at: new Date().toISOString() })
-      .eq("id", job.id)
-      .or(`status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`)
-      .select("id");
-    if (!claimed?.length) return new Response(JSON.stringify({ ok: true, idle: true, taken: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
+  /** Una tanda de UN trabajo: hasta 120 leads o 90 s. Devuelve cómo ha quedado. */
+  const procesar = async (job: any) => {
     const provider = job.provider === "claude" && claudeKey ? "claude" : "deepseek";
     if (provider === "deepseek" && !deepseekKey) {
       await db.from("personalization_csv_jobs").update({ status: "error", updated_at: new Date().toISOString() }).eq("id", job.id);
-      return new Response(JSON.stringify({ ok: false, error: "DEEPSEEK_API_KEY missing" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return { job_id: job.id, error: "DEEPSEEK_API_KEY missing" };
     }
     const system = (job.system && String(job.system).trim()) || PERSONALIZE_SYSTEM;
     const gen = (p: string) => generatePersonalized({ provider: provider as "claude" | "deepseek", deepseekKey, claudeKey, system, userPrompt: p, temperature: 0.7, retries: 2 });
 
     const rows: { __idx: number; [k: string]: any }[] = Array.isArray(job.rows) ? job.rows : [];
-    const results: Record<string, { message: string; error?: string }> = job.results || {};
-
-    // Rows not yet processed.
+    const results: Results = job.results || {};
     const pending = rows.filter((r) => !(String(r.__idx) in results));
     const total = rows.length;
+    const counts = () => ({
+      done: Object.keys(results).length,
+      ok: Object.values(results).filter((x) => x.message && !x.error).length,
+      failed: Object.values(results).filter((x) => x.error).length,
+    });
 
-    // Time-boxed chunk: process until ~65s or 80 rows, whichever first (cron continues).
     const startMs = Date.now();
-    const CONCURRENCY = 5;
-    const MAX_MS = 90_000;
-    const MAX_ROWS = 120;
     let processed = 0;
-
     for (let i = 0; i < pending.length && processed < MAX_ROWS && (Date.now() - startMs) < MAX_MS; i += CONCURRENCY) {
       // Respect a Stop pressed mid-run: re-read status each group (~5 rows apart) and, if the
       // user cancelled, save whatever is done and BAIL — without ever writing "running" again.
       // This clobber (progress write resurrecting a cancelled job) was why "Parar" no paraba.
       const { data: cur } = await db.from("personalization_csv_jobs").select("status").eq("id", job.id).maybeSingle();
       if ((cur as any)?.status === "cancelled") {
-        await db.from("personalization_csv_jobs").update({
-          results, done: Object.keys(results).length,
-          ok: Object.values(results).filter((x) => x.message && !x.error).length,
-          failed: Object.values(results).filter((x) => x.error).length,
-          updated_at: new Date().toISOString(),
-        }).eq("id", job.id).eq("status", "cancelled");
-        return new Response(JSON.stringify({ ok: true, cancelled: true, job_id: job.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await db.from("personalization_csv_jobs").update({ results, ...counts(), updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "cancelled");
+        return { job_id: job.id, cancelled: true };
       }
+      if (!cur) return { job_id: job.id, deleted: true }; // lo han borrado del registro a mitad
       const chunk = pending.slice(i, i + CONCURRENCY);
       const settled = await Promise.allSettled(chunk.map(async (r) => {
         const { __idx, ...data } = r;
@@ -98,13 +80,11 @@ serve(async (req) => {
       });
       processed += chunk.length;
       // Persist progress after each concurrent group → visible live + crash-safe.
-      const done = Object.keys(results).length;
-      const okN = Object.values(results).filter((x) => x.message && !x.error).length;
-      const failN = Object.values(results).filter((x) => x.error).length;
       // `.neq(cancelled)` so a Stop that lands during the await above is never overwritten.
+      const c = counts();
       await db.from("personalization_csv_jobs").update({
-        results, done, ok: okN, failed: failN, total,
-        status: done >= total ? "completed" : "running",
+        results, ...c, total,
+        status: c.done >= total ? "completed" : "running",
         updated_at: new Date().toISOString(),
       }).eq("id", job.id).neq("status", "cancelled");
     }
@@ -114,11 +94,38 @@ serve(async (req) => {
       await db.from("personalization_csv_jobs").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", job.id).neq("status", "cancelled");
     } else {
       // Tanda terminada y quedan leads: se SUELTA el trabajo (pending) para que la siguiente pasada
-      // lo coja ya. Si se quedara en "running" habría que esperar los 2 min de "parado".
+      // lo coja ya. Si se quedara en "running" habría que esperar a que se diera por parado.
       await db.from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "running");
     }
-    return new Response(JSON.stringify({ ok: true, job_id: job.id, processed, done, total }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return { job_id: job.id, processed, done, total };
+  };
+
+  try {
+    // Candidatos: pendientes, o "running" que llevan parados demasiado (→ se retoman). Se miran
+    // primero los que más llevan esperando, así varias personalizaciones avanzan a la par.
+    const staleIso = new Date(Date.now() - STALE_MS).toISOString();
+    const disponible = `status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`;
+    let q = db.from("personalization_csv_jobs").select("id").or(disponible).order("updated_at", { ascending: true }).limit(MAX_JOBS);
+    if (onlyUser) q = q.eq("user_id", onlyUser);
+    const { data: candidatos } = await q;
+    if (!candidatos?.length) return json({ ok: true, idle: true });
+
+    // La reserva es ATÓMICA: cada trabajo lo consigue UN solo proceso (el cron y el botón de la
+    // página pueden llegar a la vez). Los que ya tiene otro proceso se dejan pasar.
+    const tandas = await Promise.all(candidatos.map(async ({ id }: { id: string }) => {
+      const { data: claimed } = await db.from("personalization_csv_jobs")
+        .update({ status: "running", updated_at: new Date().toISOString() })
+        .eq("id", id).or(disponible)
+        .select("*");
+      const job = claimed?.[0];
+      if (!job) return null;
+      try { return await procesar(job); }
+      catch (e) { return { job_id: id, error: e instanceof Error ? e.message : "error" }; }
+    }));
+    const hechas = tandas.filter(Boolean);
+    if (!hechas.length) return json({ ok: true, idle: true, taken: true });
+    return json({ ok: true, jobs: hechas, ...(hechas.length === 1 ? hechas[0] : {}) });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: e instanceof Error ? e.message : "error" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return json({ ok: false, error: e instanceof Error ? e.message : "error" });
   }
 });
