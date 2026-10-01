@@ -37,6 +37,13 @@ interface Variant { subject: string; body: string; tag_filter?: string }
 // shows exactly what the lead receives (fallbacks included, never a raw {{placeholder}}).
 const renderVariables = (text: string, fields: Record<string, string>) => replaceVariables(text || "", fields);
 
+/** Variables que rellena el motor con el BUZÓN que envía cada correo (no salen del CSV de leads). */
+const SENDER_VARS = [
+  { label: "Nombre de quien envía", tag: "{{SenderFirstName}}" },
+  { label: "Apellido de quien envía", tag: "{{SenderLastName}}" },
+  { label: "Email de quien envía", tag: "{{SenderEmail}}" },
+];
+
 /** The copy preview renders the author's own HTML, which carries ITS OWN colours
  *  (dark text, grey signatures, branded links) written for a white email client.
  *  So the preview is always a sheet of white paper with dark text — in BOTH
@@ -1043,8 +1050,6 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
 
                 {/* El correo */}
                 <div
-                  draggable
-                  onDragStart={(e) => { setDragStepId(step.id); e.dataTransfer.effectAllowed = "move"; }}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverStepId(step.id); }}
                   onDragLeave={() => { if (dragOverStepId === step.id) setDragOverStepId(null); }}
                   onDrop={async (e) => {
@@ -1064,12 +1069,22 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                     }
                     load();
                   }}
-                  onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
+                  data-step-row
                   className={`group/step grid grid-cols-[32px_1fr] gap-2 sm:grid-cols-[56px_1fr] sm:gap-6 ${isDragging ? "opacity-40" : ""} ${isDragOver ? "pt-2" : ""}`}
                 >
                   {/* Número del paso (se arrastra para reordenar) + eliminar */}
                   <div className="flex flex-col items-center pt-3 sm:pt-4">
+                    {/* El paso se mueve SÓLO desde su número: si toda la tarjeta fuera arrastrable,
+                        seleccionar texto del correo con el ratón arrastraba el paso entero. */}
                     <span
+                      draggable
+                      onDragStart={(e) => {
+                        setDragStepId(step.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        const fila = (e.currentTarget as HTMLElement).closest("[data-step-row]");
+                        if (fila) e.dataTransfer.setDragImage(fila, 24, 24);
+                      }}
+                      onDragEnd={() => { setDragStepId(null); setDragOverStepId(null); }}
                       title={i === 0 ? "Paso 1 · email inicial (arrástralo para reordenar)" : `Paso ${i + 1} · seguimiento (arrástralo para reordenar)`}
                       className={`grid h-8 w-8 cursor-grab place-items-center rounded-full font-display text-[14px] font-semibold sm:h-11 sm:w-11 sm:text-[17px] transition-colors active:cursor-grabbing ${
                         isSel ? "bg-[#e7e3ff] text-[#5b45e0] dark:bg-primary/20 dark:text-primary" : "bg-[#eeeefb] text-[#6b63c7] dark:bg-muted dark:text-muted-foreground"
@@ -1130,6 +1145,13 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                                     className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
                                     <span>{v.label}</span>
                                     <code className="text-[10px] text-muted-foreground">{v.tag}</code>
+                                  </button>
+                                ))}
+                                <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Del buzón que envía</p>
+                                {SENDER_VARS.map(v => (
+                                  <button key={v.tag} type="button" onClick={() => insertVariable(v.tag, "subject")}
+                                    className="flex w-full items-center justify-between gap-2 rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
+                                    <span>{v.label}</span>
                                   </button>
                                 ))}
                               </PopoverContent>
@@ -1391,7 +1413,7 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                 <span className="seq2-sep" />
                 <Popover>
                   <PopoverTrigger asChild><button type="button" className="seq2-tool" title="Insertar variable del lead" aria-label="Insertar variable"><Braces className="h-5 w-5" /></button></PopoverTrigger>
-                  <PopoverContent side="top" className="w-56 p-1" align="center">
+                  <PopoverContent side="top" className="max-h-[60vh] w-60 overflow-y-auto p-1" align="center">
                     <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variable del lead</p>
                     {dynamicVars.length === 0 && <p className="px-3 py-2 text-[12px] text-muted-foreground">Importa leads para ver sus variables.</p>}
                     {dynamicVars.map(v => (
@@ -1399,6 +1421,13 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                         className="flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
                         <span>{v.label}</span>
                         <code className="text-[10px] text-muted-foreground">{v.tag}</code>
+                      </button>
+                    ))}
+                    <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Del buzón que envía</p>
+                    {SENDER_VARS.map(v => (
+                      <button key={v.tag} onClick={() => insertVariable(v.tag, "body")}
+                        className="flex w-full items-center justify-between gap-2 rounded px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted">
+                        <span>{v.label}</span>
                       </button>
                     ))}
                   </PopoverContent>
