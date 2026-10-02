@@ -57,3 +57,96 @@ export function extractPermanentBounceRecipients(fromEmail: string, subject: str
   for (const m of rawBody.matchAll(/X-Failed-Recipients:\s*<?([^\s<>;,]+@[^\s<>;,]+)>?/gi)) push(m[1]);
   return Array.from(emails);
 }
+
+// ───────────────────────────────────────────────────────────────────────────────────────────
+// Ficha de un rebote (02-10-2026)
+// ───────────────────────────────────────────────────────────────────────────────────────────
+// extractPermanentBounceRecipients (arriba) sólo contesta "¿a quién dejo de escribir?". Todo lo
+// demás —rebotes por política o spam, buzón lleno, retrasos— se tiraba sin dejar rastro, así que
+// un servidor que nos rechazaba por spam era invisible. bounceInfo describe CUALQUIER rebote para
+// poder anotarlo: a quién iba, con qué código y de qué clase es. No decide suprimir a nadie.
+
+export type BounceClass = "recipient_gone" | "policy" | "temporary" | "other";
+
+export interface BounceInfo {
+  recipients: string[];
+  /** "5.1.1", "4.4.7", "550"… o "" si el aviso no trae código. */
+  code: string;
+  cls: BounceClass;
+  /** false = aviso de retraso (4.x.x): el servidor sigue intentándolo. */
+  permanent: boolean;
+  /** La línea de diagnóstico, recortada, para leerla sin abrir el correo. */
+  diag: string;
+}
+
+const B_RECIPIENT_GONE =
+  /5\.1\.[0-6]\b|5\.1\.10\b|recipient ?not ?found|unrouteable address|no such domain|domain (name )?not found|host (or domain name )?not found|nxdomain|user unknown|unknown user|no such user|no such recipient|does not exist|doesn'?t exist|recipient (address )?(not found|unknown)|invalid recipient|mailbox (unavailable|not found|does not exist)|address (unknown|not found)|no mailbox here|destinatario (desconocido|no existe|inexistente)|usuario desconocido|cuenta (inexistente|no existe)|account (has been )?(disabled|deleted|closed|inactive)/i;
+const B_POLICY =
+  /5\.7\.\d|spam|policy|blocked|black\s*list|block\s*list|reputation|greylist|rate limit|too many|content rejected|virus|dmarc|spf|dkim|quota|mailbox full|too large|size limit|access denied|not authorized|relay access/i;
+const B_SUBJECT =
+  /^\s*(?:undeliverable|undelivered mail|delivery status notification|returned mail|mail delivery (?:failed|failure|subsystem)|failure notice|delivery (?:has )?failed|delivery incomplete|message not delivered|no se (?:pudo|puede|ha podido) entregar|correo no entregado|mensaje no entregado|no entregado|non remis|unzustellbar|mancata consegna|mensagem n[aã]o entregue)/i;
+
+/** ¿Es un aviso de entrega fallida? Devuelve su ficha, o null si es un correo normal. */
+export function bounceInfo(fromEmail: string, subject: string, contentType: string, rawBody: string, xFailedRecipients = ""): BounceInfo | null {
+  const from = (fromEmail || "").toLowerCase();
+  const body = rawBody || "";
+  const daemon = /^(mailer-daemon|postmaster)@/.test(from) || /mail.*daemon/.test(from) || /^microsoftexchange[0-9a-f]{16,}@/.test(from);
+  // multipart/report también es el acuse de LECTURA (disposition-notification): ése no es un rebote.
+  const report = (/multipart\/report/i.test(contentType || "") && /delivery-status/i.test(contentType || "")) || /Content-Type:\s*message\/delivery-status/i.test(body);
+  const subjBounce = B_SUBJECT.test(subject || "");
+  const bodyDsn = /Diagnostic-Code:|Final-Recipient:|This is the mail system at host|delivery to the following recipients?|could not be delivered|wasn'?t delivered to|couldn'?t be delivered|no se pudo entregar|no se ha podido entregar/i.test(body);
+  const failedHeader = (xFailedRecipients || "").trim();
+  if (!(report || failedHeader || (daemon && (subjBounce || bodyDsn)) || (subjBounce && bodyDsn))) return null;
+
+  // Sólo se juzga lo que escribe el servidor que rebota. Debajo va la copia de NUESTRO correo
+  // (con sus cabeceras DKIM/SPF y su texto): si se leyera, una palabra nuestra decidiría la clase.
+  // Los avisos suelen venir en quoted-printable: una línea larga llega partida con "=" al final
+  // ("blocked using S=" / "pamhaus"). Se vuelve a unir antes de leerla.
+  const notice = body.split(/Content-Type:\s*(?:message\/rfc822|text\/rfc822-headers)|-{2,}\s*The header of the original message|-{3,}\s*This is a copy of the message|-{3,}\s*Original message\s*-{3,}|-{3,}\s*Mensaje original\s*-{3,}/i)[0]
+    .replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/g, (_, h) => { const c = parseInt(h, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : " "; });
+  // La explicación en claro: "reason: 550 5.4.1 Recipient address rejected: Access denied" (IONOS),
+  // el Diagnostic-Code del estándar o la línea que sigue a la dirección que falló.
+  const explain = (
+    notice.match(/reason:\s*([^\n]{3,300})/i)?.[1]
+    || notice.match(/Diagnostic-Code:\s*([^\n]+(?:\n[ \t]+[^\n]+)*)/i)?.[1]
+    || notice.match(/(?:address(?:\(es\))?\s+failed|could not be delivered[^\n]*|no se pudo entregar[^\n]*)[:\s]*\n+\s*<?\S+@\S+>?:?[ \t]*\n?\s*([^\n]{5,300})/i)?.[1]
+    || notice.match(/^[^\n]*\b[45][0-9]{2}[ -][^\n]{4,300}/im)?.[0]
+    || ""
+  ).replace(/\s+/g, " ").trim();
+  const diagLines: string[] = [
+    ...(notice.match(/^(?:Status|Diagnostic-Code|Action|Remote-MTA):[^\n]*/gim) || []),
+    ...(notice.match(/^[^\n]*\b[45][0-9]{2}[ -][^\n]*/gim) || []).slice(0, 6),
+    ...(explain ? [explain] : []),
+  ];
+  const diag = diagLines.join("\n");
+  const status = diag.match(/Status:\s*([245]\.\d+\.\d+)/i)?.[1] || diag.match(/\b([45]\.\d+\.\d+)\b/)?.[1] || "";
+  const smtp = diag.match(/\b([45][0-9]{2})[ -]/)?.[1] || "";
+  const code = status || smtp;
+  const failedAction = /^Action:\s*failed/im.test(diag);
+  const delayed = !failedAction && (/^Action:\s*delayed/im.test(diag) || /^4/.test(code) || /delayed|retras|still being retried|se seguir[aá] intentando/i.test(subject || ""));
+  const permanent = !delayed;
+  const cls: BounceClass = delayed ? "temporary"
+    : (B_RECIPIENT_GONE.test(diag) && !B_POLICY.test(diag)) ? "recipient_gone"
+    : B_POLICY.test(diag) ? "policy" : "other";
+
+  const emails = new Set<string>();
+  const push = (e?: string | null) => {
+    const v = (e || "").trim().toLowerCase().replace(/^<|>$/g, "");
+    if (/^[^@\s<>"]+@[^@\s<>"]+\.[^@\s<>"]+$/.test(v) && !isAutomatedSender(v)) emails.add(v);
+  };
+  for (const m of body.matchAll(/(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s<>;]+@[^\s<>;]+)>?/gi)) push(m[1]);
+  for (const m of body.matchAll(/X-Failed-Recipients:\s*<?([^\s<>;,]+@[^\s<>;,]+)>?/gi)) push(m[1]);
+  for (const e of failedHeader.split(/[,\s]+/)) push(e);
+  // Avisos sin campos DSN (Exchange, Gmail): la dirección va en la frase que explica el fallo.
+  if (emails.size === 0) {
+    // IONOS / Exim: "The following address(es) failed:" y la dirección en la línea de debajo.
+    const ex = notice.match(/failed:\s*\n+\s*<?([^\s<>:;,]+@[^\s<>:;,]+)>?:?/i);
+    if (ex) push(ex[1]);
+  }
+  if (emails.size === 0) {
+    const m = body.slice(0, 4000).match(/(?:delivered to|deliver(?:y)? to|message to|mensaje (?:a|para)|recipients?|destinatarios?|entregar a|address)[^@\n]{0,80}?<?([^\s<>;,()"]+@[^\s<>;,()"]+\.[a-z]{2,})>?/i);
+    if (m) push(m[1]);
+  }
+  const firstDiag = (explain || diagLines.find((l) => !/^(Action|Status|Remote-MTA):/i.test(l)) || diagLines[0] || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return { recipients: Array.from(emails), code, cls, permanent, diag: firstDiag };
+}

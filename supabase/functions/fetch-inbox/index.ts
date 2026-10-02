@@ -3,9 +3,11 @@ import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { isWarmupMessage } from "../_shared/inbox-filters.ts";
-import { extractPermanentBounceRecipients, isAutomatedSender } from "../_shared/bounce.ts";
-import { repairMojibakeBytes } from "../_shared/reply-text.ts";
 import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
+import {
+  INBOUND_FETCH_ITEMS, addressOf, autoSignal, decodeMimeWords, headerValue, imapCompleted, parseInboundItem, pickFolders, refIds, splitFetchItems,
+  type FetchItem, type InboundMessage,
+} from "../_shared/imap-parse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,18 +15,6 @@ const corsHeaders = {
 };
 
 interface ParsedAttachment { name: string; mime: string; base64: string; size?: number; oversized?: boolean }
-
-interface ImapMessage {
-  from_email: string;
-  from_name: string;
-  subject: string;
-  body_text: string;
-  body_html: string;
-  message_id: string;
-  date: string;
-  ref_chain: string;
-  attachments: ParsedAttachment[];
-}
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // store the binary up to 25 MB; bigger → name-only chip
 const MAX_ATTACHMENTS_PER_MSG = 10;
@@ -71,13 +61,18 @@ async function probeInfra(): Promise<void> {
           exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='resolve_sent_by_domains') as fn_resolve,
           exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='suppress_email_global') as fn_suppress,
           exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='campaign_metrics_for_user') as fn_metrics,
-          exists(select 1 from storage.buckets where id='inbox-attachments') as bucket_att`;
+          exists(select 1 from storage.buckets where id='inbox-attachments') as bucket_att,
+          exists(select 1 from information_schema.columns where table_schema='public' and table_name='inbox_messages' and column_name='auto_signal') as col_auto,
+          exists(select 1 from information_schema.columns where table_schema='public' and table_name='email_accounts' and column_name='imap_rescan') as col_rescan,
+          exists(select 1 from information_schema.tables where table_schema='public' and table_name='inbox_ingest_log') as tbl_log,
+          exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='inbox_rescan_judge') as fn_judge`;
       const x = (r as any[])[0] || {};
       if (x.col_uid) uidStateColReady = true;
       if (x.fn_resolve) sentResolveRpcReady = true;
       if (x.fn_suppress) suppressFnReady = true;
       if (x.col_ref && x.fn_metrics) metricsFnReady = true;
       if (x.col_att && x.bucket_att) attachmentInfraReady = true;
+      if (x.col_auto && x.col_rescan && x.tbl_log && x.fn_judge) ingestInfraReady = true;
     } finally {
       await sql.end({ timeout: 3 });
     }
@@ -85,6 +80,10 @@ async function probeInfra(): Promise<void> {
     console.error("infra probe failed (falling back to ensure* DDL path):", (e as Error).message);
   }
 }
+
+// Migración 20261002140000 (registro de entrada, repaso, señal de respuesta automática). Si aún
+// no está aplicada, la sincronización sigue como antes y simplemente no usa nada de eso.
+let ingestInfraReady = false;
 
 let attachmentInfraReady = false;
 async function ensureAttachmentInfra(adminClient: ReturnType<typeof createClient>): Promise<boolean> {
@@ -312,293 +311,6 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-/** Remove null bytes and invalid Unicode escape sequences that PostgreSQL rejects */
-function sanitizeForPostgres(text: string): string {
-  if (!text) return "";
-  // Remove null bytes (\u0000)
-  let clean = text.replace(/\u0000/g, "");
-  // Remove invalid Unicode escape sequences (backslash + u + hex)
-  clean = clean.replace(/\\u[0-9a-fA-F]{4}/g, "");
-  // Remove other problematic control characters (except newline, tab, carriage return)
-  clean = clean.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-  return clean;
-}
-
-/** Normalize a charset label to one accepted by TextDecoder. */
-function normalizeCharset(cs?: string | null): string {
-  if (!cs) return "utf-8";
-  const c = cs.toLowerCase().trim().replace(/['"]/g, "").replace(/\s+/g, "");
-  // Common aliases
-  if (c === "utf8" || c === "utf-8" || c === "unicode-1-1-utf-8") return "utf-8";
-  if (c === "us-ascii" || c === "ascii") return "utf-8"; // ASCII is UTF-8 compatible
-  if (c === "latin1" || c === "latin-1") return "iso-8859-1";
-  if (c === "cp1252" || c === "cp-1252") return "windows-1252";
-  if (c.startsWith("iso8859")) return "iso-8859" + c.slice(7);
-  if (c.startsWith("windows1") && !c.includes("-")) return "windows-" + c.slice(7);
-  return c;
-}
-
-/** Safely decode bytes with a charset, falling back if the charset is unknown. */
-function safeDecode(bytes: Uint8Array, charset?: string | null): string {
-  const cs = normalizeCharset(charset);
-  try {
-    return new TextDecoder(cs, { fatal: false }).decode(bytes);
-  } catch {
-    // Fallback chain: windows-1252 (superset of latin1, handles most western mail)
-    try { return new TextDecoder("windows-1252", { fatal: false }).decode(bytes); }
-    catch {
-      try { return new TextDecoder("iso-8859-1", { fatal: false }).decode(bytes); }
-      catch { return new TextDecoder("utf-8", { fatal: false }).decode(bytes); }
-    }
-  }
-}
-
-/** Decode a sequence of quoted-printable hex bytes using the declared charset. */
-function decodeQPBytes(text: string, charset?: string): string {
-  const withSpaces = text.replace(/_/g, " ");
-  const byteChunks: number[] = [];
-  let i = 0;
-  while (i < withSpaces.length) {
-    if (withSpaces[i] === "=" && i + 2 < withSpaces.length && /[0-9A-Fa-f]{2}/.test(withSpaces.substring(i + 1, i + 3))) {
-      byteChunks.push(parseInt(withSpaces.substring(i + 1, i + 3), 16));
-      i += 3;
-    } else {
-      byteChunks.push(withSpaces.charCodeAt(i) & 0xff);
-      i++;
-    }
-  }
-  return safeDecode(new Uint8Array(byteChunks), charset);
-}
-
-/** Decode MIME encoded-words like =?UTF-8?Q?...?= or =?ISO-8859-1?B?...?= */
-function decodeMimeWords(raw: string): string {
-  if (!raw) return "";
-  // Collapse whitespace between adjacent encoded-words first (RFC 2047)
-  const collapsed = raw.replace(/\?=\s+=\?/g, "?==?");
-  return collapsed.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_, charset, encoding, text) => {
-    if (encoding.toUpperCase() === "Q") {
-      return decodeQPBytes(text, charset);
-    }
-    try {
-      const binary = atob(text.replace(/\s+/g, ""));
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return safeDecode(bytes, charset);
-    } catch { return text; }
-  }).trim();
-}
-
-/** Detect the charset declared in a MIME header block (Content-Type: ...; charset=...) */
-function detectCharset(raw: string): string {
-  if (!raw) return "utf-8";
-  const m = raw.match(/charset\s*=\s*"?([A-Za-z0-9_\-:.+]+)"?/i);
-  return normalizeCharset(m ? m[1] : "utf-8");
-}
-
-/** Detect the Content-Transfer-Encoding (quoted-printable, base64, 7bit, 8bit, binary) */
-function detectTransferEncoding(raw: string): string {
-  const m = raw.match(/Content-Transfer-Encoding\s*:\s*([^\r\n;]+)/i);
-  return (m ? m[1].trim().toLowerCase() : "7bit");
-}
-
-/** Re-decode a string that was wrongly read as UTF-8 from raw bytes,
- *  by mapping each char back to its original byte and decoding with the right charset. */
-function reinterpretBytes(text: string, charset: string): string {
-  const bytes = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
-  return safeDecode(bytes, charset);
-}
-
-function stripCssText(t: string): string {
-  // (1) whole rule blocks — selector/@media + { declarations } — only when the inside LOOKS like
-  // CSS (has ":" plus ";" or "!important"), so real prose with braces survives. Runs 3x so the
-  // outer of a nested "@media { .x { … } }" falls once its inner block is gone.
-  for (let i = 0; i < 3; i++) {
-    // selector must stay on ONE line (no \n in the class) or it swallows the words before the
-    // block ("Invitation\n\nbody{…}" used to lose "Invitation").
-    t = t.replace(/(^|[\s>])(@(?:media|font-face|keyframes|import|charset)[^{}\n]{0,120}|[.#]?[A-Za-z*][\w.,:#>*[\]"'=-]*(?:[ \t]+[\w.,:#>*[\]"'=(-]+){0,6}\)?)\{[^{}]{0,600}(?:!important|;|:)[^{}]{0,600}\}/g, " ");
-    t = t.replace(/(^|[\s>])[^\s{}]{0,80}\{\s*\}/g, " "); // now-empty shells
-  }
-  // (2) leftover pure-CSS lines: "padding-left: 10px !important;" / stray "}" / "selector {"
-  t = t.replace(/^\s*[a-zA-Z-]{2,40}\s*:\s*[^;{}\n]{1,160};\s*(?:!important;?\s*)?$/gm, "");
-  t = t.replace(/^[^\n{}]{0,100}\{\s*$/gm, "");
-  t = t.replace(/^\s*\}\s*$/gm, "");
-  t = t.replace(/^[ \t]*@(media|font-face|keyframes|import|charset)[^\n]*$/gim, ""); // headerless leftovers
-  return t;
-}
-
-/** Multipart-aware: pick the text/plain part (else the first non-multipart part) of a multipart body and
- *  decode it by ITS OWN Content-Transfer-Encoding / charset. The old whole-body path ran atob() over
- *  "part1 + boundary + part2" (which fails) and stored Outlook replies as raw base64 (~6k unreadable
- *  bodies). Returns null when the body is not multipart so the single-part path handles it. */
-function decodeMultipartPlain(raw: string, defaultCharset: string): string | null {
-  const bm = raw.match(/(?:^|\r?\n)--([A-Za-z0-9'()+_,./:=?-]{10,})\r?\n/);
-  if (!bm) return null;
-  const esc = bm[1].replace(/[^A-Za-z0-9_]/g, (c) => "\\" + c);
-  const parts = raw.split(new RegExp("(?:^|\r?\n)--" + esc + "(?:--)?(?:\r?\n|$)"));
-  const cands = parts.map((p) => { const i = p.search(/\r?\n\r?\n/); return i < 0 ? null : { hdr: p.slice(0, i), body: p.slice(i).replace(/^\r?\n\r?\n/, "") }; })
-    .filter((x): x is { hdr: string; body: string } => !!x && /content-type\s*:/i.test(x.hdr) && x.body.trim().length > 0);
-  if (!cands.length) return null;
-  const isMulti = (c: { hdr: string }) => /content-type\s*:\s*multipart\//i.test(c.hdr);
-  const isBinaryPart = (c: { hdr: string }) => /content-type\s*:\s*(image|application|audio|video)\//i.test(c.hdr) || /content-disposition\s*:\s*attachment/i.test(c.hdr);
-  // Outlook nests the text inside multipart/alternative, INSIDE a multipart/related that also
-  // carries the inline signature images. At this level there is no text/plain candidate, so the
-  // old fallback ("first non-multipart part") picked the JPEG: the reply's body_text became image
-  // bytes and "no estamos interesados" was classified from them. Descend into nested parts first.
-  const hasPlain = cands.some((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr));
-  if (!hasPlain) {
-    for (const c of cands) {
-      if (!isMulti(c)) continue;
-      const inner = decodeMultipartPlain(c.body, defaultCharset);
-      if (inner && inner.trim().length > 0) return inner;
-    }
-  }
-  const pick = cands.find((c) => /content-type\s*:\s*text\/plain/i.test(c.hdr))
-    || cands.find((c) => !isMulti(c) && !isBinaryPart(c))
-    || cands.find((c) => !isMulti(c))
-    || cands[0];
-  const cte = (pick.hdr.match(/Content-Transfer-Encoding\s*:\s*([^\r\n;]+)/i)?.[1] || "7bit").trim().toLowerCase();
-  const cs = (pick.hdr.match(/charset="?([^"\s;]+)"?/i)?.[1] || defaultCharset).toLowerCase();
-  let body = pick.body;
-  if (cte === "base64") {
-    try { const bin = atob(body.replace(/\s+/g, "")); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); body = safeDecode(bytes, cs); } catch { return null; }
-  } else if (cte === "quoted-printable") {
-    body = body.replace(/=\r?\n/g, "").replace(/(?:=[0-9A-Fa-f]{2})+/g, (m) => { const by: number[] = []; for (let i = 0; i < m.length; i += 3) by.push(parseInt(m.substring(i + 1, i + 3), 16)); return safeDecode(new Uint8Array(by), cs); });
-  } else if (cs !== "utf-8" && /[\x80-\xFF]/.test(body)) {
-    body = reinterpretBytes(body, cs);
-  }
-  if (/content-type\s*:\s*text\/html/i.test(pick.hdr)) body = body.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ");
-  return body;
-}
-
-/** Clean raw IMAP body_text into readable plain text (charset-aware) */
-function cleanBody(raw: string, defaultCharset = "utf-8"): string {
-  if (!raw) return "";
-  // Multipart → decode the right part by its own headers, then continue with the generic cleanup
-  // (transfer-encoding already applied, so the whole-body decode below must not run again).
-  const mp = decodeMultipartPlain(raw.replace(/^\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*/i, ""), defaultCharset);
-  if (mp !== null) raw = "Content-Transfer-Encoding: 8bit\n\n" + mp;
-  // The charset declared in the part header (if present) overrides the default
-  const charset = detectCharset(raw) || defaultCharset;
-  const transferEnc = detectTransferEncoding(raw);
-
-  let text = raw;
-  // Strip the IMAP item marker. With a PARTIAL fetch the server answers "BODY[TEXT]<0> {N}" — the old
-  // regex lacked the "<0>" part, so the marker survived and the HTML-tag stripper below turned it into
-  // "BODY[TEXT] {N}" at the top of ~38k stored bodies. Also tolerate BODY.PEEK and a stray leading space.
-  text = text.replace(/^\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*/i, "");
-  // Outlook/Exchange multipart preamble + the boundary token right after it (with or
-  // without its leading "--") — otherwise "This is a multi-part message in MIME format."
-  // and a bare boundary line leak into the stored body.
-  text = text.replace(
-    /^[ \t]*This is a multi-?part message in MIME format\.?[ \t]*\r?\n+(?:[ \t]*(?:--)?[A-Za-z0-9'()+_,./:=?-]{10,}[ \t]*\r?\n)?/gim,
-    "",
-  );
-  text = text.replace(/----_[^\r\n]+/g, "");
-  text = text.replace(/--[a-zA-Z0-9_=-]+--?\s*/g, "");
-  text = text.replace(/Content-Type:[^\n]+/gi, "");
-  text = text.replace(/Content-Transfer-Encoding:[^\n]+/gi, "");
-  text = text.replace(/Content-Disposition:[^\n]+/gi, "");
-  text = text.replace(/charset="?[^"\s;]+"?/gi, "");
-  text = text.replace(/<meta[^>]*>/gi, "");
-  text = text.replace(/=\r?\n/g, "");
-
-  if (transferEnc === "base64") {
-    // The whole body is base64 — decode bytes with the declared charset
-    try {
-      const cleaned = text.replace(/\s+/g, "");
-      const binary = atob(cleaned);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      text = safeDecode(bytes, charset);
-    } catch { /* fall through */ }
-  } else {
-    // Quoted-printable: decode each =XX run with the declared charset
-    text = text.replace(/(?:=[0-9A-Fa-f]{2})+/g, (match) => {
-      const bytes: number[] = [];
-      for (let i = 0; i < match.length; i += 3) bytes.push(parseInt(match.substring(i + 1, i + 3), 16));
-      return safeDecode(new Uint8Array(bytes), charset);
-    });
-    // If the part is NOT quoted-printable but still has high-bit chars that arrived
-    // as latin1 bytes (because we read the whole IMAP stream as latin1), reinterpret.
-    if (charset !== "utf-8" && /[\x80-\xFF]/.test(text)) {
-      text = reinterpretBytes(text, charset);
-    }
-  }
-
-  // Last resort: if what we have is still one pure base64 blob (headers missing/misread), decode it.
-  if (/^[A-Za-z0-9+\/=\s]{40,}$/.test(text) && !/\s[a-z]{2,}\s[a-z]{2,}\s/i.test(text)) {
-    try {
-      const bin = atob(text.replace(/\s+/g, ""));
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const dec = safeDecode(bytes, charset);
-      if (dec && !/\uFFFD{3,}/.test(dec) && /[A-Za-z]{3,}/.test(dec)) text = dec;
-    } catch { /* keep as is */ }
-  }
-  // HTML-only emails: drop <style>/<script>/<head>/comments BEFORE stripping tags, or their
-  // CSS/JS text survives as body content (real case: mailinblack invitation showing raw CSS).
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<head[\s\S]*?<\/head>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
-  text = text.replace(/<[^>]+>/g, " ");
-  text = stripCssText(text); // already-tagless CSS (partial fetch cut the tags off)
-  text = text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"');
-  // Strip any U+FFFD that might still leak (last resort cleanup)
-  text = text.replace(/\uFFFD/g, "");
-  text = text.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").replace(/\n /g, "\n").replace(/ \n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  const lines = text.split("\n");
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const line of lines) {
-    const normalized = line.trim().toLowerCase();
-    if (normalized.length > 10 && seen.has(normalized)) continue;
-    if (normalized.length > 10) seen.add(normalized);
-    deduped.push(line);
-  }
-  return deduped.join("\n").trim();
-}
-
-/** Extract HTML body from raw IMAP text (charset-aware) */
-function extractHtml(raw: string): string {
-  if (!raw) return "";
-  // Look for the text/html part. Its body runs until the next MIME BOUNDARY LINE (a line that is
-  // "--" + boundary token, optionally "--"-closed) — NOT until any "--" that appears inside the HTML.
-  // The old lookahead (?=--[a-zA-Z0-9_=-]+) stopped at Mailchimp's "<!---->" / "<!--[if !mso]><!-->"
-  // comments and at CSS variables ("--x"), so the stored HTML ended inside <head> and the Unibox
-  // painted an empty message (SICE Telecomunicazioni newsletters, 2026-09-11).
-  const htmlMatch = raw.match(/(Content-Type:\s*text\/html[\s\S]*?)(?:\r?\n\r?\n)([\s\S]*?)(?=\r?\n--[A-Za-z0-9'()+_,\-./:=?]{6,}(?:--)?[ \t]*(?:\r?\n|$)|$)/i);
-  if (htmlMatch && htmlMatch[2]) {
-    const headerBlock = htmlMatch[1] || "";
-    const charset = detectCharset(headerBlock) || "utf-8";
-    const transferEnc = detectTransferEncoding(headerBlock);
-    let html = htmlMatch[2].trim();
-
-    if (transferEnc === "base64") {
-      try {
-        const cleaned = html.replace(/\s+/g, "");
-        const binary = atob(cleaned);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        html = safeDecode(bytes, charset);
-      } catch { /* fall through */ }
-    } else {
-      html = html.replace(/=\r?\n/g, "");
-      html = html.replace(/(?:=[0-9A-Fa-f]{2})+/g, (match) => {
-        const bytes: number[] = [];
-        for (let i = 0; i < match.length; i += 3) bytes.push(parseInt(match.substring(i + 1, i + 3), 16));
-        return safeDecode(new Uint8Array(bytes), charset);
-      });
-      if (charset !== "utf-8" && /[\x80-\xFF]/.test(html)) {
-        html = reinterpretBytes(html, charset);
-      }
-    }
-    // Strip stray U+FFFD
-    html = html.replace(/\uFFFD/g, "");
-    return html;
-  }
-  return "";
-}
-
-
 // Only store Spanish/Catalan messages — drop English/other warm-up at import time
 // so the inbox doesn't fill with 10k+ foreign warm-up emails.
 const LANG_ES_CA = /\b(el|la|los|las|del|que|qué|por|para|con|como|pero|porque|cuando|donde|gracias|hola|saludos|cordial|atentamente|estimad[oa]s?|señor|empresa|reunión|información|interesa|interesad[oa]s?|necesito|necesitamos|quiero|queremos|podemos|tenemos|estamos|somos|también|según|sólo|solo|vale|claro|perfecto|encantad[oa]|amb|per|què|gràcies|salutacions|atentament|nosaltres|aquest[a]?|també|molt|més|sense|fins|bon\s?dia|d'acord)\b/gi;
@@ -620,10 +332,36 @@ function isForeignMessage(subject: string, body: string): boolean {
 // { "INBOX": { v: <UIDVALIDITY>, u: <last UID synced> }, "Spam": {...} }.
 type UidState = Record<string, { v: number; u: number }>;
 
+/** Un mensaje leído, con el sitio exacto del buzón del que salió. */
+type FetchedMessage = InboundMessage & { folder: string; uidv: number; recovered?: boolean };
+/** Un mensaje que NO se guarda como correo entrante, con el motivo (se anota, no se tira). */
+type Skip = { folder: string; uidv: number; uid: number; reason: string; from: string; subject: string; message_id: string; date: string };
+
+/** Lo mínimo de un correo (sólo cabeceras) para decidir, en un repaso, si hay que traerlo entero. */
+interface RescanItem { uid: number; mid: string; from: string; refs: string[]; auto: boolean; daemon: boolean }
+/**
+ * Repaso de los últimos N días (02-10-2026). Recorre lo que YA quedó por debajo de la marca de
+ * UID —lo que la sincronización normal no vuelve a mirar— leyendo sólo cabeceras, pregunta a la
+ * base de datos cuáles faltan y son nuestros (judge) y trae enteros sólo ésos. No borra, no mueve
+ * ni marca nada (BODY.PEEK), y lo recuperado pasa por la misma inserción sin duplicados.
+ */
+interface RescanPlan {
+  days: number;
+  since: string;                      // ISO: fijo durante todo el repaso, aunque dure varias pasadas
+  cur: Record<string, number>;        // carpeta → último UID ya repasado
+  maxFetch: number;                   // tope de correos enteros por pasada
+  judge: (items: RescanItem[]) => Promise<number[]>;
+}
+interface RescanResult { cur: Record<string, number>; checked: number; wanted: number; fetched: number; done: boolean; folders: string[] }
+
+const IMAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const imapDay = (d: Date) => `${d.getUTCDate()}-${IMAP_MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
+/** Cadena entre comillas de IMAP: la barra y las comillas van escapadas (una contraseña con `"` rompía el LOGIN). */
+const imapQuote = (s: string) => '"' + String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50,
-  uidState: UidState | null = null, budgetMs = 45_000
-): Promise<{ ok: boolean; messages: ImapMessage[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[] }> {
+  uidState: UidState | null = null, budgetMs = 45_000, rescan: RescanPlan | null = null
+): Promise<{ ok: boolean; messages: FetchedMessage[]; skips: Skip[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[]; firstSync?: string[]; truncated?: boolean; unparsed?: boolean; folders?: string[]; rescan?: RescanResult }> {
   // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
   // block the whole rotating window forever. On timeout the socket is dropped
   // and the account fails cleanly (recorded in errors[] + last_sync stays old).
@@ -657,37 +395,36 @@ async function fetchImapMessages(
       return decoder.decode(buf.subarray(0, n || 0));
     };
 
-    const send = async (tag: string, cmd: string): Promise<string> => {
+    // Lee hasta la línea ETIQUETADA del comando ("A012 OK ..."), con tope de reloj y de tamaño.
+    // `done` dice si esa línea llegó: si no (corte del servidor, tiempo agotado, socket cerrado) lo
+    // leído es SÓLO UNA PARTE y quien llama no puede dar el rango por leído. Antes no se
+    // comprobaba, y una respuesta cortada dejaba avanzar la marca de UID por encima de correos
+    // que nunca se llegaron a leer: se perdían para siempre (auditoría 02-10-2026).
+    // La etiqueta se busca sólo en la cola de la respuesta: el cuerpo de un correo puede contener
+    // el texto "A012 OK" y antes eso daba el comando por terminado a mitad.
+    const sendC = async (tag: string, cmd: string, maxMs = 30000): Promise<{ text: string; done: "OK" | "NO" | "BAD" | null }> => {
       await conn.write(encoder.encode(`${tag} ${cmd}\r\n`));
       let response = "";
-      // Read until the TAGGED completion (`<tag> OK/NO/BAD`) appears, bounded by a WALL-CLOCK
-      // deadline + a byte cap — NOT a fixed iteration count. A large FETCH (many/large bodies with
-      // quoted threads) streams in many small TLS chunks; the old `attempts < 120` cap bailed
-      // mid-response on such mailboxes, silently dropping the TAIL of the stream — i.e. the NEWEST
-      // messages (highest sequence numbers) — so new mail never synced (support@ symptom). Each
-      // read() already has its own 15s timeout; here we keep reading until the response is complete.
-      // Cap at 30s per command (was 60s): each FETCH now streams a 10-message chunk (≤~2.5MB), which
-      // completes in well under 30s — the cap only guillotines a pathological stall so one slow
-      // mailbox can't push a whole sync tick over the edge worker's 150s wall. A truncated mailbox
-      // just finishes on the next tick (dedupe makes re-reads free).
-      const deadline = Date.now() + 30000;
+      const deadline = Date.now() + maxMs;
       while (Date.now() < deadline) {
         let chunk: string;
         try { chunk = await read(); } catch { break; } // read timeout / socket dropped → return what we have
         if (!chunk) break; // EOF (socket closed)
         response += chunk;
-        if (response.includes(`${tag} OK`) || response.includes(`${tag} NO`) || response.includes(`${tag} BAD`)) break;
+        const done = imapCompleted(response.slice(-400), tag);
+        if (done) return { text: response, done };
         if (response.length > 10_000_000) break; // hard safety cap (far above any real fetch window)
       }
-      return response;
+      return { text: response, done: null };
     };
+    const send = async (tag: string, cmd: string): Promise<string> => (await sendC(tag, cmd)).text;
 
     await read(); // Server greeting
 
-    const loginResp = await send("A001", `LOGIN "${username}" "${password}"`);
+    const loginResp = await send("A001", `LOGIN ${imapQuote(username)} ${imapQuote(password)}`);
     if (!loginResp.includes("A001 OK")) {
       conn.close();
-      return { ok: false, messages: [], bouncedRecipients: [], error: `IMAP login failed` };
+      return { ok: false, messages: [], skips: [], bouncedRecipients: [], error: `IMAP login failed` };
     }
 
     // Tag generator for the variable number of IMAP commands below.
@@ -697,20 +434,21 @@ async function fetchImapMessages(
     // Discover folders so we also scan Spam/Junk — cold-email replies and warmup
     // very often land there on fresh mailboxes, and INBOX-only sync misses them.
     let spamFolder: string | null = null;
+    let extraFolders: string[] = [];
+    let allFolders: string[] = [];
     try {
       const listResp = await send(nextTag(), `LIST "" "*"`);
-      const names: string[] = [];
-      for (const m of listResp.matchAll(/\* LIST \([^)]*\)\s+(?:"[^"]*"|\S+)\s+(?:"([^"]+)"|(\S+))\r?\n/gi)) {
-        names.push((m[1] || m[2] || "").trim());
-      }
-      spamFolder = names.find((f) => /(^|[./])spam$|junk|deseado|unwanted|bulk/i.test(f)) || null;
+      const picked = pickFolders(listResp);
+      spamFolder = picked.spam; extraFolders = picked.extra; allFolders = picked.all;
     } catch { /* LIST unsupported — fall back to INBOX only */ }
 
-    const targets = ["INBOX", ...(spamFolder ? [spamFolder] : [])];
-    const messages: ImapMessage[] = [];
+    const targets = ["INBOX", ...(spamFolder ? [spamFolder] : []), ...extraFolders];
+    const messages: FetchedMessage[] = [];
+    const skips: Skip[] = [];
     const bouncedRecipients = new Set<string>();
     const seenIds = new Set<string>();
     const limit = Math.max(50, Math.min(fetchLimit, 1000));
+    const ctx = { accountEmail, imapUsername };
 
     // ── INCREMENTAL (UID) SYNC ────────────────────────────────────────────────
     // This is what makes the Unibox near-realtime with 1k+ mailboxes. Every SELECT returns
@@ -722,14 +460,38 @@ async function fetchImapMessages(
     // per-mailbox time budget guarantees one pathological mailbox can never hog a wave.
     const uidStateOut: UidState = {};
     const unchangedFolders: string[] = [];
+    const firstSync: string[] = [];
     let maxUidSeen = 0; // reset per folder; the highest UID actually parsed
     const mailboxStart = Date.now();
     const overBudget = () => Date.now() - mailboxStart > budgetMs;
+    // Respuesta cortada: el socket queda descuadrado (lo que falte por llegar se mezclaría con el
+    // comando siguiente), así que se deja de usar esta conexión. Lo ya leído ENTERO vale.
+    let broken = false;
+    let unparsed = false;
+    const rs: RescanResult | null = rescan ? { cur: { ...(rescan.cur || {}) }, checked: 0, wanted: 0, fetched: 0, done: true, folders: allFolders } : null;
+
+    /** Un elemento de FETCH ya troceado → a `messages` o a `skips`. */
+    const take = (item: FetchItem, folder: string, uidv: number, recovered = false) => {
+      // Un aviso suelto del servidor ("* 7 FETCH (FLAGS (\Seen))") no trae correo: no es un mensaje.
+      if (!item.header && !item.text) return;
+      const parsed = parseInboundItem(item, ctx);
+      for (const r of parsed.suppress) bouncedRecipients.add(r);
+      if (parsed.status === "skipped") {
+        // La copia de un envío nuestro no es correo entrante: no se anota (serían miles).
+        if (parsed.reason !== "own_copy") skips.push({ folder, uidv, uid: parsed.uid, reason: parsed.reason, from: parsed.from, subject: parsed.subject, message_id: parsed.message_id, date: parsed.date });
+        return;
+      }
+      const msg = parsed.msg;
+      // Dedupe across folders (same message can appear in INBOX + a copy)
+      if (msg.message_id && seenIds.has(msg.message_id)) return;
+      if (msg.message_id) seenIds.add(msg.message_id);
+      messages.push({ ...msg, folder, uidv, ...(recovered ? { recovered: true } : {}) });
+    };
 
     for (const folder of targets) {
-      if (overBudget()) break;
+      if (overBudget() || broken) { if (rs) rs.done = false; break; }
       const selTag = nextTag();
-      const selectResp = await send(selTag, `SELECT "${folder}"`);
+      const selectResp = await send(selTag, `SELECT ${imapQuote(folder)}`);
       if (!selectResp.includes(`${selTag} OK`)) continue; // folder missing / not selectable
       const existsMatch = selectResp.match(/\* (\d+) EXISTS/);
       const totalMessages = existsMatch ? parseInt(existsMatch[1]) : 0;
@@ -741,203 +503,146 @@ async function fetchImapMessages(
       const canIncremental = uidValidity > 0 && uidNext > 0 && !!prev && prev.v === uidValidity && prev.u > 0;
       maxUidSeen = canIncremental ? prev.u : 0;
       let cut = false; // set when the time budget stops this folder before all ranges were read
+      const tickUids = new Set<number>(); // lo leído en ESTA pasada (aún sin guardar): el repaso no lo vuelve a pedir
 
       if (totalMessages === 0) {
         if (uidValidity && uidNext) uidStateOut[folder] = { v: uidValidity, u: uidNext - 1 };
         continue;
       }
       // Fast path: nothing new since last sync → skip the FETCH altogether.
-      if (canIncremental && uidNext - 1 <= prev.u) {
+      const nothingNew = canIncremental && uidNext - 1 <= prev.u;
+      if (nothingNew) {
         unchangedFolders.push(folder);
         uidStateOut[folder] = { v: uidValidity, u: prev.u };
-        continue;
-      }
-
-      const newCount = canIncremental ? (uidNext - 1 - prev.u) : Infinity;
-      // Incremental sync ALWAYS walks UID ranges from the last watermark UPWARD (oldest-first),
-      // capped at `limit` messages per tick. A backlog bigger than the limit is then DRAINED
-      // across ticks instead of skipped: the old code fell back to a sequence "last N" fetch and
-      // still advanced the watermark to UIDNEXT-1, so the oldest (newCount-limit) messages were
-      // lost forever (e.g. after an auth_failed pause or a cron outage). Only a first sync (no
-      // prior state) uses the sequence "last N" path.
-      const useUid = canIncremental;
-      const start = Math.max(1, totalMessages - limit + 1);
-      // BODY.PEEK keeps messages unread on the server. PARTIAL fetch `<0.262144>` caps each message
-      // body at the first 256KB (a huge quoted thread could be MEGABYTES and blew the worker memory).
-      // ROBUSTNESS: fetch in SMALL BATCHES (10 per command) so each IMAP response stays tiny and is
-      // ALWAYS read to completion — this is what guarantees the newest mail is never truncated.
-      const CHUNK = 10;
-      const ranges: string[] = [];
-      // Cap this tick's window to the OLDEST `limit` new UIDs so a huge backlog is drained a
-      // slice per tick (never truncated-and-skipped). When the backlog fits, this equals
-      // (uidNext-1) → identical to the previous behaviour.
-      const uidHi = Math.min(uidNext - 1, (prev?.u || 0) + limit);
-      const drainedFull = useUid && uidHi >= uidNext - 1; // reached the end of the new range this tick
-      if (useUid) {
-        for (let lo = prev!.u + 1; lo <= uidHi; lo += CHUNK) ranges.push(`UID FETCH ${lo}:${Math.min(lo + CHUNK - 1, uidHi)}`);
       } else {
-        for (let lo = start; lo <= totalMessages; lo += CHUNK) ranges.push(`FETCH ${lo}:${Math.min(lo + CHUNK - 1, totalMessages)}`);
-      }
-      for (const rangeCmd of ranges) {
-      if (overBudget()) { cut = true; break; }
-      // `UID` is requested explicitly so BOTH paths report each message's UID → high-water mark.
-      const fetchResp = await send(nextTag(), `${rangeCmd} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO CONTENT-TYPE CONTENT-TRANSFER-ENCODING)] BODY.PEEK[TEXT]<0.262144>)`);
-
-      const parts = fetchResp.split(/\* \d+ FETCH/);
-      for (const part of parts) {
-        if (!part.trim()) continue;
-        // High-water mark: the item's UID comes first in the FETCH response (" (UID 4567 BODY[...").
-        const uidM = part.match(/^\s*\(?\s*UID (\d+)/);
-        if (uidM) maxUidSeen = Math.max(maxUidSeen, parseInt(uidM[1]));
-
-        // Capture header value INCLUDING folded continuation lines (RFC 5322: a
-        // header can wrap onto following lines that start with space/tab). The old
-        // regex stopped at the first newline, so a long display name pushed the
-        // <email> onto line 2 and we stored the NAME as the address — which then
-        // made replies fail ("RCPT TO:<ignacio garcia cuadrado>" → SMTP 500).
-        const headerVal = (re: RegExp) => {
-          const m = part.match(re);
-          return m ? m[1].replace(/\r?\n[ \t]+/g, " ").trim() : "";
-        };
-        const fromStr = headerVal(/From:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
-        // Subject uses [ \t]* (NOT \s*): with an EMPTY "Subject:" header, \s* swallowed the
-        // newline + the leading space of the next IMAP line (" BODY[TEXT]<0> {262}") and stored
-        // that section marker as the subject — a real reply then went out as
-        // "Re: BODY[TEXT]<0> {262}". Horizontal whitespace only means an empty subject stays
-        // empty ("(sin asunto)"). The guard below also rejects any leaked IMAP framing.
-        // Scope the Subject lookup to the HEADER block only (before the first blank line) and
-        // anchor it to a line start — otherwise an EMPTY "Subject:" let the unanchored regex run
-        // on into the body and pick up a QUOTED "> Subject: …" from the original mail.
-        const headerBlockForSubject = part.split(/\r?\n\r?\n/)[0] || "";
-        const subjM = headerBlockForSubject.match(/^Subject:[ \t]*(.*(?:\r?\n[ \t]+.+)*)/im);
-        let subjectStr = subjM ? subjM[1].replace(/\r?\n[ \t]+/g, " ").trim() : "";
-        if (/^\s*(BODY\[|BODY\.PEEK\[|\{\d+\}\s*$)/i.test(subjectStr)) subjectStr = "";
-        const dateMatch = part.match(/Date:\s*(.+?)(?:\r?\n)/i);
-        // Message-ID — folded-aware, and pull the <id@host> reliably (a missing/
-        // mangled Message-ID is what makes a reply land as a NEW message instead of
-        // threading). Prefer the value inside <…>; else the bare token.
-        const msgIdRaw = headerVal(/Message-ID:\s*(.+(?:\r?\n[ \t]+.+)*)/i);
-        const msgIdInner = msgIdRaw.match(/<([^<>\s]+)>/) || msgIdRaw.match(/([^\s<>]+@[^\s<>]+)/);
-        const msgIdMatch: RegExpMatchArray | null = msgIdInner ? ([msgIdInner[0], msgIdInner[1]] as unknown as RegExpMatchArray) : null;
-        // Thread chain: References + In-Reply-To of the received message, so a
-        // reply can carry the FULL chain and thread perfectly in every client.
-        // Destinatarios: "Para" y "Cc". Sin esto no se veía a quién más escribían (24-09-2026:
-        // una respuesta sumaba a un compañero en el "Para" y en el Unibox no aparecía por ningún lado).
-        const toStr = headerVal(/^To:\s*(.+(?:\r?\n[ \t]+.+)*)/im).slice(0, 2000);
-        const ccStr = headerVal(/^Cc:\s*(.+(?:\r?\n[ \t]+.+)*)/im).slice(0, 2000);
-        const referencesStr = headerVal(/References:\s*(<[^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);
-        const inReplyToStr = headerVal(/In-Reply-To:\s*(<[^\r\n>]+>)/i);
-        const refChain = Array.from(new Set(
-          `${referencesStr} ${inReplyToStr}`.match(/<[^<>\s]+>/g) || []
-        )).join(" ").slice(0, 3000);
-
-        let fromEmail = "";
-        let fromName = "";
-        if (fromStr) {
-          // Prefer <email>; else the first bare addr token anywhere in the value.
-          // NEVER fall back to the whole string (that's how a name became the address).
-          const emailMatch = fromStr.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/) || fromStr.match(/([^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+)/);
-          fromEmail = emailMatch ? emailMatch[1] : "";
-          const nameMatch = fromStr.match(/^"?([^"<]+?)"?\s*</);
-          fromName = nameMatch ? nameMatch[1].trim() : "";
-        }
-
-        // Skip messages sent by the account itself (sent copies in the folder)
-        const fromLower = fromEmail.toLowerCase().trim();
-        const accountLower = accountEmail.toLowerCase().trim();
-        const imapLower = imapUsername.toLowerCase().trim();
-        if (fromLower && (fromLower === accountLower || fromLower === imapLower)) continue;
-
-        const bodyParts = part.split(/\r?\n\r?\n/);
-        // Strip ONLY the trailing IMAP framing that follows the body — the tagged
-        // completion line ("A005 OK …") and the closing ")" on its own line.
-        // The old code `.replace(/\)[\s\S]*$/,"")` cut at the FIRST ")" anywhere,
-        // destroying every reply containing a paren ("(VG)", "recipient(s)", etc.).
-        // Rejoin the body with "\n\n" (NOT "\n"): the split was on blank lines, so joining with a
-        // single "\n" flattened every paragraph break → the message showed as one cramped blob in
-        // the Unibox. "\n\n" preserves the blank lines between paragraphs (cleanBody caps runs at 2).
-        let rawBody = bodyParts.length > 1 ? bodyParts.slice(1).join("\n\n") : "";
-        rawBody = rawBody
-          .replace(/(\r?\n)?[A-Za-z0-9]{1,8} (OK|NO|BAD)[^\n]*\s*$/, "")
-          .replace(/(\r?\n)?\)\s*$/, "")
-          .trim();
-        // Single-part messages carry Content-Type / Content-Transfer-Encoding in the TOP headers
-        // (which we now fetch), not inside BODY[TEXT]. Without them cleanBody saw a bare base64
-        // blob and stored it verbatim (~6k unreadable bodies). Prepend them when the body has no
-        // MIME headers of its own so the existing charset/encoding decoding just works.
-        if (!/^[\s\S]{0,400}?Content-Transfer-Encoding\s*:/i.test(rawBody)) {
-          const topCte = headerVal(/Content-Transfer-Encoding:[ \t]*([^\r\n]+)/i);
-          const topCt = headerVal(/Content-Type:[ \t]*([^\r\n]+(?:\r?\n[ \t]+[^\r\n]+)*)/i);
-          if (topCte || topCt) {
-            const hdr = (topCt ? "Content-Type: " + topCt.replace(/\r?\n[ \t]+/g, " ") + "\r\n" : "") + (topCte ? "Content-Transfer-Encoding: " + topCte + "\r\n" : "");
-            rawBody = rawBody.replace(/^(\s*BODY(?:\.PEEK)?\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*)/i, "$1" + hdr + "\r\n");
-          }
-        }
-
-        if (fromEmail) {
-          const decodedSubject = decodeMimeWords(subjectStr);
-          // Async bounce (mailer-daemon DSN): capture the failed recipient(s) so
-          // the handler can suppress them globally, THEN skip storing the bounce.
-          for (const r of extractPermanentBounceRecipients(fromEmail, decodedSubject, rawBody)) bouncedRecipients.add(r);
-          if (isAutomatedSender(fromEmail)) continue;
-
-          // Dedupe across folders (same message can appear in INBOX + a copy)
-          const msgId = msgIdMatch ? msgIdMatch[1].trim() : "";
-          if (msgId && seenIds.has(msgId)) continue;
-          if (msgId) seenIds.add(msgId);
-
-          // repairMojibakeBytes: some senders hand us UTF-8 already misread as Latin-1
-          // ("informaciÃ³n"). Repairing it HERE means the stored body is clean for the
-          // rule classifier, the AI, the reply agent and the Unibox alike. Only the safe
-          // byte-level half runs at write time (it is accepted only when it removes
-          // suspicious sequences); the U+FFFD guessing stays at read time.
-          const bodyText = sanitizeForPostgres(repairMojibakeBytes(cleanBody(rawBody)).slice(0, 5000));
-          const bodyHtml = sanitizeForPostgres(repairMojibakeBytes(extractHtml(rawBody)).slice(0, 50000));
-
-          messages.push({
-            from_email: fromEmail.toLowerCase().trim(),
-            from_name: sanitizeForPostgres(decodeMimeWords(fromName)),
-            subject: sanitizeForPostgres(decodedSubject || "(sin asunto)"),
-            body_text: bodyText,
-            body_html: bodyHtml,
-            message_id: msgId,
-            // Sin Date: fecha FIJA, no "ahora". Con "ahora", un correo sin Message-ID ni Date
-            // cambiaba de dedupe_hash en cada pasada y se insertaba (y notificaba) una y otra vez.
-            date: dateMatch ? dateMatch[1].trim() : "1970-01-01T00:00:00.000Z",
-            ref_chain: sanitizeForPostgres(refChain),
-            to_emails: sanitizeForPostgres(decodeMimeWords(toStr)),
-            cc_emails: sanitizeForPostgres(decodeMimeWords(ccStr)),
-            // Los logos de la firma NO son archivos adjuntos: colgarlos como tales llenaba
-            // el Unibox de iconos de 38x38 (facebook.png, instagram.png...) en cada correo.
-            attachments: extractAttachments(rawBody).filter((a) => !looksInline(a)),
-          });
-        }
-      }
-      } // end batch loop (10 messages per FETCH)
-      // Persist the folder's high-water mark. Advance ONLY to the highest UID we ACTUALLY parsed
-      // whenever we did not cleanly drain the whole new range this tick — a budget cut (`cut`), a
-      // capped backlog, or a truncated FETCH — so the unread tail resumes next tick instead of
-      // being skipped forever. Jump straight to UIDNEXT-1 only on a fully-drained incremental tick
-      // (covers trailing UIDs with no stored message, e.g. our own sent copies) or a first sync.
-      if (uidValidity && uidNext) {
-        let advanceTo: number;
-        if (!canIncremental) {
-          advanceTo = cut ? Math.max(prev?.u || 0, maxUidSeen) : (uidNext - 1);
-        } else if (!cut && drainedFull) {
-          advanceTo = uidNext - 1;
+        // Primera vez en esta carpeta (o el servidor la reconstruyó: UIDVALIDITY nuevo): sólo se
+        // traen los últimos N. Se avisa para que el buzón pida un repaso de los últimos días.
+        if (!canIncremental && uidValidity && uidNext) firstSync.push(folder);
+        // Una carpeta PROPIA del buzón que se mira por primera vez puede guardar correo de hace
+        // meses: no se importa en bloque (entraría como recién llegado). Se empieza desde ahora y
+        // lo de los últimos días lo trae el repaso, que sólo recoge lo que es nuestro y falta.
+        if (!canIncremental && extraFolders.includes(folder)) {
+          if (uidValidity && uidNext) uidStateOut[folder] = { v: uidValidity, u: uidNext - 1 };
         } else {
-          advanceTo = Math.max(prev?.u || 0, maxUidSeen);
+        // Incremental sync ALWAYS walks UID ranges from the last watermark UPWARD (oldest-first),
+        // capped at `limit` messages per tick. A backlog bigger than the limit is then DRAINED
+        // across ticks instead of skipped: the old code fell back to a sequence "last N" fetch and
+        // still advanced the watermark to UIDNEXT-1, so the oldest (newCount-limit) messages were
+        // lost forever (e.g. after an auth_failed pause or a cron outage). Only a first sync (no
+        // prior state) uses the sequence "last N" path.
+        const useUid = canIncremental;
+        const start = Math.max(1, totalMessages - limit + 1);
+        // BODY.PEEK keeps messages unread on the server. PARTIAL fetch `<0.262144>` caps each message
+        // body at the first 256KB (a huge quoted thread could be MEGABYTES and blew the worker memory).
+        // ROBUSTNESS: fetch in SMALL BATCHES (10 per command) so each IMAP response stays tiny and is
+        // ALWAYS read to completion — this is what guarantees the newest mail is never truncated.
+        const CHUNK = 10;
+        const ranges: string[] = [];
+        // Cap this tick's window to the OLDEST `limit` new UIDs so a huge backlog is drained a
+        // slice per tick (never truncated-and-skipped). When the backlog fits, this equals
+        // (uidNext-1) → identical to the previous behaviour.
+        const uidHi = Math.min(uidNext - 1, (prev?.u || 0) + limit);
+        const drainedFull = useUid && uidHi >= uidNext - 1; // reached the end of the new range this tick
+        if (useUid) {
+          for (let lo = prev!.u + 1; lo <= uidHi; lo += CHUNK) ranges.push(`UID FETCH ${lo}:${Math.min(lo + CHUNK - 1, uidHi)}`);
+        } else {
+          for (let lo = start; lo <= totalMessages; lo += CHUNK) ranges.push(`FETCH ${lo}:${Math.min(lo + CHUNK - 1, totalMessages)}`);
         }
-        if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo };
+        for (const rangeCmd of ranges) {
+          if (overBudget()) { cut = true; break; }
+          // `UID` and INTERNALDATE are requested explicitly; the items are split by their IMAP
+          // literals, so the order in which the server returns them does not matter.
+          const fr = await sendC(nextTag(), `${rangeCmd} ${INBOUND_FETCH_ITEMS}`);
+          const { items, truncated } = splitFetchItems(fr.text);
+          // Red de seguridad: si el servidor contestó con correos pero no se ha entendido ninguno
+          // (o alguno llega sin UID), NO se da el rango por leído. Mejor un buzón parado y visible
+          // que una marca que avanza por encima de correos sin leer.
+          const usable = items.filter((it) => it.complete && (it.header || it.text));
+          if ((usable.length === 0 && /BODY\[/i.test(fr.text)) || usable.some((it) => !it.uid)) { unparsed = true; cut = true; break; }
+          for (const item of items) {
+            if (!item.complete) continue;                    // a medias: se relee en la pasada siguiente
+            if (overBudget()) { cut = true; break; }         // un cuerpo patológico no puede comerse la pasada
+            take(item, folder, uidValidity);
+            if (item.uid) { maxUidSeen = Math.max(maxUidSeen, item.uid); tickUids.add(item.uid); }
+          }
+          if (fr.done !== "OK" || truncated) { cut = true; broken = true; break; }
+          if (cut) break;
+        }
+        // Persist the folder's high-water mark. Advance ONLY to the highest UID we ACTUALLY parsed
+        // whenever we did not cleanly drain the whole new range this tick — a budget cut (`cut`), a
+        // capped backlog, or a truncated FETCH — so the unread tail resumes next tick instead of
+        // being skipped forever. Jump straight to UIDNEXT-1 only on a fully-drained incremental tick
+        // (covers trailing UIDs with no stored message, e.g. our own sent copies) or a first sync.
+        if (uidValidity && uidNext) {
+          let advanceTo: number;
+          if (!canIncremental) {
+            advanceTo = cut ? Math.max(prev?.u || 0, maxUidSeen) : (uidNext - 1);
+          } else if (!cut && drainedFull) {
+            advanceTo = uidNext - 1;
+          } else {
+            advanceTo = Math.max(prev?.u || 0, maxUidSeen);
+          }
+          if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo };
+        }
+        if (cut && rs) rs.done = false;
+        }
+      }
+
+      // ── Repaso de los últimos días en esta carpeta (sólo cabeceras + lo que falte) ──
+      if (rescan && rs && !broken && !cut && uidValidity) {
+        const mark = uidStateOut[folder]?.u || 0;       // por encima de la marca manda la pasada normal
+        const sr = await sendC(nextTag(), `UID SEARCH SINCE ${imapDay(new Date(rescan.since))}`);
+        if (sr.done !== "OK") { rs.done = false; broken = sr.done === null; continue; }
+        const from = rs.cur[folder] || 0;
+        const uids = (sr.text.match(/\* SEARCH([^\r\n]*)/)?.[1] || "").trim().split(/\s+/).filter(Boolean).map(Number)
+          .filter((u) => u > from && u <= mark && !tickUids.has(u)).sort((a, b) => a - b);
+        const pending = new Set(uids);
+        for (let i = 0; i < uids.length; i += 200) {
+          if (overBudget() || rs.fetched >= rescan.maxFetch) { rs.done = false; break; }
+          const ch = uids.slice(i, i + 200);
+          const hr = await sendC(nextTag(), `UID FETCH ${ch[0]}:${ch[ch.length - 1]} (UID BODY.PEEK[HEADER.FIELDS (FROM MESSAGE-ID IN-REPLY-TO REFERENCES AUTO-SUBMITTED X-AUTOREPLY X-AUTORESPOND CONTENT-TYPE X-FAILED-RECIPIENTS)])`);
+          const split = splitFetchItems(hr.text);
+          if (hr.done !== "OK" || split.truncated) { rs.done = false; broken = true; break; }
+          const heads: RescanItem[] = [];
+          for (const it of split.items) {
+            if (!it.uid || !pending.has(it.uid)) continue;
+            const frm = addressOf(headerValue(it.header, "From")) || addressOf(decodeMimeWords(headerValue(it.header, "From")));
+            if (!frm || frm === accountEmail.toLowerCase().trim() || frm === imapUsername.toLowerCase().trim()) continue;
+            const midRaw = headerValue(it.header, "Message-ID");
+            const mid = (midRaw.match(/<([^<>\s]+)>/)?.[1] || midRaw.match(/([^\s<>]+@[^\s<>]+)/)?.[1] || "").trim();
+            heads.push({
+              uid: it.uid, mid, from: frm,
+              refs: refIds(`${headerValue(it.header, "References")} ${headerValue(it.header, "In-Reply-To")}`).slice(0, 20),
+              auto: !!autoSignal(it.header),
+              daemon: /^(mailer-daemon|postmaster)@/.test(frm) || /multipart\/report/i.test(headerValue(it.header, "Content-Type")) || !!headerValue(it.header, "X-Failed-Recipients"),
+            });
+          }
+          rs.checked += heads.length;
+          let want: number[] = [];
+          try { want = (await rescan.judge(heads)).filter((u) => pending.has(u)).sort((a, b) => a - b); }
+          catch { rs.done = false; break; } // sin veredicto no se da el tramo por repasado
+          rs.wanted += want.length;
+          let stoppedAt = 0;
+          for (let k = 0; k < want.length; k += 10) {
+            if (overBudget() || rs.fetched >= rescan.maxFetch) { stoppedAt = want[k]; break; }
+            const group = want.slice(k, k + 10);
+            const fr = await sendC(nextTag(), `UID FETCH ${group.join(",")} ${INBOUND_FETCH_ITEMS}`);
+            const got = splitFetchItems(fr.text);
+            for (const item of got.items) { if (item.complete) { take(item, folder, uidValidity, true); rs.fetched++; } }
+            if (fr.done !== "OK" || got.truncated) { stoppedAt = group[0]; broken = true; break; }
+          }
+          if (stoppedAt) { rs.cur[folder] = Math.max(from, stoppedAt - 1); rs.done = false; break; }
+          rs.cur[folder] = ch[ch.length - 1];
+        }
       }
     }
 
-    await send(nextTag(), "LOGOUT");
-    conn.close();
+    if (!broken) { try { await send(nextTag(), "LOGOUT"); } catch { /* da igual */ } }
+    try { conn.close(); } catch { /* ya cerrada */ }
 
-    return { ok: true, messages, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders };
+    return { ok: true, messages, skips, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders, firstSync, truncated: broken, unparsed, folders: targets, rescan: rs || undefined };
   } catch (e) {
-    return { ok: false, messages: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
+    return { ok: false, messages: [], skips: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
   }
 }
 
@@ -1021,6 +726,10 @@ serve(async (req) => {
     // each mailbox finishes ~2.4× faster, letting more accounts sync per tick. Manual/user syncs
     // keep 120 for a deeper one-off backfill.
     const requestedFetchLimit = Number.isFinite(Number(body.fetch_limit)) ? Math.max(40, Math.min(1000, Number(body.fetch_limit))) : (targetUserId ? 120 : 50);
+
+    // Repaso de los últimos N días, pedido en la llamada (botón o servidor): { account_id, rescan_days }.
+    const requestedRescanDays = Number.isFinite(Number(body.rescan_days)) && Number(body.rescan_days) > 0
+      ? Math.max(1, Math.min(60, Math.floor(Number(body.rescan_days)))) : 0;
 
     let accounts: any[] = [];
     let totalAccounts = 0;
@@ -1116,12 +825,41 @@ serve(async (req) => {
     // 1500 ≈ 25 first-sync mailboxes per tick — still 4-5× below the ~7k that produced HTTP 546.
     const MAX_MSGS_PER_TICK = 1500;
     let parsedThisTick = 0;
+    // Repasos por pasada: cada uno puede gastar el presupuesto entero de su buzón, así que se
+    // reparten entre pasadas en vez de frenar la sincronización normal.
+    const MAX_RESCANS_PER_TICK = 12;
+    let rescansThisTick = 0;
+    const ingest = { logged: 0, bounces: 0, recovered: 0, truncated: 0, unparsed: 0, db_failed: 0, rescans_done: 0, stored: 0, auto: 0, by_thread: 0 };
+    const validIso = (d?: string | null) => { const t = Date.parse(d || ""); return Number.isFinite(t) && t > 86400_000 ? new Date(t).toISOString() : null; };
 
     // Process account: fetch IMAP + insert messages (relies on dedupe_hash unique constraint to skip duplicates)
     async function processAccount(account: any): Promise<number> {
       let newCount = 0;
       const t0 = Date.now();
       try {
+        // Repaso pendiente de este buzón: pedido en esta llamada, a mano (imap_rescan) o tras una
+        // primera sincronización. Se hace por tramos; `cur` recuerda por dónde iba cada carpeta.
+        if (requestedRescanDays && ingestInfraReady && (specificAccountId || body.account_id)) {
+          account.imap_rescan = { days: requestedRescanDays, requested_at: new Date().toISOString(), why: "pedido" };
+        }
+        const rescanReq = ingestInfraReady ? ((account.imap_rescan as Record<string, any> | null) || null) : null;
+        let plan: RescanPlan | null = null;
+        if (rescanReq && !rescanReq.done_at && Number(rescanReq.days) > 0 && rescansThisTick < MAX_RESCANS_PER_TICK) {
+          rescansThisTick++;
+          const days = Math.max(1, Math.min(60, Number(rescanReq.days)));
+          plan = {
+            days,
+            since: validIso(rescanReq.since) || new Date(Date.now() - days * 86400_000).toISOString(),
+            cur: (rescanReq.cur as Record<string, number>) || {},
+            maxFetch: 80,
+            judge: async (items) => {
+              if (items.length === 0) return [];
+              const { data, error } = await adminClient.rpc("inbox_rescan_judge", { p_user: account.user_id, p_account: account.id, p_items: items });
+              if (error) throw new Error(error.message);
+              return ((data || []) as { uid: number }[]).map((r) => Number(r.uid));
+            },
+          };
+        }
         const result = await fetchImapMessages(
           account.imap_host, account.imap_port,
           account.imap_username, account.imap_password,
@@ -1130,8 +868,17 @@ serve(async (req) => {
           requestedFetchLimit,
           // Incremental UID state (per folder) — only when the column is confirmed to exist.
           uidStateReady ? ((account.imap_uid_state as UidState) || null) : null,
-          45_000 // per-mailbox time budget: one slow mailbox can never hog a whole wave
+          45_000, // per-mailbox time budget: one slow mailbox can never hog a whole wave
+          plan
         );
+        if (result.ok && result.unparsed) {
+          ingest.unparsed++;
+          errors.push(`${account.id}: respuesta IMAP que no se ha podido leer; la marca no avanza`);
+        }
+        if (result.ok && result.truncated) {
+          ingest.truncated++;
+          console.warn(`${account.id}: respuesta IMAP cortada; lo no leído se retoma en la próxima pasada`);
+        }
         timings.push({
           // El correo del buzón sólo se enseña a su dueño; al cron le vale el id.
           email: targetUserId ? account.email : account.id, ms: Date.now() - t0, ok: result.ok,
@@ -1174,7 +921,7 @@ serve(async (req) => {
         // between (wave timeout, WORKER_RESOURCE_LIMIT/546, an upsert error) the next tick started
         // past those UIDs and that mail was lost for good. With no messages there is nothing to
         // insert, so the state can be written now; otherwise it is written after the upsert.
-        const deferUidWrite = !!mergedUid && result.messages.length > 0;
+        const deferUidWrite = !!mergedUid && (result.messages.length > 0 || (result.skips?.length || 0) > 0);
         if (mustWrite) {
           const { error: syncUpdErr } = await adminClient.from("email_accounts")
             .update(mergedUid && !deferUidWrite ? { last_sync: nowIso, imap_uid_state: mergedUid } : { last_sync: nowIso })
@@ -1219,7 +966,87 @@ serve(async (req) => {
         // quoting the English/Italian original counted as foreign → discarded).
         // Language/warm-up hiding is now done in the frontend (code detector),
         // where it is reversible — never destructive here.
-        if (result.messages.length === 0) return 0;
+        // ── Lo que llega al buzón y NO es una respuesta: se anota, nunca se tira en silencio ──
+        const logRows: Record<string, unknown>[] = [];
+        const logRow = (m: { folder: string; uidv: number; uid: number; message_id?: string; from_email?: string; subject?: string; date?: string }, extra: Record<string, unknown>) => ({
+          user_id: account.user_id, account_id: account.id, folder: m.folder || "INBOX", uid_validity: m.uidv || 0, uid: m.uid || 0,
+          message_id: m.message_id || null, from_email: m.from_email || null, subject: (m.subject || "").slice(0, 300) || null,
+          received_at: validIso(m.date), to_email: null, kind: "human", result: "ignorado", reason: null, bounce_code: null,
+          bounce_class: null, detail: null, sent_email_id: null, lead_id: null, campaign_id: null, ...extra,
+        });
+        for (const sk of result.skips || []) {
+          logRows.push(logRow({ ...sk, from_email: sk.from }, { reason: sk.reason === "no_from" ? "sin_remitente" : sk.reason }));
+        }
+        // Rebotes (avisos de entrega fallida): no son una respuesta, así que no van al Unibox ni
+        // marcan al lead como "respondido". Se anotan con su código y su clase, y si son
+        // definitivos el envío queda marcado como rebotado (antes sólo se marcaba cuando el
+        // servidor rechazaba el correo en el momento; los rebotes que llegan después no contaban).
+        const bounceMsgs = result.messages.filter((m) => m.kind === "bounce");
+        for (const b of bounceMsgs) {
+          const info = b.bounce!;
+          type SentHit = { id: string; lead_id: string | null; campaign_id: string | null; bounced_at: string | null };
+          let hit = null as SentHit | null;
+          if (info.recipients.length > 0) {
+            const { data: se } = await adminClient.from("sent_emails")
+              .select("id, lead_id, campaign_id, bounced_at")
+              .eq("account_id", account.id).in("to_email", info.recipients.slice(0, 5))
+              .order("created_at", { ascending: false }).limit(1);
+            hit = (se && se[0]) ? (se[0] as unknown as SentHit) : null;
+          }
+          if (hit && info.permanent && !hit.bounced_at) {
+            await adminClient.from("sent_emails").update({ bounced_at: validIso(b.date) || new Date().toISOString() }).eq("id", hit.id).is("bounced_at", null);
+          }
+          ingest.bounces++;
+          logRows.push(logRow(b, {
+            to_email: info.recipients.join(", ") || null, kind: "bounce", result: "registrado", reason: info.cls,
+            bounce_code: info.code || null, bounce_class: info.cls, detail: info.diag || null,
+            sent_email_id: hit?.id || null, lead_id: hit?.lead_id || null, campaign_id: hit?.campaign_id || null,
+          }));
+        }
+        result.messages = result.messages.filter((m) => m.kind !== "bounce");
+
+        // Cierre del buzón en esta pasada: anotaciones, marca de UID y estado del repaso. La marca
+        // sólo avanza si TODO lo leído quedó guardado o anotado; si no, se relee la próxima vez.
+        let insertFailed = false;
+        let recoveredNew = 0;
+        const finish = async () => {
+          if (logRows.length > 0 && ingestInfraReady) {
+            for (let i = 0; i < logRows.length; i += 100) {
+              const { error: logErr } = await adminClient.from("inbox_ingest_log")
+                .upsert(logRows.slice(i, i + 100), { onConflict: "account_id,folder,uid_validity,uid,result", ignoreDuplicates: true });
+              if (logErr) { insertFailed = true; errors.push(`${account.id}: registro de entrada: ${logErr.message}`); }
+              else ingest.logged += Math.min(100, logRows.length - i);
+            }
+          }
+          // Messages are in the DB → NOW advance the UID high-water mark (see deferUidWrite above).
+          // On any failure before this line the state stays put and the same UIDs are re-fetched
+          // next tick; the dedupe_hash upsert makes that re-read free.
+          if (deferUidWrite && !insertFailed) {
+            await adminClient.from("email_accounts").update({ imap_uid_state: mergedUid }).eq("id", account.id);
+          }
+          if (!ingestInfraReady) return;
+          if (plan && result.rescan) {
+            const before = rescanReq || {};
+            const totals = {
+              checked: (Number(before.checked) || 0) + result.rescan.checked,
+              wanted: (Number(before.wanted) || 0) + result.rescan.wanted,
+              fetched: (Number(before.fetched) || 0) + result.rescan.fetched,
+              recovered: (Number(before.recovered) || 0) + recoveredNew,
+            };
+            const done = result.rescan.done && !insertFailed;
+            const next = done
+              ? { done_at: nowIso, days: plan.days, since: plan.since, folders: result.rescan.folders, read: result.folders, ...totals }
+              : { days: plan.days, since: plan.since, cur: insertFailed ? (before.cur || {}) : result.rescan.cur, requested_at: before.requested_at || nowIso, why: before.why || null, ...totals };
+            if (done) ingest.rescans_done++;
+            await adminClient.from("email_accounts").update({ imap_rescan: next }).eq("id", account.id);
+          } else if ((result.firstSync?.length || 0) > 0 && (!rescanReq || (rescanReq.done_at && Date.parse(rescanReq.done_at) < Date.now() - 6 * 3600_000))) {
+            // Primera sincronización de una carpeta (buzón nuevo, carpeta propia o el servidor la
+            // reconstruyó): sólo se trajeron los últimos mensajes. Se pide un repaso de 30 días.
+            await adminClient.from("email_accounts").update({ imap_rescan: { days: 30, requested_at: nowIso, why: "primera_sincronizacion" } }).eq("id", account.id);
+          }
+        };
+
+        if (result.messages.length === 0) { await finish(); return 0; }
 
         // Resolve each inbound reply to the lead + campaign we ACTUALLY emailed — using sent_emails
         // as the source of truth (that's what the "replied" stat and campaign membership are keyed
@@ -1302,6 +1129,28 @@ serve(async (req) => {
             for (const r of lc || []) if (r.lead_id && r.campaign_id && !leadCampaign.has(r.lead_id)) leadCampaign.set(r.lead_id, r.campaign_id);
           }
         }
+
+        // (hilo) In-Reply-To / References → el envío EXACTO al que contesta. Es el enlace más
+        // fiable y no depende de quién firme la respuesta: un fuera de oficina que sale de un alias
+        // o de otro dominio (escribimos a info@acme.com y contesta juan@acme-group.com) no casaba
+        // con nadie, se quedaba sin lead ni campaña y a veces se marcaba como warm-up.
+        const refSent = new Map<string, { lead_id: string; campaign_id: string }>();
+        if (ingestInfraReady) {
+          const allRefs = [...new Set(result.messages.flatMap((m) => refIds(m.ref_chain)))].slice(0, 600);
+          for (let i = 0; i < allRefs.length; i += 200) {
+            try {
+              const { data: rr } = await adminClient.rpc("resolve_sent_by_refs", { p_user: account.user_id, p_refs: allRefs.slice(i, i + 200) });
+              for (const r of (rr || []) as { ref: string; lead_id: string; campaign_id: string }[]) {
+                if (r?.ref && r.lead_id && r.campaign_id) refSent.set(r.ref, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+              }
+            } catch { /* sin esto se enlaza como antes, por remitente */ }
+          }
+        }
+        const threadOf = (refChain: string) => {
+          const ids = refIds(refChain);
+          for (let i = ids.length - 1; i >= 0; i--) { const h = refSent.get(ids[i]); if (h) return h; }
+          return null;
+        };
 
         // Blocklist check — import blocked senders' mail but mark is_archived so it never
         // shows in the Unibox (and never inflates reply stats). Only look up THIS batch's
@@ -1465,7 +1314,7 @@ serve(async (req) => {
         tAtt = Date.now();
         Object.assign(timings[timings.length - 1], { resolve_ms: tResolve - tFetch, att_ms: tAtt - tResolve });
         // Build batch insert payload (dedupe_hash trigger + unique constraint will reject duplicates)
-        const rows = result.messages.map(msg => {
+        const built = result.messages.map(msg => {
           let parsedDate: string;
           try { parsedDate = new Date(msg.date).toISOString(); } catch { parsedDate = new Date().toISOString(); }
           // Prefer the lead + campaign we ACTUALLY emailed (exact recipient), else a colleague at
@@ -1479,9 +1328,12 @@ serve(async (req) => {
           // flipped the wrong lead to "replied"). Generic providers are already excluded above.
           const exactSent = emailSent.get(fe) || null;
           const exactLead = leadsMap.get(fe) || null;
-          const domHit = (!exactSent && !exactLead && dom) ? (domainSent.get(dom) || null) : null;
-          const leadId = exactSent?.lead_id || exactLead || domHit?.lead_id || null;
-          const campaignId = exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
+          // El hilo dice a QUÉ envío contesta: manda para la campaña (un lead puede estar en dos) y
+          // da el lead cuando quien contesta no es nadie a quien hayamos escrito con esa dirección.
+          const threadHit = threadOf(msg.ref_chain);
+          const domHit = (!exactSent && !exactLead && !threadHit && dom) ? (domainSent.get(dom) || null) : null;
+          const leadId = exactSent?.lead_id || exactLead || threadHit?.lead_id || domHit?.lead_id || null;
+          const campaignId = threadHit?.campaign_id || exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
             // Una respuesta NUNCA es de una campaña creada DESPUÉS de que llegara (23-09-2026).
             || (() => {
               const hit = dom ? companyCampaign.get(dom) : null;
@@ -1489,7 +1341,15 @@ serve(async (req) => {
               const when = Date.parse(parsedDate);
               return (Number.isFinite(when) && hit.created > when) ? null : hit.id;
             })() || null;
-          return {
+          const related = !!(threadHit || exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom)));
+          // noreply@ / no-reply@ / postmaster@… que no es un rebote: un acuse automático de la
+          // empresa de un lead SÍ es una respuesta (antes se tiraba). Sin relación con nada
+          // nuestro (un boletín, un aviso del proveedor) no entra en el Unibox, pero se anota.
+          if (msg.automated_sender && !related) {
+            logRows.push(logRow(msg, { kind: msg.kind, reason: "remitente_automatico_sin_relacion" }));
+            return null;
+          }
+          const row = {
             user_id: account.user_id,
             account_id: account.id,
             lead_id: leadId,
@@ -1516,11 +1376,14 @@ serve(async (req) => {
             // senderKnown: ¿sabemos algo de quien escribe? (lead exacto, envío nuestro a esa
             // dirección o a su dominio, empresa de un lead). Si NO, un asunto con forma de hilo
             // de pool ("RE: Yoga Class") es warm-up aunque no lleve palabra de oficina.
-            is_warmup: isWarmupMessage({
+            // Una respuesta AUTOMÁTICA con su cabecera (Auto-Submitted…) de alguien relacionado con
+            // lo nuestro no es warm-up: el pool de calentamiento escribe como una persona, sin esa cabecera.
+            is_warmup: (msg.auto_signal && related && !ownMailboxes.has(fe)) ? false : isWarmupMessage({
               subject: msg.subject, body: msg.body_text, fromEmail: msg.from_email, ownMailboxes,
               linked: !!(leadId || campaignId) || leadDomainHit.has(dom),
-              senderKnown: !!(exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom))),
+              senderKnown: related,
             }),
+            ...(ingestInfraReady ? { auto_signal: msg.auto_signal || null } : {}),
             // Only reference these columns when their bootstrap confirmed they
             // exist — otherwise the whole insert would fail and break the sync.
             ...(attInfraOk ? { attachments: (msg as unknown as { _stored?: unknown[] })._stored || [] } : {}),
@@ -1531,10 +1394,15 @@ serve(async (req) => {
             ref_chain: msg.ref_chain || null,
             // A quién más iba el correo: sin esto, una respuesta que suma a un compañero en el
             // "Para" parecía dirigida sólo a nuestro buzón (24-09-2026).
-            to_emails: (msg as unknown as { to_emails?: string }).to_emails || null,
-            cc_emails: (msg as unknown as { cc_emails?: string }).cc_emails || null,
+            to_emails: msg.to_emails || null,
+            cc_emails: msg.cc_emails || null,
           };
+          return { msg, row };
         });
+        const pairs = built.filter((x): x is NonNullable<typeof x> => !!x);
+        const rows = pairs.map((x) => x.row);
+        const recoveredIds = new Map<string, FetchedMessage>();
+        for (const x of pairs) if (x.msg.recovered && x.msg.message_id) recoveredIds.set(x.msg.message_id, x.msg);
 
         // Insert one by one but only counts errors as duplicates - upsert with ignore via insert
         // Use chunks of 50 for batch insert
@@ -1555,12 +1423,33 @@ serve(async (req) => {
 
           if (insertError) {
             // If batch fails (likely due to dedupe), fall back to individual inserts
-            for (const row of chunk) {
-              const { data: ins, error: e } = await adminClient
+            for (let k = 0; k < chunk.length; k++) {
+              const row = chunk[k];
+              let { data: ins, error: e } = await adminClient
                 .from("inbox_messages")
                 .insert(row)
                 .select("id")
                 .single();
+              // El lead o la campaña se borraron entre la consulta y el guardado: el correo se
+              // guarda igual, sin enlazar. Antes se perdía.
+              if (e && e.code === "23503") {
+                ({ data: ins, error: e } = await adminClient.from("inbox_messages")
+                  .insert({ ...row, lead_id: null, campaign_id: null }).select("id").single());
+              }
+              // Un duplicado (23505) es lo normal al releer. Cualquier otro fallo se tragaba en
+              // silencio y la marca de UID avanzaba igual: el correo desaparecía. Ahora un fallo
+              // propio de ESA fila (dato inválido) se anota con el motivo, y un fallo general
+              // (base de datos caída, tiempo agotado) frena la marca para releer en la próxima pasada.
+              if (e && e.code !== "23505") {
+                ingest.db_failed++;
+                console.error(`${account.id}: no se pudo guardar un correo (${e.code || "?"}): ${e.message}`);
+                if (/^2[23]/.test(String(e.code || ""))) {
+                  logRows.push(logRow(pairs[i + k].msg, { kind: pairs[i + k].msg.kind, result: "fallo_bd", reason: String(e.code), detail: String(e.message || "").slice(0, 300) }));
+                } else {
+                  insertFailed = true;
+                  errors.push(`${account.id}: guardar correo: ${e.message}`);
+                }
+              }
               if (!e && ins) {
                 newCount++;
                 if (row.lead_id && !(row as any).is_warmup) {
@@ -1577,6 +1466,13 @@ serve(async (req) => {
             }
           } else if (inserted) {
             newCount += inserted.length;
+            // Lo que ha traído un repaso y de verdad no estaba: queda anotado como recuperado.
+            for (const r of inserted) {
+              const rec = (r as { message_id?: string }).message_id ? recoveredIds.get((r as { message_id: string }).message_id) : null;
+              if (!rec) continue;
+              recoveredNew++; ingest.recovered++;
+              logRows.push(logRow(rec, { kind: rec.kind, result: "recuperado", reason: "repaso", lead_id: r.lead_id || null, campaign_id: r.campaign_id || null }));
+            }
             // Mark replied for leads that produced a new message
             const warmIds = new Set(rows.filter((r: any) => r.is_warmup).map((r: any) => r.message_id).filter(Boolean));
             const repliedLeadIds = inserted.filter(r => r.lead_id && !warmIds.has((r as any).message_id)).map(r => r.lead_id);
@@ -1600,12 +1496,7 @@ serve(async (req) => {
             }
           }
         }
-        // Messages are in the DB → NOW advance the UID high-water mark (see deferUidWrite above).
-        // On any throw before this line the state stays put and the same UIDs are re-fetched next
-        // tick; the dedupe_hash upsert makes that re-read free.
-        if (deferUidWrite) {
-          await adminClient.from("email_accounts").update({ imap_uid_state: mergedUid }).eq("id", account.id);
-        }
+        await finish();
       } catch (accountErr) {
         console.error(`Error processing account ${account.email}:`, accountErr);
         errors.push(`${account.email}: ${accountErr.message}`);
@@ -1686,6 +1577,9 @@ serve(async (req) => {
       slowest: timings.sort((a, b) => b.ms - a.ms).slice(0, 8),
       unchanged_fast_path: timings.filter((t) => (t.unchanged || 0) > 0).length,
       parsed_messages: parsedThisTick,
+      // Auditoría de entrada: anotaciones escritas, rebotes, recuperados por repaso, respuestas
+      // IMAP cortadas, fallos al guardar y repasos terminados en esta pasada.
+      ingest,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("fetch-inbox error:", e);

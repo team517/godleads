@@ -107,7 +107,9 @@ Deno.serve(async (req) => {
 
     // Only REAL prospect replies: a reply inside a real thread (In-Reply-To / References) or tied
     // to a lead/campaign. Cold spam arriving at our mailboxes carries no thread headers.
-    const COLS = "id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain, created_at";
+    // auto_signal: la cabecera que delata una respuesta automática (Auto-Submitted, X-Autoreply…),
+    // leída al sincronizar. received_at: para no avisar por correos viejos que entran ahora (un repaso).
+    const COLS = "id, user_id, from_email, from_name, subject, body_text, body_html, labels, lead_id, campaign_id, in_reply_to, ref_chain, created_at, auto_signal, received_at";
     let windowQuery = admin
       .from("inbox_messages")
       .select(COLS)
@@ -241,12 +243,18 @@ Deno.serve(async (req) => {
       const created = (m as unknown as { created_at?: string }).created_at || null;
       if (created && (!oldestSeen || created < oldestSeen)) oldestSeen = created;
       if (!isRealReply(m)) continue;
+      const autoSignal = String((m as unknown as { auto_signal?: string | null }).auto_signal || "");
+      // Un correo que entra AHORA pero llegó hace más de dos días (lo trae un repaso del buzón) se
+      // etiqueta como cualquiera, pero no hace sonar el teléfono.
+      const receivedAt = Date.parse((m as unknown as { received_at?: string }).received_at || "");
+      if (Number.isFinite(receivedAt) && receivedAt < Date.now() - 48 * 3600_000) staleIds.add(m.id);
       // Warm-up pool threads carry References (our seed mailbox started them) and generic English
       // office subjects the sync detector used to miss; the model then read "let's confirm the
       // workshop" as Interesado and 99 phones buzzed in a week (2026-09-15). Flag them here — the
       // same detector as the sync, with the same lead/campaign exemption — and never judge them.
       // Igual que al sincronizar: remitente desconocido + asunto con forma de hilo de pool = warm-up.
-      if (isWarmupMessage({
+      // Con cabecera de respuesta automática no es warm-up: el pool escribe como una persona.
+      if (!autoSignal && isWarmupMessage({
         subject: m.subject, body: m.body_text, fromEmail: m.from_email,
         linked: !!(m.lead_id || m.campaign_id) || leadCompany.has(m.id),
         senderKnown: !!(m.lead_id || m.campaign_id || leadCompany.has(m.id)),
@@ -259,7 +267,12 @@ Deno.serve(async (req) => {
       // Already judged by this function (or relabelled by a human on top of it): leave it alone.
       if (!force && labels.includes(AI_MARKER)) { skipped++; continue; }
       const text = replyTextForClassification(m.body_text, m.body_html);
-      const ruleVerdict = classifyMessage(m.subject, text);
+      const byText = classifyMessage(m.subject, text);
+      // La cabecera manda sobre el texto: "Gracias por tu mensaje, responderé a mi regreso" no lleva
+      // ninguna frase que las reglas reconozcan, y el modelo a veces lo leía como interés. Si el
+      // propio correo dice que lo ha enviado una máquina, es "Fuera / Auto". Sólo se respeta
+      // "Derivado": un contestador que da otro contacto ("ya no trabajo aquí, escribe a X") sirve.
+      const ruleVerdict = (autoSignal && byText !== "derivado") ? "out_of_office" : byText;
       pending.push({ m, text, ruleVerdict, verdict: ruleVerdict, via: "reglas" });
     }
 
