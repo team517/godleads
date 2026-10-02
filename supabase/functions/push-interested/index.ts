@@ -368,7 +368,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Phase 3: write labels, notify ────────────────────────────────────────────────────────
-    let classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0;
+    let classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0, bajas = 0;
     const sample: { tipo: string; via: string; from: string | null; subject: string; reglas?: string; cita?: string; motivo?: string; texto?: string }[] = [];
     for (const p of pending) {
       if (deferred.has(p.m.id)) continue;
@@ -401,6 +401,29 @@ Deno.serve(async (req) => {
         if (upErr) continue;
       }
       classified++; if (p.via === "ia") byAi++; else byRules++;
+
+      // Baja pedida POR ESCRITO ("dadme de baja", "no me escribáis más"): hasta ahora sólo se le
+      // ponía la etiqueta, y otra campaña podía volver a escribirle. Se hace lo mismo que con el
+      // enlace de baja: la dirección entra en la lista de bloqueo y el lead queda como dado de
+      // baja. Sólo cuando lo dicen las REGLAS (frases explícitas), nunca por una lectura del
+      // modelo, y nunca en un repaso del histórico. La respuesta sigue visible en su hilo.
+      if (!dryRun && !force && p.verdict === "no_contactar" && p.ruleVerdict === "no_contactar"
+          && (p.m.lead_id || p.m.campaign_id) && p.m.from_email && !labels.includes("No contactar")) {
+        const email = String(p.m.from_email).toLowerCase().trim();
+        const { error: blErr } = await admin.from("blocklist").upsert(
+          { user_id: p.m.user_id, entry_type: "email", value: email },
+          { onConflict: "user_id,entry_type,value" },
+        );
+        if (!blErr) {
+          const { data: leadRows } = await admin.from("leads").select("id").eq("user_id", p.m.user_id).ilike("email", email.replace(/[\\%_]/g, (c) => "\\" + c)).limit(20);
+          const leadIds = ((leadRows || []) as { id: string }[]).map((l) => l.id);
+          if (leadIds.length > 0) {
+            await admin.from("leads").update({ status: "unsubscribed" }).in("id", leadIds);
+            await admin.from("campaign_leads").update({ status: "unsubscribed", unsubscribed_at: new Date().toISOString() }).in("lead_id", leadIds);
+          }
+          bajas++;
+        }
+      }
 
       if (shouldNotify) {
         if (!dryRun) {

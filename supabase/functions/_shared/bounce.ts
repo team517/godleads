@@ -102,12 +102,22 @@ export function bounceInfo(fromEmail: string, subject: string, contentType: stri
   // (con sus cabeceras DKIM/SPF y su texto): si se leyera, una palabra nuestra decidiría la clase.
   // Los avisos suelen venir en quoted-printable: una línea larga llega partida con "=" al final
   // ("blocked using S=" / "pamhaus"). Se vuelve a unir antes de leerla.
-  const notice = body.split(/Content-Type:\s*(?:message\/rfc822|text\/rfc822-headers)|-{2,}\s*The header of the original message|-{3,}\s*This is a copy of the message|-{3,}\s*Original message\s*-{3,}|-{3,}\s*Mensaje original\s*-{3,}/i)[0]
+  let notice = body.split(/Content-Type:\s*(?:message\/rfc822|text\/rfc822-headers)|-{2,}\s*The header of the original message|-{3,}\s*This is a copy of the message|-{3,}\s*Original message\s*-{3,}|-{3,}\s*Mensaje original\s*-{3,}/i)[0]
     .replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/g, (_, h) => { const c = parseInt(h, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : " "; });
-  // La explicación en claro: "reason: 550 5.4.1 Recipient address rejected: Access denied" (IONOS),
-  // el Diagnostic-Code del estándar o la línea que sigue a la dirección que falló.
+  // Si la explicación viene en base64 (pasa cuando el servidor remoto contesta con tildes), se
+  // decodifica: sin esto sólo se veía "Action: failed" y el rebote quedaba sin motivo.
+  notice = notice.replace(/(?:^|\n)((?:[A-Za-z0-9+/]{60,}\r?\n)+[A-Za-z0-9+/]*={0,2})(?=\r?\n|$)/g, (whole, b64: string) => {
+    try {
+      const text = atob(b64.replace(/\s+/g, ""));
+      const printable = text.replace(/[^\x20-\x7E\r\n\t]/g, "").length;
+      return printable > text.length * 0.85 ? "\n" + text.replace(/[^\x20-\x7E\r\n\t]/g, " ") : whole;
+    } catch { return whole; }
+  });
+  // La explicación en claro: "reason: 550 5.4.1 Recipient address rejected: Access denied" (IONOS,
+  // partida en varias líneas de 76 caracteres), el Diagnostic-Code del estándar o la línea que
+  // sigue a la dirección que falló.
   const explain = (
-    notice.match(/reason:\s*([^\n]{3,300})/i)?.[1]
+    notice.match(/reason:\s*([^\n]{3,300}(?:\r?\n[ \t]+[^\s][^\n]{0,300}){0,4})/i)?.[1]
     || notice.match(/Diagnostic-Code:\s*([^\n]+(?:\n[ \t]+[^\n]+)*)/i)?.[1]
     || notice.match(/(?:address(?:\(es\))?\s+failed|could not be delivered[^\n]*|no se pudo entregar[^\n]*)[:\s]*\n+\s*<?\S+@\S+>?:?[ \t]*\n?\s*([^\n]{5,300})/i)?.[1]
     || notice.match(/^[^\n]*\b[45][0-9]{2}[ -][^\n]{4,300}/im)?.[0]
@@ -147,6 +157,9 @@ export function bounceInfo(fromEmail: string, subject: string, contentType: stri
     const m = body.slice(0, 4000).match(/(?:delivered to|deliver(?:y)? to|message to|mensaje (?:a|para)|recipients?|destinatarios?|entregar a|address)[^@\n]{0,80}?<?([^\s<>;,()"]+@[^\s<>;,()"]+\.[a-z]{2,})>?/i);
     if (m) push(m[1]);
   }
-  const firstDiag = (explain || diagLines.find((l) => !/^(Action|Status|Remote-MTA):/i.test(l)) || diagLines[0] || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  // Sin explicación reconocible se guarda el principio del aviso tal cual: mejor texto en bruto
+  // que un rebote sin motivo.
+  const rawNotice = notice.replace(/^(?:--[^\n]*|Content-[A-Za-z-]+:[^\n]*|MIME-Version:[^\n]*|This is a (?:MIME|multi)[^\n]*)$/gim, "").replace(/\s+/g, " ").trim();
+  const firstDiag = (explain || diagLines.find((l) => !/^(Action|Status|Remote-MTA):/i.test(l)) || rawNotice || diagLines[0] || "").replace(/\s+/g, " ").trim().slice(0, 300);
   return { recipients: Array.from(emails), code, cls, permanent, diag: firstDiag };
 }
