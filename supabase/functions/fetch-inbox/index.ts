@@ -1460,10 +1460,11 @@ serve(async (req) => {
               if (!e && ins) {
                 newCount++;
                 if (row.lead_id && !(row as any).is_warmup) {
-                  await adminClient.from("leads").update({ status: "replied" }).eq("id", row.lead_id);
+                  const esAuto = !!(row as any).auto_signal; // fuera de oficina: cuenta, pero no para la secuencia
+                  if (!esAuto) await adminClient.from("leads").update({ status: "replied" }).eq("id", row.lead_id);
                   await adminClient.from("sent_emails").update({ replied_at: row.received_at })
                     .eq("lead_id", row.lead_id).eq("user_id", account.user_id).is("replied_at", null);
-                  if (row.campaign_id) {
+                  if (row.campaign_id && !esAuto) {
                     await adminClient.from("campaign_leads")
                       .update({ status: "replied" })
                       .eq("lead_id", row.lead_id).eq("campaign_id", row.campaign_id);
@@ -1482,9 +1483,15 @@ serve(async (req) => {
             }
             // Mark replied for leads that produced a new message
             const warmIds = new Set(rows.filter((r: any) => r.is_warmup).map((r: any) => r.message_id).filter(Boolean));
+            // Un fuera de oficina (correo con cabecera de respuesta automática) cuenta en las
+            // estadísticas de respuestas, como siempre, pero NO deja al lead como "respondido" ni
+            // para su secuencia: no ha dicho ni que sí ni que no. Si el contestador da otro
+            // contacto o pide la baja, lo marca después el etiquetado (push-interested).
+            const autoIds = new Set(rows.filter((r: any) => r.auto_signal).map((r: any) => r.message_id).filter(Boolean));
             const repliedLeadIds = inserted.filter(r => r.lead_id && !warmIds.has((r as any).message_id)).map(r => r.lead_id);
+            const humanLeadIds = inserted.filter(r => r.lead_id && !warmIds.has((r as any).message_id) && !autoIds.has((r as any).message_id)).map(r => r.lead_id);
             if (repliedLeadIds.length > 0) {
-              await adminClient.from("leads").update({ status: "replied" }).in("id", repliedLeadIds);
+              if (humanLeadIds.length > 0) await adminClient.from("leads").update({ status: "replied" }).in("id", humanLeadIds);
               // Marca "respondido" SOLO en la campaña a la que contesta (y con la fecha real de la
               // respuesta): antes una respuesta a la campaña B subía también el contador de la A.
               for (const r of inserted) {
@@ -1494,7 +1501,7 @@ serve(async (req) => {
                 if (r.campaign_id) q = q.eq("campaign_id", r.campaign_id);
                 await q;
               }
-              const campaignPairs = inserted.filter(r => r.lead_id && r.campaign_id);
+              const campaignPairs = inserted.filter(r => r.lead_id && r.campaign_id && !warmIds.has((r as any).message_id) && !autoIds.has((r as any).message_id));
               for (const cp of campaignPairs) {
                 await adminClient.from("campaign_leads")
                   .update({ status: "replied" })

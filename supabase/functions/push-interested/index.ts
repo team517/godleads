@@ -402,6 +402,17 @@ Deno.serve(async (req) => {
       }
       classified++; if (p.via === "ia") byAi++; else byRules++;
 
+      // Un correo AUTOMÁTICO que no es un simple fuera de oficina (da otro contacto, dice que esa
+      // persona ya no está…): al llegar no se marcó al lead como respondido —un fuera de oficina
+      // no para la secuencia—, así que se marca ahora para que no reciba más seguimientos.
+      const esAutomatico = !!(p.m as unknown as { auto_signal?: string | null }).auto_signal;
+      if (!dryRun && !force && esAutomatico && p.verdict !== "out_of_office" && p.verdict !== "neutral" && p.m.lead_id) {
+        await admin.from("leads").update({ status: "replied" }).eq("id", p.m.lead_id);
+        let q = admin.from("campaign_leads").update({ status: "replied" }).eq("lead_id", p.m.lead_id).in("status", ["pending", "active", "in_progress"]);
+        if (p.m.campaign_id) q = q.eq("campaign_id", p.m.campaign_id);
+        await q;
+      }
+
       // Baja pedida POR ESCRITO ("dadme de baja", "no me escribáis más"): hasta ahora sólo se le
       // ponía la etiqueta, y otra campaña podía volver a escribirle. Se hace lo mismo que con el
       // enlace de baja: la dirección entra en la lista de bloqueo y el lead queda como dado de

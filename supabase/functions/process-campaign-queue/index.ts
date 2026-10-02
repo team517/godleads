@@ -1762,9 +1762,14 @@ serve(async (req) => {
           // leads duplicados), a ninguna, o haberse enlazado después. Medido el 25-09-2026: 55
           // seguimientos en 30 días a personas que ya habían respondido. La consulta por correo va
           // por el índice idx_inbox_user_from_email.
+          // Un FUERA DE OFICINA no es una respuesta (02-10-2026): quien estaba de vacaciones no ha
+          // dicho ni que sí ni que no, y parar ahí la secuencia lo dejaba sin los seguimientos.
+          // Sólo se descartan los correos que llevan cabecera de respuesta automática
+          // (auto_signal, leída al sincronizar). Si un contestador da otro contacto o pide la baja,
+          // el etiquetado marca al lead como respondido y la secuencia se para igual.
           const [porLead, porCorreo] = await Promise.all([
-            adminClient.from("inbox_messages").select("id").eq("lead_id", lead.id).limit(1),
-            adminClient.from("inbox_messages").select("id").eq("user_id", campaign.user_id).ilike("from_email", leadEmail).limit(1),
+            adminClient.from("inbox_messages").select("id").eq("lead_id", lead.id).is("auto_signal", null).limit(1),
+            adminClient.from("inbox_messages").select("id").eq("user_id", campaign.user_id).ilike("from_email", leadEmail).is("auto_signal", null).limit(1),
           ]);
           // Si la consulta falla no se asume "no ha contestado": se salta el lead y se reintenta
           // en la pasada siguiente. Mejor un seguimiento tarde que uno a quien ya te respondió.
@@ -1883,13 +1888,16 @@ serve(async (req) => {
             // 500-row fetch window. Re-bind to a healthy account so the sequence continues: a
             // follow-up from a sibling mailbox in the same campaign beats a lead frozen forever
             // behind a dead mailbox.
+            //
+            // PRESTADO, no reasignado (02-10-2026): este envío sale de un buzón hermano, pero el
+            // lead SIGUE siendo de su buzón original. Antes el cambio se guardaba para siempre:
+            // tras el bloqueo de IONOS de septiembre los buzones volvieron a conectarse y 364
+            // leads siguieron recibiendo el "Re:" de un remitente que no conocían (233 de 1.823
+            // seguimientos en un día). Ahora, en cuanto el buzón original vuelve, el siguiente
+            // paso sale otra vez de él.
             account = selectAccount();
             if (!account) { totalSkipped++; continue; }
-            console.warn(`Lead ${lead.id} re-bound from unavailable ${boundId} → ${account.email} (original mailbox disconnected)`);
-            await adminClient.from("campaign_leads")
-              .update({ assigned_account_id: account.id })
-              .eq("id", cl.id);
-            console.warn(`Lead ${lead.id}: rebound from dead account ${boundId} → ${account.email} (no prior delivery)`);
+            console.warn(`Lead ${lead.id}: buzón ${boundId} no disponible; este envío sale de ${account.email} (el lead sigue asignado al original)`);
           }
           // Skip accounts that already hit a rate/auth error this run
           if (rateLimitedThisRun.has(account.id)) {
@@ -2272,7 +2280,9 @@ serve(async (req) => {
           const newStep = currentStepIndex + 1;
           await adminClient.from("campaign_leads").update({
             current_step: newStep, last_sent_at: now.toISOString(),
-            assigned_account_id: account.id,
+            // El buzón del lead es el de su PRIMER correo; un envío prestado por otro buzón
+            // (el original estaba desconectado) no lo cambia.
+            assigned_account_id: boundId || account.id,
             status: newStep >= steps.length ? "completed" : "in_progress",
           }).eq("id", cl.id);
 
