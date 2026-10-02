@@ -827,7 +827,14 @@ serve(async (req) => {
     let parsedThisTick = 0;
     // Repasos por pasada: cada uno puede gastar el presupuesto entero de su buzón, así que se
     // reparten entre pasadas en vez de frenar la sincronización normal.
-    const MAX_RESCANS_PER_TICK = 12;
+    // En horario de envío (lunes a viernes, 9-18 h de Madrid) NO se hacen repasos en bloque:
+    // medido el 02-10-2026, 12 por pasada bajaron el ritmo del motor de envío un 40% mientras
+    // duraron (sesiones IMAP largas contra el mismo proveedor que envía), y con 2 por pasada
+    // seguía notándose. Los pendientes esperan y se reanudan solos a las 18 h. El repaso de UN
+    // buzón pedido a mano sí se hace en el momento.
+    const madrid = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Madrid" }));
+    const sendingHours = madrid.getDay() >= 1 && madrid.getDay() <= 5 && madrid.getHours() >= 9 && madrid.getHours() < 18;
+    const MAX_RESCANS_PER_TICK = (sendingHours && !requestedRescanDays) ? 0 : 12;
     let rescansThisTick = 0;
     const ingest = { logged: 0, bounces: 0, recovered: 0, truncated: 0, unparsed: 0, db_failed: 0, rescans_done: 0, stored: 0, auto: 0, by_thread: 0 };
     const validIso = (d?: string | null) => { const t = Date.parse(d || ""); return Number.isFinite(t) && t > 86400_000 ? new Date(t).toISOString() : null; };
