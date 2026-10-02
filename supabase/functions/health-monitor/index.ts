@@ -120,6 +120,27 @@ serve(async (req) => {
     }
 
     const checks = evaluate(metrics);
+
+    // Rebotes por LISTA NEGRA, por campaña (02-10-2026). Un enlace que el proveedor de correo
+    // marca hace que saque esos correos por servidores en lista negra: los seguimientos con
+    // calendly.com/onepulso/30min rebotaron un 38% durante semanas sin que nadie lo viera. Con el
+    // registro de rebotes (inbox_ingest_log) se ve en minutos: si una campaña junta 8 o más
+    // rechazos "blocked using Spamhaus / listed by…" en hora y media, se avisa con su nombre.
+    // Se mira la fecha en que llegó el rebote, no la de anotación: un repaso del histórico no avisa.
+    try {
+      const { data: malas, error: blErr } = await admin.rpc("health_blacklist_bounces", { p_minutes: 90, p_min: 8 });
+      if (blErr) throw new Error(blErr.message);
+      const filas = (malas || []) as { name: string; n: number }[];
+      if (filas.length > 0) {
+        checks.push({
+          key: "blacklist_bounces", failing: true,
+          msg: `🧱 Rebotes por LISTA NEGRA en la última hora y media: ${filas.map((f) => `${f.name} (${f.n})`).join(", ")}. Casi siempre es un ENLACE del correo que el proveedor ha marcado: quítalo o cámbialo en los pasos de esa campaña.`,
+        });
+      }
+    } catch (e) {
+      console.error("[blacklist_bounces] no se pudo comprobar:", String((e as any)?.message || e));
+    }
+
     const failing = checks.filter((c) => c.failing);
     const failingKeys = new Set(failing.map((c) => c.key));
 
