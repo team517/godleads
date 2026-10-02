@@ -82,10 +82,10 @@ export const IA_MOD_TOOLS = [
     step_id: S("id del paso"),
     letra: S("B, C, D…"),
   }, ["step_id", "letra"]),
-  fn("ver_archivo", "Lee un archivo CSV que el usuario ha adjuntado en el chat: columnas, cuántas filas, emails válidos y descartados, duplicados, y las filas que pidas.", {
+  fn("ver_archivo", "Lee un archivo que el usuario ha adjuntado en el chat. Si es un CSV: columnas, cuántas filas, emails válidos y descartados, duplicados, y las filas que pidas. Si es un PDF: devuelve su texto por páginas (pide más con `desde` = siguiente_desde si quedan_paginas).", {
     upload_id: S("id del adjunto (sale en el mensaje del usuario)"),
-    desde: N("primera fila (0 por defecto)"),
-    cuantas: N("cuántas filas enseñar (máx. 50, por defecto 10)"),
+    desde: N("primera fila o página (0 por defecto)"),
+    cuantas: N("cuántas filas o páginas enseñar (máx. 50, por defecto 10)"),
     campaign_id: S("opcional: id de una campaña para contar cuántos emails del archivo ya están en ella"),
   }, ["upload_id"]),
   fn("importar_leads", "Importa los leads de un CSV adjunto a una campaña del cliente. En campañas en borrador o pausadas se importan YA (se puede deshacer); en campañas ACTIVAS queda pendiente de que el usuario pulse Confirmar. Los emails que ya están se actualizan en vez de duplicarse; los bloqueados se saltan solos.", {
@@ -259,6 +259,8 @@ Límites de slow ramp: máximo 30 al día por cuenta; un inicio típico es 5-10 
 ETIQUETAS (TAGS) DE LAS CUENTAS: si preguntan qué etiqueta tiene una cuenta, qué cuentas llevan una etiqueta o qué cuentas usa una campaña, llama a ver_cuentas con email, tag o campaign_id y contesta EXACTO: el nombre de la etiqueta tal cual está escrito, cuántas cuentas la llevan y qué campañas la usan. Una campaña usa las cuentas añadidas a mano más las que tienen alguna de sus etiquetas escrita EXACTAMENTE igual (mayúsculas incluidas). Si hay avisos de etiquetas (mayúsculas distintas, etiqueta sin cuentas, dos campañas activas compartiendo buzones), dilos.
 
 CUENTAS DE CORREO: si preguntan por sus cuentas, buzones, envíos que fallan o por qué no envía, llama a ver_cuentas. Resume cuántas hay, cuántas funcionan y cuáles tienen problema y qué hacer (en lenguaje llano: "IONOS rechaza la contraseña al enviar: revisa o desbloquea el buzón"). Los errores de destinatario (dirección que no existe) no son culpa de la cuenta.
+
+DOCUMENTOS PDF ADJUNTOS: cuando el usuario adjunte uno verás "(Adjuntó el documento PDF …, id …)". Léelo SIEMPRE con ver_archivo antes de contestar (si quedan_paginas y lo que piden puede estar más adelante, sigue leyendo). Úsalo para lo que pidan: entender al cliente, sacar su oferta, sus datos o sus ejemplos y escribir o cambiar mensajes con eso, resumirlo, o guardar lo importante en la memoria con guardar_nota. Nunca digas qué pone un PDF sin haberlo leído en este turno. De un PDF no se importan leads.
 
 ARCHIVOS ADJUNTOS (CSV): cuando el usuario adjunte uno verás "(Adjuntó el archivo …, id …)".
 - Si te pide meter/implementar/importar/subir esos leads en una campaña: llama YA a importar_leads (formato "plantilla" salvo que pida todas las columnas). NO preguntes antes ni ofrezcas opciones: la plantilla ya elige la mejor columna para cada variable (first_name, company_name, industry, city…). Si no dice la campaña y sólo hay una que encaje por nombre, usa esa; si hay dudas reales, pregunta sólo cuál.

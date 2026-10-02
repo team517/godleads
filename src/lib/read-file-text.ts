@@ -22,6 +22,11 @@ export async function readFileText(file: File): Promise<string> {
 }
 
 async function readPdfText(file: File): Promise<string> {
+  return (await readPdfPages(file, 40)).join("\n");
+}
+
+/** El texto de cada página de un PDF (hasta `maxPages`). Un PDF escaneado devuelve páginas vacías. */
+export async function readPdfPages(file: File, maxPages = 60): Promise<string[]> {
   const pdfjs: any = await import("pdfjs-dist");
   // Inline the worker as a blob (no separate .mjs fetch → immune to server MIME/CORS
   // issues that broke "Failed to fetch dynamically imported module" in production).
@@ -32,11 +37,12 @@ async function readPdfText(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const doc = await pdfjs.getDocument({ data: buf }).promise;
   const parts: string[] = [];
-  const maxPages = Math.min(doc.numPages, 40); // sane cap
-  for (let i = 1; i <= maxPages; i++) {
+  const hasta = Math.min(doc.numPages, maxPages);
+  for (let i = 1; i <= hasta; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    parts.push(content.items.map((it: any) => (typeof it?.str === "string" ? it.str : "")).join(" "));
+    // hasEOL = fin de línea en el PDF: se conserva para no pegar titulares con párrafos.
+    parts.push(content.items.map((it: any) => (typeof it?.str === "string" ? it.str + (it.hasEOL ? "\n" : " ") : "")).join(""));
   }
-  return parts.join("\n");
+  return parts;
 }

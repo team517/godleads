@@ -15,12 +15,15 @@ const ALIAS_EMAIL = ["email", "e_mail", "e-mail", "email_address", "work_email",
 const EMAIL_OK = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
 
 export interface CsvPreparado {
-  kind: "leads" | "tabla";
+  /** "documento" = un PDF: cada fila es una página ({ pagina, texto }). */
+  kind: "leads" | "tabla" | "documento";
   headers: string[];
   rows: Record<string, string>[];
   /** Filas que no entran: sin email válido (en "leads") o vacías. */
   descartadas: number;
   total: number;
+  /** Sólo PDF: el documento era más largo de lo que se sube y se ha cortado. */
+  recortado?: boolean;
 }
 
 /** Bytes del archivo → texto: UTF-8 si lo es; si no, Windows-1252 (el CSV típico de Excel en español). */
@@ -72,6 +75,33 @@ export function prepararCsv(texto: string): CsvPreparado | { error: string } {
     rows.push(r);
   }
   return { kind: "leads", headers, rows, descartadas: cuerpo.length - rows.length, total: cuerpo.length };
+}
+
+export const MAX_PAGINAS_PDF = 60;
+const MAX_CHARS_PAGINA = 8000;
+const MAX_CHARS_PDF = 300_000;
+/** Páginas por petición al subir un PDF (cada una puede traer varios KB de texto). */
+export const TROZO_PAGINAS = 5;
+
+/**
+ * Las páginas de un PDF (texto ya extraído) → un adjunto que PulseBot puede leer. Un PDF escaneado
+ * (sólo imágenes) no trae texto: se avisa en vez de subir un documento vacío.
+ */
+export function prepararDocumento(paginas: string[]): CsvPreparado | { error: string } {
+  const rows: Record<string, string>[] = [];
+  let chars = 0, vacias = 0, recortado = false;
+  paginas.slice(0, MAX_PAGINAS_PDF).forEach((p, i) => {
+    const texto = String(p || "").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+    if (!texto) { vacias++; return; }
+    if (chars >= MAX_CHARS_PDF) { recortado = true; return; }
+    const t = texto.slice(0, Math.min(MAX_CHARS_PAGINA, MAX_CHARS_PDF - chars));
+    if (t.length < texto.length) recortado = true;
+    chars += t.length;
+    rows.push({ pagina: String(i + 1), texto: t });
+  });
+  if (!rows.length) return { error: "No he podido leer texto en ese PDF: parece escaneado (sólo imágenes). Súbelo con texto seleccionable o pega el contenido en el chat." };
+  if (paginas.length > MAX_PAGINAS_PDF) recortado = true;
+  return { kind: "documento", headers: ["pagina", "texto"], rows, descartadas: vacias, total: paginas.length, ...(recortado ? { recortado: true } : {}) };
 }
 
 /** Trozos para subir sin mandar un cuerpo enorme de una vez. */

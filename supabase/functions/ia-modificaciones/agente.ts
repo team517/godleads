@@ -109,7 +109,9 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     }
     const adjuntos = tarjetas.filter((t: any) => t.type === "adjunto");
     if (f.role === "user" && adjuntos.length) {
-      const nota = adjuntos.map((t: any) =>
+      const nota = adjuntos.map((t: any) => t.tipo === "documento"
+        ? `(Adjuntó el documento PDF "${t.nombre}", id ${t.upload_id}: ${t.filas} páginas con texto. Para saber qué dice, léelo con ver_archivo antes de contestar.)`
+        :
         `(Adjuntó el archivo "${t.nombre}", id ${t.upload_id}: ${t.filas} filas${t.tipo === "leads" ? ` con email válido (${t.descartadas || 0} descartadas al leerlo)` : " (sin columna de email)"}; columnas: ${(t.columnas || []).join(", ")})`,
       ).join("\n");
       return { role: f.role, content: `${f.content}\n\n${nota}` };
@@ -940,6 +942,22 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       const up = await adjuntoDelCliente(ctx, a.upload_id);
       const desde = entero(a.desde, 0, 0, Math.max(0, up.row_count - 1));
       const cuantas = entero(a.cuantas, 10, 1, 50);
+      if (up.kind === "documento") {
+        // Un PDF: se devuelve su texto por páginas, sin pasarse de lo que cabe en un turno.
+        const MAX = 14000;
+        const paginas: { pagina: string; texto: string }[] = [];
+        let chars = 0, i = desde;
+        for (; i < up.rows.length && paginas.length < cuantas; i++) {
+          const t = String((up.rows[i] as any)?.texto || "");
+          if (paginas.length && chars + t.length > MAX) break;
+          paginas.push({ pagina: String((up.rows[i] as any)?.pagina || i + 1), texto: t.slice(0, MAX) });
+          chars += t.length;
+        }
+        return {
+          archivo: up.filename, tipo: "documento", paginas_con_texto: up.row_count, desde,
+          paginas, ...(i < up.rows.length ? { quedan_paginas: up.rows.length - i, siguiente_desde: i } : { fin_del_documento: true }),
+        };
+      }
       const plan = up.kind === "leads" ? planImportacion(up.rows) : null;
       let enCampana: number | null = null;
       if (a.campaign_id && plan) {
@@ -958,6 +976,7 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
 
     case "importar_leads": {
       const up = await adjuntoDelCliente(ctx, a.upload_id);
+      if (up.kind === "documento") throw new Error("Eso es un documento PDF, no una lista de leads: para importar leads hace falta un CSV con columna de email");
       if (up.kind !== "leads") throw new Error("Ese archivo no tiene columna de email: no se pueden importar leads");
       const camp = await campanaDelCliente(ctx, a.campaign_id);
       const renombrar = a.renombrar_columnas && typeof a.renombrar_columnas === "object" ? a.renombrar_columnas as Record<string, string> : {};

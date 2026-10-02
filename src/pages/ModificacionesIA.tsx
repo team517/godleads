@@ -21,7 +21,8 @@ import {
   ESTADO_CAMBIO, ESTADO_CAMPANA, SUGERENCIAS, conversacionesRecientes, csvMetricas, diaCorto, haceCuanto, horaCorta,
   nombreCliente, puedeVerIaMod, tieneIdea, type IaCliente, type IaMensaje, type IaTarjeta, type ImportacionVista, type RespuestaVista, type VistaPaso,
 } from "@/lib/ia-mod-view";
-import { decodificarArchivo, prepararCsv, trozos, type CsvPreparado } from "@/lib/ia-mod-csv";
+import { MAX_PAGINAS_PDF, TROZO_PAGINAS, decodificarArchivo, prepararCsv, prepararDocumento, trozos, type CsvPreparado } from "@/lib/ia-mod-csv";
+import { readPdfPages } from "@/lib/read-file-text";
 
 async function llamar<T = any>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke("ia-modificaciones", { body });
@@ -71,6 +72,7 @@ export default function ModificacionesIA() {
   const [memoriaAbierta, setMemoriaAbierta] = useState(false);
   const [menciones, setMenciones] = useState(false);
   const [adjunto, setAdjunto] = useState<{ nombre: string; datos: CsvPreparado } | null>(null);
+  const [leyendoPdf, setLeyendoPdf] = useState(false);
   const [subida, setSubida] = useState<number | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const archivoRef = useRef<HTMLInputElement>(null);
@@ -181,8 +183,22 @@ export default function ModificacionesIA() {
 
   const leerArchivo = async (f: File | undefined | null) => {
     if (!f) return;
-    if (!/\.(csv|txt)$/i.test(f.name)) { toast.error("Adjunta un archivo .csv (si es Excel: Archivo → Guardar como → CSV)"); return; }
-    if (f.size > 15 * 1024 * 1024) { toast.error("El archivo pesa más de 15 MB; divídelo en varios"); return; }
+    const esPdf = /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+    if (!esPdf && !/\.(csv|txt)$/i.test(f.name)) { toast.error("Adjunta un .csv o un .pdf (si es Excel: Archivo → Guardar como → CSV)"); return; }
+    if (f.size > (esPdf ? 25 : 15) * 1024 * 1024) { toast.error(`El archivo pesa más de ${esPdf ? 25 : 15} MB; divídelo en varios`); return; }
+    if (esPdf) {
+      // El PDF se lee aquí, en el navegador: a PulseBot sólo le llega su texto, página a página.
+      setLeyendoPdf(true);
+      try {
+        const doc = prepararDocumento(await readPdfPages(f, MAX_PAGINAS_PDF));
+        if ("error" in doc) { toast.error(doc.error); return; }
+        setAdjunto({ nombre: f.name, datos: doc });
+        setTimeout(() => entradaRef.current?.focus(), 30);
+      } catch (e: any) {
+        toast.error(`No se pudo leer el PDF${e?.name === "PasswordException" ? ": está protegido con contraseña" : ""}. Prueba con otro o pega el texto.`);
+      } finally { setLeyendoPdf(false); }
+      return;
+    }
     const r = prepararCsv(decodificarArchivo(await f.arrayBuffer()));
     if ("error" in r) { toast.error(r.error); return; }
     if (r.kind === "leads" && r.rows.length === 0) { toast.error("Ninguna fila tiene un email válido"); return; }
@@ -196,7 +212,7 @@ export default function ModificacionesIA() {
       action: "upload_start", client_id: clientId, filename: a.nombre, kind: a.datos.kind,
       headers: a.datos.headers, total: a.datos.rows.length, discarded: a.datos.descartadas,
     });
-    const partes = trozos(a.datos.rows);
+    const partes = trozos(a.datos.rows, a.datos.kind === "documento" ? TROZO_PAGINAS : undefined);
     for (let i = 0; i < partes.length; i++) {
       setSubida(Math.round((i / partes.length) * 100));
       await llamar({ action: "upload_append", client_id: clientId, upload_id, rows: partes[i] });
@@ -305,10 +321,14 @@ export default function ModificacionesIA() {
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] font-medium">{adjunto.nombre}</span>
                   <span className="block text-[12px] text-muted-foreground">
-                    {adjunto.datos.kind === "leads"
-                      ? `${adjunto.datos.rows.length.toLocaleString("es-ES")} leads con email válido${adjunto.datos.descartadas ? ` · ${adjunto.datos.descartadas.toLocaleString("es-ES")} ${adjunto.datos.descartadas === 1 ? "fila" : "filas"} sin email válido` : ""}`
-                      : `${adjunto.datos.rows.length.toLocaleString("es-ES")} filas · sin columna de email (sólo para analizar)`}
-                    {" · "}{adjunto.datos.headers.length} columnas
+                    {adjunto.datos.kind === "documento"
+                      ? `PDF · ${adjunto.datos.rows.length} ${adjunto.datos.rows.length === 1 ? "página" : "páginas"} con texto${adjunto.datos.recortado ? " (documento largo: se lee el principio)" : ""}`
+                      : <>
+                        {adjunto.datos.kind === "leads"
+                          ? `${adjunto.datos.rows.length.toLocaleString("es-ES")} leads con email válido${adjunto.datos.descartadas ? ` · ${adjunto.datos.descartadas.toLocaleString("es-ES")} ${adjunto.datos.descartadas === 1 ? "fila" : "filas"} sin email válido` : ""}`
+                          : `${adjunto.datos.rows.length.toLocaleString("es-ES")} filas · sin columna de email (sólo para analizar)`}
+                        {" · "}{adjunto.datos.headers.length} columnas
+                      </>}
                   </span>
                 </span>
                 <button onClick={() => setAdjunto(null)} className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Quitar archivo"><X className="h-4 w-4" /></button>
@@ -317,11 +337,14 @@ export default function ModificacionesIA() {
             {subida !== null && (
               <p className="mb-2 flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Subiendo el archivo… {subida} %</p>
             )}
-            <input ref={archivoRef} type="file" accept=".csv,.txt,text/csv" className="hidden"
+            {leyendoPdf && (
+              <p className="mb-2 flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Leyendo el PDF…</p>
+            )}
+            <input ref={archivoRef} type="file" accept=".csv,.txt,.pdf,text/csv,application/pdf" className="hidden"
               onChange={(e) => { leerArchivo(e.target.files?.[0]); e.target.value = ""; }} />
             <div className="flex items-end gap-2">
               <div className="pb-1.5">
-                <IconoAtajo titulo="Adjuntar CSV (leads o cualquier tabla)" onClick={() => archivoRef.current?.click()} disabled={pensando}><Paperclip className="h-5 w-5" /></IconoAtajo>
+                <IconoAtajo titulo="Adjuntar un CSV (leads o cualquier tabla) o un PDF" onClick={() => archivoRef.current?.click()} disabled={pensando || leyendoPdf}><Paperclip className="h-5 w-5" /></IconoAtajo>
               </div>
               <div className="hidden sm:flex items-center gap-0.5 pb-1.5">
                 <IconoAtajo titulo="Métricas en imagen" onClick={() => enviar("Métricas de los últimos 14 días en imagen")} disabled={pensando}><BarChart3 className="h-5 w-5" /></IconoAtajo>
@@ -594,7 +617,7 @@ function Burbuja({ m, cambios, onCambio, onPedir, ultimo = false }: {
           {(m.cards || []).filter((t) => t.type === "adjunto").map((t, i) => t.type === "adjunto" && (
             <span key={i} className="mt-2 flex items-center gap-2 rounded-lg bg-white/15 px-2.5 py-1.5 text-[13px]">
               <FileSpreadsheet className="h-4 w-4 flex-shrink-0" />
-              <span className="truncate">{t.nombre} · {t.filas.toLocaleString("es-ES")} {t.tipo === "leads" ? "leads" : "filas"}</span>
+              <span className="truncate">{t.nombre} · {t.filas.toLocaleString("es-ES")} {t.tipo === "documento" ? (t.filas === 1 ? "página" : "páginas") : t.tipo === "leads" ? "leads" : "filas"}</span>
             </span>
           ))}
         </div>

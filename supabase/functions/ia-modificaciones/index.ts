@@ -90,11 +90,11 @@ Deno.serve(async (req) => {
     // Adjuntar un CSV: se crea el adjunto y luego se le añaden las filas por trozos.
     if (action === "upload_start") {
       const headers = (Array.isArray(body.headers) ? body.headers : []).map((h: unknown) => String(h).slice(0, 80)).slice(0, 120);
-      const kind = body.kind === "tabla" ? "tabla" : "leads";
+      const kind = body.kind === "tabla" ? "tabla" : body.kind === "documento" ? "documento" : "leads";
       if (kind === "leads" && !headers.includes("email")) return json({ error: "El archivo no tiene columna de email" }, 400);
       const esperadas = Math.max(0, Math.min(25000, Math.floor(Number(body.total) || 0)));
       const { data, error } = await db.from("ia_mod_uploads").insert({
-        client_user_id: clientId, author_email: email, filename: String(body.filename || "archivo.csv").slice(0, 160),
+        client_user_id: clientId, author_email: email, filename: String(body.filename || (kind === "documento" ? "documento.pdf" : "archivo.csv")).slice(0, 160),
         kind, headers, expected_rows: esperadas, discarded: Math.max(0, Math.floor(Number(body.discarded) || 0)),
       }).select("id").single();
       if (error) return json({ error: error.message }, 500);
