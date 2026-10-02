@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
+import { LeadMixControl, type LeadMixValue } from "@/components/campaigns/LeadMixControl";
 
 interface Props { campaignId: string; }
 
@@ -137,6 +138,8 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [textOnlyEmails, setTextOnlyEmails] = useState(false);
   const [firstEmailTextOnly, setFirstEmailTextOnly] = useState(false);
   const [prioritizeNewLeads, setPrioritizeNewLeads] = useState(false);
+  // Reparto del día entre primeros correos y seguimientos (mix_mode / new_lead_pct / max_new_per_day).
+  const [leadMix, setLeadMix] = useState<LeadMixValue>({ mode: "off", pct: 35, maxNewPerDay: null });
   const [domainLimitEnabled, setDomainLimitEnabled] = useState(false);
   const [domainDailyLimit, setDomainDailyLimit] = useState(3);
   const [providerMatching, setProviderMatching] = useState(false);
@@ -348,6 +351,11 @@ export default function CampaignOptions({ campaignId }: Props) {
         setTextOnlyEmails(d.text_only_emails ?? false);
         setFirstEmailTextOnly(d.first_email_text_only ?? false);
         setPrioritizeNewLeads(d.prioritize_new_leads ?? false);
+        setLeadMix({
+          mode: d.mix_mode === "auto" || d.mix_mode === "manual" ? d.mix_mode : "off",
+          pct: Number.isFinite(Number(d.new_lead_pct)) ? Number(d.new_lead_pct) : 35,
+          maxNewPerDay: d.max_new_per_day > 0 ? d.max_new_per_day : null,
+        });
         setDomainLimitEnabled(d.domain_limit_enabled ?? false);
         setDomainDailyLimit(d.domain_daily_limit ?? 3);
         setProviderMatching(d.provider_matching ?? false);
@@ -395,6 +403,9 @@ export default function CampaignOptions({ campaignId }: Props) {
       text_only_emails: textOnlyEmails,
       first_email_text_only: firstEmailTextOnly,
       prioritize_new_leads: prioritizeNewLeads,
+      mix_mode: leadMix.mode,
+      new_lead_pct: Math.max(0, Math.min(100, Math.round(leadMix.pct))),
+      max_new_per_day: leadMix.maxNewPerDay && leadMix.maxNewPerDay > 0 ? leadMix.maxNewPerDay : null,
       domain_limit_enabled: domainLimitEnabled,
       domain_daily_limit: domainDailyLimit,
       provider_matching: providerMatching,
@@ -608,11 +619,24 @@ export default function CampaignOptions({ campaignId }: Props) {
             </div>
           )}
         </Row>
-        <Row icon={<Users className="h-4 w-4" />} tint="blue"
-          title="Priorizar nuevos leads"
-          desc="Contacta antes a los leads nuevos que a los follow-ups en cola."
-          control={<Switch checked={prioritizeNewLeads} onCheckedChange={v => { setPrioritizeNewLeads(!!v); markDirty(); }} />}
-        />
+        <Row icon={<Split className="h-4 w-4" />} tint="blue"
+          title="Reparto del día: leads nuevos y seguimientos"
+          desc="Qué parte de los envíos de cada día son primeros correos y qué parte seguimientos. El total del día no cambia."
+        >
+          <LeadMixControl
+            campaignId={campaignId}
+            capacityToday={autoLimit ? capacityToday : Math.min(dailyLimit, capacityToday)}
+            value={leadMix}
+            onChange={(v) => { setLeadMix(v); markDirty(); }}
+          />
+        </Row>
+        {leadMix.mode === "off" && (
+          <Row icon={<Users className="h-4 w-4" />} tint="blue"
+            title="Priorizar nuevos leads"
+            desc="Contacta antes a los leads nuevos que a los follow-ups en cola."
+            control={<Switch checked={prioritizeNewLeads} onCheckedChange={v => { setPrioritizeNewLeads(!!v); markDirty(); }} />}
+          />
+        )}
         <Row icon={<TrendingUp className="h-4 w-4" />} tint="violet"
           title="Aumento gradual" badge={<Badge variant="secondary" className="h-4 px-1.5 text-[10.5px] font-semibold">SlowRamp</Badge>}
           desc="Sube poco a poco el volumen diario por cuenta para calentar los buzones."

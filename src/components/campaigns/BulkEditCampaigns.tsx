@@ -95,6 +95,10 @@ export default function BulkEditCampaigns({ open, onOpenChange, campaignIds, man
   const [applyFirstText, setApplyFirstText] = useState(false);
   const [firstText, setFirstText] = useState(false);
 
+  const [applyMix, setApplyMix] = useState(false);
+  const [mixMode, setMixMode] = useState<"off" | "auto" | "manual">("auto");
+  const [mixPct, setMixPct] = useState(35);
+
   const [applyPrioritize, setApplyPrioritize] = useState(false);
   const [prioritize, setPrioritize] = useState(false);
 
@@ -144,8 +148,8 @@ export default function BulkEditCampaigns({ open, onOpenChange, campaignIds, man
   const enabledCount = useMemo(() => [
     applyDaily, applyRamp, applyStop, applyWindow, applyDays, applyTextOnly, applyFirstText,
     applyPrioritize, applyDomain, applyProvider, applyExpert, applyUnsub, applyBreak, applySig,
-    applyTags, applyManager, applyClient,
-  ].filter(Boolean).length, [applyDaily, applyRamp, applyStop, applyWindow, applyDays, applyTextOnly, applyFirstText, applyPrioritize, applyDomain, applyProvider, applyExpert, applyUnsub, applyBreak, applySig, applyTags, applyManager, applyClient]);
+    applyTags, applyManager, applyClient, applyMix,
+  ].filter(Boolean).length, [applyDaily, applyRamp, applyStop, applyWindow, applyDays, applyTextOnly, applyFirstText, applyPrioritize, applyDomain, applyProvider, applyExpert, applyUnsub, applyBreak, applySig, applyTags, applyManager, applyClient, applyMix]);
 
   const toggleDay = (d: string) => setSendDays((p) => p.includes(d) ? p.filter((x) => x !== d) : [...p, d]);
   const toggleTag = (t: string) => setTags((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t]);
@@ -164,6 +168,7 @@ export default function BulkEditCampaigns({ open, onOpenChange, campaignIds, man
     if (applyTextOnly) patch.text_only_emails = textOnly;
     if (applyFirstText) patch.first_email_text_only = firstText;
     if (applyPrioritize) patch.prioritize_new_leads = prioritize;
+    if (applyMix) { patch.mix_mode = mixMode; if (mixMode === "manual") patch.new_lead_pct = Math.max(0, Math.min(100, Math.round(mixPct))); }
     if (applyDomain) { patch.domain_limit_enabled = domainEnabled; patch.domain_daily_limit = Math.max(1, domainLimit); }
     if (applyProvider) patch.provider_matching = provider;
     if (applyExpert) patch.expert_rotation = expert;
@@ -237,6 +242,21 @@ export default function BulkEditCampaigns({ open, onOpenChange, campaignIds, man
             </ApplyRow>
             <ApplyRow on={applyFirstText} setOn={setApplyFirstText} title="Primer email como solo texto">
               <Switch checked={firstText} onCheckedChange={setFirstText} />
+            </ApplyRow>
+            <ApplyRow on={applyMix} setOn={setApplyMix} title="Reparto del día: nuevos y seguimientos" desc="Automático = equilibrio según los pasos (3 pasos → 35 % nuevos).">
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={mixMode} onChange={(e) => setMixMode(e.target.value as "off" | "auto" | "manual")}
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm">
+                  <option value="off">Como siempre</option>
+                  <option value="auto">Automático</option>
+                  <option value="manual">Manual</option>
+                </select>
+                {mixMode === "manual" && (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {numInput(mixPct, setMixPct, 0)} % nuevos
+                  </label>
+                )}
+              </div>
             </ApplyRow>
             <ApplyRow on={applyPrioritize} setOn={setApplyPrioritize} title="Priorizar nuevos leads" desc="Contacta antes a los nuevos que a los follow-ups.">
               <Switch checked={prioritize} onCheckedChange={setPrioritize} />

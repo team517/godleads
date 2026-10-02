@@ -16,6 +16,7 @@ const PAIRS: [string, string][] = [
   ["src/lib/step-variants.ts", "supabase/functions/_shared/step-variants.ts"],
   ["src/lib/lead-merge.ts", "supabase/functions/_shared/lead-merge.ts"],
   ["src/lib/variable-resolver.ts", "supabase/functions/_shared/variable-resolver.ts"],
+  ["src/lib/lead-mix.ts", "supabase/functions/_shared/lead-mix.ts"],
 ];
 
 describe("shared copies stay byte-identical", () => {

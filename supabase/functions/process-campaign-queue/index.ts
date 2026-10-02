@@ -4,6 +4,7 @@ import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
+import { allocateMix, interleave, laneAllowance, resolveNewPct, roomForNewLead, type MixPlan } from "../_shared/lead-mix.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -1181,6 +1182,7 @@ serve(async (req) => {
     const ritmoEmpresa = new Map<string, EstadoEmpresa>();
     const ritmoCargado = new Set<string>();   // "cliente|día" ya leído de la base
     let batchNewLeads = 0;
+    let batchFollowups = 0;
     // Sending domains already represented in the current batch. Two mailboxes on the
     // SAME sending domain must never fire concurrently (that would be a burst on one
     // domain/IP → spam risk). We flush before queueing a repeat, so same-domain sends
@@ -1191,7 +1193,7 @@ serve(async (req) => {
     // MAX_CONCURRENT_PER_HOST so no single server (≈all of IONOS here) gets a burst of
     // simultaneous connections. This is the guard that keeps IONOS healthy.
     let batchHostCounts: Record<string, number> = {};
-    const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchSendDomains.clear(); batchHostCounts = {}; };
+    const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchFollowups = 0; batchSendDomains.clear(); batchHostCounts = {}; };
     const flushSendBatch = async () => {
       if (sendBatch.length === 0) { resetBatchTallies(); return; }
       const batch = sendBatch;
@@ -1438,8 +1440,12 @@ serve(async (req) => {
       // bounded windows: overdue FOLLOW-UPS first (oldest last_sent_at), then the
       // OLDEST new leads. Deterministic order → coverage advances monotonically.
       const LEAD_FETCH_CAP = 500; // ≥ each per-lane scan cap (follow-ups 300, new 200)
+      // REPARTO nuevos / seguimientos (02-10-2026): si la campaña lo tiene activado, los
+      // seguimientos se piden más abajo (sólo los que tocan AHORA y de buzones con sitio), cuando
+      // ya se conoce el reparto del día. Con el reparto apagado todo sigue exactamente igual.
+      const mixWanted = (campaign as any).mix_mode === "auto" || (campaign as any).mix_mode === "manual";
       const [followupRes, newRes] = await Promise.all([
-        adminClient
+        mixWanted ? Promise.resolve({ data: [] as any[] }) : adminClient
           .from("campaign_leads")
           .select("*, leads(*)")
           .eq("campaign_id", campaign.id)
@@ -1454,16 +1460,16 @@ serve(async (req) => {
           .order("id", { ascending: true })
           .limit(LEAD_FETCH_CAP),
       ]);
-      const campaignLeads = [...(followupRes.data || []), ...(newRes.data || [])];
+      let campaignLeads = [...(followupRes.data || []), ...(newRes.data || [])];
 
-      if (!campaignLeads?.length) continue;
+      if (!campaignLeads?.length && !mixWanted) continue;
 
       // PRIORIDAD DE ENVÍO: por defecto los follow-ups (current_step > 0) van ANTES que
       // los leads nuevos (current_step 0), para que los seguimientos nunca se retrasen.
       // El cupo que sobre tras los follow-ups se usa igualmente para leads nuevos.
       // Si la campaña tiene prioritize_new_leads = true, se invierte.
       const prioritizeNew = (campaign as any).prioritize_new_leads === true;
-      campaignLeads.sort((a: any, b: any) => {
+      if (!mixWanted) campaignLeads.sort((a: any, b: any) => {
         const aNew = (a.current_step || 0) === 0;
         const bNew = (b.current_step || 0) === 0;
         if (aNew === bNew) return 0;
@@ -1551,6 +1557,75 @@ serve(async (req) => {
       // Huecos de ESTA campaña en esta pasada, según lo que sus buzones pueden enviar hoy
       // en el tramo que le queda (toda la franja si empezó a su hora).
       const campaignTickCap = perTickCampaignCap(campaignDailyLimit, pace.spanMinutes);
+
+      // ═══ REPARTO DEL DÍA: primeros correos / seguimientos ═══
+      // El total del día NO cambia (mismos topes por buzón, misma subida gradual): sólo la mezcla.
+      // mix = null → reparto apagado o no disponible: el motor sigue como siempre (seguimientos primero).
+      let mix: { plan: MixPlan; newAllowed: number; fuAllowed: number; fuSentByAcc: Record<string, number> } | null = null;
+      let fuSentThisCampaign = 0;
+      if (mixWanted) {
+        const dayEndIso = new Date(now.getTime() + remainingWindowMinutes * 60_000).toISOString();
+        const { data: st, error: stErr } = await adminClient.rpc("campaign_mix_state", {
+          p_campaign: campaign.id, p_today_start: todayStart, p_day_end: dayEndIso,
+        });
+        // Si el reparto no se puede calcular, la campaña NO se para: envía como siempre
+        // (seguimientos primero) y se vuelve a intentar en la pasada siguiente.
+        const comoSiempre = async (motivo: string) => {
+          console.error(`Campaign "${campaign.name}": reparto no disponible (${motivo}) — esta pasada envía como siempre`);
+          const { data: legacy } = await adminClient
+            .from("campaign_leads").select("*, leads(*)")
+            .eq("campaign_id", campaign.id).eq("status", "in_progress")
+            .order("last_sent_at", { ascending: true, nullsFirst: true }).limit(LEAD_FETCH_CAP);
+          campaignLeads = [...(legacy || []), ...(newRes.data || [])];
+        };
+        if (stErr || !st) {
+          await comoSiempre(stErr?.message || "sin datos");
+          if (!campaignLeads.length) continue;
+        } else {
+        const state = st as { new_pending: number; new_sent: number; fu_sent: number; fu_due: number; accounts: { id: string | null; fu_due: number; fu_sent: number; new_sent: number }[] };
+        const byAcc = new Map<string, { fu_due: number; fu_sent: number }>();
+        for (const r of state.accounts || []) if (r.id) byAcc.set(r.id, { fu_due: Number(r.fu_due) || 0, fu_sent: Number(r.fu_sent) || 0 });
+        const pool = new Set(accounts.map((a: any) => a.id));
+        const mixAccounts = accounts.map((a: any) => ({
+          id: a.id as string, limit: getEffectiveLimit(a),
+          fuDue: byAcc.get(a.id)?.fu_due || 0, fuSent: byAcc.get(a.id)?.fu_sent || 0,
+        }));
+        // Seguimientos de buzones que hoy no están disponibles (desconectados): saldrán prestados.
+        const extraFuDue = (state.accounts || []).filter((r) => !r.id || !pool.has(r.id)).reduce((n, r) => n + (Number(r.fu_due) || 0), 0);
+        const newSentToday = Number(state.new_sent) || 0;
+        const fuSentToday = Number(state.fu_sent) || 0;
+        const maxNewDay = Number((campaign as any).max_new_per_day);
+        let newDemand = newSentToday + (Number(state.new_pending) || 0);
+        if (Number.isFinite(maxNewDay) && maxNewDay > 0) newDemand = Math.min(newDemand, maxNewDay);
+        const newPct = resolveNewPct({
+          mode: (campaign as any).mix_mode, pct: (campaign as any).new_lead_pct, steps: steps.length,
+          dailyLimit: campaignDailyLimit, followupsDueToday: fuSentToday + (Number(state.fu_due) || 0),
+        });
+        const plan = allocateMix({ dailyLimit: campaignDailyLimit, newPct: newPct ?? 0, newDemand, accounts: mixAccounts, extraFuDue });
+        const newAllowed = laneAllowance(plan.newQuota, newSentToday, paceFraction);
+        const fuAllowed = laneAllowance(plan.fuQuota, fuSentToday, paceFraction);
+        // Seguimientos que tocan AHORA, sin los de buzones que hoy ya han enviado los suyos.
+        let dueNow: any[] = [];
+        let fuFallo = "";
+        if (fuAllowed > 0) {
+          const full = mixAccounts.filter((a) => a.fuSent >= (plan.fuTarget[a.id] ?? 0)).map((a) => a.id);
+          const { data: fuRows, error: fuErr } = await adminClient
+            .rpc("campaign_due_followups", { p_campaign: campaign.id, p_exclude: full, p_limit: LEAD_FETCH_CAP })
+            .select("*, leads(*)");
+          if (fuErr) fuFallo = fuErr.message || "error";
+          dueNow = fuRows || [];
+        }
+        if (fuFallo) {
+          await comoSiempre(fuFallo);
+        } else {
+          mix = { plan, newAllowed, fuAllowed, fuSentByAcc: Object.fromEntries(mixAccounts.map((a) => [a.id, a.fuSent])) };
+          // Intercalados en la proporción de lo que le toca ahora a cada parte.
+          campaignLeads = interleave(dueNow, newAllowed > 0 ? (newRes.data || []) : [], fuAllowed, newAllowed);
+          console.log(`Campaign "${campaign.name}": reparto ${newPct}% nuevos · hoy ${plan.newQuota} nuevos + ${plan.fuQuota} seguimientos · ahora ${newAllowed} + ${fuAllowed}`);
+        }
+        if (!campaignLeads.length) continue;
+        }
+      }
 
       // ═══ Blocklist check (load once per campaign) ═══
       // Paged: an unpaged select is silently capped at PostgREST's 1000 rows, and every hard
@@ -1740,6 +1815,14 @@ serve(async (req) => {
           }
         }
 
+        // Reparto: cada parte (primeros correos / seguimientos) tiene su cupo de AHORA. El lead
+        // que no cabe no se pierde: sigue en cola y sale en una pasada posterior.
+        if (mix) {
+          if (currentStepIndex === 0) {
+            if (newLeadsSentThisRun + batchNewLeads >= mix.newAllowed) { totalSkipped++; continue; }
+          } else if (fuSentThisCampaign + batchFollowups >= mix.fuAllowed) { totalSkipped++; continue; }
+        }
+
         // Domain daily limit check (+ in-flight sends to this domain queued in the batch)
         if (domainLimitEnabled) {
           const currentDomainCount = (domainSentCounts[leadDomain] || 0) + (batchDomainCounts[leadDomain] || 0);
@@ -1788,7 +1871,13 @@ serve(async (req) => {
         // for every lead.
 
         // Expert rotation / account selection
-        const selectAccount = () => {
+        // forNew = se busca buzón para un lead NUEVO. Con reparto, sólo valen los buzones a los que
+        // les queda sitio después de guardar el de sus seguimientos de hoy.
+        const hasRoomForNew = (acc: any) => !mix || roomForNewLead(
+          { limit: getEffectiveLimit(acc), sentToday: acc.sent_today || 0, fuSent: mix.fuSentByAcc[acc.id] || 0 },
+          mix.plan.fuTarget[acc.id] ?? 0,
+        );
+        const selectAccount = (forNew = false) => {
           if ((campaign as any).expert_rotation && accounts.length > 1) {
             const domainMap: Record<string, any[]> = {};
             for (const acc of accounts) {
@@ -1802,7 +1891,7 @@ serve(async (req) => {
             const providerMatching = (campaign as any).provider_matching ?? false;
 
             const scored = accounts
-              .filter(acc => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id))
+              .filter(acc => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id) && (!forNew || hasRoomForNew(acc)))
               .map(acc => {
                 const domain = acc.email.split("@")[1] || "unknown";
                 const domainAccounts = domainMap[domain];
@@ -1839,7 +1928,7 @@ serve(async (req) => {
 
           // True round-robin: pick the account with the LEAST sent_today
           // so load is evenly distributed across all available accounts.
-          const eligible = accounts.filter((acc: any) => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id));
+          const eligible = accounts.filter((acc: any) => acc.sent_today < getEffectiveLimit(acc) && (accountSendsThisTick[acc.id] || 0) < MAX_PER_ACCOUNT_PER_TICK && !isAccountOnCooldown(acc) && !rateLimitedThisRun.has(acc.id) && (!forNew || hasRoomForNew(acc)));
           if (eligible.length === 0) return null;
           eligible.sort((a: any, b: any) => {
             if (a.sent_today !== b.sent_today) return a.sent_today - b.sent_today;
@@ -1904,6 +1993,13 @@ serve(async (req) => {
             totalSkipped++;
             continue;
           }
+          // Reparto: este buzón ya ha enviado hoy los seguimientos que le tocan; el resto de su
+          // día es para leads nuevos. (Un envío prestado por otro buzón no entra en esta cuenta.)
+          if (mix && currentStepIndex > 0 && account.id === boundId
+              && (mix.fuSentByAcc[account.id] || 0) >= (mix.plan.fuTarget[account.id] ?? 0)) {
+            totalSkipped++;
+            continue;
+          }
           // Respect daily caps even on the bound account
           if (account.sent_today >= getEffectiveLimit(account)) {
             totalSkipped++;
@@ -1922,7 +2018,7 @@ serve(async (req) => {
             continue;
           }
           // pick via rotation and persist on the very first send
-          account = selectAccount();
+          account = selectAccount(true);
           if (account) {
             const { data: claimedLead, error: claimErr } = await adminClient
               .from("campaign_leads")
@@ -2260,7 +2356,10 @@ serve(async (req) => {
           totalSent++;
           sentThisCampaign++;
           if (currentStepIndex === 0) { newSentTotal++; newLeadsSentThisRun++; }
-          else { followupsSentTotal++; }
+          else {
+            followupsSentTotal++; fuSentThisCampaign++;
+            if (mix) mix.fuSentByAcc[account.id] = (mix.fuSentByAcc[account.id] || 0) + 1;
+          }
 
           // ATOMIC increment (sent_today = sent_today + 1 in the DB). The old
           // read-modify-write wrote the in-memory value read minutes earlier, so if
@@ -2389,7 +2488,7 @@ serve(async (req) => {
           batchSendDomains.add(sendDomain);
           batchHostCounts[smtpHost] = (batchHostCounts[smtpHost] || 0) + 1;
           if (domainLimitEnabled) batchDomainCounts[leadDomain] = (batchDomainCounts[leadDomain] || 0) + 1;
-          if (currentStepIndex === 0) batchNewLeads++;
+          if (currentStepIndex === 0) batchNewLeads++; else batchFollowups++;
           sendBatch.push({ email: leadEmail, send: doSend, record });
           if (sendBatch.length >= SEND_CONCURRENCY) await flushSendBatch();
         }
