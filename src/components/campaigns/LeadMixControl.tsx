@@ -4,9 +4,10 @@ import { AUTO_MIN_NEW_PCT, balancedNewPct, clampPct, mixAdvice, mixEstimate, res
 
 /* Reparto del día entre primeros correos y seguimientos (opciones de campaña).
    Tres modos: como siempre (seguimientos primero), automático (equilibrio según los pasos) y
-   manual (la barra). Debajo se ve qué saldría HOY con ese reparto. */
+   manual (la barra). Debajo se ve qué saldría HOY con ese reparto. El total del día lo sigue
+   calculando el motor (topes por buzón y subida gradual): aquí sólo se decide la mezcla. */
 
-export interface LeadMixValue { mode: MixMode; pct: number; maxNewPerDay: number | null }
+export interface LeadMixValue { mode: MixMode; pct: number }
 
 interface Props {
   campaignId: string;
@@ -52,14 +53,14 @@ export function LeadMixControl({ campaignId, capacityToday, value, onChange }: P
     return () => { alive = false; };
   }, [campaignId]);
 
-  const { mode, pct, maxNewPerDay } = value;
+  const { mode, pct } = value;
   const balance = balancedNewPct(steps || 3);
   const known = pending !== null && dueToday !== null && capacityToday > 0;
   const shownPct = mode === "manual" ? clampPct(pct)
     : mode === "auto" ? (resolveNewPct({ mode: "auto", steps: steps || 3, dailyLimit: capacityToday, followupsDueToday: dueToday ?? 0 }) ?? balance)
     : null;
   const est = known && shownPct !== null
-    ? mixEstimate({ dailyLimit: capacityToday, newPct: shownPct, newPending: pending!, followupsDueToday: dueToday!, maxNewPerDay })
+    ? mixEstimate({ dailyLimit: capacityToday, newPct: shownPct, newPending: pending!, followupsDueToday: dueToday! })
     : null;
   // El consejo general no se enseña si contradice lo que va a pasar HOY (hay cola y aun así quedan seguimientos fuera).
   const general = mode === "manual" ? mixAdvice(clampPct(pct), steps || 3) : null;
@@ -117,13 +118,6 @@ export function LeadMixControl({ campaignId, capacityToday, value, onChange }: P
               {est.aplazados > 0 ? ` Quedarían ${fmt(est.aplazados)} seguimientos para otro día.` : " Los seguimientos van al día."}
             </p>
           )}
-          <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Máximo de leads nuevos al día</span>
-            <input type="number" min={0} inputMode="numeric" placeholder="sin tope" value={maxNewPerDay ?? ""}
-              onChange={(e) => { const n = parseInt(e.target.value); onChange({ ...value, maxNewPerDay: Number.isFinite(n) && n > 0 ? n : null }); }}
-              className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-foreground" />
-            <span>Déjalo vacío para no limitar. Sirve para que la lista no se acabe demasiado rápido.</span>
-          </label>
         </div>
       )}
     </div>

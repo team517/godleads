@@ -138,8 +138,8 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [textOnlyEmails, setTextOnlyEmails] = useState(false);
   const [firstEmailTextOnly, setFirstEmailTextOnly] = useState(false);
   const [prioritizeNewLeads, setPrioritizeNewLeads] = useState(false);
-  // Reparto del día entre primeros correos y seguimientos (mix_mode / new_lead_pct / max_new_per_day).
-  const [leadMix, setLeadMix] = useState<LeadMixValue>({ mode: "off", pct: 35, maxNewPerDay: null });
+  // Reparto del día entre primeros correos y seguimientos (mix_mode / new_lead_pct).
+  const [leadMix, setLeadMix] = useState<LeadMixValue>({ mode: "off", pct: 35 });
   const [domainLimitEnabled, setDomainLimitEnabled] = useState(false);
   const [domainDailyLimit, setDomainDailyLimit] = useState(3);
   const [providerMatching, setProviderMatching] = useState(false);
@@ -354,7 +354,6 @@ export default function CampaignOptions({ campaignId }: Props) {
         setLeadMix({
           mode: d.mix_mode === "auto" || d.mix_mode === "manual" ? d.mix_mode : "off",
           pct: Number.isFinite(Number(d.new_lead_pct)) ? Number(d.new_lead_pct) : 35,
-          maxNewPerDay: d.max_new_per_day > 0 ? d.max_new_per_day : null,
         });
         setDomainLimitEnabled(d.domain_limit_enabled ?? false);
         setDomainDailyLimit(d.domain_daily_limit ?? 3);
@@ -405,7 +404,6 @@ export default function CampaignOptions({ campaignId }: Props) {
       prioritize_new_leads: prioritizeNewLeads,
       mix_mode: leadMix.mode,
       new_lead_pct: Math.max(0, Math.min(100, Math.round(leadMix.pct))),
-      max_new_per_day: leadMix.maxNewPerDay && leadMix.maxNewPerDay > 0 ? leadMix.maxNewPerDay : null,
       domain_limit_enabled: domainLimitEnabled,
       domain_daily_limit: domainDailyLimit,
       provider_matching: providerMatching,
