@@ -23,8 +23,9 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body,
-    icon: "/pwa-192x192.png",
-    badge: "/pwa-192x192.png",
+    icon: "/pwa-192x192.png?v=2",
+    // Android paints the badge from its alpha only: a white star, not the coloured tile.
+    badge: "/badge-96x96.png",
     vibrate: [200, 100, 200],
     // A UNIQUE tag per notification. With one shared tag every new alert REPLACED the previous
     // one, so three leads replying showed only the last — the others vanished silently.
