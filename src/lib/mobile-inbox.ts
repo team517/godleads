@@ -115,6 +115,8 @@ export interface InboxRow {
   /** Lo marca el servidor (mobile_inbox_feed): quien escribe es un lead de alguna campaña, o
    *  su dominio es el de algún lead de alguna campaña. */
   in_campaign?: boolean | null;
+  /** Campaña del lead que coincide (por email o por dominio), para lo que no trae campaign_id. */
+  campaign_hint?: string | null;
 }
 
 export interface Conversation {
@@ -241,7 +243,8 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
       receivedAt: latest.received_at,
       unreadIds: msgs.filter((m) => !m.is_read).map((m) => m.id),
       messageIds: msgs.map((m) => m.id),
-      campaignId: withCampaign?.campaign_id ?? null,
+      // La del envío al que contesta; si no la hay, la del lead que coincide (por email o dominio).
+      campaignId: withCampaign?.campaign_id ?? msgs.find((m) => m.campaign_hint)?.campaign_hint ?? null,
       leadId: withLead?.lead_id ?? null,
       folderId: msgs.find((m) => m.folder_id)?.folder_id ?? null,
       important: msgs.some((m) => (m.labels || []).includes(IMPORTANT)),
@@ -297,12 +300,14 @@ export function filterConversations(list: Conversation[], f: MobileFilters, manu
     && (!f.status || effectiveStatus(c, manual) === f.status));
 }
 
-/** Contador por estado del menú de filtros: todas las conversaciones del ámbito (las dos pestañas). */
+/** Contador por estado del menú de filtros: las conversaciones de la PESTAÑA abierta (y del resto
+ *  de filtros), las mismas que se ven al tocar ese estado. Antes sumaba Primary y Others y el
+ *  número no cuadraba con la lista (Out of office decía ~450 estando en Primary). */
 export function statusCounts(list: Conversation[], f: MobileFilters, manual: Map<string, LeadStatus>) {
   const counts = {} as Record<LeadStatus, { total: number; unread: number }>;
   for (const s of LEAD_STATUSES) counts[s.id] = { total: 0, unread: 0 };
   for (const c of list) {
-    if (!matchesScope(c, f)) continue;
+    if (c.tab !== f.tab || !matchesScope(c, f)) continue;
     const s = counts[effectiveStatus(c, manual)];
     s.total++;
     if (c.unreadIds.length) s.unread++;

@@ -38,17 +38,17 @@ export function FilterDrawer(p: Props) {
   // Buzones y campañas que tienen respuestas (con cuántas), de más a menos.
   const inboxes = useMemo(() => {
     const n = new Map<string, number>();
-    for (const c of p.conversations) n.set(c.accountId, (n.get(c.accountId) || 0) + 1);
+    for (const c of p.conversations) if (c.tab === p.filters.tab) n.set(c.accountId, (n.get(c.accountId) || 0) + 1);
     return [...n.entries()].map(([id, count]) => ({ id, count, email: p.accountEmails[id] || "…" }))
       .sort((a, b) => b.count - a.count || a.email.localeCompare(b.email));
-  }, [p.conversations, p.accountEmails]);
+  }, [p.conversations, p.accountEmails, p.filters.tab]);
   const campaignList = useMemo(() => {
     const n = new Map<string, number>();
-    for (const c of p.conversations) if (c.campaignId) n.set(c.campaignId, (n.get(c.campaignId) || 0) + 1);
+    for (const c of p.conversations) if (c.campaignId && c.tab === p.filters.tab) n.set(c.campaignId, (n.get(c.campaignId) || 0) + 1);
     const names = new Map(p.campaigns.map((c) => [c.id, c.name]));
     return [...n.entries()].map(([id, count]) => ({ id, count, name: names.get(id) || "Campaña" }))
       .sort((a, b) => b.count - a.count);
-  }, [p.conversations, p.campaigns]);
+  }, [p.conversations, p.campaigns, p.filters.tab]);
 
   // Arrastrar hacia la izquierda para cerrar.
   const [dragX, setDragX] = useState(0);
@@ -93,7 +93,9 @@ export function FilterDrawer(p: Props) {
           {/* Status */}
           <button type="button" onClick={() => setSection((s) => ({ ...s, status: !s.status }))}
             className="flex w-full items-center justify-between px-1.5 py-2.5">
-            <span className="text-[16px] font-semibold text-[#5B6283]">Status</span>
+            <span className="text-[16px] font-semibold text-[#5B6283]">
+              Status <span className="ml-1 text-[13px] font-medium text-[#9AA0BA]">· {p.filters.tab === "primary" ? "Primary" : "Others"}</span>
+            </span>
             {section.status ? <ChevronUp className="h-[18px] w-[18px] text-[#5B6283]" /> : <ChevronDown className="h-[18px] w-[18px] text-[#5B6283]" />}
           </button>
           {section.status && (

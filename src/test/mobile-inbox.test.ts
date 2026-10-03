@@ -118,10 +118,28 @@ describe("conversaciones", () => {
     expect(filterConversations(list, { ...EMPTY_FILTERS, campaignId: "c2" }, manual).map((c) => c.email)).toEqual(["b@b.es"]);
     expect(filterConversations(list, { ...EMPTY_FILTERS, unreadOnly: true }, manual).map((c) => c.email)).toEqual(["a@a.es"]);
     expect(filterConversations(list, { ...EMPTY_FILTERS, search: "B.ES" }, manual).map((c) => c.email)).toEqual(["b@b.es"]);
+    // Los contadores son los de la pestaña abierta: cuadran con lo que sale al tocar el estado.
     const counts = statusCounts(list, EMPTY_FILTERS, manual);
     expect(counts.interested).toEqual({ total: 1, unread: 1 });
     expect(counts.not_interested).toEqual({ total: 1, unread: 0 });
-    expect(counts.out_of_office.total).toBe(1);
+    expect(counts.out_of_office.total).toBe(0);
+    const countsOthers = statusCounts(list, { ...EMPTY_FILTERS, tab: "others" }, manual);
+    expect(countsOthers.out_of_office.total).toBe(1);
+    expect(countsOthers.interested.total).toBe(0);
+    for (const tab of ["primary", "others"] as const) {
+      for (const s of ["interested", "not_interested", "out_of_office"] as const) {
+        const f = { ...EMPTY_FILTERS, tab, status: s };
+        expect(statusCounts(list, f, manual)[s].total).toBe(filterConversations(list, f, manual).length);
+      }
+    }
+  });
+
+  it("campaña de la conversación: la del envío y, si no la hay, la del lead que coincide", () => {
+    const [linked] = buildConversations([row({ campaign_id: "c9", campaign_hint: "c1" })]);
+    expect(linked.campaignId).toBe("c9");
+    const [colleague] = buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, campaign_hint: "c7", from_email: "lucia@theofficeco.es" })]);
+    expect(colleague.campaignId).toBe("c7");
+    expect(filterConversations([colleague], { ...EMPTY_FILTERS, campaignId: "c7" }, new Map())).toHaveLength(1);
   });
 });
 
