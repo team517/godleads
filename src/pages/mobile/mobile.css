@@ -6,6 +6,7 @@
   overflow: hidden;
   color: #0e1330;
   background:
+    linear-gradient(180deg, #ffffff 0px, rgba(255, 255, 255, 0) 130px),
     radial-gradient(120% 60% at 100% 0%, #eef1fd 0%, rgba(238, 241, 253, 0) 60%),
     radial-gradient(90% 50% at 0% 100%, #f3eefc 0%, rgba(243, 238, 252, 0) 60%),
     #f7f8fc;
@@ -96,8 +97,11 @@
   transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* Fondo de las pantallas que se abren encima (conversación, responder). */
+.m-page { background: linear-gradient(180deg, #ffffff 0px, #f7f8fc 130px); }
+
 .m-nav {
-  background: rgba(255, 255, 255, 0.96);
+  background: #ffffff;
   -webkit-backdrop-filter: saturate(160%) blur(16px);
   backdrop-filter: saturate(160%) blur(16px);
   box-shadow: 0 -1px 0 #eef0f6, 0 -8px 30px rgba(20, 25, 60, 0.04);

@@ -240,7 +240,7 @@ export function Composer(p: Props) {
   const style = vv && kbOpen ? { height: vv.h, transform: `translate3d(0, ${vv.top}px, 0)` } : { height: "100%" };
 
   return (
-    <div className="absolute inset-x-0 top-0 flex flex-col bg-[#F7F8FC]" style={style}>
+    <div className="m-page absolute inset-x-0 top-0 flex flex-col" style={style}>
       {/* Cabecera */}
       <div className="flex items-center gap-3 px-4 pb-2 pt-[calc(14px+env(safe-area-inset-top))]">
         <SquareButton label="Volver" onClick={() => { saveDraft(); p.onClose(); }}><ChevronLeft className="h-[22px] w-[22px]" strokeWidth={2} /></SquareButton>

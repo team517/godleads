@@ -15,7 +15,7 @@ export default function MobileGate() {
   }
   if (isInstalledApp() && !isPhoneDevice()) return <Navigate to="/dashboard" replace />;
   return (
-    <Suspense fallback={<div className="fixed inset-0 bg-[#F7F8FC]" />}>
+    <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
       <MobileApp />
     </Suspense>
   );

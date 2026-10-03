@@ -17,7 +17,6 @@ import { ThreadView } from "./ThreadView";
 import { Composer } from "./Composer";
 import { AccountView } from "./AccountView";
 import { PushBanner } from "./PushBanner";
-import { useFullScreenHeight } from "./useFullScreenHeight";
 import { Bolt, ConfirmSheet, Sheet, SheetRow, useToast } from "./ui";
 import "./mobile.css";
 
@@ -36,8 +35,6 @@ export default function MobileApp() {
   const location = useLocation();
   const inbox = useMobileInbox(user?.id);
   const toast = useToast();
-  const rootRef = useRef<HTMLDivElement>(null);
-  useFullScreenHeight(rootRef);
 
   const [nav, setNav] = useState<"unibox" | "account">("unibox");
   const [filters, setFilters] = useState<MobileFilters>(() => {
@@ -106,7 +103,7 @@ export default function MobileApp() {
   useEffect(() => {
     const metas = Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
     const prev = metas.map((m) => m.content);
-    metas.forEach((m) => { m.content = "#F7F8FC"; });
+    metas.forEach((m) => { m.content = "#FFFFFF"; });
     const html = document.documentElement;
     const hadDark = html.classList.contains("dark");
     html.classList.remove("dark");
@@ -223,7 +220,7 @@ export default function MobileApp() {
   const composeMode = compose || leavingCompose;
 
   return (
-    <div ref={rootRef} className="m-root">
+    <div className="m-root">
       <div className="m-frame">
         {/* Pestañas principales */}
         <div className="absolute inset-0 flex flex-col">

@@ -70,7 +70,7 @@ export function ThreadView(p: Props) {
 
   return (
     <div
-      className="flex h-full flex-col bg-[#F7F8FC]"
+      className="m-page flex h-full flex-col"
       style={dx ? { transform: `translate3d(${dx}px,0,0)`, transition: "none" } : { transition: "transform 200ms ease" }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
