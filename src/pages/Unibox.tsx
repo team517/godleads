@@ -1,4 +1,4 @@
-import { isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
+import { campaignMatchCounts, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { sentBodyHtml } from "@/lib/sent-body";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
@@ -671,6 +671,10 @@ export default function Unibox() {
   // Pestaña Campaigns: sus correos se piden a la BD (los enlazados a una campaña, o a la elegida),
   // para no depender de la ventana de 500+500 del resto de pestañas.
   const [campaignItems, setCampaignItems] = useState<any[]>([]);
+  // Mensajes DE CAMPAÑA (regla de inbox_campaign_match) → su campaña (o null si no se sabe cuál).
+  // Lo que no está aquí no sale en la pestaña Campañas. Aparte, lo que el buscador encuentra.
+  const [campaignMatch, setCampaignMatch] = useState<Map<string, string | null>>(new Map());
+  const [searchCampaignMatch, setSearchCampaignMatch] = useState<Map<string, string | null>>(new Map());
   const [campaignItemsLoading, setCampaignItemsLoading] = useState(false);
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
@@ -1132,22 +1136,25 @@ export default function Unibox() {
   // Load ALL starred messages straight from the DB (not just the ones inside the
   // in-memory 500+500 window), so the "Importantes" tab always shows everything you
   // flagged. Loaded on mount (for the tab badge count) and whenever the tab is opened.
-  const loadCampaignItems = useCallback(async (campaignId: string) => {
+  // CAMPAÑAS = la regla de la Unibox de campaña, la misma que Primary en la app del móvil y que los
+  // avisos de "Interesado": quien escribe es un lead de una campaña (o alguien a quien escribimos
+  // desde una), escribe desde el dominio de empresa de un lead de una campaña, o contesta citando
+  // un correo nuestro de campaña; nunca warm-up. Antes bastaba con tener campaign_id y el warm-up
+  // pegado a una campaña salía aquí ("Lucy - coffee? | KK5XRDN 0396QKE", 03-10-2026). Trae lo
+  // enlazado (1.000 más recientes) y lo demás que no es warm-up (400): así entran también los
+  // compañeros de la empresa de un lead, que no traen campaign_id, con la campaña de su lead.
+  const loadCampaignItems = useCallback(async () => {
     if (!user) return;
     setCampaignItemsLoading(true);
-    let q = (supabase as any)
-      .from("inbox_messages")
-      .select(INBOX_LIST_COLS)
-      .eq("user_id", user.id)
-      .eq("is_archived", false)
-      .not("campaign_id", "is", null)
-      .order("received_at", { ascending: false })
-      .limit(1000);
-    if (campaignId !== "all") q = q.eq("campaign_id", campaignId);
-    const { data, error } = await q;
+    const { data, error } = await (supabase as any).rpc("mobile_inbox_feed", { p_linked: 1000, p_other: 400, p_since: null });
     setCampaignItemsLoading(false);
     if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
-    setCampaignItems(data || []);
+    const rows = ((data || []) as any[]).filter((r) =>
+      campaignMatchCounts(r) && !isBounceOrNoise(r.from_email) && !isBounceOrFailure(r.from_email));
+    const match = new Map<string, string | null>();
+    for (const r of rows) match.set(r.id, r.campaign_id || r.campaign_hint || null);
+    setCampaignMatch(match);
+    setCampaignItems(rows.map((r) => ({ ...r, user_id: user.id, is_warmup: false })));
   }, [user]);
 
   const loadImportant = useCallback(async () => {
@@ -1655,7 +1662,11 @@ export default function Unibox() {
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const inTab = (m: any) => {
       if (viewTab === "reminders") return !!reminders[m.id];
-      if (viewTab === "campaigns") return !!m.campaign_id && (selectedCampaignId === "all" || m.campaign_id === selectedCampaignId);
+      if (viewTab === "campaigns") {
+        const camp = campaignMatch.has(m.id) ? campaignMatch.get(m.id) : searchCampaignMatch.get(m.id);
+        if (camp === undefined) return false;   // no es de campaña
+        return selectedCampaignId === "all" || camp === selectedCampaignId;
+      }
       return true;
     };
     // SEARCH (main inbox tabs): when there's a query, show the DB search results — the whole
@@ -1676,7 +1687,7 @@ export default function Unibox() {
     if (viewTab === "campaigns") {
       const byId = new Map<string, any>();
       for (const m of campaignItems) byId.set(m.id, m);
-      for (const m of messages) if (m.campaign_id) byId.set(m.id, m); // lo más reciente (tiempo real) gana
+      for (const m of messages) if (campaignMatch.has(m.id)) byId.set(m.id, m); // lo más reciente (tiempo real) gana
       source = Array.from(byId.values());
     }
     return source
@@ -1688,25 +1699,47 @@ export default function Unibox() {
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
       .filter(m => !search || searchTextOf(m).includes(search.toLowerCase()));
-  }, [messages, campaignItems, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+  }, [messages, campaignItems, campaignMatch, searchCampaignMatch, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
 
-  // Al entrar en Campaigns (o cambiar de campaña) y cada vez que se recarga el Unibox.
+  // Al entrar en Campaigns y cada vez que se recarga el Unibox (la campaña elegida sólo filtra).
   useEffect(() => {
     if (viewTab !== "campaigns") return;
-    void loadCampaignItems(selectedCampaignId);
-  }, [viewTab, selectedCampaignId, loadCampaignItems, messages.length]);
+    void loadCampaignItems();
+  }, [viewTab, loadCampaignItems, messages.length]);
+
+  // Buscando en Campaigns: lo que encuentra el buscador (todo el buzón) pasa por la misma regla.
+  useEffect(() => {
+    if (viewTab !== "campaigns" || !searchResults || searchResults.length === 0) return;
+    const ids = searchResults.map((m: any) => m.id).filter((id: string) => !campaignMatch.has(id) && !searchCampaignMatch.has(id));
+    if (ids.length === 0) return;
+    let alive = true;
+    (async () => {
+      const subjectOf = new Map(searchResults.map((m: any) => [m.id, m.subject]));
+      const found = new Map<string, string | null>();
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data } = await (supabase as any).rpc("inbox_campaign_match_mine", { p_ids: ids.slice(i, i + 300) });
+        for (const h of (data || []) as { id: string; in_campaign: boolean; campaign_hint: string | null; why: string | null }[]) {
+          if (campaignMatchCounts({ in_campaign: h.in_campaign, match_why: h.why, subject: subjectOf.get(h.id) })) found.set(h.id, h.campaign_hint);
+        }
+      }
+      if (alive && found.size) setSearchCampaignMatch((prev) => { const n = new Map(prev); for (const [k, v] of found) n.set(k, v); return n; });
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewTab, searchResults]);
 
   // Respuestas por campaña (para el selector), sin warm-up ni ocultos.
   const campaignReplyCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     const seen = new Set<string>();
-    for (const m of [...campaignItems, ...messages]) {
-      if (!m.campaign_id || seen.has(m.id) || hiddenFromClean(m)) continue;
+    for (const m of campaignItems) {
+      const camp = campaignMatch.get(m.id);
+      if (!camp || seen.has(m.id) || hiddenFromClean(m)) continue;
       seen.add(m.id);
-      counts[m.campaign_id] = (counts[m.campaign_id] || 0) + 1;
+      counts[camp] = (counts[camp] || 0) + 1;
     }
     return counts;
-  }, [campaignItems, messages, hiddenFromClean]);
+  }, [campaignItems, campaignMatch, hiddenFromClean]);
 
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
@@ -2699,7 +2732,8 @@ export default function Unibox() {
                 const due = isReminderDue(msg.id);
                 const hasReminder = !!reminders[msg.id];
                 const msgFolder = msg.folder_id ? folders.find((f) => f.id === msg.folder_id) : null;
-                const msgCampaign = msg.campaign_id ? (campaigns.find((c) => c.id === msg.campaign_id) || null) : null;
+                const msgCampaignId = msg.campaign_id || campaignMatch.get(msg.id) || null; // los compañeros traen la campaña de su lead
+                const msgCampaign = msgCampaignId ? (campaigns.find((c) => c.id === msgCampaignId) || null) : null;
                 const campaignName = msgCampaign?.name || null;
                 // Responsable de la campaña ("cargo de Samuel") — badge junto al chip de campaña.
                 const campaignManager = msgCampaign?.manager_id ? (managers.find((m) => m.id === msgCampaign.manager_id) || null) : null;

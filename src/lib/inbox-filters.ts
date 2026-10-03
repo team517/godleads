@@ -163,7 +163,15 @@ export function looksLikeGenericEnglishSubject(subject: string | null | undefine
  * 03-10-2026 en support@, 837 correos así en 30 días y ninguno era una respuesta real.
  */
 const POOL_EXTRA_RE = /\b(strateg(y|ies)|resources?|allocation|usage|book|jira|slack|kpis?|okrs?|q[1-4]|h[12]|progress|plans?)\b/i;
+// Una respuesta automática nunca es un hilo del pool: "Out of office", "Automatic reply: …".
+const AUTO_REPLY_SUBJECT_RE = /out[\s-]*of[\s-]*(the[\s-]*)?office|automatic\s*reply|auto[\s-]*reply|autoreply|auto[\s-]*response|respuesta\s*autom|resposta\s*autom|fuera\s*de\s*(la\s*)?oficina|ausencia|abwesen|absence|r[ée]ponse\s*automatique|vacation|no\s*longer|undeliver|delivery|unzustellbar/i;
+// Nuestros asuntos de campaña van en español/catalán ("te dejaste esto en X", "una idea para X",
+// "algo para X"): con cualquiera de estas palabras no es un hilo del pool (que es siempre inglés).
+// Caso real 03-10-2026: "Re: te dejaste esto en Identify Travel" se tomaba por pool por "Travel".
+const OUR_LANGUAGE_RE = /\b(de|del|la|el|los|las|en|para|per|una|un|esto|aixo|idea|algo|alguna|con|amb|por|tu|te|que|y|i|sobre|olvides|dejaste|hola|propuesta|empresa|vuestro|vuestra)\b/i;
 export function looksLikePoolThreadSubject(subject: string | null | undefined): boolean {
+  if (AUTO_REPLY_SUBJECT_RE.test(String(subject || ""))) return false;
+  if (OUR_LANGUAGE_RE.test(String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, ""))) return false;
   const s = String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
   if (!s || s.length > 80) return false;
   // Algo personal (" - Empresa", "|", "@", "¿", acentos, ñ) = no es del pool.
@@ -172,6 +180,21 @@ export function looksLikePoolThreadSubject(subject: string | null | undefined): 
   const words = s.replace(/[:/&]/g, " ").split(/\s+/).filter(Boolean);
   if (words.length < 1 || words.length > 8) return false;
   return OFFICE_WORD_RE.test(s) || POOL_EXTRA_RE.test(s);
+}
+
+/**
+ * ¿Cuenta como DE CAMPAÑA un mensaje que el servidor ha marcado con inbox_campaign_match? La regla
+ * del servidor (lead de campaña / su dominio / cita un envío nuestro, y nunca con la etiqueta del
+ * warm-up en el asunto) más una cosa: si sólo coincide por lead o por dominio y el asunto es un
+ * hilo del pool en inglés ("RE: Travel Expenses", "RE: Sustainability Efforts Update"), es una
+ * empresa que también está en la red de warm-up — no es una respuesta. Lo que cita un envío
+ * nuestro ("hilo") nunca es warm-up. Lo usan la app del móvil, la Unibox y los avisos.
+ */
+export function campaignMatchCounts(m: { in_campaign?: boolean | null; match_why?: string | null; subject?: string | null }): boolean {
+  if (m.in_campaign !== true) return false;
+  if (m.match_why === "hilo") return true;
+  const s = String(m.subject || "");
+  return !(/^\s*re\s*:/i.test(s) && looksLikePoolThreadSubject(s));
 }
 
 export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null; senderKnown?: boolean | null }): boolean {

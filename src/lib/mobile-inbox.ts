@@ -1,7 +1,7 @@
 // Lógica de la app del móvil (Unibox estilo Instantly): estados de contacto, conversaciones,
 // pestañas Primary / Others y formatos de fecha. Todo puro para poder probarlo aparte.
 import { categoryOf, cleanBodyText, decodeSubject, decodeSubjectKeepCodes, isBounceOrNoise, CATEGORY_LABEL, type MessageCategory } from "@/lib/unibox-text";
-import { isBounceOrFailure, isWarmupMessage, looksLikePoolThreadSubject } from "@/lib/inbox-filters";
+import { campaignMatchCounts, isBounceOrFailure, isWarmupMessage, looksLikePoolThreadSubject } from "@/lib/inbox-filters";
 
 /* ── Estados ─────────────────────────────────────────────────────────────── */
 
@@ -117,6 +117,8 @@ export interface InboxRow {
   in_campaign?: boolean | null;
   /** Campaña del lead que coincide (por email o por dominio), para lo que no trae campaign_id. */
   campaign_hint?: string | null;
+  /** Por qué es de campaña según el servidor: lead · dominio · hilo (cita un envío nuestro) · warmup. */
+  match_why?: string | null;
 }
 
 export interface Conversation {
@@ -158,13 +160,15 @@ function looksLikeWarmup(m: InboxRow): boolean {
 }
 
 /**
- * ¿Es de campaña? Sí si quien escribe es un lead de alguna campaña o de su dominio (lo marca el
- * servidor), o si es una respuesta enlazada a un envío de campaña que no tiene pinta de warm-up
- * (alguien que contesta desde otro correo, p. ej. su gmail: "Juli ya no está en la compañía").
- * El warm-up que se cuela enlazado a una campaña ("Lucy - coffee? | KK5XRDN 0396QKE") no cuenta.
+ * ¿Es de campaña? Exactamente la regla de la Unibox de campaña, marcada por el servidor
+ * (inbox_campaign_match): quien escribe es un lead de una campaña (o alguien a quien escribimos
+ * desde una), escribe desde el dominio de empresa de un lead de una campaña, o contesta citando un
+ * correo nuestro de campaña. Nunca lo es lo que lleva la etiqueta del warm-up, ni un hilo del pool
+ * desde una empresa que también está en la red de warm-up (campaignMatchCounts).
+ * Filas viejas de la caché, sin la marca: lo enlazado que no tenga pinta de warm-up.
  */
 export function isCampaignMessage(m: InboxRow): boolean {
-  if (m.in_campaign === true) return true;
+  if (typeof m.in_campaign === "boolean") return campaignMatchCounts(m);
   return !!(m.lead_id || m.campaign_id) && !looksLikeWarmup(m);
 }
 
@@ -173,6 +177,7 @@ export function isCampaignMessage(m: InboxRow): boolean {
 export function isMobileReply(m: InboxRow): boolean {
   if (m.is_archived) return false;
   if (isBounceOrNoise(m.from_email) || isBounceOrFailure(m.from_email)) return false;
+  if (m.match_why === "warmup") return false;   // la etiqueta del warm-up en el asunto
   if (isCampaignMessage(m)) return true;
   return !looksLikeWarmup(m);
 }

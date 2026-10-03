@@ -33,7 +33,7 @@ import { classifyMessage, authorText, isPoliteFileAway } from "../_shared/classi
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
-import { isWarmupMessage, looksLikeWarmupSubject } from "../_shared/inbox-filters.ts";
+import { campaignMatchCounts, isWarmupMessage, looksLikeWarmupSubject } from "../_shared/inbox-filters.ts";
 import { shouldPushReply } from "../_shared/push-rule.ts";
 
 const corsHeaders = {
@@ -225,6 +225,34 @@ Deno.serve(async (req) => {
 
     const isRealReply = (m: Row) => !!(m.lead_id || m.campaign_id || leadCompany.has(m.id) || replyToOurs.has(m.id));
 
+    // ¿DE CAMPAÑA? La misma regla que Primary (app del móvil) y Campañas (Unibox):
+    // inbox_campaign_match = lead de una campaña o alguien a quien escribimos desde una, su dominio
+    // de empresa, o cita un envío nuestro; nunca con la etiqueta del warm-up en el asunto. Más
+    // campaignMatchCounts: un hilo del pool desde una empresa que también está en la red de warm-up
+    // tampoco cuenta. SÓLO esto hace sonar el móvil. Si la consulta falla, no se avisa (mejor un
+    // aviso de menos que uno de warm-up); las etiquetas se ponen igual.
+    const campaignOk = new Set<string>();
+    const warmupTagged = new Set<string>();
+    {
+      const byUser = new Map<string, string[]>();
+      const subjectOf = new Map<string, string | null>();
+      for (const m of (msgs || []) as Row[]) {
+        if (!byUser.has(m.user_id)) byUser.set(m.user_id, []);
+        byUser.get(m.user_id)!.push(m.id);
+        subjectOf.set(m.id, m.subject);
+      }
+      for (const [uid, idsOfUser] of byUser) {
+        for (let i = 0; i < idsOfUser.length; i += 300) {
+          const { data: hits, error: mErr } = await admin.rpc("inbox_campaign_match", { p_user: uid, p_ids: idsOfUser.slice(i, i + 300) });
+          if (mErr) { console.warn("inbox_campaign_match:", mErr.message); continue; }
+          for (const h of (hits || []) as { id: string; in_campaign: boolean; why: string | null }[]) {
+            if (h.why === "warmup") warmupTagged.add(h.id);
+            if (campaignMatchCounts({ in_campaign: h.in_campaign, match_why: h.why, subject: subjectOf.get(h.id) })) campaignOk.add(h.id);
+          }
+        }
+      }
+    }
+
     // Already pushed? One indexed lookup for the whole batch.
     const ids = (msgs || []).map((m) => m.id);
     const yaEnviados = new Set<string>();
@@ -248,6 +276,16 @@ Deno.serve(async (req) => {
       // etiqueta como cualquiera, pero no hace sonar el teléfono.
       const receivedAt = Date.parse((m as unknown as { received_at?: string }).received_at || "");
       if (Number.isFinite(receivedAt) && receivedAt < Date.now() - 48 * 3600_000) staleIds.add(m.id);
+      // La etiqueta del warm-up en el asunto ("… | KK5XRDN 0396QKE"): es warm-up aunque venga
+      // pegado a una campaña. Se marca, se le quita la categoría que tuviera y no se juzga.
+      if (warmupTagged.has(m.id)) {
+        warmupFlagged++;
+        if (!dryRun) {
+          const clean = (m.labels || []).filter((l) => !CATEGORY_LABELS.includes(l) && l !== AI_MARKER);
+          await admin.from("inbox_messages").update({ is_warmup: true, labels: clean }).eq("id", m.id);
+        }
+        continue;
+      }
       // Warm-up pool threads carry References (our seed mailbox started them) and generic English
       // office subjects the sync detector used to miss; the model then read "let's confirm the
       // workshop" as Interesado and 99 phones buzzed in a week (2026-09-15). Flag them here — the
@@ -256,8 +294,10 @@ Deno.serve(async (req) => {
       // Con cabecera de respuesta automática no es warm-up: el pool escribe como una persona.
       if (!autoSignal && isWarmupMessage({
         subject: m.subject, body: m.body_text, fromEmail: m.from_email,
-        linked: !!(m.lead_id || m.campaign_id) || leadCompany.has(m.id),
-        senderKnown: !!(m.lead_id || m.campaign_id || leadCompany.has(m.id)),
+        // Sólo lo que es de campaña se libra del detector: el warm-up pegado a una campaña
+        // (sin ser de ningún lead) ya no pasa por "enlazado".
+        linked: campaignOk.has(m.id),
+        senderKnown: campaignOk.has(m.id) || leadCompany.has(m.id),
       })) {
         warmupFlagged++;
         if (!dryRun) await admin.from("inbox_messages").update({ is_warmup: true }).eq("id", m.id);
@@ -391,7 +431,7 @@ Deno.serve(async (req) => {
       // en 3 días 21 de 48 avisos eran de hilos sin campaña (warm-up "RE: Gym Membership Discount",
       // respuestas a envíos hechos fuera de la plataforma).
       const shouldNotify = shouldPushReply({
-        notify, campaignId: p.m.campaign_id, verdict: p.verdict, via: p.via,
+        notify, inCampaign: campaignOk.has(p.m.id), verdict: p.verdict, via: p.via,
         alreadyPushed: yaEnviados.has(p.m.id), stale: staleIds.has(p.m.id),
       });
       if (p.via === "ia" && p.verdict !== p.ruleVerdict) aiDisagreed++;
