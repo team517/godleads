@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { bounceBreakdownText, type BounceBreakdown } from "@/lib/campaign-metrics";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 import BulkEditCampaigns from "@/components/campaigns/BulkEditCampaigns";
 
@@ -52,6 +53,8 @@ export interface CampaignsTableProps {
   progressMap: Record<string, { sent: number; total: number }>;
   /** Metrics resolver from the page (single RPC) — may return null/undefined while loading. */
   metricsFor: (id: string) => CampaignMetrics | null | undefined;
+  /** Rebotes por causa de una campaña (tooltip de la celda); sin él, sólo el total. */
+  bounceBreakdownFor?: (id: string) => BounceBreakdown | null;
   onSelect: (id: string) => void;
   onToggleStatus: (campaign: any) => void;
   onDuplicate: (campaign: any) => void;
@@ -138,15 +141,18 @@ function Metric({
   className,
   icon: Icon,
   warn,
+  title,
 }: {
   value: number | null;
   pct?: string | null;
   className: string;
   icon?: React.ComponentType<{ className?: string }>;
   warn?: boolean;
+  /** Explicación al pasar el ratón (p. ej. los rebotes por causa). */
+  title?: string;
 }) {
   return (
-    <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+    <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={title}>
       {Icon && <Icon className={cn("h-3.5 w-3.5 self-center", className)} />}
       <span className={cn("text-[15px] font-semibold tabular-nums", className)}>{value === null ? "—" : value}</span>
       {value !== null && pct && <span className="text-[13px] font-semibold text-muted-foreground">{pct}</span>}
@@ -161,6 +167,7 @@ export default function CampaignsTable({
   clients = [],
   progressMap,
   metricsFor,
+  bounceBreakdownFor,
   onSelect,
   onToggleStatus,
   onDuplicate,
@@ -442,11 +449,15 @@ export default function CampaignsTable({
                     />
                   </td>
                   <td className="px-4 py-[17px]">
+                    {/* El desglose por causa separa el bloqueo del servidor emisor (infraestructura:
+                        el 2-10-2026 IONOS enrutó por un servidor en Spamhaus y rebotó el 42 %) del
+                        buzón inexistente (lista). La cifra es la real; aquí se explica. */}
                     <Metric
                       value={m === null ? null : bounced}
                       pct={pctOf(bounced, sent)}
                       className="text-red-500 dark:text-red-400"
                       warn={m !== null && bounceRate > 2}
+                      title={m === null ? undefined : bounceBreakdownText(bounced, bounceBreakdownFor?.(campaign.id) ?? null)}
                     />
                   </td>
 

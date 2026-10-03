@@ -1,4 +1,4 @@
-import { fetchCampaignMetrics } from "@/lib/campaign-metrics";
+import { fetchBounceBreakdown, fetchCampaignMetrics, type BounceBreakdown } from "@/lib/campaign-metrics";
 import { useState, useEffect } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { Button } from "@/components/ui/button";
@@ -81,6 +81,8 @@ export default function Campaigns() {
   // All campaigns' metrics from ONE server-side RPC → cards render instantly with
   // zero per-card queries (was: up to 5000 sent_emails rows downloaded PER card).
   const [metricsMap, setMetricsMap] = useState<Record<string, any>>(() => cacheGet<Record<string, any>>("campaigns:metrics") || {});
+  // Rebotes por causa (tooltip de la celda "Rebotados"); llega después de las métricas.
+  const [bounceMap, setBounceMap] = useState<Record<string, BounceBreakdown>>({});
   // Progress per campaign = leads already emailed / total leads (count-only queries).
   const [progressMap, setProgressMap] = useState<Record<string, { sent: number; total: number }>>(() => cacheGet<Record<string, { sent: number; total: number }>>("campaigns:progress") || {});
   const [showCreate, setShowCreate] = useState(false);
@@ -132,6 +134,7 @@ export default function Campaigns() {
       }
       setMetricsMap(map);
       cacheSet("campaigns:metrics", map);
+      void fetchBounceBreakdown(supabase as any, user.id).then(setBounceMap).catch(() => { /* sin desglose: sólo el total */ });
     }
     // Progress = leads emailed / total leads, per campaign. COUNT-only (head:true) so
     // no rows are transferred — cheap even with thousands of leads.
@@ -507,6 +510,7 @@ export default function Campaigns() {
             clients={clients}
             progressMap={progressMap}
             metricsFor={metricsFor}
+            bounceBreakdownFor={(id) => bounceMap[id] ?? null}
             onSelect={setSelectedId}
             onToggleStatus={handleStatusToggle}
             onDuplicate={handleDuplicate}

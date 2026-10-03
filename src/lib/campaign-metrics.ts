@@ -27,3 +27,38 @@ export function normalizeLeadQuery(raw: string): string {
   const q = (raw || "").replace(/\s+/g, " ").trim();
   return q.length >= 2 ? q : "";
 }
+
+/** Rebotes de una campaña por causa (campaign_bounce_breakdown). */
+export type BounceBreakdown = { policy: number; recipient_gone: number; temporary: number; other: number };
+
+/**
+ * Texto de la celda "Rebotados" al pasar el ratón: cuántos y por qué. Separa el bloqueo del
+ * servidor emisor (lista negra / reputación: IONOS, Spamhaus) —infraestructura, no la lista— del
+ * buzón inexistente —calidad de la lista—. Sin desglose, sólo el total.
+ */
+export function bounceBreakdownText(total: number, b: BounceBreakdown | null | undefined): string {
+  if (!total) return "Sin rebotes";
+  const parts: string[] = [`${total.toLocaleString("es-ES")} rebotes`];
+  if (b) {
+    if (b.policy > 0) parts.push(`${b.policy.toLocaleString("es-ES")} por bloqueo del servidor emisor (lista negra/reputación: IONOS, Spamhaus)`);
+    if (b.recipient_gone > 0) parts.push(`${b.recipient_gone.toLocaleString("es-ES")} buzón inexistente`);
+    if (b.temporary > 0) parts.push(`${b.temporary.toLocaleString("es-ES")} temporales`);
+    if (b.other > 0) parts.push(`${b.other.toLocaleString("es-ES")} otros`);
+  }
+  return parts.join(" · ");
+}
+
+/** Lee el RPC del desglose; si no existe o falla, mapa vacío (la celda enseña sólo el total). */
+export async function fetchBounceBreakdown(client: RpcClient, userId: string): Promise<Record<string, BounceBreakdown>> {
+  const r = await client.rpc("campaign_bounce_breakdown", { p_user_id: userId });
+  const map: Record<string, BounceBreakdown> = {};
+  if (r.error || !Array.isArray(r.data)) return map;
+  for (const row of r.data as { campaign_id: string; policy: unknown; recipient_gone: unknown; temporary: unknown; other: unknown }[]) {
+    map[row.campaign_id] = {
+      policy: Number(row.policy) || 0, recipient_gone: Number(row.recipient_gone) || 0,
+      temporary: Number(row.temporary) || 0, other: Number(row.other) || 0,
+    };
+  }
+  return map;
+}
+
