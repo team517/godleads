@@ -452,7 +452,8 @@ Deno.serve(async (req) => {
               user_id: p.m.user_id,
               title: `${esPregunta ? "❓ Pregunta" : "🔥 Interesado"} — ${who}`,
               body: preview || p.m.subject || (esPregunta ? "Te han preguntado algo" : "Nueva respuesta interesada"),
-              url: "/unibox",
+              // Abre esa conversación (en el móvil, en la app; en el ordenador, la Unibox).
+              url: `/unibox?c=${p.m.id}`,
             }),
           }).then((r) => r.json().catch(() => ({}))).catch(() => null);
           // Si no llegó a ningún dispositivo (el usuario aún no había activado los avisos), se

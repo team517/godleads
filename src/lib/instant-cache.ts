@@ -18,6 +18,8 @@ const PERSIST_KEYS = new Set([
   "accounts:list",
   "dash:stats",
   "dash:campaigns",
+  "mobile:rows",
+  "mobile:accounts",
 ]);
 
 let boundUid: string | null = null;
@@ -43,6 +45,13 @@ function shrinkForDisk(key: string, value: unknown): unknown {
     return value.slice(0, 150).map((m: any) => ({
       ...m,
       body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 600) : m.body_text,
+    }));
+  }
+  // App del móvil: las 200 conversaciones más nuevas bastan para pintar al instante.
+  if (key === "mobile:rows" && Array.isArray(value)) {
+    return value.slice(0, 250).map((m: any) => ({
+      ...m,
+      body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 1200) : m.body_text,
     }));
   }
   // Cuentas: la firma HTML de cada buzón (varios KB × cientos de buzones) no hace falta para

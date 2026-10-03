@@ -13,6 +13,8 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ConfirmProvider } from "@/hooks/useConfirm";
 import { Suspense } from "react";
 import { lazyWithRetry } from "@/lib/lazy-retry";
+import { ServiceWorkerBridge } from "@/components/ServiceWorkerBridge";
+import MobileGate from "@/pages/mobile/MobileGate";
 // Lazy: the chatbot pulls in recharts + react-markdown + framer-motion. Loading
 // it eagerly bloated the initial bundle of EVERY page. Now it loads on idle,
 // after the page is interactive.
@@ -67,6 +69,7 @@ const App = () => (
       <ConfirmProvider>
       <BrowserRouter>
         <AuthProvider>
+        <ServiceWorkerBridge />
         <SubscriptionProvider>
         <ProfileProvider>
         <VerificationProvider>
@@ -84,6 +87,8 @@ const App = () => (
               <Route path="/acceso-cliente" element={<Auth />} />
               {/* Bienvenida del primer acceso: ocupa toda la pantalla, sin menú ni barra. */}
               <Route path="/bienvenida" element={<ProtectedRoute><Welcome /></ProtectedRoute>} />
+              {/* La app del móvil: sólo la Unibox y la cuenta, a pantalla completa (sin menú). */}
+              <Route path="/m" element={<ProtectedRoute><MobileGate /></ProtectedRoute>} />
               <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/email-accounts" element={<EmailAccounts />} />

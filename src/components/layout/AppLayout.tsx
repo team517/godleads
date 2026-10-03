@@ -13,6 +13,7 @@ import { PushPrompt } from "@/components/PushPrompt";
 import { ensurePushSubscription } from "@/lib/push-notifications";
 import { startVersionWatcher } from "@/lib/version-check";
 import { brandStyleFor } from "@/lib/brandColor";
+import { isInstalledApp, isPhoneDevice, mobileAppUrl, shouldOpenMobileApp, uniboxAllowed } from "@/lib/mobile-app";
 
 export function AppLayout() {
   const isMobile = useIsMobile();
@@ -78,6 +79,16 @@ export function AppLayout() {
   // La animación de entrada se dispara al cambiar de SECCIÓN (primer tramo de la ruta), no en
   // cada sub-ruta: así una página no se remonta al moverse por dentro de sí misma.
   const section = location.pathname.split("/")[1] || "";
+
+  // En el teléfono la Unibox es la app del móvil (/m); con la app instalada, todo lo es.
+  if (shouldOpenMobileApp({
+    pathname: location.pathname,
+    phone: isPhoneDevice(),
+    installed: isInstalledApp(),
+    allowed: uniboxAllowed(profile.allowed_routes),
+  })) {
+    return <Navigate to={mobileAppUrl(location.search)} replace />;
+  }
 
   return (
     <div className="soft-surface min-h-screen">

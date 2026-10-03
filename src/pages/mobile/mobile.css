@@ -1,0 +1,171 @@
+/* App del móvil (Unibox estilo Instantly). Siempre en claro, como el diseño. */
+
+.m-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: #0e1330;
+  background:
+    radial-gradient(120% 60% at 100% 0%, #eef1fd 0%, rgba(238, 241, 253, 0) 60%),
+    radial-gradient(90% 50% at 0% 100%, #f3eefc 0%, rgba(243, 238, 252, 0) 60%),
+    #f7f8fc;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  color-scheme: light;
+  font-feature-settings: "cv11", "ss01";
+  touch-action: manipulation;
+}
+.m-root * { -webkit-tap-highlight-color: transparent; }
+.m-root ::selection { background: #d9e2fd; }
+
+/* En un ordenador la app se enseña con ancho de móvil, centrada. */
+.m-frame {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+@media (min-width: 560px) {
+  .m-frame { box-shadow: 0 0 0 1px #e6e9f3, 0 30px 80px rgba(30, 40, 90, 0.08); }
+}
+
+.m-scroll {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.m-scroll::-webkit-scrollbar { display: none; }
+
+.m-press { transition: transform 120ms ease, background-color 120ms ease, opacity 120ms ease; }
+.m-press:active { transform: scale(0.97); }
+
+.m-square {
+  background: #fff;
+  color: #2b3252;
+  box-shadow: 0 1px 2px rgba(17, 24, 64, 0.04), 0 4px 14px rgba(17, 24, 64, 0.05);
+}
+
+.m-field {
+  background: #fff;
+  border: 1px solid #e5e8f2;
+  box-shadow: 0 1px 2px rgba(17, 24, 64, 0.03);
+}
+
+.m-card {
+  background: #fff;
+  border: 1px solid #edf0f7;
+  box-shadow: 0 1px 2px rgba(17, 24, 64, 0.03), 0 6px 20px rgba(17, 24, 64, 0.035);
+}
+
+.m-avatar {
+  color: #4b4fd3;
+  background: linear-gradient(145deg, #eef1fe 0%, #f1ecfd 55%, #f7eefc 100%);
+  box-shadow: inset 0 0 0 1px rgba(120, 110, 230, 0.06);
+}
+
+.m-gradient {
+  background: linear-gradient(90deg, #4a7dff 0%, #6d6af9 50%, #9555f6 100%);
+  box-shadow: 0 8px 20px rgba(86, 100, 245, 0.28);
+}
+
+.m-btn-outline {
+  background: #fff;
+  border: 1px solid #dfe4f2;
+}
+
+.m-backdrop { background: rgba(28, 33, 62, 0.58); }
+
+.m-sheet {
+  background: #fff;
+  box-shadow: 0 -12px 40px rgba(20, 25, 60, 0.12);
+  touch-action: pan-y;
+}
+
+.m-tab-active-primary { color: #4d6cf3; }
+.m-tab-active-others { color: #7a5cf2; }
+.m-tab-bar {
+  background: linear-gradient(90deg, #4a7dff 0%, #8b5cf6 100%);
+  border-radius: 2px;
+  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.m-nav {
+  background: rgba(255, 255, 255, 0.96);
+  -webkit-backdrop-filter: saturate(160%) blur(16px);
+  backdrop-filter: saturate(160%) blur(16px);
+  box-shadow: 0 -1px 0 #eef0f6, 0 -8px 30px rgba(20, 25, 60, 0.04);
+}
+
+/* Pantallas que entran desde la derecha (conversación, responder). */
+.m-screen {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+.m-enter-right { animation: m-in-right 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.m-leave-right { animation: m-out-right 240ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes m-in-right { from { transform: translate3d(100%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+@keyframes m-out-right { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(100%, 0, 0); } }
+
+.m-toast { animation: m-toast-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes m-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+
+.m-fade-in { animation: m-fade 220ms ease both; }
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.m-row { content-visibility: auto; contain-intrinsic-size: auto 118px; }
+
+.m-skeleton {
+  background: linear-gradient(90deg, #eef0f7 0%, #f6f7fb 50%, #eef0f7 100%);
+  background-size: 200% 100%;
+  animation: m-shimmer 1.2s linear infinite;
+}
+@keyframes m-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+.m-spin { animation: m-rot 0.8s linear infinite; }
+@keyframes m-rot { to { transform: rotate(360deg); } }
+
+/* Cuerpo del correo dentro de la tarjeta. */
+.m-mail {
+  font-size: 16.5px;
+  line-height: 1.55;
+  color: #1b2140;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.m-mail p { margin: 0 0 0.85em; }
+.m-mail p:last-child { margin-bottom: 0; }
+.m-mail a { color: #3b6cf6; text-decoration: underline; text-underline-offset: 2px; }
+.m-mail img { max-width: 100% !important; height: auto !important; }
+.m-mail table { max-width: 100% !important; width: auto !important; border-collapse: collapse; }
+.m-mail td, .m-mail th { padding: 2px 4px; }
+.m-mail blockquote {
+  margin: 0.6em 0;
+  padding-left: 12px;
+  border-left: 2px solid #c9cff0;
+  color: #5c6385;
+}
+.m-mail pre { white-space: pre-wrap; font-family: inherit; }
+.m-mail * { max-width: 100%; }
+.m-mail-plain { white-space: pre-wrap; }
+
+/* El cuadro de respuesta. */
+.m-editor { outline: none; font-size: 16.5px; line-height: 1.55; color: #1b2140; caret-color: #4d6cf3; min-height: 120px; }
+.m-editor:empty::before { content: attr(data-placeholder); color: #a0a6c0; }
+.m-editor a { color: #3b6cf6; text-decoration: underline; }
+
+.m-quote {
+  border-left: 2px solid #7a6af0;
+  padding-left: 14px;
+  color: #4a5175;
+  font-size: 15px;
+  line-height: 1.55;
+}
+.m-quote a { color: #4a5175; }
+
+/* Tirar para actualizar. */
+.m-ptr { transition: height 200ms ease; }

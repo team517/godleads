@@ -42,21 +42,35 @@ self.addEventListener("push", (event) => {
 });
 
 // ── Tap ──────────────────────────────────────────────────────────────────────
+// With the app already open: focus it and ask it to open the conversation itself ("open-url"),
+// so it does not reload. If it does not answer (an old version of the app), navigate it.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   if (event.action === "dismiss") return;
 
   const url = event.notification.data?.url || "/unibox";
 
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if (client.url.includes(self.location.origin)) {
-          // navigate() can reject if the client is not controlled yet; focusing still helps.
-          return Promise.resolve(client.navigate(url)).catch(() => null).then(() => client.focus());
-        }
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const client = all.find((c) => c.url.startsWith(self.location.origin));
+    if (!client) {
+      await self.clients.openWindow(url);
+      return;
+    }
+    try { await client.focus(); } catch (e) { /* focusing is best-effort */ }
+    const answered = await new Promise((resolve) => {
+      try {
+        const channel = new MessageChannel();
+        const timer = setTimeout(() => resolve(false), 1500);
+        channel.port1.onmessage = () => { clearTimeout(timer); resolve(true); };
+        client.postMessage({ type: "open-url", url }, [channel.port2]);
+      } catch (e) {
+        resolve(false);
       }
-      return self.clients.openWindow(url);
-    }),
-  );
+    });
+    if (!answered) {
+      // navigate() can reject if the client is not controlled yet.
+      try { await client.navigate(url); } catch (e) { /* nothing else to do */ }
+    }
+  })());
 });

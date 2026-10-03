@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { SparkMark } from "@/components/SparkMark";
 import { useLocation } from "react-router-dom";
+import { isMobileAppPath } from "@/lib/mobile-app";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend,
@@ -64,7 +65,8 @@ export function ColdEmailChatbot() {
   // so it never covers the "Responder" button. Y en la bienvenida del primer acceso tampoco
   // pinta nada: esa pantalla es sólo cuatro preguntas.
   // Modificaciones IA ya ES el chat de PulseBot: el botón flotante tapaba su panel derecho.
-  const hideHere = location.pathname.startsWith("/unibox") || location.pathname.startsWith("/bienvenida") || location.pathname.startsWith("/modificaciones-ia");
+  // La app del móvil (/m) tiene su propia barra abajo: el botón flotante la taparía.
+  const hideHere = location.pathname.startsWith("/unibox") || location.pathname.startsWith("/bienvenida") || location.pathname.startsWith("/modificaciones-ia") || isMobileAppPath(location.pathname);
 
   useEffect(() => {
     if (scrollRef.current) {
