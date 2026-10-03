@@ -184,16 +184,22 @@ export function looksLikePoolThreadSubject(subject: string | null | undefined): 
 
 /**
  * ¿Cuenta como DE CAMPAÑA un mensaje que el servidor ha marcado con inbox_campaign_match? La regla
- * del servidor (lead de campaña / su dominio / cita un envío nuestro, y nunca con la etiqueta del
- * warm-up en el asunto) más una cosa: si sólo coincide por lead o por dominio y el asunto es un
- * hilo del pool en inglés ("RE: Travel Expenses", "RE: Sustainability Efforts Update"), es una
- * empresa que también está en la red de warm-up — no es una respuesta. Lo que cita un envío
- * nuestro ("hilo") nunca es warm-up. Lo usan la app del móvil, la Unibox y los avisos.
+ * del servidor (lead de campaña / su dominio / cita un envío nuestro de campaña / contesta a un
+ * correo de uno de nuestros buzones; nunca con la etiqueta del warm-up en el asunto ni si lo envía
+ * uno de nuestros buzones) más el filtro del pool:
+ *  - "hilo" (cita un envío nuestro de campaña de esta plataforma): nunca es warm-up.
+ *  - "lead" / "dominio": si el asunto es un hilo del pool en inglés ("RE: Travel Expenses"), es una
+ *    empresa que también está en la red de warm-up — no es una respuesta.
+ *  - "responde" (cita un correo de nuestros buzones, de cualquier plataforma): el warm-up también
+ *    cita nuestros buzones, así que aquí el filtro es más estricto (cualquier asunto con forma de
+ *    pool, sin exigir "RE:").
+ * Lo usan la app del móvil, la Unibox y los avisos.
  */
 export function campaignMatchCounts(m: { in_campaign?: boolean | null; match_why?: string | null; subject?: string | null }): boolean {
   if (m.in_campaign !== true) return false;
   if (m.match_why === "hilo") return true;
   const s = String(m.subject || "");
+  if (m.match_why === "responde") return !looksLikePoolThreadSubject(s) && !looksLikeWarmupSubject(s);
   return !(/^\s*re\s*:/i.test(s) && looksLikePoolThreadSubject(s));
 }
 
