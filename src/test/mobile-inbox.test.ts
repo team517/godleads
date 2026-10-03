@@ -75,9 +75,11 @@ describe("conversaciones", () => {
     expect(list[0].unreadIds).toHaveLength(1);
   });
 
-  it("Primary = una persona de campaña; Others = respuestas automáticas y lo que no es de campaña", () => {
+  it("Primary = TODO lo de campaña (también fuera de la oficina); Others = lo que no es de campaña", () => {
     const [auto] = buildConversations([row({ auto_signal: "auto-submitted", subject: "Respuesta automática: Lucy" })]);
-    expect(auto.tab).toBe("others");
+    expect(auto.tab).toBe("primary");
+    const [autoOther] = buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: false, auto_signal: "auto-submitted", subject: "Automatic reply: newsletter", body_text: "I am away" })]);
+    expect(autoOther.tab).toBe("others");
     const [mixed] = buildConversations([
       row({ auto_signal: "auto-submitted", received_at: "2026-10-03T10:00:00Z" }),
       row({ body_text: "Me interesa, llámame", received_at: "2026-10-01T10:00:00Z" }),
@@ -95,9 +97,12 @@ describe("conversaciones", () => {
     expect(buildConversations([row({ in_campaign: true, match_why: "dominio", from_email: "ana.s@playmotiv.com", subject: "RE: Travel Expenses", body_text: "Sounds good" })])).toHaveLength(0);
     // …pero si cita un envío nuestro, es una respuesta aunque el asunto suene a oficina.
     expect(buildConversations([row({ in_campaign: true, match_why: "hilo", subject: "RE: Project Plan", body_text: "Me interesa" })])[0].tab).toBe("primary");
-    // Un "Out of office" de un lead no es un hilo del pool: se ve (en Others, es automático).
+    // Un "Out of office" de un lead no es un hilo del pool: va a Primary como todo lo de campaña.
     const [ooo] = buildConversations([row({ in_campaign: true, match_why: "lead", subject: "Out of office Re: Samuel - IRISBOND", auto_signal: "auto-submitted", body_text: "I am out of the office" })]);
-    expect(ooo.tab).toBe("others");
+    expect(ooo.tab).toBe("primary");
+    // Misma empresa con otra terminación: Primary; un hilo del pool desde ahí, no.
+    expect(buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "marca", from_email: "leire@kurago.software", subject: "Respuesta automática: una idea para Kurago", auto_signal: "auto-submitted" })])[0].tab).toBe("primary");
+    expect(buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "marca", subject: "RE: Project Review", body_text: "ok" })])).toHaveLength(0);
     // La etiqueta del warm-up en el asunto: nunca se ve.
     expect(buildConversations([row({ in_campaign: false, match_why: "warmup", subject: "Lucy - coffee? | KK5XRDN 0396QKE" })])).toHaveLength(0);
     // Warm-up enlazado a una campaña y que no es de ningún lead → ni Primary ni Others.
@@ -122,7 +127,7 @@ describe("conversaciones", () => {
     const list = buildConversations([
       row({ from_email: "a@a.es", labels: ["Interesado"], received_at: "2026-10-02T10:00:00Z" }),
       row({ from_email: "b@b.es", labels: ["No interesado"], is_read: true, campaign_id: "c2" }),
-      row({ from_email: "c@c.es", auto_signal: "auto-submitted", labels: ["Fuera / Auto"] }),
+      row({ from_email: "c@c.es", auto_signal: "auto-submitted", labels: ["Fuera / Auto"], lead_id: null, campaign_id: null, in_campaign: false, subject: "Automatic reply", body_text: "Away" }),
     ]);
     const manual = new Map<string, LeadStatus>();
     expect(filterConversations(list, EMPTY_FILTERS, manual).map((c) => c.email)).toEqual(["a@a.es", "b@b.es"]);

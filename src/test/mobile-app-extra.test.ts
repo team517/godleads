@@ -45,6 +45,7 @@ describe("regla de campaña (campaignMatchCounts)", () => {
     expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "Baja" })).toBe(true);
     expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "RE: Book Recommendation" })).toBe(false);
     expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "RE: Volunteer Day Participation" })).toBe(false);
+    expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "RE: Cost Saving Initiatives" })).toBe(false);
   });
   it("etiqueta del warm-up, buzón propio o nada: no cuenta", () => {
     expect(campaignMatchCounts({ in_campaign: false, match_why: "warmup", subject: "Lucy - coffee? | KK5XRDN 0396QKE" })).toBe(false);

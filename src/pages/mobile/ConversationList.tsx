@@ -198,7 +198,7 @@ function EmptyState({ tab, searching }: { tab: "primary" | "others"; searching: 
       <p className="relative mt-2 max-w-[290px] text-[15.5px] leading-[1.45] text-[#6E7491]">
         {tab === "primary"
           ? "Intenta ajustar tu búsqueda o revisa en la pestaña Others."
-          : searching ? "Intenta ajustar tu búsqueda o revisa en la pestaña Primary." : "Aquí llegan las respuestas automáticas (fuera de la oficina y similares)."}
+          : searching ? "Intenta ajustar tu búsqueda o revisa en la pestaña Primary." : "Aquí llega el correo que no es de ninguna campaña."}
       </p>
     </div>
   );

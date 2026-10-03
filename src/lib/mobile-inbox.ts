@@ -139,8 +139,8 @@ export interface Conversation {
   important: boolean;
   /** ¿Alguno de sus mensajes es de campaña? (lead de una campaña o de su dominio) */
   inCampaign: boolean;
-  /** Primary = respuesta de una PERSONA de campaña; Others = todo lo demás (respuestas
-   *  automáticas y correo que no es de ninguna campaña). */
+  /** Primary = TODO lo de campaña (respuestas, fuera de la oficina, avisos automáticos…: lo que
+   *  venga de un lead o de su empresa); Others = lo que no es de ninguna campaña. */
   tab: "primary" | "others";
   /** Lo que dicen las etiquetas del clasificador (sin la elección manual). */
   derivedStatus: LeadStatus;
@@ -233,8 +233,6 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
     msgs.sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     const latest = msgs[0];
     const inCampaign = msgs.some(isCampaignMessage);
-    // Primary: una persona de campaña escribió algo (no sólo respuestas automáticas).
-    const human = msgs.some((m) => isCampaignMessage(m) && !isAutoReply(m));
     const withCampaign = msgs.find((m) => m.campaign_id);
     const withLead = msgs.find((m) => m.lead_id);
     out.push({
@@ -254,7 +252,9 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
       folderId: msgs.find((m) => m.folder_id)?.folder_id ?? null,
       important: msgs.some((m) => (m.labels || []).includes(IMPORTANT)),
       inCampaign,
-      tab: inCampaign && human ? "primary" : "others",
+      // Petición del dueño (03-10-2026): cualquier mensaje de un lead o de su empresa va a Primary,
+      // también los "fuera de la oficina". Others es sólo lo que no es de ninguna campaña.
+      tab: inCampaign ? "primary" : "others",
       derivedStatus: deriveStatus(msgs),
     });
   }

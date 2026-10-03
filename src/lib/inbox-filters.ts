@@ -179,7 +179,9 @@ export function looksLikePoolThreadSubject(subject: string | null | undefined): 
   if (!/^[A-Za-z0-9][A-Za-z0-9' :&/-]*$/.test(s)) return false;
   const words = s.replace(/[:/&]/g, " ").split(/\s+/).filter(Boolean);
   if (words.length < 1 || words.length > 8) return false;
-  return OFFICE_WORD_RE.test(s) || POOL_EXTRA_RE.test(s);
+  // También en plural: "RE: Cost Saving Initiatives" se colaba porque la lista dice "initiative".
+  const singular = s.replace(/([A-Za-z]{4,})s\b/g, "$1");
+  return OFFICE_WORD_RE.test(s) || OFFICE_WORD_RE.test(singular) || POOL_EXTRA_RE.test(s);
 }
 
 /**
@@ -190,16 +192,17 @@ export function looksLikePoolThreadSubject(subject: string | null | undefined): 
  *  - "hilo" (cita un envío nuestro de campaña de esta plataforma): nunca es warm-up.
  *  - "lead" / "dominio": si el asunto es un hilo del pool en inglés ("RE: Travel Expenses"), es una
  *    empresa que también está en la red de warm-up — no es una respuesta.
- *  - "responde" (cita un correo de nuestros buzones, de cualquier plataforma): el warm-up también
- *    cita nuestros buzones, así que aquí el filtro es más estricto (cualquier asunto con forma de
- *    pool, sin exigir "RE:").
+ *  - "responde" (cita un correo de nuestros buzones, de cualquier plataforma) y "marca" (la misma
+ *    empresa con otra terminación de dominio): el warm-up también cita nuestros buzones, así que
+ *    aquí el filtro es más estricto (cualquier asunto con forma de pool, sin exigir "RE:").
  * Lo usan la app del móvil, la Unibox y los avisos.
  */
 export function campaignMatchCounts(m: { in_campaign?: boolean | null; match_why?: string | null; subject?: string | null }): boolean {
   if (m.in_campaign !== true) return false;
   if (m.match_why === "hilo") return true;
   const s = String(m.subject || "");
-  if (m.match_why === "responde") return !looksLikePoolThreadSubject(s) && !looksLikeWarmupSubject(s);
+  // "responde" (cita nuestros buzones) y "marca" (misma empresa, otra terminación): el filtro estricto.
+  if (m.match_why === "responde" || m.match_why === "marca") return !looksLikePoolThreadSubject(s) && !looksLikeWarmupSubject(s);
   return !(/^\s*re\s*:/i.test(s) && looksLikePoolThreadSubject(s));
 }
 
