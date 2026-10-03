@@ -57,3 +57,15 @@ export function notificationTarget(url: string, currentPath: string): string {
   } catch { /* url rara: tal cual */ }
   return url;
 }
+
+/**
+ * Cuánto se queda corta la página en un iPhone con la app instalada y la barra de estado
+ * transparente (ver useIosStandaloneShim). 0 si no hay que hacer nada: con la barra de estado
+ * normal (safeTop 0) la app ya empieza debajo de ella y llega hasta abajo.
+ */
+export function iosBottomShim(input: { safeTop: number; portrait: boolean; screenW: number; screenH: number; pageH: number }): number {
+  if (input.safeTop < 20) return 0;
+  const full = input.portrait ? Math.max(input.screenW, input.screenH) : Math.min(input.screenW, input.screenH);
+  const missing = Math.round(full - input.pageH);
+  return missing > 1 && missing < 140 ? missing : 0;
+}

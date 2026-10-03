@@ -17,6 +17,7 @@ import { ThreadView } from "./ThreadView";
 import { Composer } from "./Composer";
 import { AccountView } from "./AccountView";
 import { PushBanner } from "./PushBanner";
+import { useIosStandaloneShim } from "./useIosStandaloneShim";
 import { Bolt, ConfirmSheet, Sheet, SheetRow, useToast } from "./ui";
 import "./mobile.css";
 
@@ -35,6 +36,7 @@ export default function MobileApp() {
   const location = useLocation();
   const inbox = useMobileInbox(user?.id);
   const toast = useToast();
+  useIosStandaloneShim();
 
   const [nav, setNav] = useState<"unibox" | "account">("unibox");
   const [filters, setFilters] = useState<MobileFilters>(() => {

@@ -155,6 +155,25 @@ export function looksLikeGenericEnglishSubject(subject: string | null | undefine
   return words.every((w) => /^[A-Z][a-z']*(-[A-Z][a-z']*)?$/.test(w) || /^[A-Z]{2,3}$/.test(w) || /^(on|and|for|of|the|in|to|a|an|with|at|from|vs)$/i.test(w));
 }
 
+/**
+ * Asunto de hilo de pool de warm-up en sentido AMPLIO, para correo que NO es de ninguna campaña:
+ * inglés sin nada personal ("RE: Q2 Project Plan", "RE: Bug fix progress", "RE: Project Timeline:
+ * Milestone 2", "RE: Marketing Strategies for Q1"). looksLikeWarmupSubject los dejaba pasar por la
+ * cifra o por las minúsculas. Sólo se usa con remitentes que no son de campaña: medido el
+ * 03-10-2026 en support@, 837 correos así en 30 días y ninguno era una respuesta real.
+ */
+const POOL_EXTRA_RE = /\b(strateg(y|ies)|resources?|allocation|usage|book|jira|slack|kpis?|okrs?|q[1-4]|h[12]|progress|plans?)\b/i;
+export function looksLikePoolThreadSubject(subject: string | null | undefined): boolean {
+  const s = String(subject || "").replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
+  if (!s || s.length > 80) return false;
+  // Algo personal (" - Empresa", "|", "@", "¿", acentos, ñ) = no es del pool.
+  if (/ - |[|@¿?!€$%]/.test(s) || /[^\x00-\x7F]/.test(s)) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9' :&/-]*$/.test(s)) return false;
+  const words = s.replace(/[:/&]/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length < 1 || words.length > 8) return false;
+  return OFFICE_WORD_RE.test(s) || POOL_EXTRA_RE.test(s);
+}
+
 export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null; senderKnown?: boolean | null }): boolean {
   const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
   // Our OWN seed mailboxes are warm-up whatever they write, and an explicit marker is definitive.

@@ -1,6 +1,7 @@
 // Lógica de la app del móvil (Unibox estilo Instantly): estados de contacto, conversaciones,
 // pestañas Primary / Others y formatos de fecha. Todo puro para poder probarlo aparte.
 import { categoryOf, cleanBodyText, decodeSubject, decodeSubjectKeepCodes, isBounceOrNoise, CATEGORY_LABEL, type MessageCategory } from "@/lib/unibox-text";
+import { isBounceOrFailure, isWarmupMessage, looksLikePoolThreadSubject } from "@/lib/inbox-filters";
 
 /* ── Estados ─────────────────────────────────────────────────────────────── */
 
@@ -111,6 +112,9 @@ export interface InboxRow {
   auto_signal?: string | null;
   to_emails?: string | null;
   cc_emails?: string | null;
+  /** Lo marca el servidor (mobile_inbox_feed): quien escribe es un lead de alguna campaña, o
+   *  su dominio es el de algún lead de alguna campaña. */
+  in_campaign?: boolean | null;
 }
 
 export interface Conversation {
@@ -129,7 +133,10 @@ export interface Conversation {
   leadId: string | null;
   folderId: string | null;
   important: boolean;
-  /** Primary = alguien escribió de verdad; Others = sólo respuestas automáticas. */
+  /** ¿Alguno de sus mensajes es de campaña? (lead de una campaña o de su dominio) */
+  inCampaign: boolean;
+  /** Primary = respuesta de una PERSONA de campaña; Others = todo lo demás (respuestas
+   *  automáticas y correo que no es de ninguna campaña). */
   tab: "primary" | "others";
   /** Lo que dicen las etiquetas del clasificador (sin la elección manual). */
   derivedStatus: LeadStatus;
@@ -137,11 +144,35 @@ export interface Conversation {
 
 export const IMPORTANT = "Importante";
 
-/** Sólo las respuestas de verdad: enlazadas a un lead o a una campaña y que no son un rebote. */
+/** ¿Pinta de warm-up? (hilo de pool en inglés de oficina, códigos en el asunto, pares sin sentido…) */
+const warmupCache = new WeakMap<object, boolean>();
+function looksLikeWarmup(m: InboxRow): boolean {
+  const hit = warmupCache.get(m);
+  if (hit !== undefined) return hit;
+  const v = looksLikePoolThreadSubject(m.subject)
+    || isWarmupMessage({ subject: m.subject ?? null, body: m.body_text ?? null, fromEmail: m.from_email, linked: false, senderKnown: false });
+  warmupCache.set(m, v);
+  return v;
+}
+
+/**
+ * ¿Es de campaña? Sí si quien escribe es un lead de alguna campaña o de su dominio (lo marca el
+ * servidor), o si es una respuesta enlazada a un envío de campaña que no tiene pinta de warm-up
+ * (alguien que contesta desde otro correo, p. ej. su gmail: "Juli ya no está en la compañía").
+ * El warm-up que se cuela enlazado a una campaña ("Lucy - coffee? | KK5XRDN 0396QKE") no cuenta.
+ */
+export function isCampaignMessage(m: InboxRow): boolean {
+  if (m.in_campaign === true) return true;
+  return !!(m.lead_id || m.campaign_id) && !looksLikeWarmup(m);
+}
+
+/** Lo que se enseña: ni archivado, ni rebotes, ni avisos del sistema, ni warm-up. Lo que es de
+ *  campaña nunca se toma por warm-up (una firma con números lo parecía); el resto sí se mira. */
 export function isMobileReply(m: InboxRow): boolean {
   if (m.is_archived) return false;
-  if (!m.lead_id && !m.campaign_id) return false;
-  return !isBounceOrNoise(m.from_email);
+  if (isBounceOrNoise(m.from_email) || isBounceOrFailure(m.from_email)) return false;
+  if (isCampaignMessage(m)) return true;
+  return !looksLikeWarmup(m);
 }
 
 /** ¿Es una respuesta automática (fuera de la oficina, acuse…)? */
@@ -194,7 +225,9 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
   for (const [key, msgs] of groups) {
     msgs.sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     const latest = msgs[0];
-    const human = msgs.some((m) => !isAutoReply(m));
+    const inCampaign = msgs.some(isCampaignMessage);
+    // Primary: una persona de campaña escribió algo (no sólo respuestas automáticas).
+    const human = msgs.some((m) => isCampaignMessage(m) && !isAutoReply(m));
     const withCampaign = msgs.find((m) => m.campaign_id);
     const withLead = msgs.find((m) => m.lead_id);
     out.push({
@@ -212,7 +245,8 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
       leadId: withLead?.lead_id ?? null,
       folderId: msgs.find((m) => m.folder_id)?.folder_id ?? null,
       important: msgs.some((m) => (m.labels || []).includes(IMPORTANT)),
-      tab: human ? "primary" : "others",
+      inCampaign,
+      tab: inCampaign && human ? "primary" : "others",
       derivedStatus: deriveStatus(msgs),
     });
   }

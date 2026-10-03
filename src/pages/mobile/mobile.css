@@ -23,6 +23,28 @@
 .m-root * { -webkit-tap-highlight-color: transparent; }
 .m-root ::selection { background: #d9e2fd; }
 
+/* iPhone con la app instalada: iOS calcula la página más corta que la pantalla (ver
+   useIosStandaloneShim). Se alarga el documento lo que falta y la app pasa a "absolute" dentro
+   de él: lo "fixed" no se pinta fuera de la página corta, lo del documento sí. */
+html.m-shim {
+  height: calc(100% + var(--m-shim, 0px));
+  overscroll-behavior: none;
+}
+html.m-shim body {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+}
+html.m-shim .m-root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: auto;
+  height: calc(100vh + var(--m-shim, 0px));
+  height: calc(100% + var(--m-shim, 0px));
+}
+
 /* En un ordenador la app se enseña con ancho de móvil, centrada. */
 .m-frame {
   position: relative;

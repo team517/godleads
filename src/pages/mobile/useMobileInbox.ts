@@ -7,15 +7,17 @@ import {
   type Conversation, type InboxRow, type LeadStatus,
 } from "@/lib/mobile-inbox";
 
-/* Datos de la app del móvil. Sólo las respuestas reales (enlazadas a un lead o a una campaña):
-   lo demás que entra en los buzones es warm-up (cientos por hora) y no pinta nada aquí.
+/* Datos de la app del móvil. Los da mobile_inbox_feed (servidor): lo enlazado a leads/campañas
+   y, aparte, lo demás que no es warm-up, cada mensaje marcado "de campaña" (lead de una campaña
+   o de su dominio) o no. Primary = campaña; Others = el resto (ver buildConversations).
    Primero se pinta lo guardado de la última vez, luego llegan las 150 más nuevas y después el
    resto; con la app abierta se miran las nuevas cada 20 s y todo de nuevo al volver a ella. */
 
 export const MOBILE_COLS =
   "id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, ref_chain, auto_signal, to_emails, cc_emails";
-const FIRST_PAGE = 150;
-const TOTAL = 900;
+// Carril enlazado / carril del resto, en la primera pintada y en la carga completa.
+const FIRST = { linked: 150, other: 60 };
+const FULL = { linked: 900, other: 300 };
 const POLL_MS = 20_000;
 const CACHE_KEY = "mobile:rows";
 
@@ -25,15 +27,12 @@ export interface Campaign { id: string; name: string }
 // El tipo generado de la BD está desfasado (faltan columnas como auto_signal o folder_id):
 // las consultas van sin tipar y se convierten a InboxRow.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (t: string) => any };
+const db = supabase as unknown as { from: (t: string) => any; rpc: (fn: string, args?: Record<string, unknown>) => any };
 
-function linkedQuery(userId: string) {
-  return db.from("inbox_messages")
-    .select(MOBILE_COLS)
-    .eq("user_id", userId)
-    .eq("is_archived", false)
-    .or("lead_id.not.is.null,campaign_id.not.is.null")
-    .order("received_at", { ascending: false });
+async function feed(size: { linked: number; other: number }, since: string | null = null): Promise<InboxRow[]> {
+  const { data, error } = await db.rpc("mobile_inbox_feed", { p_linked: size.linked, p_other: size.other, p_since: since });
+  if (error) throw new Error(error.message);
+  return (data || []) as InboxRow[];
 }
 
 export function useMobileInbox(userId: string | undefined) {
@@ -59,22 +58,16 @@ export function useMobileInbox(userId: string | undefined) {
     if (!userId) return;
     if (!opts.quiet) setRefreshing(true);
     try {
-      const first = await linkedQuery(userId).range(0, FIRST_PAGE - 1);
-      if (first.error) throw new Error(first.error.message);
-      const head = (first.data || []) as InboxRow[];
-      // Mientras llega el resto se conserva lo que ya había más allá de la primera página.
+      const head = await feed(FIRST);
+      // Mientras llega el resto se conserva lo que ya había (más viejo que lo recién traído).
       const headIds = new Set(head.map((r) => r.id));
       const oldest = head.length ? head[head.length - 1].received_at : null;
       const keep = rowsRef.current.filter((r) => !headIds.has(r.id) && oldest && r.received_at < oldest);
       commit([...head, ...keep]);
       setLoading(false);
       setError(null);
-      if (head.length === FIRST_PAGE) {
-        const rest = await linkedQuery(userId).range(FIRST_PAGE, TOTAL - 1);
-        if (!rest.error) commit([...head, ...((rest.data || []) as InboxRow[])]);
-      } else {
-        commit(head);
-      }
+      const all = await feed(FULL).catch(() => null);
+      if (all) commit(all);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -89,9 +82,8 @@ export function useMobileInbox(userId: string | undefined) {
     if (!userId) return;
     const newest = rowsRef.current[0]?.received_at;
     if (!newest) return;
-    const { data, error: err } = await linkedQuery(userId).gt("received_at", newest).limit(50);
-    if (err || !data?.length) return;
-    const fresh = data as InboxRow[];
+    const fresh = await feed({ linked: 50, other: 50 }, newest).catch(() => [] as InboxRow[]);
+    if (!fresh.length) return;
     const ids = new Set(fresh.map((r) => r.id));
     commit([...fresh, ...rowsRef.current.filter((r) => !ids.has(r.id))]);
   }, [userId, commit]);

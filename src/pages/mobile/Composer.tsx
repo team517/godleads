@@ -32,7 +32,9 @@ function useVisualViewport() {
   useEffect(() => {
     const v = window.visualViewport;
     if (!v) return;
-    const update = () => setVv({ h: v.height, top: v.offsetTop });
+    // Con la app en "absolute" (iPhone, documento alargado) el arriba de lo visible se mide desde
+    // el documento (pageTop); con la app "fixed", desde la ventana (offsetTop).
+    const update = () => setVv({ h: v.height, top: document.documentElement.classList.contains("m-shim") ? v.pageTop : v.offsetTop });
     update();
     v.addEventListener("resize", update);
     v.addEventListener("scroll", update);

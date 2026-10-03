@@ -7,10 +7,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- "default", no "black-translucent": con la transparente iOS dibuja la app desde arriba del
-         todo pero le da la altura de la pantalla MENOS la barra de estado, y abajo quedaba una
-         franja de ~59 pt sin app (se veía en la app instalada del iPhone). -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!-- Transparente: la app se ve por debajo de la hora, como en el diseño. iOS calcula entonces
+         la página ~59 pt más corta que la pantalla; lo corrige useIosStandaloneShim (app del móvil). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="OnePulso" />
     <!-- The op monogram, not the pulse wave: at tab size the wave reads as a lightning bolt. -->
     <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png?v=2" />

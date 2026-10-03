@@ -50,11 +50,16 @@ describe("estados del contacto", () => {
 });
 
 describe("conversaciones", () => {
-  it("sólo respuestas reales: enlazadas, sin rebotes ni archivadas", () => {
+  it("se enseña: lo de campaña y el correo normal; nunca rebotes, archivados ni warm-up", () => {
     expect(isMobileReply(row({}))).toBe(true);
-    expect(isMobileReply(row({ lead_id: null, campaign_id: null }))).toBe(false);
+    expect(isMobileReply(row({ lead_id: null, campaign_id: null, in_campaign: false, subject: "Factura de octubre", body_text: "Adjunto la factura." }))).toBe(true);
     expect(isMobileReply(row({ from_email: "mailer-daemon@ionos.es" }))).toBe(false);
     expect(isMobileReply(row({ is_archived: true }))).toBe(false);
+    // Warm-up pegado a una campaña pero que NO es de ningún lead de campaña (caso real 03-10).
+    expect(isMobileReply(row({ in_campaign: false, from_email: "martina.ll@patagoniaconsultants.net", subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" }))).toBe(false);
+    expect(isMobileReply(row({ lead_id: null, campaign_id: null, in_campaign: false, subject: "RE: Q2 Project Plan", body_text: "Sounds good." }))).toBe(false);
+    // Un lead de campaña nunca se toma por warm-up aunque su firma lleve códigos.
+    expect(isMobileReply(row({ in_campaign: true, subject: "Re: idea | REF 4H7K2LQ", body_text: "Me interesa" }))).toBe(true);
   });
 
   it("agrupa por buzón + remitente, la más nueva arriba, con sus no leídos", () => {
@@ -70,7 +75,7 @@ describe("conversaciones", () => {
     expect(list[0].unreadIds).toHaveLength(1);
   });
 
-  it("Others = sólo respuestas automáticas; si alguien escribió de verdad, va a Primary", () => {
+  it("Primary = una persona de campaña; Others = respuestas automáticas y lo que no es de campaña", () => {
     const [auto] = buildConversations([row({ auto_signal: "auto-submitted", subject: "Respuesta automática: Lucy" })]);
     expect(auto.tab).toBe("others");
     const [mixed] = buildConversations([
@@ -78,6 +83,18 @@ describe("conversaciones", () => {
       row({ body_text: "Me interesa, llámame", received_at: "2026-10-01T10:00:00Z" }),
     ]);
     expect(mixed.tab).toBe("primary");
+    // Contesta a un envío de campaña desde otro correo (su gmail): no es lead, pero es respuesta → Primary.
+    const [otherAddress] = buildConversations([row({ in_campaign: false, from_email: "ruth.asho@gmail.com", subject: "Re: una idea para ASHO", body_text: "Juli ya no está en la compañía" })]);
+    expect(otherAddress.tab).toBe("primary");
+    expect(otherAddress.inCampaign).toBe(true);
+    // Warm-up enlazado a una campaña y que no es de ningún lead → ni Primary ni Others.
+    expect(buildConversations([row({ in_campaign: false, subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" })])).toHaveLength(0);
+    // Sin enlazar pero del dominio de un lead de campaña (un compañero) → Primary.
+    const [colleague] = buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, from_email: "lucia@theofficeco.es", body_text: "Me lo pasa mi compañero, ¿hablamos?" })]);
+    expect(colleague.tab).toBe("primary");
+    // Correo normal que no es de campaña → Others.
+    const [other] = buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: false, from_email: "facturas@proveedor.es", subject: "Factura de octubre", body_text: "Adjunto la factura." })]);
+    expect(other.tab).toBe("others");
   });
 
   it("nombre: el del remitente o Unknown (nunca un email ni '(sin asunto)')", () => {
