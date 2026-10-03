@@ -206,11 +206,26 @@ export function campaignMatchCounts(m: { in_campaign?: boolean | null; match_why
   return !(/^\s*re\s*:/i.test(s) && looksLikePoolThreadSubject(s));
 }
 
+/**
+ * La etiqueta de filtro del warm-up al final del asunto: "| <algo> <CÓDIGO>", con un código de 6 a 8
+ * mayúsculas y cifras mezcladas ("Lucy - coffee? | KK5XRDN 0396QKE", "Success story ads | 36P2ARY
+ * 0396QKE"). Es la misma regla que inbox_campaign_match en la base de datos. Lo que la lleva es
+ * warm-up aunque la sincronización lo haya atado a una campaña por la empresa del remitente
+ * (03-10-2026: 4 casos en un día, etiquetados "Pregunta"/"Interesado" y en Primary).
+ */
+export function hasWarmupSubjectTag(subject: string | null | undefined): boolean {
+  const m = /\|[^|]*\s([A-Z0-9]{6,8})\s*$/.exec(String(subject || ""));
+  if (!m) return false;
+  return /[0-9]/.test(m[1]) && /[A-Z]/.test(m[1]);
+}
+
 export function isWarmupMessage(input: { subject?: string | null; body?: string | null; fromEmail?: string | null; ownMailboxes?: Set<string> | null; linked?: boolean | null; senderKnown?: boolean | null }): boolean {
   const s = input.subject || ""; const b = input.body || ""; const from = (input.fromEmail || "").trim().toLowerCase();
   // Our OWN seed mailboxes are warm-up whatever they write, and an explicit marker is definitive.
   if (from && input.ownMailboxes && input.ownMailboxes.has(from)) return true;
   if (WARMUP_MARKER_RE.test(`${s} ${b.slice(0, 800)}`)) return true;
+  // La etiqueta del warm-up en el asunto: warm-up seguro, esté o no atado a una campaña.
+  if (hasWarmupSubjectTag(s)) return true;
   // A message LINKED to a real lead/campaign is a genuine prospect reply — NEVER warm-up. Warm-up
   // traffic comes from other seed mailboxes, never from someone we actually emailed. Without this
   // guard the code detector tripped on ordinary signatures (a phone/reference number, a base64
@@ -275,6 +290,22 @@ export function isBounceOrFailure(fromEmail: string | null): boolean {
   if ((domain === "instantly.ai" || domain.endsWith(".instantly.ai")) && INSTANTLY_LOCALS.has(local)) return true;
 
   return false;
+}
+
+/**
+ * ¿Es un aviso de que un correo NUESTRO no se pudo entregar (un rebote)? Por el remitente
+ * (postmaster2@, MicrosoftExchange…@, mailer-daemon@ de cualquier dominio, que isBounceOrFailure no
+ * siempre cubre) o por el asunto ("Undeliverable:", "Unzustellbar:", "Your message couldn't be
+ * delivered", "No se ha podido entregar"…). Los manda el servidor de la empresa del lead, así que
+ * son "de campaña", pero el dueño los quiere en Others (03-10-2026), no en Primary.
+ * Ojo: un contestador que dice "esta cuenta ya no está activa" NO es un rebote (suele dar otro
+ * contacto); sigue siendo una respuesta automática normal.
+ */
+const DELIVERY_FAILURE_FROM_RE = /^(postmaster\d*|mailer-?daemon|mail-daemon|maildaemon|bounces?|mdaemon|microsoftexchange[0-9a-f]*)@/i;
+const DELIVERY_FAILURE_SUBJECT_RE = /\b(undeliverable|undelivered mail|unzustellbar|non remis|non recapitabile|impossible de remettre|nondeliverable|delivery status notification|delivery (has )?failed|delivery failure|mail delivery (failed|failure|problems?|subsystem)|returned mail|returned to sender|failure notice|message not delivered|(couldn'?t|could not|cannot|can't|wasn'?t|was not) be delivered|no se ha podido entregar|no se pudo entregar|mensaje no entregado|error de entrega|entrega fallida|no entregado)\b/i;
+export function isDeliveryFailureMessage(m: { from_email?: string | null; subject?: string | null }): boolean {
+  if (DELIVERY_FAILURE_FROM_RE.test(String(m.from_email || "").trim())) return true;
+  return DELIVERY_FAILURE_SUBJECT_RE.test(String(m.subject || ""));
 }
 
 // Word sets are curated to be DISTINCTIVE per language (minimal cross-language

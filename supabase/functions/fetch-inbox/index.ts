@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
-import { isWarmupMessage } from "../_shared/inbox-filters.ts";
+import { hasWarmupSubjectTag, isWarmupMessage } from "../_shared/inbox-filters.ts";
 import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
 import {
   INBOUND_FETCH_ITEMS, addressOf, autoSignal, decodeMimeWords, headerValue, imapCompleted, parseInboundItem, pickFolders, refIds, splitFetchItems,
@@ -1339,16 +1339,20 @@ serve(async (req) => {
           // da el lead cuando quien contesta no es nadie a quien hayamos escrito con esa dirección.
           const threadHit = threadOf(msg.ref_chain);
           const domHit = (!exactSent && !exactLead && !threadHit && dom) ? (domainSent.get(dom) || null) : null;
-          const leadId = exactSent?.lead_id || exactLead || threadHit?.lead_id || domHit?.lead_id || null;
-          const campaignId = threadHit?.campaign_id || exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
+          // La etiqueta del warm-up en el asunto ("| 36P2ARY 0396QKE"): es warm-up y NO se ata a nada.
+          // Antes se ataba a la campaña por la empresa del remitente (misma marca con otra
+          // terminación) y, ya "enlazado", el detector no lo miraba: salía en Primary y avisaba.
+          const warmupTagged = hasWarmupSubjectTag(msg.subject);
+          const leadId = warmupTagged ? null : (exactSent?.lead_id || exactLead || threadHit?.lead_id || domHit?.lead_id || null);
+          const campaignId = warmupTagged ? null : (threadHit?.campaign_id || exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
             // Una respuesta NUNCA es de una campaña creada DESPUÉS de que llegara (23-09-2026).
             || (() => {
               const hit = dom ? companyCampaign.get(dom) : null;
               if (!hit) return null;
               const when = Date.parse(parsedDate);
               return (Number.isFinite(when) && hit.created > when) ? null : hit.id;
-            })() || null;
-          const related = !!(threadHit || exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom)));
+            })() || null);
+          const related = !warmupTagged && !!(threadHit || exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom)));
           // noreply@ / no-reply@ / postmaster@… que no es un rebote: un acuse automático de la
           // empresa de un lead SÍ es una respuesta (antes se tiraba). Sin relación con nada
           // nuestro (un boletín, un aviso del proveedor) no entra en el Unibox, pero se anota.

@@ -1,7 +1,7 @@
 // Lógica de la app del móvil (Unibox estilo Instantly): estados de contacto, conversaciones,
 // pestañas Primary / Others y formatos de fecha. Todo puro para poder probarlo aparte.
 import { categoryOf, cleanBodyText, decodeSubject, decodeSubjectKeepCodes, isBounceOrNoise, CATEGORY_LABEL, type MessageCategory } from "@/lib/unibox-text";
-import { campaignMatchCounts, isBounceOrFailure, isWarmupMessage, looksLikePoolThreadSubject } from "@/lib/inbox-filters";
+import { campaignMatchCounts, isBounceOrFailure, isDeliveryFailureMessage, isWarmupMessage, looksLikePoolThreadSubject } from "@/lib/inbox-filters";
 
 /* ── Estados ─────────────────────────────────────────────────────────────── */
 
@@ -232,7 +232,9 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
   for (const [key, msgs] of groups) {
     msgs.sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     const latest = msgs[0];
-    const inCampaign = msgs.some(isCampaignMessage);
+    // Un aviso de rebote (correo nuestro no entregado) no cuenta: va a Others aunque lo mande el
+    // servidor de la empresa del lead (petición del dueño, 03-10-2026).
+    const inCampaign = msgs.some((m) => isCampaignMessage(m) && !isDeliveryFailureMessage(m));
     const withCampaign = msgs.find((m) => m.campaign_id);
     const withLead = msgs.find((m) => m.lead_id);
     out.push({

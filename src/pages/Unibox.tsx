@@ -1,4 +1,4 @@
-import { campaignMatchCounts, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
+import { campaignMatchCounts, hasWarmupSubjectTag, isDeliveryFailureMessage, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { sentBodyHtml } from "@/lib/sent-body";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
@@ -1150,7 +1150,7 @@ export default function Unibox() {
     setCampaignItemsLoading(false);
     if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
     const rows = ((data || []) as any[]).filter((r) =>
-      campaignMatchCounts(r) && !isBounceOrNoise(r.from_email) && !isBounceOrFailure(r.from_email));
+      campaignMatchCounts(r) && !isBounceOrNoise(r.from_email) && !isBounceOrFailure(r.from_email) && !isDeliveryFailureMessage(r));
     const match = new Map<string, string | null>();
     for (const r of rows) match.set(r.id, r.campaign_id || r.campaign_hint || null);
     setCampaignMatch(match);
@@ -1456,6 +1456,8 @@ export default function Unibox() {
     const fromDom = String(m.from_email || "").split("@")[1]?.toLowerCase().trim() || "";
     const fromLeadCompany = !!fromDom && leadDomains.has(fromDom) && !isOwnBrandDomain(fromDom);
     if (m.is_warmup && !m.lead_id && !m.campaign_id && !fromLeadCompany) return true;
+    // La etiqueta del warm-up en el asunto ("| 36P2ARY 0396QKE"): fuera, esté atado a lo que esté.
+    if (hasWarmupSubjectTag(m.subject)) return true;
     // 1) CAMPAIGN-RELEVANT → always show: a lead, a lead's DOMAIN (a colleague at the same company
     //    counts, even if that exact email isn't a lead), or one of our own onepulso/variant domains.
     //    (leadDomains is empty until the get_lead_domains RPC loads, so lead_id/campaign_id/onepulso

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { templatePreview } from "@/pages/mobile/Templates";
 import { iosBottomShim } from "@/lib/mobile-app";
-import { campaignMatchCounts } from "@/lib/inbox-filters";
+import { campaignMatchCounts, hasWarmupSubjectTag, isDeliveryFailureMessage, isWarmupMessage } from "@/lib/inbox-filters";
+import { buildConversations } from "@/lib/mobile-inbox";
 
 describe("vista previa de una plantilla", () => {
   it("sin etiquetas, con el texto del enlace y en una línea", () => {
@@ -51,5 +52,43 @@ describe("regla de campaña (campaignMatchCounts)", () => {
     expect(campaignMatchCounts({ in_campaign: false, match_why: "warmup", subject: "Lucy - coffee? | KK5XRDN 0396QKE" })).toBe(false);
     expect(campaignMatchCounts({ in_campaign: false, match_why: "propio", subject: "Hola" })).toBe(false);
     expect(campaignMatchCounts({ in_campaign: false, match_why: null, subject: "RE: Would this be useful?" })).toBe(false);
+  });
+});
+
+describe("rebotes: a Others aunque vengan de la empresa del lead", () => {
+  it("se reconocen por el remitente o por el asunto", () => {
+    expect(isDeliveryFailureMessage({ from_email: "postmaster2@rheinschrift.de", subject: "Unzustellbar: Lucy - Rheinschrift" })).toBe(true);
+    expect(isDeliveryFailureMessage({ from_email: "security@quint.co.uk", subject: "Your message couldn't be delivered" })).toBe(true);
+    expect(isDeliveryFailureMessage({ from_email: "microsoftexchange329e71ec88ae4615bbc36ab6ce41109e@netorgft15653426.onmicrosoft.com", subject: "Undeliverable: Hola" })).toBe(true);
+    expect(isDeliveryFailureMessage({ from_email: "it@empresa.es", subject: "No se ha podido entregar el mensaje" })).toBe(true);
+  });
+  it("una respuesta o un contestador normal no es un rebote", () => {
+    expect(isDeliveryFailureMessage({ from_email: "ana@empresa.es", subject: "Re: una idea para Empresa" })).toBe(false);
+    expect(isDeliveryFailureMessage({ from_email: "ana@empresa.es", subject: "Fuera de la oficina Re: Juan - Empresa" })).toBe(false);
+    expect(isDeliveryFailureMessage({ from_email: "isabel@ideatik.com", subject: "Este correo no está activo" })).toBe(false);
+  });
+  it("un rebote de la empresa del lead va a Others; la respuesta del lead, a Primary", () => {
+    const base = { account_id: "a1", lead_id: null, campaign_id: null, received_at: "2026-10-02T10:00:00Z", is_read: false, labels: [] };
+    const [bounce] = buildConversations([{ ...base, id: "b1", from_email: "security@quint.co.uk", subject: "Your message couldn't be delivered", in_campaign: true, match_why: "dominio" }]);
+    expect(bounce.tab).toBe("others");
+    const [reply] = buildConversations([{ ...base, id: "r1", from_email: "ana@quint.co.uk", subject: "Re: una idea para Quint", in_campaign: true, match_why: "dominio" }]);
+    expect(reply.tab).toBe("primary");
+  });
+});
+
+describe("la etiqueta del warm-up en el asunto", () => {
+  it("se reconoce (código de 6-8 mayúsculas y cifras tras una barra)", () => {
+    expect(hasWarmupSubjectTag("Success story ads | 36P2ARY 0396QKE")).toBe(true);
+    expect(hasWarmupSubjectTag("Lucy - coffee? | KK5XRDN 0396QKE")).toBe(true);
+    expect(hasWarmupSubjectTag("how can we help you grow? | blow_coat_avoid_beca 0396QKE")).toBe(true);
+  });
+  it("un asunto normal con barra no lo es", () => {
+    expect(hasWarmupSubjectTag("Re: una idea para RUMAR | Mayorista Dental")).toBe(false);
+    expect(hasWarmupSubjectTag("Cambio de dirección de contacto | Change of contact email")).toBe(false);
+    expect(hasWarmupSubjectTag("Oferta | 2026")).toBe(false);
+    expect(hasWarmupSubjectTag("Re: Juan - TTR Data")).toBe(false);
+  });
+  it("es warm-up aunque esté atado a una campaña o venga de la empresa de un lead", () => {
+    expect(isWarmupMessage({ subject: "Success story ads | 36P2ARY 0396QKE", body: "Hey Vanessa, did you have a customer succeed lately?", fromEmail: "tom_b@leadscale.click", linked: true, senderKnown: true })).toBe(true);
   });
 });
