@@ -70,6 +70,27 @@ export async function listarClientes(db: Db) {
 export interface Cliente {
   id: string; email: string; nombre: string; empresa: string;
   instrucciones: string; skills: string; enlace: string;
+  /** Modo propio: el dueño de la cuenta hablando de sus campañas (chatbot flotante). */
+  propio?: boolean;
+}
+
+/** Con qué IA se habla: por defecto DeepSeek de la plataforma; en modo propio, la del usuario (BYOK). */
+export type ModeloIa = { baseUrl?: string; model?: string };
+const urlChat = (ia?: ModeloIa) => `${String(ia?.baseUrl || "https://api.deepseek.com/v1").replace(/\/+$/, "")}/chat/completions`;
+const modelo = (ia?: ModeloIa) => ia?.model || "deepseek-chat";
+
+/** La cuenta de QUIEN habla (cualquier usuario), para el modo propio: sin exigir que sea un cliente del portal. */
+export async function cargarPropio(db: Db, id: string, email: string): Promise<Cliente> {
+  const { data: p } = await db.from("profiles")
+    .select("full_name, company_name, ai_reply_prompt, ai_reply_calendar_url, campaign_skills")
+    .eq("user_id", id).maybeSingle();
+  return {
+    id, email,
+    nombre: (p as any)?.full_name || "", empresa: (p as any)?.company_name || "",
+    instrucciones: (p as any)?.ai_reply_prompt || "", skills: (p as any)?.campaign_skills || "",
+    enlace: (p as any)?.ai_reply_calendar_url || "",
+    propio: true,
+  };
 }
 
 export async function cargarCliente(db: Db, id: string): Promise<Cliente | null> {
@@ -89,7 +110,7 @@ export async function cargarCliente(db: Db, id: string): Promise<Cliente | null>
 
 /* ── La conversación con herramientas ──────────────────────────────────────────────────── */
 
-export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor: string): Promise<{ texto: string; tarjetas: Tarjeta[] }> {
+export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor: string, extra?: { contexto?: string; ia?: ModeloIa }): Promise<{ texto: string; tarjetas: Tarjeta[] }> {
   const inicio = Date.now();
   const { data: estados } = await db.from("ia_mod_changes").select("id, status").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(300);
   const estadoDe = new Map(((estados || []) as any[]).map((e) => [e.id, e.status]));
@@ -126,6 +147,8 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     nombre: cliente.nombre, empresa: cliente.empresa, email: cliente.email,
     notas: (nota as any)?.notes || "", instruccionesRespuestas: cliente.instrucciones, skills: cliente.skills,
     enlaceReserva: cliente.enlace,
+    propio: !!cliente.propio,
+    extraContexto: extra?.contexto || "",
     campanas: (camps || []).map((c: any) => ({ id: c.id, name: c.name, status: c.status })),
     hoy: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }),
     resumen: (nota as any)?.resumen || "",
@@ -138,7 +161,7 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
 
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     const ultima = vuelta === MAX_VUELTAS - 1 || Date.now() - inicio > PLAZO_MS - 25_000;
-    const r = await llamarModelo(apiKey, mensajes, !ultima);
+    const r = await llamarModelo(apiKey, mensajes, !ultima, extra?.ia);
     const msg = r?.choices?.[0]?.message;
     if (!msg) throw new Error("La IA no ha respondido");
     const llamadas = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
@@ -166,7 +189,7 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
 const EN_CONTEXTO = 24;
 const MAX_MENSAJES = 300;
 
-export async function mantenerMemoria(db: Db, apiKey: string, clientId: string) {
+export async function mantenerMemoria(db: Db, apiKey: string, clientId: string, ia?: ModeloIa) {
   const { data: nota } = await db.from("ia_mod_notes").select("resumen, resumen_hasta").eq("client_user_id", clientId).maybeSingle();
   const { data: todos } = await db.from("ia_mod_messages").select("id, role, content, cards, created_at")
     .eq("client_user_id", clientId).order("created_at", { ascending: false }).limit(MAX_MENSAJES + 200);
@@ -176,11 +199,11 @@ export async function mantenerMemoria(db: Db, apiKey: string, clientId: string) 
   const sinResumir = fuera.filter((m) => Date.parse(m.created_at) > hasta);
   if (apiKey && sinResumir.length >= 12) {
     const anterior = String((nota as any)?.resumen || "");
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const res = await fetch(urlChat(ia), {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "deepseek-chat", temperature: 0.2, max_tokens: 700,
+        model: modelo(ia), temperature: 0.2, max_tokens: 700,
         messages: [
           { role: "system", content: RESUMEN_SISTEMA },
           { role: "user", content: `${anterior ? `RESUMEN ANTERIOR:\n${anterior}\n\n` : ""}CONVERSACIÓN NUEVA A INTEGRAR:\n${textoParaResumir(sinResumir)}` },
@@ -204,13 +227,13 @@ export async function mantenerMemoria(db: Db, apiKey: string, clientId: string) 
   }
 }
 
-async function llamarModelo(apiKey: string, messages: any[], conHerramientas: boolean) {
+async function llamarModelo(apiKey: string, messages: any[], conHerramientas: boolean, ia?: ModeloIa) {
   for (let intento = 0; intento < 2; intento++) {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const res = await fetch(urlChat(ia), {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: modelo(ia),
         temperature: 0.4,
         max_tokens: 4000,
         messages,

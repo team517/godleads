@@ -7,7 +7,8 @@
 // Acciones: clients | history | campaigns | upload_start | upload_append | chat | confirm | cancel | undo | clear | save_notes
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { puedeUsarIaMod } from "../_shared/ia-mod.ts";
-import { aplicarPendiente, cargarCliente, conversar, deshacer, listarClientes, mantenerMemoria } from "./agente.ts";
+import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
+import { aplicarPendiente, cargarCliente, cargarPropio, conversar, deshacer, listarClientes, mantenerMemoria, type ModeloIa } from "./agente.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,17 +27,37 @@ Deno.serve(async (req) => {
     const { data: ud } = await db.auth.getUser(token);
     const email = (ud?.user?.email || "").toLowerCase();
     if (!ud?.user) return json({ error: "No autorizado" }, 401);
-    if (!puedeUsarIaMod(email)) return json({ error: "Sólo el equipo (hello@, support@, equipo@) puede usar Modificaciones IA" }, 403);
 
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");
 
-    if (action === "clients") return json({ clients: await listarClientes(db) });
+    // MODO PROPIO (self): cualquier usuario sobre SU cuenta, desde el chatbot flotante (03-10-2026,
+    // petición del dueño: "que cada persona pueda aplicar cambios en sus mensajes desde el chatbot").
+    // Mismas herramientas y mismo Confirmar/Deshacer; la clave de IA es la suya o la de la
+    // plataforma según BYOK. Sin self: el chat del equipo sobre la cuenta de un cliente, como siempre.
+    const self = body.self === true;
+    let ia: ModeloIa | undefined;
+    let apiKey = "";
+    if (self) {
+      const k = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+      if (k === "unauthorized") return json({ error: "No autorizado" }, 401);
+      if (k === "needs_key") return json({ error: "Para usar la IA pon tu clave de OpenAI o DeepSeek en Ajustes → IA" }, 402);
+      apiKey = k.apiKey;
+      ia = { baseUrl: k.baseUrl, model: k.model };
+    } else {
+      if (!puedeUsarIaMod(email)) return json({ error: "Sólo el equipo (hello@, support@, equipo@) puede usar Modificaciones IA" }, 403);
+      apiKey = Deno.env.get("DEEPSEEK_API_KEY") || "";
+    }
 
-    // Todo lo demás es sobre UN cliente, y tiene que ser un cliente de verdad (cuenta creada por
-    // la agencia), nunca una cuenta del equipo ni un registro propio.
-    const clientId = String(body.client_id || "");
-    const cliente = await cargarCliente(db, clientId);
+    if (action === "clients") {
+      if (self) return json({ error: "Acción no disponible" }, 400);
+      return json({ clients: await listarClientes(db) });
+    }
+
+    // Todo lo demás es sobre UNA cuenta: la propia (self) o la de un cliente de verdad (cuenta
+    // creada por la agencia), nunca una cuenta del equipo ni un registro propio.
+    const clientId = self ? String(ud.user.id) : String(body.client_id || "");
+    const cliente = self ? await cargarPropio(db, clientId, email) : await cargarCliente(db, clientId);
     if (!cliente) return json({ error: "Cliente no válido" }, 400);
 
     if (action === "history") {
@@ -124,20 +145,19 @@ Deno.serve(async (req) => {
       }
       const texto = (String(body.message || "").trim() || (adjunto ? `Te adjunto el archivo ${adjunto.nombre}.` : "")).slice(0, 6000);
       if (!texto) return json({ error: "Mensaje vacío" }, 400);
-      const apiKey = Deno.env.get("DEEPSEEK_API_KEY") || "";
       if (!apiKey) return json({ error: "Falta la clave de IA de la plataforma" }, 500);
 
       const { data: filaUsuario } = await db.from("ia_mod_messages")
         .insert({ client_user_id: clientId, author_email: email, role: "user", content: texto, cards: adjunto ? [adjunto] : [] })
         .select("id, role, content, cards, author_email, created_at").single();
-      const reply = await conversar(db, apiKey, cliente, email);
+      const reply = await conversar(db, apiKey, cliente, email, { contexto: String(body.contexto || "").slice(0, 3000), ia });
       const { data: row } = await db.from("ia_mod_messages")
         .insert({ client_user_id: clientId, author_email: "ia", role: "assistant", content: reply.texto, cards: reply.tarjetas })
         .select("id, role, content, cards, author_email, created_at").single();
       const ids = reply.tarjetas.map((t) => t.change_id).filter(Boolean) as string[];
       const { data: cambios } = ids.length ? await db.from("ia_mod_changes").select("id, status").in("id", ids) : { data: [] };
       // Resumir lo viejo y podar, por detrás: la respuesta no espera a esto.
-      const memoria = mantenerMemoria(db, apiKey, clientId).catch((e) => console.error("memoria:", e));
+      const memoria = mantenerMemoria(db, apiKey, clientId, ia).catch((e) => console.error("memoria:", e));
       const rt = (globalThis as any).EdgeRuntime;
       if (rt?.waitUntil) rt.waitUntil(memoria); else await memoria;
       return json({ message: row, user_message: filaUsuario, changes: Object.fromEntries((cambios || []).map((c: any) => [c.id, c.status])) });

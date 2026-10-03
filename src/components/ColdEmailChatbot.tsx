@@ -9,6 +9,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SparkMark } from "@/components/SparkMark";
 import { useLocation } from "react-router-dom";
 import { isMobileAppPath } from "@/lib/mobile-app";
+import { contextoParaPulseBot, esPeticionDeCambio, siguePulseBot } from "@/lib/chatbot-intent";
+import { TarjetaCambioMini, type AccionCambio, type TarjetaCambioT } from "@/components/chatbot/TarjetaCambioMini";
+import type { IaTarjeta } from "@/lib/ia-mod-view";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend,
@@ -27,12 +30,32 @@ type Msg = {
   images?: string[];
   charts?: ChartData[];
   analyticsSummary?: string;
+  /** Tarjetas de PulseBot (cambios en campañas con Confirmar / Deshacer, métricas…). */
+  cards?: IaTarjeta[];
+  /** Quién contestó: el consultor (stream) o PulseBot (herramientas sobre la cuenta). */
+  via?: "pulsebot";
 };
+
+/* PulseBot en modo propio: la misma IA con herramientas de "Modificaciones IA", pero sobre la
+   cuenta de QUIEN habla. Ve sus campañas y mensajes, propone el cambio con antes/después y lo
+   aplica (en campañas activas, tras Confirmar). Un turno va a PulseBot cuando el usuario pide
+   cambiar algo (esPeticionDeCambio) o cuando responde a un turno de PulseBot (siguePulseBot). */
+async function llamarPulseBot<T = any>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke("ia-modificaciones", { body: { ...body, self: true } });
+  if (error) {
+    let msg = error.message;
+    try { const j = await (error as any).context?.json?.(); if (j?.error) msg = j.error; } catch { /* sin cuerpo */ }
+    throw new Error(msg);
+  }
+  if ((data as any)?.error) throw new Error((data as any).error);
+  return data as T;
+}
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cold-email-chat`;
 
 const quickPrompts = [
   "📊 Analiza mis campañas con gráficos",
+  "✏️ Cambia un mensaje de mi campaña",
   "Escríbeme un email de prospección para SaaS B2B",
   "Dame 5 asuntos de email con alto open rate",
   "Crea una secuencia de 3 follow-ups",
@@ -56,6 +79,9 @@ export function ColdEmailChatbot() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  // Estado real de cada cambio de PulseBot (pending / applied / undone / cancelled), por change_id.
+  const [estadosCambio, setEstadosCambio] = useState<Record<string, string>>({});
+  const [viaPulseBot, setViaPulseBot] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -246,6 +272,13 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setInput("");
     setPendingImages([]);
 
+    // ¿Pide cambiar algo de sus campañas (o sigue una conversación de cambios)? → PulseBot.
+    const ultimoAsistente = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!isAutoAnalytics && !userMsg.images && (esPeticionDeCambio(text) || siguePulseBot(text, ultimoAsistente?.via === "pulsebot"))) {
+      await enviarAPulseBot(text.trim(), messages);
+      return;
+    }
+
     if (isAskingForCharts) {
       const result = await fetchAnalyticsCharts();
       if (result && result.charts.length > 0) {
@@ -259,6 +292,33 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     }
 
     await streamToAI(isAutoAnalytics ? [...messages, userMsg] : newMessages);
+  };
+
+  const enviarAPulseBot = async (texto: string, previos: Msg[]) => {
+    setIsLoading(true);
+    setViaPulseBot(true);
+    try {
+      // Lo hablado con el consultor justo antes va como contexto de un solo uso (no se guarda).
+      const contexto = previos.some((m) => m.via === "pulsebot") ? "" : contextoParaPulseBot(previos);
+      const r = await llamarPulseBot<{ message: { content: string; cards?: IaTarjeta[] }; changes?: Record<string, string> }>({ action: "chat", message: texto, contexto });
+      if (r.changes) setEstadosCambio((prev) => ({ ...prev, ...r.changes }));
+      setMessages((prev) => [...prev, { role: "assistant", content: r.message?.content || "", cards: r.message?.cards || [], via: "pulsebot" }]);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `❌ ${e instanceof Error ? e.message : "No se pudo aplicar el cambio"}`, via: "pulsebot" }]);
+    } finally {
+      setIsLoading(false);
+      setViaPulseBot(false);
+    }
+  };
+
+  const accionCambio = async (change_id: string, action: AccionCambio) => {
+    try {
+      const r = await llamarPulseBot<{ status: string; summary?: string | null }>({ action, change_id });
+      setEstadosCambio((prev) => ({ ...prev, [change_id]: r.status }));
+      if (r.summary) setMessages((prev) => [...prev, { role: "assistant", content: r.summary!, via: "pulsebot" }]);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `❌ ${e instanceof Error ? e.message : "No se pudo"}`, via: "pulsebot" }]);
+    }
   };
 
   const streamToAI = async (allMessages: Msg[]) => {
@@ -483,6 +543,8 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 analizar tu rendimiento y darte recomendaciones concretas para <strong>conseguir más reuniones</strong>.
                 <br /><br />
                 Usa el botón <strong>📊</strong> para adjuntar tus analíticas con gráficos, o adjunta capturas con 📎.
+                <br /><br />
+                Y también <strong>cambio los mensajes de tus campañas</strong>: dime qué cambiar y te enseño el antes y el después para que lo confirmes.
               </div>
             </div>
             <div className={`grid gap-2 pl-10 ${isFullscreen ? "grid-cols-2 max-w-2xl" : "grid-cols-1"}`}>
@@ -540,7 +602,16 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 )}
                 {msg.role === "assistant" ? (
                   <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>li]:my-0.5 [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:rounded-lg [&>blockquote]:py-1 [&>pre]:bg-background/80 [&>pre]:rounded-lg [&>pre]:text-xs">
+                    {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">PulseBot · tus campañas</p>}
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    {(msg.cards || []).map((card, j) => (
+                      card.type === "cambio" || card.type === "pendiente"
+                        ? <TarjetaCambioMini key={card.change_id || j} t={card as TarjetaCambioT} estado={estadosCambio[card.change_id] || (card.type === "pendiente" ? "pending" : "applied")} onAccion={accionCambio} />
+                        : card.type === "adjunto" ? null
+                        : (card as { summary?: string }).summary
+                          ? <p key={j} className="mt-2 rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-[12.5px] text-muted-foreground">{(card as { summary?: string }).summary}</p>
+                          : null
+                    ))}
                   </div>
                 ) : (
                   msg.content || null
@@ -556,7 +627,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
             <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3">
               <div className="flex items-center gap-1.5">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="text-xs text-muted-foreground">Analizando...</span>
+                <span className="text-xs text-muted-foreground">{viaPulseBot ? "Revisando tu campaña…" : "Analizando..."}</span>
               </div>
             </div>
           </div>
@@ -618,7 +689,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Pregunta sobre cold email, adjunta gráficos..."
+          placeholder="Pregunta, o pide un cambio en tu campaña…"
           className="flex-1 border-0 bg-muted/50 focus-visible:ring-0 text-sm"
           disabled={isLoading}
         />

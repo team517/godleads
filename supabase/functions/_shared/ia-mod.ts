@@ -178,6 +178,10 @@ export interface ContextoCliente {
   estadoCambios?: string;
   /** Resumen de lo hablado antes de los mensajes que van enteros. */
   resumen?: string;
+  /** Modo propio: habla el DUEÑO de la cuenta sobre sus campañas (chatbot flotante), no el equipo. */
+  propio?: boolean;
+  /** Lo que el usuario hablaba con el consultor justo antes (contexto de un solo uso, no se guarda). */
+  extraContexto?: string;
 }
 
 const ESTADO_CAMBIO_TXT: Record<string, string> = { applied: "APLICADO", pending: "PENDIENTE (falta pulsar Confirmar)", undone: "DESHECHO", cancelled: "CANCELADO" };
@@ -235,10 +239,16 @@ export function sistemaIaMod(c: ContextoCliente, sugerir = false): string {
     c.instruccionesRespuestas && `CÓMO RESPONDE ESTE CLIENTE A SUS LEADS (su contexto de negocio):\n${c.instruccionesRespuestas.slice(0, 2500)}`,
     c.skills && `CONOCIMIENTO DE CAMPAÑA DE ESTE CLIENTE:\n${c.skills.slice(0, 2500)}`,
     c.enlaceReserva && `ENLACE DE RESERVA DEL CLIENTE: ${c.enlaceReserva}`,
+    c.extraContexto && `LO QUE EL USUARIO HABLABA HACE UN MOMENTO CON EL CONSULTOR DE COLD EMAIL (contexto de este turno; úsalo si ayuda, no lo repitas):\n${c.extraContexto.slice(0, 3000)}`,
   ].filter(Boolean).join("\n\n");
-  return `Eres PulseBot, el asistente de IA de OnePulso para el equipo de la agencia. Hablas en español, cercano y directo, como un experto en cold email que ayuda y asesora. Hoy es ${c.hoy}.
+  const cabecera = c.propio
+    ? `Eres PulseBot, el asistente de IA de OnePulso. Hablas con el DUEÑO de esta cuenta sobre SUS propias campañas: trátale de tú y habla de "tu campaña", "tus mensajes" (es su negocio, no un cliente de nadie). Hablas en español, cercano y directo, como un experto en cold email que ayuda y asesora. Hoy es ${c.hoy}.
 
-ESTÁS DENTRO DE LA CUENTA DE ESTE CLIENTE (y sólo de este):
+ESTÁS DENTRO DE SU CUENTA (y sólo de esta):`
+    : `Eres PulseBot, el asistente de IA de OnePulso para el equipo de la agencia. Hablas en español, cercano y directo, como un experto en cold email que ayuda y asesora. Hoy es ${c.hoy}.
+
+ESTÁS DENTRO DE LA CUENTA DE ESTE CLIENTE (y sólo de este):`;
+  return `${cabecera}
 - Nombre: ${c.nombre || "—"}
 - Empresa: ${c.empresa || "—"}
 - Correo de acceso: ${c.email}
