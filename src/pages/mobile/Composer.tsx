@@ -6,6 +6,8 @@ import { forwardSubject } from "@/lib/forward";
 import { editorToSource, quoteHeader, replySubject, type Conversation } from "@/lib/mobile-inbox";
 import { searchAccounts, sendForward, sendReply, type ThreadMessage } from "./mail-actions";
 import { ConfirmSheet, Sheet, SheetRow, SquareButton } from "./ui";
+import { sourceToHtml } from "@/components/unibox/RichReplyEditor";
+import { TemplatesBar, TemplatesSheet, useTemplates, type ReplyTemplate } from "./Templates";
 
 interface Props {
   mode: "reply" | "forward";
@@ -16,6 +18,8 @@ interface Props {
   onClose: () => void;
   onSent: (text: string) => void;
   onError: (text: string) => void;
+  /** Un aviso que no cierra el redactor (p. ej. "plantilla guardada"). */
+  onNotice: (text: string) => void;
 }
 
 const EMAIL_RE = /^[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+$/;
@@ -59,7 +63,8 @@ export function Composer(p: Props) {
   const [empty, setEmpty] = useState(true);
   const [files, setFiles] = useState<{ filename: string; mime: string; base64: string; size: number }[]>([]);
   const [sending, setSending] = useState(false);
-  const [sheet, setSheet] = useState<null | "from" | "link" | "emoji" | "size" | "menu" | "discard">(null);
+  const [sheet, setSheet] = useState<null | "from" | "link" | "emoji" | "size" | "menu" | "discard" | "templates">(null);
+  const templates = useTemplates();
   const [fmt, setFmt] = useState({ bold: false, italic: false, underline: false });
   const savedRange = useRef<Range | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -114,6 +119,37 @@ export function Composer(p: Props) {
     try { document.execCommand(cmd, false, value); } catch { /* sin execCommand */ }
     const el = editorRef.current;
     setEmpty(!el?.textContent?.trim());
+    saveDraft();
+  };
+
+  /** Pone una plantilla donde estaba el cursor (o al final). Si el cuadro está vacío, lo llena. */
+  const insertTemplate = (t: ReplyTemplate) => {
+    const el = editorRef.current;
+    if (!el) return;
+    const html = sourceToHtml(t.body || "");
+    if (!el.textContent?.trim()) {
+      el.innerHTML = html;
+      savedRange.current = null;
+    } else {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = (savedRange.current ? "" : "<br><br>") + html;
+      const last = tpl.content.lastChild;
+      let range = savedRange.current && el.contains(savedRange.current.startContainer) ? savedRange.current : null;
+      if (!range) { range = document.createRange(); range.selectNodeContents(el); range.collapse(false); }
+      range.deleteContents();
+      range.insertNode(tpl.content);
+      if (last) { const r = document.createRange(); r.setStartAfter(last); r.collapse(true); savedRange.current = r; }
+    }
+    // El cursor, justo detrás de lo puesto (o al final si el cuadro estaba vacío).
+    const after = savedRange.current;
+    if (after && el.contains(after.startContainer)) {
+      el.focus({ preventScroll: true });
+      const sel = document.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(after); }
+    } else {
+      focusEnd(el);
+    }
+    setEmpty(!el.textContent?.trim());
     saveDraft();
   };
 
@@ -198,9 +234,10 @@ export function Composer(p: Props) {
   const fromEmail = p.accountEmails[fromId] || p.accountEmails[p.conv.accountId] || "";
   const canSend = !sending && (to.length > 0 || EMAIL_RE.test(toInput.trim())) && (p.mode === "forward" || !empty || files.length > 0);
 
-  const style = vv ? { height: vv.h, transform: `translate3d(0, ${vv.top}px, 0)` } : { height: "100%" };
   // Con el teclado fuera no hace falta el margen de la barra de inicio del iPhone.
   const kbOpen = !!vv && vv.h < window.innerHeight - 120;
+  // Teclado fuera: toda la app (su altura ya corregida en iPhone). Teclado dentro: lo visible.
+  const style = vv && kbOpen ? { height: vv.h, transform: `translate3d(0, ${vv.top}px, 0)` } : { height: "100%" };
 
   return (
     <div className="absolute inset-x-0 top-0 flex flex-col bg-[#F7F8FC]" style={style}>
@@ -298,6 +335,9 @@ export function Composer(p: Props) {
           </div>
         )}
 
+        {/* Plantillas: el botón con todas y las primeras a un toque */}
+        <TemplatesBar templates={templates.list} onOpen={() => setSheet("templates")} onPick={insertTemplate} />
+
         {/* Barra de formato + papelera + enviar */}
         <div className="flex shrink-0 items-center gap-2.5" style={{ paddingBottom: kbOpen ? 6 : "calc(6px + env(safe-area-inset-bottom))" }}>
           <div className="m-card flex h-[48px] min-w-0 flex-1 items-center justify-between rounded-[14px] px-2">
@@ -360,6 +400,18 @@ export function Composer(p: Props) {
         <SheetRow label="Adjuntar archivo" onClick={() => { setSheet(null); fileInput.current?.click(); }} />
         <SheetRow label="Descartar borrador" danger onClick={() => setSheet("discard")} />
       </Sheet>
+      <TemplatesSheet open={sheet === "templates"} onClose={() => setSheet(null)}
+        templates={templates.list} loaded={templates.loaded} canSave={!empty}
+        onPick={(t) => { setSheet(null); insertTemplate(t); }}
+        onSave={async (name) => {
+          const el = editorRef.current;
+          if (!el) return;
+          try { await templates.save(name, editorToSource(el)); p.onNotice(`Plantilla «${name.trim()}» guardada`); }
+          catch (e) { p.onError(e instanceof Error ? e.message : String(e)); }
+        }}
+        onRemove={async (id) => {
+          try { await templates.remove(id); } catch (e) { p.onError(e instanceof Error ? e.message : String(e)); }
+        }} />
       <ConfirmSheet open={sheet === "discard"} title="¿Descartar el borrador?" text="Se borra lo que has escrito en esta respuesta."
         confirmLabel="Descartar" danger onConfirm={discard} onClose={() => setSheet(null)} />
     </div>

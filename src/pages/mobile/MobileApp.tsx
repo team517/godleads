@@ -17,6 +17,7 @@ import { ThreadView } from "./ThreadView";
 import { Composer } from "./Composer";
 import { AccountView } from "./AccountView";
 import { PushBanner } from "./PushBanner";
+import { useFullScreenHeight } from "./useFullScreenHeight";
 import { Bolt, ConfirmSheet, Sheet, SheetRow, useToast } from "./ui";
 import "./mobile.css";
 
@@ -35,6 +36,8 @@ export default function MobileApp() {
   const location = useLocation();
   const inbox = useMobileInbox(user?.id);
   const toast = useToast();
+  const rootRef = useRef<HTMLDivElement>(null);
+  useFullScreenHeight(rootRef);
 
   const [nav, setNav] = useState<"unibox" | "account">("unibox");
   const [filters, setFilters] = useState<MobileFilters>(() => {
@@ -220,7 +223,7 @@ export default function MobileApp() {
   const composeMode = compose || leavingCompose;
 
   return (
-    <div className="m-root">
+    <div ref={rootRef} className="m-root">
       <div className="m-frame">
         {/* Pestañas principales */}
         <div className="absolute inset-0 flex flex-col">
@@ -258,9 +261,11 @@ export default function MobileApp() {
           </div>
 
           {/* Barra inferior */}
-          <nav className="m-nav relative z-10 grid grid-cols-2 gap-2 px-6 pb-[calc(8px+env(safe-area-inset-bottom))] pt-2">
+          {/* Medidas del diseño: pastilla de 124×50 y su borde inferior a ~32 pt del final de la pantalla. */}
+          <nav className="m-nav relative z-10 grid grid-cols-2 justify-items-center rounded-t-[22px] px-3 pt-[7px]"
+            style={{ paddingBottom: "max(10px, calc(env(safe-area-inset-bottom) - 2px))" }}>
             <NavItem active={nav === "unibox"} label="Unibox" onClick={() => setNav("unibox")} icon={<UniboxIcon />} />
-            <NavItem active={nav === "account"} label="Account" onClick={() => setNav("account")} icon={<User className="h-[25px] w-[25px]" strokeWidth={1.8} />} />
+            <NavItem active={nav === "account"} label="Account" onClick={() => setNav("account")} icon={<User className="h-[24px] w-[24px]" strokeWidth={1.8} />} />
           </nav>
         </div>
 
@@ -304,6 +309,7 @@ export default function MobileApp() {
                 window.setTimeout(() => { void refreshThread(c); }, 600);
               }}
               onError={(text) => toast.show(text, "error")}
+              onNotice={(text) => toast.show(text)}
             />
           </div>
         )}
@@ -441,9 +447,9 @@ export default function MobileApp() {
 function NavItem({ active, label, icon, onClick }: { active: boolean; label: string; icon: React.ReactNode; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} aria-current={active ? "page" : undefined}
-      className={`m-press flex h-[54px] flex-col items-center justify-center gap-0.5 rounded-[14px] ${active ? "bg-[#EAF1FE] text-[#2F6BEA]" : "text-[#6B7192]"}`}>
+      className={`m-press flex h-[50px] w-[124px] flex-col items-center justify-center gap-[3px] rounded-[14px] ${active ? "bg-[#EAF1FE] text-[#2F6BEA]" : "text-[#6B7192]"}`}>
       {icon}
-      <span className="text-[13px] font-medium">{label}</span>
+      <span className="text-[13px] font-medium leading-none">{label}</span>
     </button>
   );
 }
@@ -451,7 +457,7 @@ function NavItem({ active, label, icon, onClick }: { active: boolean; label: str
 /** El icono de Unibox del diseño: dos cuadrados redondeados superpuestos. */
 function UniboxIcon() {
   return (
-    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
       <rect x="3" y="3" width="13" height="13" rx="3" stroke="currentColor" strokeWidth="1.9" />
       <rect x="8" y="8" width="13" height="13" rx="3" stroke="currentColor" strokeWidth="1.9" fill="none" />
     </svg>

@@ -15,6 +15,9 @@
   color-scheme: light;
   font-feature-settings: "cv11", "ss01";
   touch-action: manipulation;
+  /* Hace de marco para los "fixed" de dentro (filtros, hojas, avisos): así usan la altura
+     corregida de la app y no la de iOS, que a veces se queda corta. */
+  transform: translateZ(0);
 }
 .m-root * { -webkit-tap-highlight-color: transparent; }
 .m-root ::selection { background: #d9e2fd; }

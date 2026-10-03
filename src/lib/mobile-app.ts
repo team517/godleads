@@ -57,3 +57,22 @@ export function notificationTarget(url: string, currentPath: string): string {
   } catch { /* url rara: tal cual */ }
   return url;
 }
+
+/**
+ * iPhone con la app instalada y la barra de estado transparente: iOS a veces da a la página la
+ * altura de la pantalla MENOS la barra de estado (≈ 59 pt), y la app se pinta como si la
+ * pantalla acabara antes: queda una franja vacía debajo de la barra de abajo. Devuelve la altura
+ * buena (la de la pantalla) cuando falta ese trozo; null si no hay que tocar nada.
+ * Sólo en iPhone: en Android la altura sin las barras del sistema es la correcta.
+ */
+export function fullScreenHeightFix(input: {
+  ios: boolean; installed: boolean; portrait: boolean;
+  screenW: number; screenH: number; innerH: number; visualH?: number | null;
+}): number | null {
+  if (!input.ios || !input.installed) return null;
+  // Con el teclado fuera la altura visible es menor a propósito: no se toca.
+  if (input.visualH != null && input.innerH - input.visualH > 120) return null;
+  const full = input.portrait ? Math.max(input.screenW, input.screenH) : Math.min(input.screenW, input.screenH);
+  const missing = full - input.innerH;
+  return missing > 1 && missing < 140 ? full : null;
+}

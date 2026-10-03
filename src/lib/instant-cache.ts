@@ -20,6 +20,7 @@ const PERSIST_KEYS = new Set([
   "dash:campaigns",
   "mobile:rows",
   "mobile:accounts",
+  "mobile:templates",
 ]);
 
 let boundUid: string | null = null;
