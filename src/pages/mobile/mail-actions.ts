@@ -33,6 +33,9 @@ export interface ThreadMessage {
   received_at?: string | null;
   sent_at?: string | null;
   attachments?: { name: string; mime: string; size: number; path: string; oversized?: boolean }[] | null;
+  /** Envío que rebotó después de salir (lo marca la sincronización) y su motivo. */
+  bounced_at?: string | null;
+  error_message?: string | null;
   lead_id?: string | null;
   campaign_id?: string | null;
   is_warmup?: boolean | null;
@@ -94,7 +97,9 @@ export interface Outgoing {
   attachments: { filename: string; mime: string; base64: string }[];
 }
 
-async function callSendEmail(payload: Record<string, unknown>): Promise<void> {
+export type LinkFix = { from: string; to: string };
+
+async function callSendEmail(payload: Record<string, unknown>): Promise<{ linkFixes: LinkFix[] }> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesión no válida. Vuelve a entrar en la app.");
   const controller = new AbortController();
@@ -106,11 +111,12 @@ async function callSendEmail(payload: Record<string, unknown>): Promise<void> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    let result: { error?: string } | null = null;
+    let result: { error?: string; link_fixes?: LinkFix[] } | null = null;
     try { result = await resp.json(); } catch { /* sin cuerpo */ }
     if (!resp.ok || !result || result.error) {
       throw new Error(result?.error || `No se pudo enviar (HTTP ${resp.status}). El correo NO ha salido.`);
     }
+    return { linkFixes: Array.isArray(result.link_fixes) ? result.link_fixes : [] };
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
       throw new Error("El envío tardó demasiado. El correo NO se confirmó: inténtalo de nuevo.");
@@ -127,7 +133,7 @@ async function signatureOf(accountId: string): Promise<string> {
 }
 
 /** Responder dentro del hilo, igual que el escritorio (In-Reply-To, References, cita y firma). */
-export async function sendReply(userId: string, thread: ThreadMessage[], out: Outgoing): Promise<void> {
+export async function sendReply(userId: string, thread: ThreadMessage[], out: Outgoing): Promise<{ linkFixes: LinkFix[] }> {
   if (!out.body.trim() && out.attachments.length === 0) throw new Error("Escribe la respuesta antes de enviarla.");
   if (containsProfanity(out.body)) throw new Error("Tu respuesta contiene lenguaje inapropiado. Cámbiala antes de enviar.");
   const received = thread.filter((m) => m._type === "received" && m.message_id);
@@ -144,7 +150,7 @@ export async function sendReply(userId: string, thread: ThreadMessage[], out: Ou
   const signature = await signatureOf(out.accountId);
   const quoteHtml = target ? buildReplyQuoteHtml(target) : "";
   const header = target ? quoteHeader(target) : "";
-  await callSendEmail({
+  return callSendEmail({
     account_id: out.accountId,
     to_email: out.to,
     subject: out.subject || replySubject(target?.subject),
@@ -160,7 +166,7 @@ export async function sendReply(userId: string, thread: ThreadMessage[], out: Ou
 }
 
 /** Reenviar el mensaje a otra dirección desde el mismo buzón (queda en esta conversación). */
-export async function sendForward(source: ThreadMessage, accountEmail: string, out: Outgoing): Promise<void> {
+export async function sendForward(source: ThreadMessage, accountEmail: string, out: Outgoing): Promise<{ linkFixes: LinkFix[] }> {
   if (!out.to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(out.to)) throw new Error("Pon un email de destino válido.");
   const origSubject = decodeSubject(source.subject ?? null) || "";
   const origHtml = (source.body_html && source.body_html.trim().length > 20)
@@ -174,7 +180,7 @@ export async function sendForward(source: ThreadMessage, accountEmail: string, o
     toAccountEmail: accountEmail,
     originalHtml: origHtml,
   }, out.body);
-  await callSendEmail({
+  return callSendEmail({
     account_id: out.accountId,
     to_email: out.to,
     subject: out.subject || forwardSubject(origSubject),

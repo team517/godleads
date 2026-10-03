@@ -2292,6 +2292,10 @@ export default function Unibox() {
       }
 
       toast.success(ccList.length ? `Respuesta enviada a ${ccList.length + 1} personas (mismo hilo)` : "Respuesta enviada");
+      // El servidor sustituyó un enlace que IONOS no entrega: decirlo, para que la plantilla se corrija.
+      if (Array.isArray(result?.link_fixes) && result.link_fixes.length > 0) {
+        toast.info(`Enlace cambiado para que llegue: ${result.link_fixes.map((f: { from: string; to: string }) => `${f.from} → ${f.to}`).join(", ")}`, { duration: 10000 });
+      }
       setReplySource("");
       setReplyFiles([]);
       setReplyLang(null);
@@ -2366,6 +2370,9 @@ export default function Unibox() {
       if (result.error) toast.error(result.error);
       else {
         toast.success(`Reenviado a ${to}`);
+        if (Array.isArray(result?.link_fixes) && result.link_fixes.length > 0) {
+          toast.info(`Enlace cambiado para que llegue: ${result.link_fixes.map((f: { from: string; to: string }) => `${f.from} → ${f.to}`).join(", ")}`, { duration: 10000 });
+        }
         setForwardOpen(false);
         setForwardTo("");
         setForwardNote("");
@@ -3095,8 +3102,13 @@ export default function Unibox() {
                                   <span className="font-semibold text-sm text-foreground">
                                     {isSent ? "Yo" : (tm.from_name || tm.from_email?.split("@")[0])}
                                   </span>
-                                  {isSent && !tm.forwarded_from && (
+                                  {isSent && !tm.forwarded_from && !tm.bounced_at && (
                                     <span className={`${CHIP_MINI} bg-accent text-accent-foreground`}>Enviado</span>
+                                  )}
+                                  {isSent && tm.bounced_at && (
+                                    <span className={`${CHIP_MINI} bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300`} title={tm.error_message || "El servidor del destinatario devolvió el correo"}>
+                                      No entregado
+                                    </span>
                                   )}
                                   {isSent && tm.forwarded_from && (
                                     <span className={`${CHIP_MINI} bg-accent text-accent-foreground`} title={`Reenviado a ${tm.to_email}`}>

@@ -3,6 +3,7 @@ import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize
 import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, htmlToPlainText, textToHtmlBody, threadHeaders } from "../_shared/mime-headers.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { copiarAEnviados } from "../_shared/imap-append.ts";
+import { fixBlockedLinks } from "../_shared/link-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -799,7 +800,18 @@ serve(async (req) => {
     if (forcedThreadSubject) {
       finalSubject = replaceVariables(forcedThreadSubject, fields, templateLang);
     }
-    const finalBody = textToHtml(replaceVariables(body, fields, templateLang).trim());
+    // Enlaces que IONOS enruta por un servidor en lista negra (Spamhaus): el SMTP contesta 250 y el
+    // correo no llega nunca ("enviado" sin enviar, 03-10-2026). Se sustituyen por la versión que
+    // sí entrega (y se avisa en la respuesta); sin sustituto conocido, se rechaza el envío.
+    const guard = fixBlockedLinks(String(body ?? ""));
+    const guardedSig = fixBlockedLinks(String(signature_html ?? ""));
+    const guardedAccountSig = fixBlockedLinks(String((account as { signature_html?: string | null }).signature_html ?? ""));
+    if (guard.blocked.length > 0 || guardedSig.blocked.length > 0) {
+      const bad = [...guard.blocked, ...guardedSig.blocked][0];
+      return new Response(JSON.stringify({ error: `El correo lleva un enlace que IONOS no entrega (${bad}). Cámbialo antes de enviar: el correo NO ha salido.` }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    const linkFixes = [...guard.fixes, ...guardedSig.fixes, ...guardedAccountSig.fixes];
+    const finalBody = textToHtml(replaceVariables(guard.text, fields, templateLang).trim());
     const senderName = [account.first_name, account.last_name].filter(Boolean).join(" ") || undefined;
 
     if (campaign_id && lead_id && campaign_step_id) {
@@ -841,8 +853,8 @@ serve(async (req) => {
         listUnsubscribeUrl: listUnsubUrl,
         // Signature (kept RICH): the Unibox reply passes it explicitly; campaign sends
         // fall back to the account's stored signature. Appended server-side, once.
-        signatureHtml: (signature_html && String(signature_html).trim())
-          || (campaign_id ? (account as any).signature_html : undefined)
+        signatureHtml: guardedSig.text.trim()
+          || (campaign_id ? (guardedAccountSig.text.trim() || undefined) : undefined)
           || undefined,
         // Quoted original under the reply — manual replies only, never campaign sends.
         quoteHtml: !campaign_id && quote_html ? String(quote_html) : undefined,
@@ -897,7 +909,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: result.error }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    return new Response(JSON.stringify({ success: true, message: "Email sent successfully", messageId: result.messageId || resolvedMessageId || null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, message: "Email sent successfully", messageId: result.messageId || resolvedMessageId || null, link_fixes: linkFixes }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("send-email error:", e);
     const message = e instanceof Error ? e.message : String(e);

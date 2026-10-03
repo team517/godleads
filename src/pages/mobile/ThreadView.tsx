@@ -170,6 +170,7 @@ const MessageCard = memo(function MessageCard({ m, open, onToggle, contactEmail,
         className="m-card m-press block w-full rounded-[16px] px-4 py-3.5 text-left">
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-[#1B2140]">{sent ? (m._forward ? `Forwarded to ${m.to_email}` : "You") : from}</span>
+          {sent && m.bounced_at && <span className="shrink-0 rounded-full bg-[#FFE5EB] px-2 py-0.5 text-[11px] font-semibold text-[#E5354F]">No entregado</span>}
           <span className="shrink-0 text-[12.5px] text-[#7C819A]">{shortDate(m._date)}</span>
         </span>
         <span className="mt-1 block truncate text-[14px] text-[#6E7491]">{snippet || subject}</span>
@@ -181,6 +182,11 @@ const MessageCard = memo(function MessageCard({ m, open, onToggle, contactEmail,
     <article data-mid={m.id} className="m-card m-fade-in rounded-[18px] px-[18px] pb-5 pt-5">
       <h1 className="text-[22px] font-bold leading-[1.22] tracking-[-0.01em] text-[#0E1330] [overflow-wrap:anywhere]">{subject}</h1>
       <p className="mt-2 text-[14.5px] text-[#6E7491]">{detailDate(m._date)}</p>
+      {sent && m.bounced_at && (
+        <div className="mt-3 rounded-[12px] border border-[#FAD3DB] bg-[#FFF3F5] px-3.5 py-2.5 text-[13.5px] leading-snug text-[#B4233C]">
+          <span className="font-semibold">No entregado.</span> {m.error_message || "El servidor del destinatario devolvió el correo."}
+        </div>
+      )}
       <div className="mt-3.5 space-y-2">
         <AddressRow label="From:" value={from} onCopied={onCopied} />
         <AddressRow label="To:" value={to} onCopied={onCopied} />

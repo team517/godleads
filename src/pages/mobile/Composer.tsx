@@ -210,10 +210,16 @@ export function Composer(p: Props) {
         body,
         attachments: files.map(({ filename, mime, base64 }) => ({ filename, mime, base64 })),
       };
-      if (p.mode === "reply") await sendReply(p.userId, p.thread || [source], out);
-      else await sendForward(source, p.accountEmails[p.conv.accountId] || "", out);
+      const r = p.mode === "reply"
+        ? await sendReply(p.userId, p.thread || [source], out)
+        : await sendForward(source, p.accountEmails[p.conv.accountId] || "", out);
       try { localStorage.removeItem(draftKey); } catch { /* nada */ }
       p.onSent(p.mode === "reply" ? (out.cc.length ? `Respuesta enviada a ${out.cc.length + 1} personas` : "Respuesta enviada") : `Reenviado a ${out.to}`);
+      // El servidor cambió un enlace que IONOS no entrega: decirlo (y corregir la plantilla).
+      if (r.linkFixes.length > 0) {
+        const txt = `Enlace cambiado para que llegue: ${r.linkFixes.map((f) => `${f.from} → ${f.to}`).join(", ")}`;
+        window.setTimeout(() => p.onNotice(txt), 2600);
+      }
     } catch (e) {
       p.onError(e instanceof Error ? e.message : String(e));
     } finally {

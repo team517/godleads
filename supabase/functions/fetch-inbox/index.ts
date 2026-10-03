@@ -991,17 +991,38 @@ serve(async (req) => {
         const bounceMsgs = result.messages.filter((m) => m.kind === "bounce");
         for (const b of bounceMsgs) {
           const info = b.bounce!;
-          type SentHit = { id: string; lead_id: string | null; campaign_id: string | null; bounced_at: string | null };
+          type SentHit = { id: string; lead_id: string | null; campaign_id: string | null; bounced_at: string | null; user_id: string | null; to_email: string | null; subject: string | null };
           let hit = null as SentHit | null;
           if (info.recipients.length > 0) {
             const { data: se } = await adminClient.from("sent_emails")
-              .select("id, lead_id, campaign_id, bounced_at")
+              .select("id, lead_id, campaign_id, bounced_at, user_id, to_email, subject")
               .eq("account_id", account.id).in("to_email", info.recipients.slice(0, 5))
               .order("created_at", { ascending: false }).limit(1);
             hit = (se && se[0]) ? (se[0] as unknown as SentHit) : null;
           }
           if (hit && info.permanent && !hit.bounced_at) {
-            await adminClient.from("sent_emails").update({ bounced_at: validIso(b.date) || new Date().toISOString() }).eq("id", hit.id).is("bounced_at", null);
+            // El motivo queda en error_message: el hilo del Unibox enseña "No entregado" y por qué.
+            const motivo = `Rebote ${info.code || ""}: ${info.diag || "el servidor del destinatario devolvió el correo"}`.replace(/\s+/g, " ").trim().slice(0, 500);
+            const { data: marked } = await adminClient.from("sent_emails")
+              .update({ bounced_at: validIso(b.date) || new Date().toISOString(), error_message: motivo })
+              .eq("id", hit.id).is("bounced_at", null).select("id");
+            // Una respuesta MANUAL (sin campaña) que rebota avisa al móvil: el dueño pulsó enviar,
+            // vio "enviada" y el correo no llegó (03-10-2026). Los envíos de campaña no avisan.
+            if (marked && marked.length > 0 && !hit.campaign_id && hit.user_id) {
+              try {
+                const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+                await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
+                  body: JSON.stringify({
+                    user_id: hit.user_id,
+                    title: `⚠️ No entregado — ${hit.to_email || ""}`,
+                    body: `Tu respuesta "${String(hit.subject || "").slice(0, 60)}" ha rebotado: ${(info.diag || info.code || "el servidor la rechazó").slice(0, 110)}`,
+                    url: "/unibox",
+                  }),
+                });
+              } catch { /* el aviso es lo de menos: el rebote ya queda registrado */ }
+            }
           }
           ingest.bounces++;
           logRows.push(logRow(b, {
