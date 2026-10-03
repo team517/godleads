@@ -232,6 +232,31 @@ describe("rebotes", () => {
     expect(dead).toMatchObject({ cls: "recipient_gone" });
   });
 
+  it("el aviso devuelve el correo original: se saca su Message-ID y su asunto para colgar el rebote del envío exacto", () => {
+    // IONOS: la copia del original va como message/rfc822 debajo del aviso.
+    const ionos = [
+      "Your email could not be delivered", "The following recipient address(es) could not be reached:", "* support@onepulso.online", "",
+      "--BOUND9", "Content-Type: message/delivery-status", "", "Final-Recipient: rfc822; support@onepulso.online", "Action: failed", "Status: 5.0.0", "",
+      "--BOUND9", "Content-Type: message/rfc822", "",
+      "Received: from [10.0.0.1] by mrelayeu.kundenserver.de id 0Mabc; Sat, 03 Oct 2026 22:47:29 +0200",
+      "From: Mario <mario@tunuevoleadpower.com>", "To: support@onepulso.online",
+      "Subject: =?UTF-8?Q?Re=3A_interesado_=E2=80=94_reuni=C3=B3n?=",
+      "Message-ID: <20261003.204729.j6sqi9rohz.bwsgqh@tunuevoleadpower.com>", "", "Hola, te paso el enlace.", "--BOUND9--",
+    ].join(CRLF);
+    const { items } = splitFetchItems(response([fetchItem({ uid: 312, headers: dsnHeaders, body: ionos })]));
+    const p = parseInboundItem(items[0], ACCOUNT);
+    if (p.status !== "message") throw new Error("mal");
+    expect(p.msg.bounce?.original).toEqual({ message_id: "<20261003.204729.j6sqi9rohz.bwsgqh@tunuevoleadpower.com>", subject: "Re: interesado — reunión" });
+    // Exim: sólo las cabeceras del original, tras la línea "--- The header of the original message ---".
+    const exim = ["A message that you sent could not be delivered. The following address(es) failed:", "  juan@empresa.com:", "    550 5.1.1 User unknown", "",
+      "--- The header of the original message is following. ---", "", "Subject: Propuesta", "Message-ID:", "  <abc.def@onepulso-ventas.es>", ""].join(CRLF);
+    expect(bounceInfo("mailer-daemon@kundenserver.de", "Mail delivery failed: returning message to sender", "text/plain", exim)!.original)
+      .toEqual({ message_id: "<abc.def@onepulso-ventas.es>", subject: "Propuesta" });
+    // Un aviso que no devuelve el original: sin Message-ID, y no se inventa uno.
+    expect(bounceInfo("mailer-daemon@kundenserver.de", "Mail delivery failed: returning message to sender", "text/plain",
+      "The following address(es) failed:\r\n  juan@empresa.com:\r\n    550 5.1.1 User unknown\r\n")!.original).toEqual({ message_id: "", subject: "" });
+  });
+
   it("una respuesta humana que menciona un rebote NO es un rebote, ni lo es un acuse de lectura", () => {
     expect(bounceInfo("javier@acordia.es", "Re: Undeliverable: lo que os comenté", "text/plain", "Me rebotó vuestro correo, escribidme aquí.")).toBeNull();
     expect(bounceInfo("javier@acordia.es", "Leído: Lucy - ACORDIA", 'multipart/report; report-type=disposition-notification; boundary="x"', "Su mensaje fue leído.")).toBeNull();

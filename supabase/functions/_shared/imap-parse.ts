@@ -533,6 +533,7 @@ export function parseInboundItem(item: FetchItem, ctx: { accountEmail: string; i
   const refChain = Array.from(new Set(`${hv("References")} ${hv("In-Reply-To")}`.match(/<[^<>\s]+>/g) || [])).join(" ").slice(0, 3000);
   const signal = autoSignal(H);
   const bounce = bounceInfo(fromEmail, decodedSubject, hv("Content-Type"), rawBody, hv("X-Failed-Recipients"));
+  if (bounce?.original.subject) bounce.original.subject = decodeMimeWords(bounce.original.subject);
   const kind: InboundKind = bounce ? "bounce" : (signal || looksAutoSubject(decodedSubject)) ? "auto_reply" : "human";
 
   return {

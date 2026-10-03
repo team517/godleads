@@ -3,6 +3,7 @@ import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 import { hasWarmupSubjectTag, isWarmupMessage } from "../_shared/inbox-filters.ts";
+import { BOUNCE_CLOCK_SLACK_MS, BOUNCE_LOOKBACK_MS, chooseBouncedSend, type BounceCandidate, type BounceMatch } from "../_shared/bounce-match.ts";
 import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
 import {
   INBOUND_FETCH_ITEMS, addressOf, autoSignal, decodeMimeWords, headerValue, imapCompleted, parseInboundItem, pickFolders, refIds, splitFetchItems,
@@ -989,22 +990,35 @@ serve(async (req) => {
         // definitivos el envío queda marcado como rebotado (antes sólo se marcaba cuando el
         // servidor rechazaba el correo en el momento; los rebotes que llegan después no contaban).
         const bounceMsgs = result.messages.filter((m) => m.kind === "bounce");
+        const matchTally: Record<string, number> = {};
         for (const b of bounceMsgs) {
           const info = b.bounce!;
-          type SentHit = { id: string; lead_id: string | null; campaign_id: string | null; bounced_at: string | null; user_id: string | null; to_email: string | null; subject: string | null };
-          let hit = null as SentHit | null;
-          if (info.recipients.length > 0) {
-            const { data: se } = await adminClient.from("sent_emails")
-              .select("id, lead_id, campaign_id, bounced_at, user_id, to_email, subject")
-              .eq("account_id", account.id).in("to_email", info.recipients.slice(0, 5))
-              .order("created_at", { ascending: false }).limit(1);
-            hit = (se && se[0]) ? (se[0] as unknown as SentHit) : null;
+          const bounceAt = validIso(b.date) || new Date().toISOString();
+          // Qué envío rebotó: por el Message-ID del correo devuelto (exacto) y, si el aviso no lo
+          // trae, por destinatario SÓLO cuando hay un único envío anterior posible (bounce-match.ts).
+          // Antes se cogía "el último a ese destinatario": un rebote tardío (IONOS avisó 2 h después)
+          // se colgó de una respuesta posterior que SÍ había llegado y el dueño recibió un
+          // "No entregado" falso (03-10-2026). Con dudas no se marca ni se avisa: queda anotado.
+          const mid = (info.original?.message_id || "").toLowerCase();
+          const mids = mid ? Array.from(new Set([mid, mid.replace(/^<|>$/g, "")])) : [];
+          const recipients = info.recipients.slice(0, 5).map((r) => r.toLowerCase());
+          let match: BounceMatch = { hit: null, how: "ninguno", candidates: 0 };
+          if (mids.length > 0 || recipients.length > 0) {
+            const t = Date.parse(bounceAt);
+            const { data: cands, error: candErr } = await adminClient.rpc("bounce_candidates", {
+              p_user: account.user_id, p_account: account.id, p_mids: mids, p_recipients: recipients,
+              p_after: new Date(t - BOUNCE_LOOKBACK_MS).toISOString(), p_before: new Date(t + BOUNCE_CLOCK_SLACK_MS).toISOString(),
+            });
+            if (candErr) console.error("bounce_candidates:", candErr.message);
+            match = chooseBouncedSend((cands || []) as BounceCandidate[], bounceAt, info.original);
           }
+          matchTally[match.how] = (matchTally[match.how] || 0) + 1;
+          const hit = match.hit;
           if (hit && info.permanent && !hit.bounced_at) {
             // El motivo queda en error_message: el hilo del Unibox enseña "No entregado" y por qué.
             const motivo = `Rebote ${info.code || ""}: ${info.diag || "el servidor del destinatario devolvió el correo"}`.replace(/\s+/g, " ").trim().slice(0, 500);
             const { data: marked } = await adminClient.from("sent_emails")
-              .update({ bounced_at: validIso(b.date) || new Date().toISOString(), error_message: motivo })
+              .update({ bounced_at: bounceAt, error_message: motivo })
               .eq("id", hit.id).is("bounced_at", null).select("id");
             // Una respuesta MANUAL (sin campaña) que rebota avisa al móvil: el dueño pulsó enviar,
             // vio "enviada" y el correo no llegó (03-10-2026). Los envíos de campaña no avisan.
@@ -1025,12 +1039,15 @@ serve(async (req) => {
             }
           }
           ingest.bounces++;
+          const sinEnvio = match.how === "ambiguo" ? `sin envío claro (${match.candidates} candidatos)` : "";
           logRows.push(logRow(b, {
             to_email: info.recipients.join(", ") || null, kind: "bounce", result: "registrado", reason: info.cls,
-            bounce_code: info.code || null, bounce_class: info.cls, detail: info.diag || null,
+            bounce_code: info.code || null, bounce_class: info.cls,
+            detail: [info.diag || "", sinEnvio].filter(Boolean).join(" · ") || null,
             sent_email_id: hit?.id || null, lead_id: hit?.lead_id || null, campaign_id: hit?.campaign_id || null,
           }));
         }
+        if (bounceMsgs.length > 0) console.log(`Rebotes ${account.email}: ${JSON.stringify(matchTally)}`);
         result.messages = result.messages.filter((m) => m.kind !== "bounce");
 
         // Cierre del buzón en esta pasada: anotaciones, marca de UID y estado del repaso. La marca

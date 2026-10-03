@@ -77,6 +77,44 @@ export interface BounceInfo {
   permanent: boolean;
   /** La línea de diagnóstico, recortada, para leerla sin abrir el correo. */
   diag: string;
+  /** El correo devuelto (la copia que viaja debajo del aviso): con su Message-ID el rebote se cuelga del envío exacto. */
+  original: ReturnedOriginal;
+}
+
+export interface ReturnedOriginal {
+  /** "<id@dominio>" tal cual lo mandamos, o "" si el aviso no devuelve las cabeceras del original. */
+  message_id: string;
+  /** Asunto del original tal cual viene (imap-parse decodifica las palabras MIME). */
+  subject: string;
+}
+
+// Dónde empieza, dentro del aviso, la copia del correo original (o sólo sus cabeceras).
+const ORIGINAL_START_RE =
+  /Content-Type:\s*(?:message\/rfc822|text\/rfc822-headers)|-{2,}\s*The header of the original message|-{3,}\s*This is a copy of the message|-{3,}\s*Original message\s*-{3,}|-{3,}\s*Mensaje original\s*-{3,}|Original message headers:|Encabezados del mensaje original:/i;
+
+/**
+ * Del correo que el aviso devuelve, su Message-ID y su asunto. Es lo que permite colgar el rebote del
+ * envío EXACTO: antes se cogía "el último envío a ese destinatario" y un rebote tardío (IONOS avisó
+ * 2 h después) se colgó de una respuesta posterior que SÍ había llegado, con aviso de "No entregado"
+ * incluido (03-10-2026). El Message-ID del propio aviso va en sus cabeceras de arriba, que aquí no
+ * están: cualquier Message-ID del cuerpo es del original.
+ */
+export function returnedOriginal(rawBody: string): ReturnedOriginal {
+  const body = rawBody || "";
+  const at = body.search(ORIGINAL_START_RE);
+  const part = (at >= 0 ? body.slice(at) : body).slice(0, 60000).replace(/\r?\n[ \t]+/g, " ");
+  // Si va en quoted-printable, una cabecera larga llega partida con "=" al final: segunda pasada unida.
+  const variants = [part, part.replace(/=\r?\n/g, "")];
+  let message_id = "";
+  let subject = "";
+  for (const v of variants) {
+    const mid = v.match(/^Message-ID:[ \t]*(<[^<>\s]+>|[^\s<>]+@[^\s<>]+)/im);
+    if (mid && !message_id) message_id = mid[1].startsWith("<") ? mid[1] : `<${mid[1]}>`;
+    const subj = v.match(/^Subject:[ \t]*(.*)$/im);
+    if (subj && !subject) subject = subj[1].trim().slice(0, 300);
+    if (message_id && subject) break;
+  }
+  return { message_id, subject };
 }
 
 const B_RECIPIENT_GONE =
@@ -161,5 +199,5 @@ export function bounceInfo(fromEmail: string, subject: string, contentType: stri
   // que un rebote sin motivo.
   const rawNotice = notice.replace(/^(?:--[^\n]*|Content-[A-Za-z-]+:[^\n]*|MIME-Version:[^\n]*|This is a (?:MIME|multi)[^\n]*)$/gim, "").replace(/\s+/g, " ").trim();
   const firstDiag = (explain || diagLines.find((l) => !/^(Action|Status|Remote-MTA):/i.test(l)) || rawNotice || diagLines[0] || "").replace(/\s+/g, " ").trim().slice(0, 300);
-  return { recipients: Array.from(emails), code, cls, permanent, diag: firstDiag };
+  return { recipients: Array.from(emails), code, cls, permanent, diag: firstDiag, original: returnedOriginal(body) };
 }
