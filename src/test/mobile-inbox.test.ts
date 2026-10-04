@@ -50,16 +50,13 @@ describe("estados del contacto", () => {
 });
 
 describe("conversaciones", () => {
-  it("se enseña: lo de campaña y el correo normal; nunca rebotes, archivados ni warm-up", () => {
+  it("se enseña todo lo de \"Todos\" (warm-up y rebotes incluidos); sólo se quita lo archivado", () => {
     expect(isMobileReply(row({}))).toBe(true);
     expect(isMobileReply(row({ lead_id: null, campaign_id: null, in_campaign: false, subject: "Factura de octubre", body_text: "Adjunto la factura." }))).toBe(true);
-    expect(isMobileReply(row({ from_email: "mailer-daemon@ionos.es" }))).toBe(false);
+    expect(isMobileReply(row({ from_email: "mailer-daemon@ionos.es" }))).toBe(true);
     expect(isMobileReply(row({ is_archived: true }))).toBe(false);
-    // Warm-up pegado a una campaña pero que NO es de ningún lead de campaña (caso real 03-10).
-    expect(isMobileReply(row({ in_campaign: false, from_email: "martina.ll@patagoniaconsultants.net", subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" }))).toBe(false);
-    expect(isMobileReply(row({ lead_id: null, campaign_id: null, in_campaign: false, subject: "RE: Q2 Project Plan", body_text: "Sounds good." }))).toBe(false);
-    // Un lead de campaña nunca se toma por warm-up aunque su firma lleve códigos.
-    expect(isMobileReply(row({ in_campaign: true, subject: "Re: idea | REF 4H7K2LQ", body_text: "Me interesa" }))).toBe(true);
+    expect(isMobileReply(row({ in_campaign: false, from_email: "martina.ll@patagoniaconsultants.net", subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" }))).toBe(true);
+    expect(isMobileReply(row({ lead_id: null, campaign_id: null, in_campaign: false, is_warmup: true, subject: "RE: Q2 Project Plan", body_text: "Sounds good." }))).toBe(true);
   });
 
   it("agrupa por buzón + remitente, la más nueva arriba, con sus no leídos", () => {
@@ -93,8 +90,8 @@ describe("conversaciones", () => {
     const [stuck] = buildConversations([row({ in_campaign: false, match_why: null, from_email: "alguien@otra.es", subject: "Re: hola", body_text: "Gracias" })]);
     expect(stuck.tab).toBe("others");
     expect(stuck.inCampaign).toBe(false);
-    // Empresa que también está en la red de warm-up: hilo del pool por dominio → fuera de todo.
-    expect(buildConversations([row({ in_campaign: true, match_why: "dominio", from_email: "ana.s@playmotiv.com", subject: "RE: Travel Expenses", body_text: "Sounds good" })])).toHaveLength(0);
+    // Empresa que también está en la red de warm-up: hilo del pool por dominio → Others.
+    expect(buildConversations([row({ in_campaign: true, match_why: "dominio", from_email: "ana.s@playmotiv.com", subject: "RE: Travel Expenses", body_text: "Sounds good" })])[0].tab).toBe("others");
     // …pero si cita un envío nuestro, es una respuesta aunque el asunto suene a oficina.
     expect(buildConversations([row({ in_campaign: true, match_why: "hilo", subject: "RE: Project Plan", body_text: "Me interesa" })])[0].tab).toBe("primary");
     // Un "Out of office" de un lead no es un hilo del pool: va a Primary como todo lo de campaña.
@@ -102,11 +99,11 @@ describe("conversaciones", () => {
     expect(ooo.tab).toBe("primary");
     // Misma empresa con otra terminación: Primary; un hilo del pool desde ahí, no.
     expect(buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "marca", from_email: "leire@kurago.software", subject: "Respuesta automática: una idea para Kurago", auto_signal: "auto-submitted" })])[0].tab).toBe("primary");
-    expect(buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "marca", subject: "RE: Project Review", body_text: "ok" })])).toHaveLength(0);
-    // La etiqueta del warm-up en el asunto: nunca se ve.
-    expect(buildConversations([row({ in_campaign: false, match_why: "warmup", subject: "Lucy - coffee? | KK5XRDN 0396QKE" })])).toHaveLength(0);
-    // Warm-up enlazado a una campaña y que no es de ningún lead → ni Primary ni Others.
-    expect(buildConversations([row({ in_campaign: false, subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" })])).toHaveLength(0);
+    expect(buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "marca", subject: "RE: Project Review", body_text: "ok" })])[0].tab).toBe("others");
+    // La etiqueta del warm-up en el asunto: nunca Primary (está en Others, como en "Todos").
+    expect(buildConversations([row({ in_campaign: false, match_why: "warmup", subject: "Lucy - coffee? | KK5XRDN 0396QKE" })])[0].tab).toBe("others");
+    // Warm-up enlazado a una campaña y que no es de ningún lead → Others.
+    expect(buildConversations([row({ in_campaign: false, subject: "Lucy - coffee? | KK5XRDN 0396QKE", body_text: "Hey Lucy, Great presentation last week!" })])[0].tab).toBe("others");
     // Sin enlazar pero del dominio de un lead de campaña (un compañero) → Primary.
     const [colleague] = buildConversations([row({ lead_id: null, campaign_id: null, in_campaign: true, match_why: "dominio", from_email: "lucia@theofficeco.es", body_text: "Me lo pasa mi compañero, ¿hablamos?" })]);
     expect(colleague.tab).toBe("primary");

@@ -18,6 +18,10 @@ interface Props {
   onRefresh: () => Promise<void> | void;
   /** Aviso opcional arriba de la lista (activar notificaciones). */
   banner?: ReactNode;
+  /** Others se pagina en el servidor: queda más hacia atrás. */
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 const CHUNK = 60;
@@ -33,15 +37,24 @@ export function ConversationList(p: Props) {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [p.filters.tab, p.filters.status, p.filters.accountId, p.filters.campaignId, p.filters.unreadOnly, p.filters.importantOnly, p.filters.folderId]);
 
+  // Al acercarse al final: primero se montan más filas de las ya cargadas; cuando ya están todas,
+  // en Others se pide la página siguiente al servidor (sólo sin filtros ni búsqueda: con un filtro
+  // que casi no casa, bajaría el buzón entero solo; entonces va con el botón "Cargar más").
+  const filtering = !!p.filters.search.trim() || p.activeFilterCount > 0;
+  const autoMore = !!p.hasMore && !p.loadingMore && !filtering && !!p.onLoadMore;
+  const { onLoadMore } = p;
   useEffect(() => {
     const el = endRef.current;
-    if (!el || p.items.length <= limit) return;
+    const more = p.items.length > limit;
+    if (!el || (!more && !autoMore)) return;
     const io = new IntersectionObserver((e) => {
-      if (e.some((x) => x.isIntersecting)) setLimit((l) => Math.min(p.items.length, l + CHUNK));
+      if (!e.some((x) => x.isIntersecting)) return;
+      if (more) setLimit((l) => Math.min(p.items.length, l + CHUNK));
+      else onLoadMore?.();
     }, { root: scrollRef.current, rootMargin: "800px 0px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [p.items.length, limit]);
+  }, [p.items.length, limit, autoMore, onLoadMore]);
 
   /* Tirar hacia abajo para actualizar (en la app instalada no hay botón de recargar). */
   const pull = useRef<{ y: number; active: boolean }>({ y: 0, active: false });
@@ -148,14 +161,26 @@ export function ConversationList(p: Props) {
               </div>
             ))}
           </div>
-        ) : p.items.length === 0 ? (
-          <EmptyState tab={tab} searching={!!p.filters.search.trim() || p.activeFilterCount > 0} />
+        ) : p.items.length === 0 && !p.hasMore ? (
+          <EmptyState tab={tab} searching={filtering} />
         ) : (
           <div className="space-y-[10px] px-2.5 pb-6 pt-3">
             {shown.map((c) => (
               <Row key={c.key} c={c} status={p.statusOf(c)} onOpen={p.onOpen} />
             ))}
             <div ref={endRef} className="h-px" />
+            {p.hasMore && shown.length >= p.items.length && (
+              <div className="flex justify-center py-3">
+                {p.loadingMore ? (
+                  <span className="m-spin h-6 w-6 rounded-full border-[2.5px] border-[#C9D2F6] border-t-[#4D6CF3]" />
+                ) : (
+                  <button type="button" onClick={() => p.onLoadMore?.()}
+                    className="m-press rounded-[11px] border border-[#E7EAF2] bg-white px-4 py-2 text-[14px] font-semibold text-[#4D6CF3]">
+                    Cargar más antiguos
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

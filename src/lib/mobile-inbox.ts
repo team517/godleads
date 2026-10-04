@@ -119,6 +119,61 @@ export interface InboxRow {
   campaign_hint?: string | null;
   /** Por qué es de campaña según el servidor: lead · dominio · hilo (cita un envío nuestro) · warmup. */
   match_why?: string | null;
+  /** Cuándo lo guardó la sincronización (para pedir sólo lo nuevo, aunque llegue con retraso). */
+  created_at?: string | null;
+  /** Marca de warm-up de la sincronización (lo trae mobile_inbox_others). */
+  is_warmup?: boolean | null;
+  in_reply_to?: string | null;
+}
+
+/* ── Primary / Others: UNA regla para la app del móvil y la pestaña Campañas del escritorio ── */
+
+/** Ventana de Primary (y de la pestaña Campañas del escritorio): las respuestas enlazadas más
+ *  nuevas y, aparte, lo demás que no es warm-up. Suman 1.000: PostgREST no devuelve más filas
+ *  por petición, y con más el corte se llevaba lo más viejo de forma distinta en cada sitio. */
+export const PRIMARY_FEED = { linked: 700, other: 300 } as const;
+
+/**
+ * ¿Es este mensaje DE CAMPAÑA (Primary en el móvil = pestaña Campañas del escritorio)?
+ * La regla del servidor (inbox_campaign_match: lead de la base, su dominio, su marca, cita un envío
+ * nuestro de campaña o contesta a uno de nuestros buzones; nunca la etiqueta del warm-up ni
+ * nuestros propios buzones) + el filtro del pool (campaignMatchCounts). Nunca lo es el warm-up sin
+ * enlazar (is_warmup, el mismo conjunto que mira mobile_inbox_feed), ni un aviso de
+ * correo no entregado (va a Others, petición del dueño 03-10-2026) ni el ruido de sistema.
+ * Filas viejas de la caché, sin la marca del servidor: lo enlazado que no tenga pinta de warm-up.
+ */
+export function isPrimaryRow(m: InboxRow): boolean {
+  if (m.match_why === "warmup") return false;
+  // Warm-up sin enlazar: nunca (el warm-up también cita nuestros buzones; 565 se colaban en 7 días).
+  if (m.is_warmup === true && !m.lead_id && !m.campaign_id) return false;
+  if (isDeliveryFailureMessage(m)) return false;
+  if (isBounceOrNoise(m.from_email ?? null) || isBounceOrFailure(m.from_email ?? null)) return false;
+  return isCampaignMessage(m);
+}
+
+/** ¿Es parte de un hilo de verdad? (bloquear a alguien no borra lo que ya nos contestó). */
+export function isThreadReplyRow(m: InboxRow): boolean {
+  return !!(m.ref_chain || m.in_reply_to || m.lead_id || m.campaign_id);
+}
+
+export type BlockedCheck = (email: string | null | undefined) => boolean;
+
+/** Lista de bloqueo → función "¿está bloqueado este remitente?" (por email o por dominio). */
+export function blockedChecker(entries: { entry_type: string; value: string }[]): BlockedCheck {
+  const emails = new Set<string>();
+  const domains = new Set<string>();
+  for (const e of entries) {
+    const v = String(e.value || "").trim().toLowerCase();
+    if (!v) continue;
+    if (e.entry_type === "domain") domains.add(v); else if (e.entry_type === "email") emails.add(v);
+  }
+  return (email) => {
+    const e = String(email || "").trim().toLowerCase();
+    if (!e) return false;
+    if (emails.has(e)) return true;
+    const dom = e.split("@")[1] || "";
+    return !!dom && domains.has(dom);
+  };
 }
 
 export interface Conversation {
@@ -140,7 +195,7 @@ export interface Conversation {
   /** ¿Alguno de sus mensajes es de campaña? (lead de una campaña o de su dominio) */
   inCampaign: boolean;
   /** Primary = TODO lo de campaña (respuestas, fuera de la oficina, avisos automáticos…: lo que
-   *  venga de un lead o de su empresa); Others = lo que no es de ninguna campaña. */
+   *  venga de un lead o de su empresa); Others = todo lo demás (warm-up, rebotes, avisos…). */
   tab: "primary" | "others";
   /** Lo que dicen las etiquetas del clasificador (sin la elección manual). */
   derivedStatus: LeadStatus;
@@ -172,14 +227,13 @@ export function isCampaignMessage(m: InboxRow): boolean {
   return !!(m.lead_id || m.campaign_id) && !looksLikeWarmup(m);
 }
 
-/** Lo que se enseña: ni archivado, ni rebotes, ni avisos del sistema, ni warm-up. Lo que es de
- *  campaña nunca se toma por warm-up (una firma con números lo parecía); el resto sí se mira. */
-export function isMobileReply(m: InboxRow): boolean {
+/** Lo que se enseña: TODO lo que enseña "Todos" en el escritorio (warm-up, rebotes y avisos
+ *  incluidos, petición del dueño 05-10-2026: Others = Todos menos Primary). Sólo se quita lo
+ *  archivado y, como en "Todos", lo de un remitente bloqueado que no sea parte de un hilo. */
+export function isMobileReply(m: InboxRow, isBlocked?: BlockedCheck): boolean {
   if (m.is_archived) return false;
-  if (isBounceOrNoise(m.from_email) || isBounceOrFailure(m.from_email)) return false;
-  if (m.match_why === "warmup") return false;   // la etiqueta del warm-up en el asunto
-  if (isCampaignMessage(m)) return true;
-  return !looksLikeWarmup(m);
+  if (isBlocked && isBlocked(m.from_email) && !isThreadReplyRow(m)) return false;
+  return true;
 }
 
 /** ¿Es una respuesta automática (fuera de la oficina, acuse…)? */
@@ -219,11 +273,15 @@ export function deriveStatus(msgsNewestFirst: InboxRow[]): LeadStatus {
   return sawOoo ? "out_of_office" : "lead";
 }
 
-/** Agrupa los mensajes (ya filtrados) en conversaciones, de la más reciente a la más vieja. */
-export function buildConversations(rows: InboxRow[]): Conversation[] {
+/** Agrupa los mensajes en conversaciones (buzón + remitente), de la más reciente a la más vieja.
+ *  Una conversación es Primary si alguno de sus mensajes lo es (isPrimaryRow); si no, Others. */
+export function buildConversations(rows: InboxRow[], opts: { isBlocked?: BlockedCheck } = {}): Conversation[] {
   const groups = new Map<string, InboxRow[]>();
+  const seen = new Set<string>();
   for (const m of rows) {
-    if (!isMobileReply(m)) continue;
+    if (seen.has(m.id)) continue;   // la misma fila puede venir de los dos carriles
+    seen.add(m.id);
+    if (!isMobileReply(m, opts.isBlocked)) continue;
     const k = conversationKey(m.account_id, m.from_email);
     const g = groups.get(k);
     if (g) g.push(m); else groups.set(k, [m]);
@@ -234,7 +292,7 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
     const latest = msgs[0];
     // Un aviso de rebote (correo nuestro no entregado) no cuenta: va a Others aunque lo mande el
     // servidor de la empresa del lead (petición del dueño, 03-10-2026).
-    const inCampaign = msgs.some((m) => isCampaignMessage(m) && !isDeliveryFailureMessage(m));
+    const inCampaign = msgs.some(isPrimaryRow);
     const withCampaign = msgs.find((m) => m.campaign_id);
     const withLead = msgs.find((m) => m.lead_id);
     out.push({
@@ -262,6 +320,64 @@ export function buildConversations(rows: InboxRow[]): Conversation[] {
   }
   out.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
   return out;
+}
+
+/* ── Mezclar lo que llega del servidor con lo que ya hay ─────────────────── */
+
+const ts = (iso: string | null | undefined) => {
+  const t = Date.parse(String(iso || ""));
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/** De la más nueva a la más vieja (y, a igualdad, por id: el orden del servidor). */
+export function sortRows(rows: InboxRow[]): InboxRow[] {
+  return [...rows].sort((a, b) => ts(b.received_at) - ts(a.received_at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** Lo nuevo (o cambiado) sustituye por id a lo que había; lo demás se queda. */
+export function upsertRows(existing: InboxRow[], fresh: InboxRow[]): InboxRow[] {
+  if (fresh.length === 0) return existing;
+  const ids = new Set(fresh.map((r) => r.id));
+  return sortRows([...fresh.filter((r) => !r.is_archived), ...existing.filter((r) => !ids.has(r.id))]);
+}
+
+/**
+ * Una página fresca del servidor manda dentro de SU ventana (de su fila más vieja hacia arriba):
+ * lo que había ahí y ya no viene (archivado, borrado) se va; lo más viejo que la ventana se queda.
+ * `laneOf` separa los carriles que el servidor corta por separado (enlazado / resto): cada uno
+ * tiene su propia ventana. Un carril que no trae nada no toca lo que había de ese carril.
+ */
+export function mergeWindow(existing: InboxRow[], fresh: InboxRow[], laneOf: (r: InboxRow) => string = () => "all"): InboxRow[] {
+  const floor = new Map<string, number>();
+  for (const r of fresh) {
+    const k = laneOf(r);
+    const t = ts(r.received_at);
+    if (!floor.has(k) || t < (floor.get(k) as number)) floor.set(k, t);
+  }
+  const ids = new Set(fresh.map((r) => r.id));
+  const keep = existing.filter((r) => {
+    if (ids.has(r.id)) return false;
+    const f = floor.get(laneOf(r));
+    return f === undefined || ts(r.received_at) < f;
+  });
+  return sortRows([...fresh, ...keep]);
+}
+
+/** Carril de mobile_inbox_feed al que pertenece una fila. */
+export const feedLane = (r: InboxRow) => (r.lead_id || r.campaign_id ? "linked" : "other");
+
+/** La fecha de guardado más nueva (desde dónde pedir lo nuevo). */
+export function newestCreated(rows: InboxRow[], prev: string | null = null): string | null {
+  let best = prev;
+  for (const r of rows) if (r.created_at && (!best || ts(r.created_at) > ts(best))) best = r.created_at;
+  return best;
+}
+
+/** Others se pagina: mientras quede más abajo, sólo se enseña hasta donde llega lo cargado (si
+ *  no, entre lo de hace una hora y lo de hace días habría un hueco que se rellena al bajar). */
+export function withinOthersWindow(c: Conversation, othersFloor: string | null | undefined): boolean {
+  if (c.tab !== "others" || !othersFloor) return true;
+  return ts(c.receivedAt) >= ts(othersFloor);
 }
 
 /** Estado que se enseña: el elegido a mano (si lo hay) o el deducido. */
@@ -300,9 +416,10 @@ export function matchesScope(c: Conversation, f: MobileFilters): boolean {
   return true;
 }
 
-export function filterConversations(list: Conversation[], f: MobileFilters, manual: Map<string, LeadStatus>): Conversation[] {
+export function filterConversations(list: Conversation[], f: MobileFilters, manual: Map<string, LeadStatus>, othersFloor: string | null = null): Conversation[] {
   return list.filter((c) =>
     c.tab === f.tab
+    && withinOthersWindow(c, othersFloor)
     && matchesScope(c, f)
     && (!f.status || effectiveStatus(c, manual) === f.status));
 }
@@ -310,11 +427,11 @@ export function filterConversations(list: Conversation[], f: MobileFilters, manu
 /** Contador por estado del menú de filtros: las conversaciones de la PESTAÑA abierta (y del resto
  *  de filtros), las mismas que se ven al tocar ese estado. Antes sumaba Primary y Others y el
  *  número no cuadraba con la lista (Out of office decía ~450 estando en Primary). */
-export function statusCounts(list: Conversation[], f: MobileFilters, manual: Map<string, LeadStatus>) {
+export function statusCounts(list: Conversation[], f: MobileFilters, manual: Map<string, LeadStatus>, othersFloor: string | null = null) {
   const counts = {} as Record<LeadStatus, { total: number; unread: number }>;
   for (const s of LEAD_STATUSES) counts[s.id] = { total: 0, unread: 0 };
   for (const c of list) {
-    if (c.tab !== f.tab || !matchesScope(c, f)) continue;
+    if (c.tab !== f.tab || !withinOthersWindow(c, othersFloor) || !matchesScope(c, f)) continue;
     const s = counts[effectiveStatus(c, manual)];
     s.total++;
     if (c.unreadIds.length) s.unread++;

@@ -117,8 +117,8 @@ export default function MobileApp() {
 
   /* ── Datos derivados ── */
   const statusOf = useCallback((c: Conversation) => effectiveStatus(c, inbox.manual), [inbox.manual]);
-  const visible = useMemo(() => filterConversations(inbox.conversations, filters, inbox.manual), [inbox.conversations, filters, inbox.manual]);
-  const counts = useMemo(() => statusCounts(inbox.conversations, filters, inbox.manual), [inbox.conversations, filters, inbox.manual]);
+  const visible = useMemo(() => filterConversations(inbox.conversations, filters, inbox.manual, inbox.othersFloor), [inbox.conversations, filters, inbox.manual, inbox.othersFloor]);
+  const counts = useMemo(() => statusCounts(inbox.conversations, filters, inbox.manual, inbox.othersFloor), [inbox.conversations, filters, inbox.manual, inbox.othersFloor]);
   const activeFilterCount = (filters.status ? 1 : 0) + (filters.accountId ? 1 : 0) + (filters.campaignId ? 1 : 0)
     + (filters.unreadOnly ? 1 : 0) + (filters.importantOnly ? 1 : 0) + (filters.folderId ? 1 : 0);
   const unreadTotal = useMemo(() => inbox.conversations.filter((c) => c.unreadIds.length).length, [inbox.conversations]);
@@ -134,7 +134,8 @@ export default function MobileApp() {
   const refreshThread = useCallback(async (c: Conversation) => {
     if (!user) return;
     try {
-      const t = await loadThread(user.id, c.accountId, c.email);
+      // En Others se enseña el hilo tal cual (warm-up y rebotes incluidos: es lo que se ve en la lista).
+      const t = await loadThread(user.id, c.accountId, c.email, { all: c.tab === "others" });
       if (threadFor.current === c.key) { setThread(t); setThreadError(null); }
     } catch (e) {
       if (threadFor.current === c.key) setThreadError(e instanceof Error ? e.message : String(e));
@@ -240,6 +241,9 @@ export default function MobileApp() {
                 onOpenFilters={() => push("drawer")}
                 onOpen={openConversation}
                 onRefresh={() => inbox.reload()}
+                hasMore={filters.tab === "others" && inbox.othersHasMore}
+                loadingMore={inbox.loadingMore}
+                onLoadMore={() => { void inbox.loadMoreOthers(); }}
                 banner={<PushBanner userId={user.id} notify={toast.show} />}
               />
             ) : (

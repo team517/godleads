@@ -1,4 +1,4 @@
-import { campaignMatchCounts, hasWarmupSubjectTag, isDeliveryFailureMessage, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
+import { hasWarmupSubjectTag, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { sentBodyHtml } from "@/lib/sent-body";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
@@ -6,6 +6,7 @@ import { isCampaignRelevant, isOwnBrandDomain } from "@/lib/inbox-visibility";
 import { looksBinaryText } from "@/lib/reply-text";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
+import { isPrimaryRow, PRIMARY_FEED } from "@/lib/mobile-inbox";
 import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1146,11 +1147,11 @@ export default function Unibox() {
   const loadCampaignItems = useCallback(async () => {
     if (!user) return;
     setCampaignItemsLoading(true);
-    const { data, error } = await (supabase as any).rpc("mobile_inbox_feed", { p_linked: 1000, p_other: 400, p_since: null });
+    // La MISMA ventana y la MISMA regla que Primary en la app del móvil (isPrimaryRow).
+    const { data, error } = await (supabase as any).rpc("mobile_inbox_feed", { p_linked: PRIMARY_FEED.linked, p_other: PRIMARY_FEED.other, p_since: null });
     setCampaignItemsLoading(false);
     if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
-    const rows = ((data || []) as any[]).filter((r) =>
-      campaignMatchCounts(r) && !isBounceOrNoise(r.from_email) && !isBounceOrFailure(r.from_email) && !isDeliveryFailureMessage(r));
+    const rows = ((data || []) as any[]).filter((r) => isPrimaryRow(r));
     const match = new Map<string, string | null>();
     for (const r of rows) match.set(r.id, r.campaign_id || r.campaign_hint || null);
     setCampaignMatch(match);
@@ -1696,7 +1697,10 @@ export default function Unibox() {
       // Blocked senders never show — unless it is their reply inside a real thread. Blocking
       // (or a bounce suppression) must not delete an answer the lead already gave us.
       .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
-      .filter(m => bypassFilters || !hiddenFromClean(m))
+      // Campañas: la regla ya la decide campaignMatch (isPrimaryRow, la de Primary en el móvil);
+      // hiddenFromClean la volvía a filtrar con un juego de dominios cortado en 1.000 de 56.000 y
+      // escondía respuestas de compañeros de un lead que el móvil sí enseñaba.
+      .filter(m => bypassFilters || viewTab === "campaigns" || !hiddenFromClean(m))
       .filter(inTab)
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
@@ -1716,12 +1720,13 @@ export default function Unibox() {
     if (ids.length === 0) return;
     let alive = true;
     (async () => {
-      const subjectOf = new Map(searchResults.map((m: any) => [m.id, m.subject]));
+      const byIdSearch = new Map<string, any>(searchResults.map((m: any) => [m.id, m]));
       const found = new Map<string, string | null>();
       for (let i = 0; i < ids.length; i += 300) {
         const { data } = await (supabase as any).rpc("inbox_campaign_match_mine", { p_ids: ids.slice(i, i + 300) });
         for (const h of (data || []) as { id: string; in_campaign: boolean; campaign_hint: string | null; why: string | null }[]) {
-          if (campaignMatchCounts({ in_campaign: h.in_campaign, match_why: h.why, subject: subjectOf.get(h.id) })) found.set(h.id, h.campaign_hint);
+          const m = byIdSearch.get(h.id);
+          if (m && isPrimaryRow({ ...m, in_campaign: h.in_campaign, match_why: h.why, campaign_hint: h.campaign_hint })) found.set(h.id, h.campaign_hint);
         }
       }
       if (alive && found.size) setSearchCampaignMatch((prev) => { const n = new Map(prev); for (const [k, v] of found) n.set(k, v); return n; });
@@ -1736,12 +1741,12 @@ export default function Unibox() {
     const seen = new Set<string>();
     for (const m of campaignItems) {
       const camp = campaignMatch.get(m.id);
-      if (!camp || seen.has(m.id) || hiddenFromClean(m)) continue;
+      if (!camp || seen.has(m.id) || (isBlockedSender(m.from_email) && !isThreadReply(m))) continue;
       seen.add(m.id);
       counts[camp] = (counts[camp] || 0) + 1;
     }
     return counts;
-  }, [campaignItems, campaignMatch, hiddenFromClean]);
+  }, [campaignItems, campaignMatch, isBlockedSender, isThreadReply]);
 
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.

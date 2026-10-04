@@ -185,6 +185,28 @@ export function looksLikePoolThreadSubject(subject: string | null | undefined): 
 }
 
 /**
+ * "RE: <título en inglés sin nada nuestro>": la forma de una respuesta del pool de warm-up aunque
+ * no lleve palabra de oficina ("RE: Finishing 'The Lean Startup'", "RE: New Hire"). Sólo se usa
+ * para "responde" y "marca" (citan nuestros buzones pero no un envío de campaña): el warm-up
+ * también cita nuestros buzones. Una respuesta real a nuestras campañas contesta a NUESTRO asunto,
+ * que lleva " - Empresa", palabras en español/catalán o es un contestador ("Automatic reply…").
+ * Medido el 05-10-2026 en support@ (30 días): el warm-up que pasaba la regla baja de 640 a 29, se
+ * van los 2 falsos positivos que llegaban a Primary y no se pierde ninguna respuesta real (1.280).
+ */
+export function looksLikePoolReplySubject(subject: string | null | undefined): boolean {
+  const raw = String(subject || "");
+  if (!/^\s*re\s*:/i.test(raw)) return false;
+  if (AUTO_REPLY_SUBJECT_RE.test(raw)) return false;
+  const s = raw.replace(/^\s*((re|fw|fwd|rv|aw|tr)\s*:\s*)+/i, "").trim();
+  if (!s || s.length > 80) return false;
+  if (OUR_LANGUAGE_RE.test(s)) return false;
+  if (/ - |[|@¿?!€$%[\]]/.test(s) || /[^\x00-\x7F]/.test(s)) return false;
+  if (!/^[A-Z][A-Za-z0-9' :&/-]*$/.test(s)) return false;
+  const words = s.replace(/[:/&]/g, " ").split(/\s+/).filter(Boolean);
+  return words.length >= 2 && words.length <= 8;
+}
+
+/**
  * ¿Cuenta como DE CAMPAÑA un mensaje que el servidor ha marcado con inbox_campaign_match? La regla
  * del servidor (lead de campaña / su dominio / cita un envío nuestro de campaña / contesta a un
  * correo de uno de nuestros buzones; nunca con la etiqueta del warm-up en el asunto ni si lo envía
@@ -202,7 +224,7 @@ export function campaignMatchCounts(m: { in_campaign?: boolean | null; match_why
   if (m.match_why === "hilo") return true;
   const s = String(m.subject || "");
   // "responde" (cita nuestros buzones) y "marca" (misma empresa, otra terminación): el filtro estricto.
-  if (m.match_why === "responde" || m.match_why === "marca") return !looksLikePoolThreadSubject(s) && !looksLikeWarmupSubject(s);
+  if (m.match_why === "responde" || m.match_why === "marca") return !looksLikePoolThreadSubject(s) && !looksLikeWarmupSubject(s) && !looksLikePoolReplySubject(s);
   return !(/^\s*re\s*:/i.test(s) && looksLikePoolThreadSubject(s));
 }
 

@@ -3,96 +3,196 @@ import { supabase } from "@/integrations/supabase/client";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import {
-  buildConversations, conversationKey, IMPORTANT, isLeadStatus, labelsForStatus,
+  blockedChecker, buildConversations, conversationKey, feedLane, IMPORTANT, isLeadStatus, labelsForStatus,
+  mergeWindow, newestCreated, PRIMARY_FEED, sortRows, upsertRows,
   type Conversation, type InboxRow, type LeadStatus,
 } from "@/lib/mobile-inbox";
 
-/* Datos de la app del móvil. Los da mobile_inbox_feed (servidor): lo enlazado a leads/campañas
-   y, aparte, lo demás que no es warm-up, cada mensaje marcado "de campaña" (lead de una campaña
-   o de su dominio) o no. Primary = campaña; Others = el resto (ver buildConversations).
-   Primero se pinta lo guardado de la última vez, luego llegan las 150 más nuevas y después el
-   resto; con la app abierta se miran las nuevas cada 20 s y todo de nuevo al volver a ella. */
+/* Datos de la app del móvil, de dos fuentes del servidor:
+   - Primary = mobile_inbox_feed: lo enlazado a leads/campañas y lo demás que no es warm-up, cada
+     mensaje marcado "de campaña" o no (la MISMA ventana y la misma regla que la pestaña Campañas
+     del escritorio).
+   - Others = mobile_inbox_others: TODO lo que entra (warm-up, rebotes y avisos incluidos), lo más
+     nuevo primero y paginado hacia atrás al bajar. Es lo que enseña "Todos" en el escritorio.
+   La pestaña la decide buildConversations (isPrimaryRow). Primero se pinta lo guardado de la
+   última vez; luego llega lo nuevo. Al día: tiempo real (INSERT → pedir lo nuevo; UPDATE →
+   leído/etiquetas/archivado/carpeta), lo nuevo por fecha de GUARDADO cada 20 s (lo que la
+   sincronización guarda tarde también llega) y un repaso cada 2 min con la app delante. */
 
 export const MOBILE_COLS =
-  "id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, ref_chain, auto_signal, to_emails, cc_emails";
-// Carril enlazado / carril del resto, en la primera pintada y en la carga completa.
+  "id, account_id, lead_id, campaign_id, message_id, from_email, from_name, subject, body_text, received_at, is_read, is_archived, folder_id, labels, ref_chain, auto_signal, to_emails, cc_emails, created_at, is_warmup";
+// Primary: primera pintada corta y luego la ventana entera.
 const FIRST = { linked: 150, other: 60 };
-const FULL = { linked: 900, other: 300 };
+const FULL = PRIMARY_FEED;
+// Others: una página (unas horas de support@, que recibe ~5.000 correos al día).
+const OTHERS_PAGE = 200;
 const POLL_MS = 20_000;
-const CACHE_KEY = "mobile:rows";
+const SAFETY_MS = 120_000;
+const REALTIME_DEBOUNCE_MS = 3_000;
+// Lo que se guarda en una transacción larga puede llevar una fecha de guardado algo anterior a lo
+// ya visto: se vuelve a pedir un margen (lo repetido se junta por id).
+const SINCE_OVERLAP_MS = 120_000;
+const CACHE_KEY = "mobile:rows2";
 
 export interface Folder { id: string; name: string; color: string | null }
 export interface Campaign { id: string; name: string }
 
+interface Rows { feed: InboxRow[]; others: InboxRow[] }
+
 // El tipo generado de la BD está desfasado (faltan columnas como auto_signal o folder_id):
 // las consultas van sin tipar y se convierten a InboxRow.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (t: string) => any; rpc: (fn: string, args?: Record<string, unknown>) => any };
+const db = supabase as unknown as { from: (t: string) => any; rpc: (fn: string, args?: Record<string, unknown>) => any; channel: (name: string) => any; removeChannel: (c: any) => any };
 
-async function feed(size: { linked: number; other: number }, since: string | null = null): Promise<InboxRow[]> {
-  const { data, error } = await db.rpc("mobile_inbox_feed", { p_linked: size.linked, p_other: size.other, p_since: since });
+async function feed(size: { linked: number; other: number }, sinceCreated: string | null = null): Promise<InboxRow[]> {
+  // p_since_created sólo cuando hace falta: así la carga normal sigue funcionando con la función de
+  // antes (si la web se publica antes que la migración 20261005160000).
+  const args: Record<string, unknown> = { p_linked: size.linked, p_other: size.other, p_since: null };
+  if (sinceCreated) args.p_since_created = sinceCreated;
+  const { data, error } = await db.rpc("mobile_inbox_feed", args);
   if (error) throw new Error(error.message);
   return (data || []) as InboxRow[];
 }
 
+async function others(opts: { limit: number; before?: InboxRow | null; sinceCreated?: string | null }): Promise<InboxRow[]> {
+  const { data, error } = await db.rpc("mobile_inbox_others", {
+    p_limit: opts.limit,
+    p_before: opts.before?.received_at ?? null,
+    p_before_id: opts.before?.id ?? null,
+    p_since_created: opts.sinceCreated ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return (data || []) as InboxRow[];
+}
+
+const sinceWithOverlap = (iso: string | null) => (iso ? new Date(Date.parse(iso) - SINCE_OVERLAP_MS).toISOString() : null);
+
+function readCache(): Rows {
+  const c = cacheGet<Rows>(CACHE_KEY);
+  return { feed: Array.isArray(c?.feed) ? c!.feed : [], others: Array.isArray(c?.others) ? c!.others : [] };
+}
+
 export function useMobileInbox(userId: string | undefined) {
-  const [rows, setRows] = useState<InboxRow[]>(() => cacheGet<InboxRow[]>(CACHE_KEY) || []);
-  const [loading, setLoading] = useState(() => !cacheGet<InboxRow[]>(CACHE_KEY));
+  const [data, setData] = useState<Rows>(readCache);
+  const [loading, setLoading] = useState(() => { const c = readCache(); return c.feed.length + c.others.length === 0; });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState<Map<string, LeadStatus>>(new Map());
   const [accountEmails, setAccountEmails] = useState<Record<string, string>>(() => cacheGet<Record<string, string>>("mobile:accounts") || {});
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
+  const [blocked, setBlocked] = useState<{ entry_type: string; value: string }[]>([]);
+  // Others paginado: hasta dónde se ha cargado (la fila más vieja de la última página) y si queda más.
+  const [othersCursor, setOthersCursor] = useState<InboxRow | null>(() => { const o = readCache().others; return o.length ? o[o.length - 1] : null; });
+  const [othersHasMore, setOthersHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const cursorRef = useRef(othersCursor);
+  cursorRef.current = othersCursor;
+  // Fecha de guardado más nueva vista: desde ahí se pide lo nuevo.
+  const sinceRef = useRef<string | null>(newestCreated([...data.feed, ...data.others]));
+  const busyRef = useRef({ load: false, poll: false, more: false });
 
-  const commit = useCallback((next: InboxRow[]) => {
-    rowsRef.current = next;
-    setRows(next);
+  const commit = useCallback((next: Rows) => {
+    dataRef.current = next;
+    setData(next);
+    sinceRef.current = newestCreated([...next.feed, ...next.others], sinceRef.current);
     cacheSet(CACHE_KEY, next);
   }, []);
 
-  /** Carga completa: primero la página corta (pinta ya) y luego el resto. */
-  const load = useCallback(async (opts: { quiet?: boolean } = {}) => {
-    if (!userId) return;
+  /**
+   * Carga: lo más nuevo de Primary (página corta, pinta ya) y la primera página de Others; luego
+   * la ventana entera de Primary. `light` (el repaso de cada 2 min) se queda en lo primero.
+   */
+  const load = useCallback(async (opts: { quiet?: boolean; light?: boolean } = {}) => {
+    if (!userId || busyRef.current.load) return;
+    busyRef.current.load = true;
     if (!opts.quiet) setRefreshing(true);
     try {
-      const head = await feed(FIRST);
-      // Mientras llega el resto se conserva lo que ya había (más viejo que lo recién traído).
-      const headIds = new Set(head.map((r) => r.id));
-      const oldest = head.length ? head[head.length - 1].received_at : null;
-      const keep = rowsRef.current.filter((r) => !headIds.has(r.id) && oldest && r.received_at < oldest);
-      commit([...head, ...keep]);
+      // Si Others falla, Primary se pinta igual (y se avisa del error).
+      let othersError: string | null = null;
+      const [head, page] = await Promise.all([
+        feed(FIRST),
+        others({ limit: OTHERS_PAGE }).catch((e) => { othersError = e instanceof Error ? e.message : String(e); return null; }),
+      ]);
+      const cur = dataRef.current;
+      // Others vuelve a su primera página (lo de más abajo se vuelve a pedir al bajar).
+      const othersNext = !page ? cur.others : opts.light ? mergeWindow(cur.others, page) : sortRows(page);
+      commit({ feed: mergeWindow(cur.feed, head, feedLane), others: othersNext });
+      if (page && (!opts.light || !cursorRef.current)) {
+        setOthersCursor(page.length ? page[page.length - 1] : null);
+        setOthersHasMore(page.length >= OTHERS_PAGE);
+      }
       setLoading(false);
-      setError(null);
-      const all = await feed(FULL).catch(() => null);
-      if (all) commit(all);
+      setError(othersError);
+      if (othersError) console.warn("mobile_inbox_others falló:", othersError);
+      if (opts.light) return;
+      try {
+        const all = await feed(FULL);
+        commit({ feed: mergeWindow(dataRef.current.feed, all, feedLane), others: dataRef.current.others });
+      } catch (e) {
+        // Se queda lo que hay (la página corta), pero se dice: antes se tragaba el error y Primary
+        // se quedaba a medias sin que nadie lo supiera. Se reintenta en 15 s.
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("mobile_inbox_feed (ventana entera) falló:", msg);
+        setError(msg);
+        window.setTimeout(() => { void load({ quiet: true }); }, 15_000);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setLoading(false);
     } finally {
+      busyRef.current.load = false;
       setRefreshing(false);
     }
   }, [userId, commit]);
 
-  /** Sólo lo nuevo desde el último mensaje que tenemos (barato: cada 20 s). */
+  /** Lo guardado desde la última vez, en las dos fuentes (por fecha de GUARDADO, no del correo). */
   const pollNew = useCallback(async () => {
-    if (!userId) return;
-    const newest = rowsRef.current[0]?.received_at;
-    if (!newest) return;
-    const fresh = await feed({ linked: 50, other: 50 }, newest).catch(() => [] as InboxRow[]);
-    if (!fresh.length) return;
-    const ids = new Set(fresh.map((r) => r.id));
-    commit([...fresh, ...rowsRef.current.filter((r) => !ids.has(r.id))]);
-  }, [userId, commit]);
+    if (!userId || busyRef.current.poll) return;
+    const since = sinceWithOverlap(sinceRef.current);
+    if (!since) return;
+    busyRef.current.poll = true;
+    try {
+      const [f, o] = await Promise.all([feed({ linked: 500, other: 500 }, since), others({ limit: 1000, sinceCreated: since })]);
+      if (f.length >= 1000 || o.length >= 1000) { busyRef.current.poll = false; await load({ quiet: true }); return; }
+      if (!f.length && !o.length) return;
+      const cur = dataRef.current;
+      commit({ feed: upsertRows(cur.feed, f), others: upsertRows(cur.others, o) });
+    } catch (e) {
+      console.warn("mobile inbox: no se pudo pedir lo nuevo:", e instanceof Error ? e.message : String(e));
+    } finally {
+      busyRef.current.poll = false;
+    }
+  }, [userId, commit, load]);
+
+  /** Others: la página siguiente hacia atrás (al llegar al final de la lista). */
+  const loadMoreOthers = useCallback(async () => {
+    const before = cursorRef.current;
+    if (!userId || !before || !othersHasMore || busyRef.current.more) return;
+    busyRef.current.more = true;
+    setLoadingMore(true);
+    try {
+      const page = await others({ limit: OTHERS_PAGE, before });
+      const cur = dataRef.current;
+      commit({ feed: cur.feed, others: upsertRows(cur.others, page) });
+      setOthersCursor(page.length ? page[page.length - 1] : before);
+      setOthersHasMore(page.length >= OTHERS_PAGE);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      busyRef.current.more = false;
+      setLoadingMore(false);
+    }
+  }, [userId, othersHasMore, commit]);
 
   const loadManual = useCallback(async () => {
     if (!userId) return;
-    const { data } = await db.from("unibox_lead_status").select("email, status").eq("user_id", userId);
+    const { data: rows } = await db.from("unibox_lead_status").select("email, status").eq("user_id", userId);
     const map = new Map<string, LeadStatus>();
-    for (const r of (data || []) as { email: string; status: string }[]) {
+    for (const r of (rows || []) as { email: string; status: string }[]) {
       if (isLeadStatus(r.status)) map.set(r.email, r.status);
     }
     setManual(map);
@@ -100,41 +200,98 @@ export function useMobileInbox(userId: string | undefined) {
 
   const loadSide = useCallback(async () => {
     if (!userId) return;
-    const [camp, fold] = await Promise.all([
+    // La lista de bloqueo como en "Todos" del escritorio: todos los dominios (pocos y críticos) y
+    // los emails más recientes (los mensajes de un email bloqueado ya se archivan al bloquear).
+    const [camp, fold, dom, mail] = await Promise.all([
       db.from("campaigns").select("id, name").eq("user_id", userId).order("created_at", { ascending: false }),
       db.from("unibox_folders").select("id, name, color").eq("user_id", userId).order("created_at", { ascending: true }),
+      db.from("blocklist").select("entry_type, value").eq("user_id", userId).eq("entry_type", "domain"),
+      db.from("blocklist").select("entry_type, value").eq("user_id", userId).eq("entry_type", "email").order("created_at", { ascending: false }),
     ]);
     if (!camp.error) setCampaigns((camp.data || []) as Campaign[]);
     if (!fold.error) setFolders((fold.data || []) as Folder[]);
+    setBlocked([...((dom.data || []) as { entry_type: string; value: string }[]), ...((mail.data || []) as { entry_type: string; value: string }[])]);
   }, [userId]);
 
   // Primera carga + lo de alrededor.
   useEffect(() => {
     if (!userId) return;
-    void load({ quiet: rowsRef.current.length > 0 });
+    const c = dataRef.current;
+    void load({ quiet: c.feed.length + c.others.length > 0 });
     void loadManual();
     void loadSide();
   }, [userId, load, loadManual, loadSide]);
 
-  // Con la app delante: lo nuevo cada 20 s. Al volver a ella: todo otra vez (lo leído en el
-  // ordenador, lo borrado, los estados cambiados en otro móvil…).
+  // Con la app delante: lo nuevo cada 20 s y un repaso cada 2 min (lo leído en el ordenador, lo
+  // archivado…). Al volver a ella: todo otra vez.
   useEffect(() => {
     if (!userId) return;
-    const tick = () => { if (document.visibilityState === "visible") void pollNew(); };
-    const timer = window.setInterval(tick, POLL_MS);
+    const visible = () => document.visibilityState === "visible";
+    const poll = window.setInterval(() => { if (visible()) void pollNew(); }, POLL_MS);
+    const safety = window.setInterval(() => { if (visible()) void load({ quiet: true, light: true }); }, SAFETY_MS);
     const onVisible = () => {
-      if (document.visibilityState === "visible") { void load({ quiet: true }); void loadManual(); }
+      if (visible()) { void load({ quiet: true }); void loadManual(); }
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     return () => {
-      window.clearInterval(timer);
+      window.clearInterval(poll);
+      window.clearInterval(safety);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
   }, [userId, pollNew, load, loadManual]);
 
-  const conversations = useMemo(() => buildConversations(rows), [rows]);
+  // Tiempo real (como la Unibox del escritorio): un correo nuevo → pedir lo nuevo (agrupado en
+  // ~3 s: la sincronización mete varios de golpe); un cambio → se aplica a la fila.
+  useEffect(() => {
+    if (!userId || typeof db.channel !== "function") return;
+    let timer: number | null = null;
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = null; void pollNew(); }, REALTIME_DEBOUNCE_MS);
+    };
+    const onUpdate = (payload: { new?: Partial<InboxRow> & { id?: string } }) => {
+      const n = payload?.new;
+      if (!n?.id) return;
+      const cur = dataRef.current;
+      if (![...cur.feed, ...cur.others].some((r) => r.id === n.id)) return;
+      const patch = (r: InboxRow): InboxRow => (r.id === n.id ? {
+        ...r,
+        ...(n.is_read !== undefined ? { is_read: n.is_read } : {}),
+        ...(n.labels !== undefined ? { labels: n.labels } : {}),
+        ...(n.is_archived !== undefined ? { is_archived: n.is_archived } : {}),
+        ...(n.folder_id !== undefined ? { folder_id: n.folder_id } : {}),
+      } : r);
+      const drop = (rows: InboxRow[]) => rows.map(patch).filter((r) => !r.is_archived);
+      commit({ feed: drop(cur.feed), others: drop(cur.others) });
+    };
+    const onDelete = (payload: { old?: { id?: string } }) => {
+      const id = payload?.old?.id;
+      if (!id) return;
+      const cur = dataRef.current;
+      commit({ feed: cur.feed.filter((r) => r.id !== id), others: cur.others.filter((r) => r.id !== id) });
+    };
+    const filter = `user_id=eq.${userId}`;
+    const channel = db.channel(`mobile-inbox-${userId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "inbox_messages", filter }, schedule)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "inbox_messages", filter }, onUpdate)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "inbox_messages", filter }, onDelete)
+      .subscribe();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      db.removeChannel(channel);
+    };
+  }, [userId, pollNew, commit]);
+
+  const rows = useMemo(() => {
+    const ids = new Set(data.feed.map((r) => r.id));
+    return sortRows([...data.feed, ...data.others.filter((r) => !ids.has(r.id))]);
+  }, [data]);
+  const isBlocked = useMemo(() => blockedChecker(blocked), [blocked]);
+  const conversations = useMemo(() => buildConversations(rows, { isBlocked }), [rows, isBlocked]);
+  // Mientras quede Others por bajar, la lista llega hasta lo cargado (sin huecos).
+  const othersFloor = othersHasMore && othersCursor ? othersCursor.received_at : null;
 
   // Correo de cada buzón que aparece (para "To:", "De" y el filtro de buzones). Sólo los que
   // hacen falta: support@ tiene miles de buzones.
@@ -146,8 +303,8 @@ export function useMobileInbox(userId: string | undefined) {
     (async () => {
       const found: Record<string, string> = {};
       for (let i = 0; i < missing.length; i += 150) {
-        const { data } = await db.from("email_accounts").select("id, email").in("id", missing.slice(i, i + 150));
-        for (const a of (data || []) as { id: string; email: string }[]) found[a.id] = a.email;
+        const { data: accs } = await db.from("email_accounts").select("id, email").in("id", missing.slice(i, i + 150));
+        for (const a of (accs || []) as { id: string; email: string }[]) found[a.id] = a.email;
       }
       if (!alive || Object.keys(found).length === 0) return;
       setAccountEmails((prev) => {
@@ -174,9 +331,18 @@ export function useMobileInbox(userId: string | undefined) {
 
   /* ── Acciones ── */
 
+  const allRows = useCallback(() => [...dataRef.current.feed, ...dataRef.current.others], []);
+
   const patchRows = useCallback((ids: string[], patch: (r: InboxRow) => InboxRow) => {
     const set = new Set(ids);
-    commit(rowsRef.current.map((r) => (set.has(r.id) ? patch(r) : r)));
+    const cur = dataRef.current;
+    const apply = (list: InboxRow[]) => list.map((r) => (set.has(r.id) ? patch(r) : r));
+    commit({ feed: apply(cur.feed), others: apply(cur.others) });
+  }, [commit]);
+
+  const dropRows = useCallback((ids: Set<string>) => {
+    const cur = dataRef.current;
+    commit({ feed: cur.feed.filter((r) => !ids.has(r.id)), others: cur.others.filter((r) => !ids.has(r.id)) });
   }, [commit]);
 
   const markRead = useCallback(async (c: Conversation) => {
@@ -205,7 +371,7 @@ export function useMobileInbox(userId: string | undefined) {
       throw new Error(err.message);
     }
     // La Unibox del ordenador lee las etiquetas de cada mensaje: se ponen las equivalentes.
-    const byId = new Map(rowsRef.current.map((r) => [r.id, r]));
+    const byId = new Map(allRows().map((r) => [r.id, r]));
     for (const id of c.messageIds) {
       const r = byId.get(id);
       const next = r ? labelsForStatus(r.labels, status) : null;
@@ -213,10 +379,10 @@ export function useMobileInbox(userId: string | undefined) {
       patchRows([id], (x) => ({ ...x, labels: next }));
       await db.from("inbox_messages").update({ labels: next }).eq("id", id);
     }
-  }, [userId, manual, patchRows]);
+  }, [userId, manual, patchRows, allRows]);
 
   const toggleImportant = useCallback(async (c: Conversation) => {
-    const byId = new Map(rowsRef.current.map((r) => [r.id, r]));
+    const byId = new Map(allRows().map((r) => [r.id, r]));
     if (c.important) {
       for (const id of c.messageIds) {
         const r = byId.get(id);
@@ -232,7 +398,7 @@ export function useMobileInbox(userId: string | undefined) {
       const { error: err } = await db.from("inbox_messages").update({ labels: next }).eq("id", c.latest.id);
       if (err) { patchRows([c.latest.id], (x) => ({ ...x, labels: c.latest.labels || [] })); throw new Error(err.message); }
     }
-  }, [patchRows]);
+  }, [patchRows, allRows]);
 
   const moveToFolder = useCallback(async (c: Conversation, folderId: string | null) => {
     const ids = [...c.messageIds];
@@ -247,8 +413,8 @@ export function useMobileInbox(userId: string | undefined) {
     const ids = new Set(c.messageIds);
     const { error: err } = await db.from("inbox_messages").update({ is_archived: true }).in("id", [...ids]);
     if (err) throw new Error(err.message);
-    commit(rowsRef.current.filter((r) => !ids.has(r.id)));
-  }, [commit]);
+    dropRows(ids);
+  }, [dropRows]);
 
   /** Igual que "Bloquear remitente" en el escritorio: a la lista de bloqueo, fuera de sus
    *  campañas y sus mensajes ocultos. */
@@ -258,7 +424,8 @@ export function useMobileInbox(userId: string | undefined) {
     const { error: blockErr } = await db.from("blocklist")
       .upsert({ user_id: userId, entry_type: "email", value }, { onConflict: "user_id,entry_type,value" });
     if (blockErr) throw new Error(blockErr.message);
-    const mine = rowsRef.current.filter((r) => String(r.from_email || "").toLowerCase() === value).map((r) => r.id);
+    setBlocked((b) => [...b, { entry_type: "email", value }]);
+    const mine = allRows().filter((r) => String(r.from_email || "").toLowerCase() === value).map((r) => r.id);
     for (let i = 0; i < mine.length; i += 100) {
       const { error: err } = await db.from("inbox_messages").update({ is_archived: true }).in("id", mine.slice(i, i + 100));
       if (err) throw new Error(err.message);
@@ -270,24 +437,30 @@ export function useMobileInbox(userId: string | undefined) {
       const { error: clErr } = await db.from("campaign_leads").delete().in("lead_id", leadIds);
       if (clErr) throw new Error(clErr.message);
     }
-    const gone = new Set(mine);
-    commit(rowsRef.current.filter((r) => !gone.has(r.id)));
-  }, [userId, commit]);
+    dropRows(new Set(mine));
+  }, [userId, dropRows, allRows]);
 
-  /** Un mensaje concreto (lo que abre una notificación) aunque no esté en la lista cargada. */
+  /** Un mensaje concreto (lo que abre una notificación) aunque no esté en la lista cargada, con
+   *  la regla de campaña del servidor (si no, sin la marca, podía caer en la pestaña equivocada). */
   const ensureMessage = useCallback(async (id: string): Promise<string | null> => {
-    const hit = rowsRef.current.find((r) => r.id === id);
+    const hit = allRows().find((r) => r.id === id);
     if (hit) return conversationKey(hit.account_id, hit.from_email);
-    const { data } = await db.from("inbox_messages").select(MOBILE_COLS).eq("id", id).maybeSingle();
-    const row = data as InboxRow | null;
+    const { data: found } = await db.from("inbox_messages").select(MOBILE_COLS).eq("id", id).maybeSingle();
+    let row = found as InboxRow | null;
     if (!row) return null;
-    if (!row.is_archived) commit([row, ...rowsRef.current.filter((r) => r.id !== row.id)]
-      .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime()));
+    const { data: match } = await db.rpc("inbox_campaign_match_mine", { p_ids: [id] });
+    const m = ((match || []) as { id: string; in_campaign: boolean; campaign_hint: string | null; why: string | null }[])[0];
+    if (m) row = { ...row, in_campaign: m.in_campaign, campaign_hint: m.campaign_hint, match_why: m.why };
+    if (!row.is_archived) {
+      const cur = dataRef.current;
+      commit({ feed: upsertRows(cur.feed, [row]), others: cur.others });
+    }
     return conversationKey(row.account_id, row.from_email);
-  }, [commit]);
+  }, [commit, allRows]);
 
   return {
     rows, conversations, loading, refreshing, error, manual, accountEmails, campaigns, folders,
+    othersFloor, othersHasMore, loadingMore, loadMoreOthers,
     reload: load, markRead, markUnread, setStatus, toggleImportant, moveToFolder, removeConversation,
     blockSender, ensureMessage,
   };

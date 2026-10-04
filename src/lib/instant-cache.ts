@@ -16,9 +16,14 @@ const PERSIST_KEYS = new Set([
   "campaigns:list",
   "leads:first",
   "accounts:list",
-  "dash:stats",
+  // Dashboard y Estadísticas: cada widget con su clave, para pintar al instante y refrescar detrás.
+  "dash:summary",
+  "dash:accounts",
+  "dash:leads",
   "dash:campaigns",
-  "mobile:rows",
+  "stats:summary",
+  "stats:daily",
+  "mobile:rows2",
   "mobile:accounts",
   "mobile:templates",
 ]);
@@ -48,12 +53,15 @@ function shrinkForDisk(key: string, value: unknown): unknown {
       body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 600) : m.body_text,
     }));
   }
-  // App del móvil: las 200 conversaciones más nuevas bastan para pintar al instante.
-  if (key === "mobile:rows" && Array.isArray(value)) {
-    return value.slice(0, 250).map((m: any) => ({
+  // App del móvil: lo más nuevo de Primary y de Others basta para pintar al instante. Van por
+  // separado: juntos, el warm-up (casi todo lo que entra) se comía el sitio de Primary.
+  if (key === "mobile:rows2" && value && typeof value === "object") {
+    const trim = (rows: unknown, n: number) => (Array.isArray(rows) ? rows.slice(0, n).map((m: Record<string, unknown>) => ({
       ...m,
       body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 1200) : m.body_text,
-    }));
+    })) : []);
+    const v = value as { feed?: unknown; others?: unknown };
+    return { feed: trim(v.feed, 200), others: trim(v.others, 80) };
   }
   // Cuentas: la firma HTML de cada buzón (varios KB × cientos de buzones) no hace falta para
   // pintar la lista y reventaba el límite del localStorage. La carga en vivo la trae en un segundo.
