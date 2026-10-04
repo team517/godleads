@@ -1,6 +1,7 @@
 import { fetchBounceBreakdown, fetchCampaignMetrics, type BounceBreakdown } from "@/lib/campaign-metrics";
 import { useState, useEffect } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+import { isMissingRpc, num } from "@/lib/widget-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -116,39 +117,65 @@ export default function Campaigns() {
     setCampaigns(data || []);
     cacheSet("campaigns:list", data || []);
     setLoading(false);
+    await reloadMetrics(data || []);
+  };
+
+  /** Métricas + progreso de TODAS las campañas: dos RPC en total, no 2 consultas por campaña.
+   *  Se llama al cargar y cuando una ficha avisa de que cambió algo (p. ej. "Reiniciar analíticas"). */
+  const reloadMetrics = async (list?: any[]) => {
+    if (!user) return;
+    const camps: any[] = list ?? campaigns;
     // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer).
-    const { data: rows, error } = await fetchCampaignMetrics(supabase as any, user.id);
-    if (!error && Array.isArray(rows)) {
+    const metricsP = fetchCampaignMetrics(supabase as any, user.id).then(({ data: rows, error }) => {
+      if (error || !Array.isArray(rows)) return;
       const map: Record<string, any> = {};
       for (const r of rows as any[]) {
         map[r.campaign_id] = {
-          sent: Number(r.sent) || 0,
-          contacted: Number(r.contacted) || 0,
-          opened: Number(r.opened) || 0,
-          replied: Number(r.replied) || 0,
-          positive: Number(r.positive) || 0,
-          bounced: Number(r.bounced) || 0,
-          senderBounced: Number(r.sender_bounced) || 0,
-          sequences: Number(r.sequences) || 0,
+          sent: num(r.sent),
+          contacted: num(r.contacted),
+          opened: num(r.opened),
+          replied: num(r.replied),
+          positive: num(r.positive),
+          bounced: num(r.bounced),
+          senderBounced: num(r.sender_bounced),
+          sequences: num(r.sequences),
         };
       }
       setMetricsMap(map);
       cacheSet("campaigns:metrics", map);
       void fetchBounceBreakdown(supabase as any, user.id).then(setBounceMap).catch(() => { /* sin desglose: sólo el total */ });
+    });
+    // Progress = leads emailed / total leads, per campaign — ONE RPC for all of them.
+    const progressP = loadProgress(camps).then((progress) => {
+      if (!progress) return; // fallo de red/servidor: se conserva lo que había en pantalla
+      setProgressMap(progress);
+      cacheSet("campaigns:progress", progress);
+    });
+    await Promise.all([metricsP, progressP]);
+  };
+
+  const loadProgress = async (camps: any[]): Promise<Record<string, { sent: number; total: number }> | null> => {
+    const ids = camps.map((c) => c.id);
+    if (!ids.length) return {};
+    const { data, error } = await (supabase as any).rpc("campaign_lead_counts", { p_campaign_ids: ids });
+    if (!error && Array.isArray(data)) {
+      const progress: Record<string, { sent: number; total: number }> = {};
+      for (const r of data as { campaign_id: string; leads_total: unknown; leads_sent: unknown }[]) {
+        progress[r.campaign_id] = { total: num(r.leads_total), sent: num(r.leads_sent) };
+      }
+      return progress;
     }
-    // Progress = leads emailed / total leads, per campaign. COUNT-only (head:true) so
-    // no rows are transferred — cheap even with thousands of leads.
-    const list = data || [];
+    if (!isMissingRpc(error)) return null;
+    // Migración aún sin aplicar: los recuentos de antes (2 por campaña), para no perder los anillos.
     const progress: Record<string, { sent: number; total: number }> = {};
-    await Promise.all(list.map(async (c: any) => {
+    await Promise.all(camps.map(async (c: any) => {
       const [totalRes, sentRes] = await Promise.all([
         supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id),
         supabase.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).not("last_sent_at", "is", null),
       ]);
       progress[c.id] = { total: totalRes.count || 0, sent: sentRes.count || 0 };
     }));
-    setProgressMap(progress);
-    cacheSet("campaigns:progress", progress);
+    return progress;
   };
 
   useEffect(() => { load(); }, [user]);
@@ -429,6 +456,7 @@ export default function Campaigns() {
         metrics={metricsFor(selectedCampaign.id)}
         onBack={() => setSelectedId(null)}
         onToggleStatus={() => handleStatusToggle(selectedCampaign)}
+        onMetricsStale={() => { void reloadMetrics(); }}
       />
     );
   }

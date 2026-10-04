@@ -6,6 +6,8 @@ import { SparkMark } from "@/components/SparkMark";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useWidget } from "@/hooks/useWidget";
+import type { DailyRpcRow } from "@/lib/daily-rows";
 
 /* Ficha de una campaña con el diseño del propietario (30-09-2026): barra de arriba con la chispa,
    volver, nombre, pestañas en el centro (Analítica · Editor · Leads · Ajustes) y, a la derecha,
@@ -49,6 +51,8 @@ interface Props {
   metrics?: any;
   onBack: () => void;
   onToggleStatus: () => void;
+  /** Tras "Reiniciar analíticas": la página vuelve a pedir las métricas de las campañas. */
+  onMetricsStale?: () => void;
 }
 
 function SubTabs<T extends string>({ value, onChange, items }: { value: T; onChange: (v: T) => void; items: { id: T; label: string }[] }) {
@@ -73,9 +77,16 @@ function SubTabs<T extends string>({ value, onChange, items }: { value: T; onCha
 
 const Loading = () => <div className="py-12 text-center text-sm text-muted-foreground">Cargando…</div>;
 
-export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, onToggleStatus }: Props) {
+export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, onToggleStatus, onMetricsStale }: Props) {
   const campaignId: string = campaign.id;
   const [tab, setTab] = useState<Tab>("editor");
+  // Envíos/respuestas por día: UNA llamada de 14 días al abrir Analítica, que alimenta la gráfica
+  // de barras (últimos 7) y la de área (14). Antes cada gráfica llamaba al RPC por su cuenta.
+  const daily = useWidget<DailyRpcRow[]>({
+    enabled: tab === "analytics",
+    load: () => (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: campaignId, p_days: 14 }),
+    deps: [campaignId],
+  });
   const [analyticsView, setAnalyticsView] = useState<"summary" | "sent">("summary");
   const [leadsView, setLeadsView] = useState<"leads" | "crm">("leads");
   const [settingsView, setSettingsView] = useState<"accounts" | "schedule" | "options" | "unsubscribes">("accounts");
@@ -185,11 +196,13 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, on
         <div className="space-y-4">
           <Suspense fallback={<Loading />}>
             <CampaignReportBar campaign={campaign} metrics={metrics} />
-            <CampaignSendsChart campaignId={campaignId} />
+            <CampaignSendsChart campaignId={campaignId} daily={daily.data} loading={daily.loading} error={daily.error} onRetry={daily.reload} />
           </Suspense>
           <SubTabs<"summary" | "sent"> value={analyticsView} onChange={setAnalyticsView} items={[{ id: "summary", label: "Resumen" }, { id: "sent", label: "Enviados" }]} />
           <Suspense fallback={<Loading />}>
-            {analyticsView === "summary" ? <CampaignAnalytics campaignId={campaignId} /> : <CampaignSentLog campaignId={campaignId} />}
+            {analyticsView === "summary"
+              ? <CampaignAnalytics campaignId={campaignId} metrics={metrics ?? undefined} daily={daily.data} dailyLoading={daily.loading} dailyError={daily.error} onDailyReload={daily.reload} onMetricsStale={onMetricsStale} />
+              : <CampaignSentLog campaignId={campaignId} />}
           </Suspense>
         </div>
       )}

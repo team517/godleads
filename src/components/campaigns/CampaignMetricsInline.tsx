@@ -1,48 +1,13 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Send, Users, MessageSquareReply, Smile, AlertTriangle } from "lucide-react";
 
-type Stats = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced: number };
+type Stats = { sent: number; contacted: number; opened: number; replied: number; positive: number; bounced: number; senderBounced?: number };
 
-/** Compact metrics strip for a campaign card. When `metrics` is passed by the
- *  parent (from the single campaign_metrics_for_user RPC) it renders instantly
- *  with ZERO queries. Falls back to its own load only if none is provided. */
-export default function CampaignMetricsInline({ campaignId, metrics }: { campaignId: string; metrics?: Stats | null }) {
-  const [m, setM] = useState<Stats | null>(metrics ?? null);
-
-  useEffect(() => {
-    if (metrics !== undefined) { setM(metrics); return; } // parent-provided → no query
-    let alive = true;
-    const count = async (q: any): Promise<number> => {
-      const { count } = await q;
-      return count || 0;
-    };
-    (async () => {
-      const sentBase = () => supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId);
-      const [sent, opened, bounced, positive, rowsRes] = await Promise.all([
-        count(sentBase().not("sent_at", "is", null)),
-        count(sentBase().not("opened_at", "is", null)),
-        count(sentBase().not("bounced_at", "is", null)),
-        count(supabase.from("inbox_messages").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).contains("labels", ["Interesado"])),
-        // One row pull drives Replied (distinct leads) AND Sender Bounced (distinct
-        // recipients) — counting raw rows double-counts a lead who replied to two
-        // steps, or one address retried N times.
-        supabase.from("sent_emails").select("to_email, status, sent_at, lead_id, replied_at").eq("campaign_id", campaignId).limit(5000),
-      ]);
-      const rows: any[] = (rowsRes as any)?.data || [];
-      const okEmails = new Set(rows.filter((x) => x.sent_at || x.status === "sent" || x.status === "bounced").map((x) => (x.to_email || "").toLowerCase()));
-      const senderBounced = new Set(rows.filter((x) => x.status === "failed").map((x) => (x.to_email || "").toLowerCase()).filter((em) => em && !okEmails.has(em))).size;
-      // Contacted = DISTINCT people we emailed (not raw rows w/ follow-ups) → the
-      // correct denominator for the reply rate.
-      const contacted = new Set(rows.filter((x) => x.sent_at || x.status === "sent").map((x) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)).size;
-      // Replied = DISTINCT leads who replied (people, not send-rows).
-      const replied = new Set(rows.filter((x) => x.replied_at).map((x) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)).size;
-      if (!alive) return;
-      setM({ sent, contacted, opened, replied, bounced, senderBounced, positive });
-    })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, metrics]);
+/** Compact metrics strip for a campaign card. The numbers come from the page's single
+ *  campaign_metrics_v2 RPC (exact, server-side); while they are not there yet it shows "—".
+ *  (The old self-load pulled up to 5000 sent_emails rows per card and counted in the browser —
+ *  capped, slow and wrong on big campaigns.) */
+export default function CampaignMetricsInline({ metrics }: { campaignId?: string; metrics?: Stats | null }) {
+  const m: Stats | null = metrics ?? null;
 
   const pct = (n: number) => (m && m.sent > 0 ? `${((n / m.sent) * 100).toFixed(1)}%` : "0%");
   // Reply rate is over CONTACTED leads (people), not emails sent (which include

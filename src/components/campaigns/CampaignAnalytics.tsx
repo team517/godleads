@@ -9,16 +9,44 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { BarChart3, Send, MessageSquare, Download, Share2, Loader2, Check, Palette, X, RotateCcw, History } from "lucide-react";
 import { useConfirm } from "@/hooks/useConfirm";
 import { fetchCampaignMetrics, formatResetAt } from "@/lib/campaign-metrics";
+import { errorText, isMissingRpc, num } from "@/lib/widget-state";
+import { toDayPoints, type DailyRpcRow, type DayPoint } from "@/lib/daily-rows";
+import RetryNotice from "@/components/RetryNotice";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 // jsPDF (~350KB) is loaded on demand inside handleDownloadPDF — not at page load.
 
-interface Props { campaignId: string; }
+type Totals = { sent: number; contacted: number; replied: number };
+type StepRow = { id: string; step_order: number | string; subject: string; sent: number; replied: number; _other?: boolean };
 
-// One day on the sends/replies area chart (same shape as the Estadísticas page).
-type DayPoint = { day: string; label: string; full: string; envios: number; respuestas: number };
+interface Props {
+  campaignId: string;
+  /** Métricas de ESTA campaña desde la página (una sola RPC para todas). `undefined` = aún no cargadas. */
+  metrics?: Totals | null;
+  /** Filas de campaign_daily_sends (14 días) que la ficha pide UNA vez para las dos gráficas. */
+  daily?: DailyRpcRow[];
+  dailyLoading?: boolean;
+  dailyError?: string | null;
+  onDailyReload?: () => void;
+  /** Tras "Reiniciar analíticas" la página tiene que volver a pedir las métricas. */
+  onMetricsStale?: () => void;
+}
+
 const CHART_DAYS = 14;
+
+/** Recuentos por paso de ANTES (dos consultas por paso): sólo si el RPC campaign_step_stats aún no existe. */
+async function legacyStepCounts(campaignId: string, steps: { id: string }[], since: string | null): Promise<Record<string, { sent: number; replied: number }>> {
+  const out: Record<string, { sent: number; replied: number }> = {};
+  await Promise.all(steps.map(async (s) => {
+    const base = () => supabase.from("sent_emails").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId).eq("campaign_step_id", s.id);
+    const sentQ = base().or("sent_at.not.is.null,status.eq.sent");
+    const repliedQ = base().not("replied_at", "is", null);
+    const [a, b] = await Promise.all([since ? sentQ.gte("sent_at", since) : sentQ, since ? repliedQ.gte("replied_at", since) : repliedQ]);
+    out[s.id] = { sent: a.count || 0, replied: b.count || 0 };
+  }));
+  return out;
+}
 
 // Loads any image (data: URL or remote https URL) and re-encodes it as a PNG
 // data URL via canvas, so jsPDF can embed it reliably regardless of source
@@ -42,12 +70,21 @@ async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; 
   }
 }
 
-export default function CampaignAnalytics({ campaignId }: Props) {
+export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoading, dailyError, onDailyReload, onMetricsStale }: Props) {
   const { user } = useAuth();
   const { profile } = useProfile();
-  const [stats, setStats] = useState({ contacted: 0, sent: 0, replied: 0 });
-  const [daily, setDaily] = useState<DayPoint[]>([]);
-  const [stepStats, setStepStats] = useState<any[]>([]);
+  // Totales: los da la página (campaign_metrics_v2, UNA RPC para todas las campañas). Sólo si la
+  // página aún no los tiene se piden aquí una vez (misma RPC, ya rápida) — nunca contando filas en
+  // el navegador, que PostgREST capa a 1000.
+  const [fallbackTotals, setFallbackTotals] = useState<Totals | null>(null);
+  const totals: Totals | null = metrics ?? fallbackTotals;
+  const stats: Totals = totals ?? { contacted: 0, sent: 0, replied: 0 };
+  const totalsPending = !totals;
+  const dayPoints: DayPoint[] = toDayPoints(daily);
+  const dailyPending = daily === undefined && !!dailyLoading;
+  const dailyFailed = daily === undefined && !!dailyError;
+  const [stepRows, setStepRows] = useState<StepRow[] | null>(null);
+  const [stepsError, setStepsError] = useState<string | null>(null);
   const [campaignName, setCampaignName] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -105,85 +142,70 @@ export default function CampaignAnalytics({ campaignId }: Props) {
   };
 
   useEffect(() => {
+    let alive = true;
     const load = async () => {
-      // Steps + name are tiny tables (never near the 1000-row cap); the RPC
-      // returns server-side aggregates (distinct contacted/replied) for ALL of
-      // the caller's campaigns in one call — accurate and NOT capped at 1000.
-      const [stepsRes, campaignRes, metricsRes, dailyRes] = await Promise.all([
+      // Pasos + nombre son tablas diminutas; los recuentos por paso los hace el servidor en UNA
+      // llamada (campaign_step_stats) en vez de dos consultas por paso.
+      const [stepsRes, campaignRes, stepStatsRes] = await Promise.all([
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
         (supabase as any).from("campaigns").select("name, analytics_reset_at").eq("id", campaignId).single(),
-        // RPC is created at runtime (fetch-inbox bootstrap) so the generated types don't
-        // know it — same `(supabase as any).rpc` pattern as campaign_daily_sends below.
-        user
-          ? fetchCampaignMetrics(supabase as any, user.id)
-          : Promise.resolve({ data: [] as any[] }),
-        // Per-day sends + replies, counted server-side (exact, not capped) — same
-        // RPC the CampaignSendsChart uses. Powers the Estadísticas-style area chart.
-        (supabase as any).rpc("campaign_daily_sends", { p_campaign_id: campaignId, p_days: CHART_DAYS }),
+        (supabase as any).rpc("campaign_step_stats", { p_campaign_id: campaignId }),
       ]);
-      const steps = stepsRes.data || [];
+      if (!alive) return;
+      const steps = (stepsRes.data || []) as { id: string; step_order: number; subject: string }[];
       setCampaignName(campaignRes.data?.name || "Campaña");
       const since: string | null = campaignRes.data?.analytics_reset_at || null;
       setResetAt(since);
 
-      setDaily(
-        ((dailyRes?.data || []) as Array<{ day: string; sends: number; replies: number }>).map((r) => {
-          const d = new Date(`${r.day}T00:00:00`);
-          return {
-            day: r.day,
-            label: d.toLocaleDateString("es", { day: "numeric", month: "short" }),
-            full: d.toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" }),
-            envios: Number(r.sends || 0),
-            respuestas: Number(r.replies || 0),
-          };
-        })
-      );
-
-      const m: any = (metricsRes.data || []).find((r: any) => r.campaign_id === campaignId) || {};
-
-      // All totals come from the server-side RPC (distinct contacted/replied,
-      // raw sent) — accurate and never capped at PostgREST's 1000-row limit.
-      const totalSent = Number(m.sent || 0);
-      const totalReplied = Number(m.replied || 0);
-
-      setStats({
-        // A replier was necessarily contacted, so contacted can never be < replied
-        // (guards the reply rate from ever exceeding 100% on odd data).
-        contacted: Math.max(Number(m.contacted || 0), totalReplied),
-        sent: totalSent,
-        replied: totalReplied,
-      });
-
-      // Per-step breakdown — also server-side counts, same predicate as the RPC
-      // (sent = sent_at set OR status 'sent') so the steps sum to the totals.
-      const perStep: any[] = await Promise.all(
-        steps.map(async (s: any) => {
-          const base = () =>
-            supabase.from("sent_emails").select("id", { count: "exact", head: true })
-              .eq("campaign_id", campaignId).eq("campaign_step_id", s.id);
-          // Tras un "Reiniciar", cada contador mira SU fecha, igual que el RPC.
-          const sentQ = base().or("sent_at.not.is.null,status.eq.sent");
-          const repliedQ = base().not("replied_at", "is", null);
-          const [sSent, sReplied] = await Promise.all([
-            since ? sentQ.gte("sent_at", since) : sentQ,
-            since ? repliedQ.gte("replied_at", since) : repliedQ,
-          ]);
-          return { ...s, sent: sSent.count || 0, replied: sReplied.count || 0 };
-        })
-      );
-
-      // Reconcile: sends not tied to a listed step (null or deleted step_id) go
-      // into an "Other" row so the per-step breakdown adds up to the total sent.
-      const sum = (k: string) => perStep.reduce((a, r: any) => a + (Number(r[k]) || 0), 0);
-      const otherSent = Math.max(0, totalSent - sum("sent"));
-      const otherReplied = Math.max(0, totalReplied - sum("replied"));
-      if (otherSent > 0) {
-        perStep.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, _other: true });
+      let counts: Record<string, { sent: number; replied: number }> | null = null;
+      if (!stepStatsRes?.error && Array.isArray(stepStatsRes?.data)) {
+        counts = {};
+        for (const r of stepStatsRes.data as { campaign_step_id: string | null; sent: unknown; replied: unknown }[]) {
+          if (r.campaign_step_id) counts[r.campaign_step_id] = { sent: num(r.sent), replied: num(r.replied) };
+        }
+      } else if (isMissingRpc(stepStatsRes?.error)) {
+        // Migración aún sin aplicar: los recuentos de siempre, para no dejar la sección vacía.
+        counts = await legacyStepCounts(campaignId, steps, since);
+        if (!alive) return;
       }
-      setStepStats(perStep);
+      if (counts) {
+        setStepsError(null);
+        setStepRows(steps.map((s) => ({ ...s, sent: counts![s.id]?.sent ?? 0, replied: counts![s.id]?.replied ?? 0 })));
+      } else {
+        setStepsError(errorText(stepStatsRes?.error));
+      }
     };
     load();
-  }, [campaignId, user, reloadKey]);
+    return () => { alive = false; };
+  }, [campaignId, reloadKey]);
+
+  // Totales de reserva (sólo si la página no los pasó): misma RPC, una vez.
+  const hasParentMetrics = !!metrics;
+  useEffect(() => {
+    if (hasParentMetrics || !user) return;
+    let alive = true;
+    fetchCampaignMetrics(supabase as any, user.id).then(({ data }) => {
+      if (!alive) return;
+      const m: any = (data || []).find((r: any) => r.campaign_id === campaignId) || {};
+      const replied = num(m.replied);
+      // Quien respondió fue contactado: contacted nunca < replied (la tasa no pasa del 100 %).
+      setFallbackTotals({ sent: num(m.sent), replied, contacted: Math.max(num(m.contacted), replied) });
+    });
+    return () => { alive = false; };
+  }, [campaignId, user, hasParentMetrics, reloadKey]);
+
+  // Pasos + fila "Otros" (envíos sin paso o de pasos borrados) para que la suma cuadre con el total.
+  const stepStats: StepRow[] = (() => {
+    if (!stepRows) return [];
+    const rows = [...stepRows];
+    if (totals) {
+      const sum = (k: "sent" | "replied") => rows.reduce((a, r) => a + r[k], 0);
+      const otherSent = Math.max(0, totals.sent - sum("sent"));
+      const otherReplied = Math.max(0, totals.replied - sum("replied"));
+      if (otherSent > 0) rows.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, _other: true });
+    }
+    return rows;
+  })();
 
   // Reiniciar = poner una marca de tiempo; NO se borra ningún correo ni respuesta (el motor los
   // necesita para no repetir pasos y el Unibox para sus hilos). Se puede deshacer cuando se quiera.
@@ -194,6 +216,9 @@ export default function CampaignAnalytics({ campaignId }: Props) {
     if (error) { toast.error(`No se pudo ${value ? "reiniciar" : "restaurar"}: ${error.message}`); return; }
     setResetAt(value);
     setReloadKey((k) => k + 1);
+    // La gráfica y las métricas las tiene la página: que las vuelva a pedir con el nuevo corte.
+    onDailyReload?.();
+    onMetricsStale?.();
     toast.success(value ? "Analíticas reiniciadas: los contadores empiezan de cero" : "Histórico completo restaurado");
   };
   const handleResetAnalytics = async () => {
@@ -390,10 +415,10 @@ export default function CampaignAnalytics({ campaignId }: Props) {
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
           <h3 className="text-sm font-semibold text-muted-foreground">
-            Reply rate: <span className="text-foreground text-base font-bold">{replyRate}%</span>
+            Reply rate: <span className="text-foreground text-base font-bold">{totalsPending ? "—" : `${replyRate}%`}</span>
           </h3>
           <span className="text-[11px] text-muted-foreground">
-            {stats.replied} respuestas de {stats.contacted} contactados
+            {totalsPending ? "Cargando métricas…" : `${stats.replied} respuestas de ${stats.contacted} contactados`}
           </span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -503,7 +528,7 @@ export default function CampaignAnalytics({ campaignId }: Props) {
             <Card key={m.label}>
               <CardContent className="p-4 text-center">
                 <m.icon className={`h-5 w-5 mx-auto mb-2 ${m.color}`} />
-                <p className="text-2xl font-bold">{m.value}</p>
+                <p className="text-2xl font-bold">{totalsPending ? "—" : m.value}</p>
                 <p className="text-xs text-muted-foreground">{m.label}</p>
               </CardContent>
             </Card>
@@ -516,15 +541,22 @@ export default function CampaignAnalytics({ campaignId }: Props) {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold">Envíos por día · últimos {CHART_DAYS} días</p>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--brand-cyan))" }} /> {daily.reduce((s, p) => s + p.envios, 0).toLocaleString("es")} envíos</span>
-                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--success))" }} /> {daily.reduce((s, p) => s + p.respuestas, 0).toLocaleString("es")} respuestas</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--brand-cyan))" }} /> {dayPoints.reduce((s, p) => s + p.envios, 0).toLocaleString("es")} envíos</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: "hsl(var(--success))" }} /> {dayPoints.reduce((s, p) => s + p.respuestas, 0).toLocaleString("es")} respuestas</span>
               </div>
             </div>
-            {daily.length === 0 ? (
+            {dailyError && onDailyReload && (
+              <RetryNotice what="la gráfica diaria" error={dailyError} onRetry={onDailyReload} stale={daily !== undefined} className="mb-2" />
+            )}
+            {dailyPending ? (
+              <div className="h-[200px] animate-pulse rounded bg-muted/50" />
+            ) : dailyFailed ? (
+              <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">Gráfica no disponible ahora mismo.</div>
+            ) : dayPoints.length === 0 ? (
               <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">Aún no hay envíos en este periodo.</div>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={daily} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <AreaChart data={dayPoints} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                   <defs>
                     <linearGradient id="caSent" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="hsl(var(--brand-cyan))" stopOpacity={0.35} />
@@ -560,6 +592,9 @@ export default function CampaignAnalytics({ campaignId }: Props) {
           </CardContent>
         </Card>
 
+        {stepsError && (
+          <RetryNotice what="la analítica por paso" error={stepsError} onRetry={() => setReloadKey((k) => k + 1)} className="mt-6" />
+        )}
         {stepStats.length > 0 && (
           <div className="mt-6">
             <h4 className="text-sm font-semibold mb-3">Analítica por paso</h4>

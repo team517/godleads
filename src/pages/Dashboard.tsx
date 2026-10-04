@@ -1,94 +1,74 @@
-import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CountUp } from "@/components/ui/count-up";
-import { Button } from "@/components/ui/button";
-import { Send, MessageCircle, Users, Mail, BarChart3, UserCheck } from "lucide-react";
+import { Send, MessageCircle, Users, Mail, UserCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import TodayMessages from "@/components/dashboard/TodayMessages";
+import RetryNotice from "@/components/RetryNotice";
+import { useWidget } from "@/hooks/useWidget";
+import { num } from "@/lib/widget-state";
 
+type Summary = { sent?: unknown; contacted?: unknown; replied?: unknown };
+type CampaignRow = { id: string; name: string; status: string; created_at?: string };
+
+/* Dashboard: cuatro widgets independientes (resumen de envíos, leads, cuentas, campañas recientes).
+   Cada uno se pinta al instante desde la caché de la última visita y se refresca detrás; si uno falla
+   (statement_timeout, token caducado, red) sólo él lo dice y ofrece reintentar — los demás se ven. */
 export default function Dashboard() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  // Instant re-entry: paint cached stats immediately, refresh in background.
-  // Merge the cached stats OVER the full default shape. Critical: an OLD cache from a previous
-  // build lacks `contacted`, and `stats.contacted.toLocaleString()` on undefined threw a
-  // TypeError that blanked the whole app (white screen) right after a redeploy. Spreading the
-  // cache last guarantees every field exists.
-  const [stats, setStats] = useState(() => ({ sent: 0, contacted: 0, replied: 0, leads: 0, accounts: 0, ...(cacheGet<any>("dash:stats") || {}) }));
-  const [campaigns, setCampaigns] = useState<any[]>(() => cacheGet<any[]>("dash:campaigns") || []);
-  const [loading, setLoading] = useState(() => !cacheGet<any>("dash:stats"));
-  // Si la carga falla no se pintan ceros: se avisa y se ofrece reintentar. `hasData` dice si
-  // lo que se ve es de verdad (caché o una carga buena) o si no hay NADA que enseñar.
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [hasData, setHasData] = useState(() => !!cacheGet<any>("dash:stats"));
-  const [reloadTick, setReloadTick] = useState(0);
+  const uid = user?.id;
 
-  useEffect(() => {
-    if (!user) return;
-    const load = async () => {
-      // Enviados/contactados/respuestas salen de la MISMA RPC exacta que Estadísticas
-      // (cuenta server-side, sin el tope de 1000 filas, respuestas del inbox). Así el
-      // Dashboard y Estadísticas siempre cuadran. try/finally → un fallo/lentitud nunca
-      // deja la pantalla en "cargando" (peor caso: enseña lo cacheado o ceros).
-      try {
-        const [statsRes, accountsRes, leadsRes, campaignsRes] = await Promise.all([
-          (supabase as any).rpc("user_email_stats"),
-          // "Cuentas ACTIVAS" = buzones conectados, no todas las filas de la tabla (antes
-          // contaba también las pendientes y las que fallan al conectar).
-          supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "connected"),
-          supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-          supabase.from("campaigns").select("*, campaign_leads(count), sent_emails(count)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(5),
-        ]);
+  // Enviados/contactados/respuestas salen de la MISMA RPC exacta que Estadísticas (cuenta
+  // server-side, sin el tope de 1000 filas). Así el Dashboard y Estadísticas siempre cuadran.
+  const summary = useWidget<Summary>({
+    cacheKey: "dash:summary", enabled: !!uid,
+    load: () => (supabase as any).rpc("user_email_stats"),
+    deps: [uid],
+  });
+  // "Cuentas ACTIVAS" = buzones conectados, no todas las filas de la tabla.
+  const accounts = useWidget<number>({
+    cacheKey: "dash:accounts", enabled: !!uid,
+    load: () => supabase.from("email_accounts").select("id", { count: "exact", head: true }).eq("user_id", uid!).eq("status", "connected")
+      .then((r) => ({ data: r.error ? null : (r.count || 0), error: r.error })),
+    deps: [uid],
+  });
+  const leads = useWidget<number>({
+    cacheKey: "dash:leads", enabled: !!uid,
+    load: () => supabase.from("leads").select("id", { count: "exact", head: true }).eq("user_id", uid!)
+      .then((r) => ({ data: r.error ? null : (r.count || 0), error: r.error })),
+    deps: [uid],
+  });
+  // Sólo lo que se pinta (nombre y estado). Antes pedía también campaign_leads(count) y
+  // sent_emails(count) embebidos, que no se enseñaban y costaban 1,2 s de media (picos de 7,5 s).
+  const campaigns = useWidget<CampaignRow[]>({
+    cacheKey: "dash:campaigns", enabled: !!uid,
+    load: () => supabase.from("campaigns").select("id, name, status, created_at").eq("user_id", uid!).order("created_at", { ascending: false }).limit(5)
+      .then((r) => ({ data: (r.data || []) as CampaignRow[], error: r.error })),
+    deps: [uid],
+  });
 
-        const s = (statsRes?.data || {}) as { sent?: number; contacted?: number; replied?: number };
-        const newStats = {
-          sent: Number(s.sent || 0),
-          contacted: Number(s.contacted || 0),
-          replied: Number(s.replied || 0),
-          leads: leadsRes.count || 0,
-          accounts: accountsRes.count || 0,
-        };
-        // PostgREST no "lanza": devuelve { error }. Sin esta comprobación, un token caducado
-        // guardaba ceros y una lista vacía en el caché de disco y el panel seguía en blanco.
-        const failed = !!(statsRes?.error || accountsRes.error || leadsRes.error || campaignsRes.error);
-        if (failed) { setLoadFailed(true); return; }
-        setLoadFailed(false);
-        setStats(newStats);
-        setCampaigns(campaignsRes.data || []);
-        setHasData(true);
-        cacheSet("dash:stats", newStats);
-        cacheSet("dash:campaigns", campaignsRes.data || []);
-      } catch {
-        /* keep cached view — never hang the spinner */
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [user, reloadTick]);
-
+  const s = summary.data || {};
+  const stats = { sent: num(s.sent), contacted: num(s.contacted), replied: num(s.replied) };
   // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
   const responseRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
 
+  const pending = (w: { data: unknown; loading: boolean }) => w.data === undefined && w.loading;
+  const failedNoData = (w: { data: unknown; error: string | null }) => w.data === undefined && !!w.error;
+
   // Como las métricas del diseño: etiqueta con icono del color de la cifra y cifra grande.
   const statCards = [
-    { label: "Correos enviados", value: stats.sent, icon: Send, color: "text-primary" },
-    { label: "Leads contactados", value: stats.contacted, icon: UserCheck, color: "text-info" },
-    { label: "Tasa de respuesta", value: Number(responseRate), decimals: 1, suffix: "%", icon: MessageCircle, color: "text-success" },
-    { label: "Leads totales", value: stats.leads, icon: Users, color: "text-[hsl(var(--brand-indigo))]" },
-    { label: "Cuentas activas", value: stats.accounts, icon: Mail, color: "text-warning" },
+    { label: "Correos enviados", value: stats.sent, icon: Send, color: "text-primary", w: summary },
+    { label: "Leads contactados", value: stats.contacted, icon: UserCheck, color: "text-info", w: summary },
+    { label: "Tasa de respuesta", value: Number(responseRate), decimals: 1, suffix: "%", icon: MessageCircle, color: "text-success", w: summary },
+    { label: "Leads totales", value: leads.data ?? 0, icon: Users, color: "text-[hsl(var(--brand-indigo))]", w: leads },
+    { label: "Cuentas activas", value: accounts.data ?? 0, icon: Mail, color: "text-warning", w: accounts },
   ];
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
-  }
+  const failures = [
+    { what: "el resumen de envíos", w: summary },
+    { what: "el total de leads", w: leads },
+    { what: "las cuentas activas", w: accounts },
+  ].filter((f) => f.w.error);
 
   return (
     <div className="stagger space-y-6">
@@ -99,29 +79,28 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {loadFailed && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-          <span className="text-[14px] text-muted-foreground">No se pudieron cargar los datos del panel.</span>
-          <Button size="sm" variant="outline" onClick={() => setReloadTick(t => t + 1)}>Reintentar</Button>
+      {failures.length > 0 && (
+        <div className="space-y-1 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          {failures.map((f) => (
+            <RetryNotice key={f.what} what={f.what} error={f.w.error} onRetry={f.w.reload} stale={f.w.data !== undefined} />
+          ))}
         </div>
       )}
 
-      {(hasData || !loadFailed) && (
       <div className="stagger grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((stat, i) => (
-          <Card key={i} className="lift">
+          <Card key={i} className="lift" aria-busy={pending(stat.w)}>
             <CardContent className="p-4 sm:p-5">
               <p className="flex items-center gap-1.5 text-[11.5px] sm:text-[12.5px] font-medium text-muted-foreground">
                 <stat.icon className={`h-3.5 w-3.5 shrink-0 ${stat.color}`} strokeWidth={2} /> <span className="truncate">{stat.label}</span>
               </p>
-              <p className={`mt-1.5 font-display text-[26px] sm:text-[32px] font-semibold leading-none tracking-[-0.03em] tabular ${stat.color}`}>
-                <CountUp value={stat.value} decimals={stat.decimals} suffix={stat.suffix} />
+              <p className={`mt-1.5 font-display text-[26px] sm:text-[32px] font-semibold leading-none tracking-[-0.03em] tabular ${stat.color} ${pending(stat.w) ? "animate-pulse opacity-40" : ""}`}>
+                {failedNoData(stat.w) ? "—" : <CountUp value={stat.value} decimals={stat.decimals} suffix={stat.suffix} />}
               </p>
             </CardContent>
           </Card>
         ))}
       </div>
-      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Today Messages */}
@@ -133,15 +112,16 @@ export default function Dashboard() {
             <CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Campañas recientes</CardTitle>
           </CardHeader>
           <CardContent>
-            {campaigns.length === 0 ? (
-              <p className="text-[15px] text-muted-foreground text-center py-8">
-                {loadFailed && !hasData
-                  ? "No se pudieron cargar las campañas."
-                  : "No tienes campañas aún. ¡Crea tu primera campaña!"}
-              </p>
+            {campaigns.error && (
+              <RetryNotice what="las campañas" error={campaigns.error} onRetry={campaigns.reload} stale={campaigns.data !== undefined} className="mb-3" />
+            )}
+            {pending(campaigns) ? (
+              <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/50" />)}</div>
+            ) : failedNoData(campaigns) ? null : (campaigns.data || []).length === 0 ? (
+              <p className="text-[15px] text-muted-foreground text-center py-8">No tienes campañas aún. ¡Crea tu primera campaña!</p>
             ) : (
               <div className="space-y-3">
-                {campaigns.map((c: any) => (
+                {(campaigns.data || []).map((c) => (
                   <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-rest transition-colors hover:border-[#C9BFFA] hover:bg-accent/30">
                     <p className="min-w-0 truncate text-[15px] font-semibold text-foreground">{c.name}</p>
                     <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold ${

@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import {
   Send, Users, MessageSquareReply, AlertTriangle,
   Play, Pause, FileEdit, ExternalLink, DollarSign,
@@ -16,70 +14,16 @@ const statusMeta: Record<string, { label: string; cls: string; icon: typeof Play
   completed: { label: "Completada", cls: "text-blue-600 dark:text-blue-400",       icon: FileEdit },
 };
 
-/** Instantly-style report bar: campaign details on the left, key metrics on the right. */
+const EMPTY: Metrics = { sent: 0, contacted: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 };
+
+/** Instantly-style report bar: campaign details on the left, key metrics on the right.
+ *  The numbers come from the parent (single campaign_metrics_v2 RPC, exact, server-side). While
+ *  they are not there yet it shows "—": the old fallback downloaded the campaign's sent_emails
+ *  rows with no limit, which PostgREST capped at 1000 → wrong totals on any big campaign. */
 export default function CampaignReportBar({ campaign, metrics: metricsProp }: Props) {
   const navigate = useNavigate();
-  const [m, setM] = useState(metricsProp ?? { sent: 0, contacted: 0, opened: 0, replied: 0, positive: 0, bounced: 0, senderBounced: 0, sequences: 0 });
-  const [loading, setLoading] = useState(!metricsProp);
-
-  useEffect(() => {
-    // Parent provided the numbers (from the single RPC) → render instantly, no query.
-    if (metricsProp) { setM(metricsProp); setLoading(false); return; }
-    let alive = true;
-    const load = async () => {
-      setLoading(true);
-      const [sentRes, stepsRes, posRes] = await Promise.all([
-        supabase.from("sent_emails")
-          .select("status, sent_at, opened_at, replied_at, bounced_at, to_email, lead_id")
-          .eq("campaign_id", campaign.id),
-        supabase.from("campaign_steps")
-          .select("id", { count: "exact", head: true })
-          .eq("campaign_id", campaign.id),
-        supabase.from("inbox_messages")
-          .select("id", { count: "exact", head: true })
-          .eq("campaign_id", campaign.id)
-          .contains("labels", ["Interesado"]),
-      ]);
-      if (!alive) return;
-      const e = sentRes.data || [];
-      const sent = e.filter((x: any) => x.status === "sent" || x.sent_at).length;
-      // Sender Bounced = recipients we could NOT deliver to. Count DISTINCT
-      // recipients (not raw attempt rows) and exclude any that later succeeded —
-      // otherwise one address retried N times inflates the % to nonsense.
-      const okEmails = new Set(
-        e.filter((x: any) => x.status === "sent" || x.sent_at || x.status === "bounced")
-         .map((x: any) => (x.to_email || "").toLowerCase())
-      );
-      const failedEmails = new Set(
-        e.filter((x: any) => x.status === "failed")
-         .map((x: any) => (x.to_email || "").toLowerCase())
-         .filter((em: string) => em && !okEmails.has(em))
-      );
-      // Replied = DISTINCT leads who replied (people), not raw send-rows — a lead who
-      // replied to two steps was being counted twice.
-      const repliedLeads = new Set(
-        e.filter((x: any) => x.replied_at).map((x: any) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)
-      );
-      // Contacted = DISTINCT people emailed → correct denominator for the reply rate.
-      const contactedLeads = new Set(
-        e.filter((x: any) => x.status === "sent" || x.sent_at).map((x: any) => x.lead_id || (x.to_email || "").toLowerCase()).filter(Boolean)
-      );
-      setM({
-        sent,
-        contacted: contactedLeads.size,
-        opened: e.filter((x: any) => x.opened_at).length,
-        replied: repliedLeads.size,
-        bounced: e.filter((x: any) => x.bounced_at).length,
-        senderBounced: failedEmails.size,
-        positive: posRes.count || 0,
-        sequences: stepsRes.count || 0,
-      });
-      setLoading(false);
-    };
-    load();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaign.id, metricsProp]);
+  const m: Metrics = metricsProp ?? EMPTY;
+  const loading = !metricsProp;
 
   const pct = (n: number) => (m.sent > 0 ? `${((n / m.sent) * 100).toFixed(2)}%` : "0%");
   // Reply rate over CONTACTED leads (people), not emails sent (which include

@@ -19,7 +19,8 @@ vi.mock("@/components/campaigns/CampaignOptions", () => ({ default: () => <div>O
 vi.mock("@/components/campaigns/CampaignUnsubscribes", () => ({ default: () => <div>BAJAS</div> }));
 vi.mock("@/integrations/supabase/client", () => {
   const q: any = { select: () => q, eq: () => q, update: () => q, single: () => Promise.resolve({ data: { crm_enabled: false }, error: null }) };
-  return { supabase: { from: () => q } };
+  // La ficha pide la gráfica diaria (campaign_daily_sends) UNA vez al abrir Analítica.
+  return { supabase: { from: () => q, rpc: () => Promise.resolve({ data: [], error: null }) } };
 });
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
