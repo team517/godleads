@@ -51,8 +51,8 @@ export async function settle<T>(p: PromiseLike<RpcLike<T>>): Promise<PromiseSett
 export function isMissingRpc(error: { message?: string; code?: string } | null | undefined): boolean {
   if (!error) return false;
   if (error.code === "PGRST202" || error.code === "42883") return true;
-  const m = (error.message || "").toLowerCase();
-  return m.includes("could not find the function") || m.includes("does not exist");
+  // Sólo el texto exacto de PostgREST; un "column … does not exist" o un timeout NO cuentan.
+  return (error.message || "").toLowerCase().includes("could not find the function");
 }
 
 /** Número seguro desde lo que devuelva el servidor (bigint llega como string). */

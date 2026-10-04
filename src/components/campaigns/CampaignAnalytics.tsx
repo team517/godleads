@@ -9,21 +9,23 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { BarChart3, Send, MessageSquare, Download, Share2, Loader2, Check, Palette, X, RotateCcw, History } from "lucide-react";
 import { useConfirm } from "@/hooks/useConfirm";
 import { fetchCampaignMetrics, formatResetAt } from "@/lib/campaign-metrics";
-import { errorText, isMissingRpc, num } from "@/lib/widget-state";
+import { errorText, isMissingRpc } from "@/lib/widget-state";
 import { toDayPoints, type DailyRpcRow, type DayPoint } from "@/lib/daily-rows";
+import { buildStepRows, totalsFromRpcRow, type StepRow, type StepStatRow, type Totals } from "@/lib/campaign-analytics-rows";
 import RetryNotice from "@/components/RetryNotice";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 // jsPDF (~350KB) is loaded on demand inside handleDownloadPDF — not at page load.
 
-type Totals = { sent: number; contacted: number; replied: number };
-type StepRow = { id: string; step_order: number | string; subject: string; sent: number; replied: number; _other?: boolean };
-
 interface Props {
   campaignId: string;
-  /** Métricas de ESTA campaña desde la página (una sola RPC para todas). `undefined` = aún no cargadas. */
-  metrics?: Totals | null;
+  /** Fila CRUDA de campaign_metrics_v2 de ESTA campaña desde la página (una sola RPC para todas;
+   *  respeta "Reiniciar analíticas"). `undefined` = aún no cargada. */
+  metrics?: { sent?: unknown; contacted?: unknown; replied?: unknown } | null;
+  /** Fallo de esa RPC en la página, para decirlo aquí con su Reintentar. */
+  metricsError?: string | null;
+  onRetryMetrics?: () => void;
   /** Filas de campaign_daily_sends (14 días) que la ficha pide UNA vez para las dos gráficas. */
   daily?: DailyRpcRow[];
   dailyLoading?: boolean;
@@ -70,20 +72,23 @@ async function imgToPngDataUrl(src: string): Promise<{ data: string; w: number; 
   }
 }
 
-export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoading, dailyError, onDailyReload, onMetricsStale }: Props) {
+export default function CampaignAnalytics({ campaignId, metrics, metricsError, onRetryMetrics, daily, dailyLoading, dailyError, onDailyReload, onMetricsStale }: Props) {
   const { user } = useAuth();
   const { profile } = useProfile();
-  // Totales: los da la página (campaign_metrics_v2, UNA RPC para todas las campañas). Sólo si la
-  // página aún no los tiene se piden aquí una vez (misma RPC, ya rápida) — nunca contando filas en
-  // el navegador, que PostgREST capa a 1000.
+  // Totales: la fila cruda de campaign_metrics_v2 que da la página (UNA RPC para todas las
+  // campañas). Sólo si la página aún no la tiene se pide aquí una vez (misma RPC) — nunca contando
+  // filas en el navegador, que PostgREST capa a 1000. Un fallo deja los totales en null ("—" +
+  // Reintentar), jamás en ceros.
   const [fallbackTotals, setFallbackTotals] = useState<Totals | null>(null);
-  const totals: Totals | null = metrics ?? fallbackTotals;
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const totals: Totals | null = totalsFromRpcRow(metrics) ?? fallbackTotals;
   const stats: Totals = totals ?? { contacted: 0, sent: 0, replied: 0 };
   const totalsPending = !totals;
+  const totalsError = totals ? null : (metricsError || fallbackError);
   const dayPoints: DayPoint[] = toDayPoints(daily);
   const dailyPending = daily === undefined && !!dailyLoading;
   const dailyFailed = daily === undefined && !!dailyError;
-  const [stepRows, setStepRows] = useState<StepRow[] | null>(null);
+  const [stepStats, setStepStats] = useState<StepRow[]>([]);
   const [stepsError, setStepsError] = useState<string | null>(null);
   const [campaignName, setCampaignName] = useState("");
   const [downloading, setDownloading] = useState(false);
@@ -157,20 +162,17 @@ export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoa
       const since: string | null = campaignRes.data?.analytics_reset_at || null;
       setResetAt(since);
 
-      let counts: Record<string, { sent: number; replied: number }> | null = null;
       if (!stepStatsRes?.error && Array.isArray(stepStatsRes?.data)) {
-        counts = {};
-        for (const r of stepStatsRes.data as { campaign_step_id: string | null; sent: unknown; replied: unknown }[]) {
-          if (r.campaign_step_id) counts[r.campaign_step_id] = { sent: num(r.sent), replied: num(r.replied) };
-        }
+        // Filas por paso + "Other (no step)" salen del propio RPC (envíos sin paso o de pasos
+        // borrados), nunca de "total − suma": sin filas fantasma tras un reinicio.
+        setStepsError(null);
+        setStepStats(buildStepRows(steps, stepStatsRes.data as StepStatRow[]));
       } else if (isMissingRpc(stepStatsRes?.error)) {
         // Migración aún sin aplicar: los recuentos de siempre, para no dejar la sección vacía.
-        counts = await legacyStepCounts(campaignId, steps, since);
+        const counts = await legacyStepCounts(campaignId, steps, since);
         if (!alive) return;
-      }
-      if (counts) {
         setStepsError(null);
-        setStepRows(steps.map((s) => ({ ...s, sent: counts![s.id]?.sent ?? 0, replied: counts![s.id]?.replied ?? 0 })));
+        setStepStats(steps.map((s) => ({ ...s, sent: counts[s.id]?.sent ?? 0, replied: counts[s.id]?.replied ?? 0 })));
       } else {
         setStepsError(errorText(stepStatsRes?.error));
       }
@@ -179,33 +181,23 @@ export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoa
     return () => { alive = false; };
   }, [campaignId, reloadKey]);
 
-  // Totales de reserva (sólo si la página no los pasó): misma RPC, una vez.
+  // Totales de reserva (sólo si la página no los pasó): misma RPC, una vez. Un error NO se
+  // convierte en ceros: se guarda y se enseña con Reintentar.
   const hasParentMetrics = !!metrics;
   useEffect(() => {
     if (hasParentMetrics || !user) return;
     let alive = true;
-    fetchCampaignMetrics(supabase as any, user.id).then(({ data }) => {
+    fetchCampaignMetrics(supabase as any, user.id).then(({ data, error }) => {
       if (!alive) return;
-      const m: any = (data || []).find((r: any) => r.campaign_id === campaignId) || {};
-      const replied = num(m.replied);
-      // Quien respondió fue contactado: contacted nunca < replied (la tasa no pasa del 100 %).
-      setFallbackTotals({ sent: num(m.sent), replied, contacted: Math.max(num(m.contacted), replied) });
+      if (error || !Array.isArray(data)) { setFallbackError(errorText(error)); return; }
+      const m = data.find((r: any) => r.campaign_id === campaignId);
+      if (!m) { setFallbackError("La campaña no aparece en las métricas"); return; }
+      setFallbackError(null);
+      setFallbackTotals(totalsFromRpcRow(m));
     });
     return () => { alive = false; };
   }, [campaignId, user, hasParentMetrics, reloadKey]);
-
-  // Pasos + fila "Otros" (envíos sin paso o de pasos borrados) para que la suma cuadre con el total.
-  const stepStats: StepRow[] = (() => {
-    if (!stepRows) return [];
-    const rows = [...stepRows];
-    if (totals) {
-      const sum = (k: "sent" | "replied") => rows.reduce((a, r) => a + r[k], 0);
-      const otherSent = Math.max(0, totals.sent - sum("sent"));
-      const otherReplied = Math.max(0, totals.replied - sum("replied"));
-      if (otherSent > 0) rows.push({ id: "__other__", step_order: "·", subject: "Other (no step)", sent: otherSent, replied: otherReplied, _other: true });
-    }
-    return rows;
-  })();
+  const retryTotals = () => { if (onRetryMetrics) onRetryMetrics(); if (!hasParentMetrics) setReloadKey((k) => k + 1); };
 
   // Reiniciar = poner una marca de tiempo; NO se borra ningún correo ni respuesta (el motor los
   // necesita para no repetir pasos y el Unibox para sus hilos). Se puede deshacer cuando se quiera.
@@ -418,8 +410,9 @@ export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoa
             Reply rate: <span className="text-foreground text-base font-bold">{totalsPending ? "—" : `${replyRate}%`}</span>
           </h3>
           <span className="text-[11px] text-muted-foreground">
-            {totalsPending ? "Cargando métricas…" : `${stats.replied} respuestas de ${stats.contacted} contactados`}
+            {totalsPending ? (totalsError ? "Métricas no disponibles" : "Cargando métricas…") : `${stats.replied} respuestas de ${stats.contacted} contactados`}
           </span>
+          {totalsError && <RetryNotice what="las métricas" error={totalsError} onRetry={retryTotals} className="mt-1 text-[12px]" />}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
@@ -483,7 +476,8 @@ export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoa
             size="sm"
             className="gap-1.5 text-xs"
             onClick={handleDownloadPDF}
-            disabled={downloading}
+            disabled={downloading || totalsPending}
+            title={totalsPending ? "Espera a que carguen las métricas" : undefined}
           >
             {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
             Descargar PDF
@@ -509,7 +503,7 @@ export default function CampaignAnalytics({ campaignId, metrics, daily, dailyLoa
                   size="sm"
                   className="h-8 gap-1.5"
                   onClick={handleShareEmail}
-                  disabled={sharing || !shareEmail.trim()}
+                  disabled={sharing || totalsPending || !shareEmail.trim()}
                   variant={!shareEmail.trim() ? "secondary" : "default"}
                 >
                   {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}

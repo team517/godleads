@@ -43,6 +43,8 @@ describe("estado de un widget (carga por tarjeta, nunca la página entera en bla
     expect(isMissingRpc({ code: "PGRST202", message: "Could not find the function public.campaign_lead_counts" })).toBe(true);
     expect(isMissingRpc({ code: "42883", message: "function does not exist" })).toBe(true);
     expect(isMissingRpc({ message: "canceling statement due to statement timeout" })).toBe(false);
+    // "does not exist" a secas puede ser una columna o una tabla: no es «función sin desplegar».
+    expect(isMissingRpc({ code: "42703", message: "column n.campaign_id does not exist" })).toBe(false);
     expect(isMissingRpc(null)).toBe(false);
   });
 

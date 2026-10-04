@@ -16,13 +16,22 @@ export function useWidget<T>(opts: {
   deps: unknown[];
 }): WidgetState<T> & { reload: () => void } {
   const { cacheKey, enabled = true, deps } = opts;
-  const [state, setState] = useState<WidgetState<T>>(() => initialWidget<T>(cacheKey ? cacheGet<T>(cacheKey) : undefined));
+  const fresh = () => initialWidget<T>(cacheKey ? cacheGet<T>(cacheKey) : undefined);
+  const [state, setState] = useState<WidgetState<T>>(fresh);
   const [tick, setTick] = useState(0);
   // La función de carga cambia en cada render: se lee la última desde un ref para no relanzar.
   const loadRef = useRef(opts.load);
   loadRef.current = opts.load;
+  // Si cambian la clave o las dependencias (otra campaña, otro usuario) el dato anterior ya no
+  // vale: se vuelve al estado inicial de la clave nueva en vez de enseñar el de la vieja.
+  const identity = JSON.stringify([cacheKey ?? null, ...deps]);
+  const lastIdentity = useRef(identity);
 
   useEffect(() => {
+    if (lastIdentity.current !== identity) {
+      lastIdentity.current = identity;
+      setState(fresh());
+    }
     if (!enabled) return;
     let alive = true;
     setState((s) => ({ ...s, loading: true }));
@@ -38,7 +47,7 @@ export function useWidget<T>(opts: {
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, tick, ...deps]);
+  }, [enabled, tick, identity]);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { ...state, reload };

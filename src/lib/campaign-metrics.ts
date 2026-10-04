@@ -4,14 +4,20 @@
 // los contadores sólo cuentan lo ocurrido después; no se borra nada). Si por lo que sea no existe
 // todavía en la base de datos, se cae a la función de siempre en vez de enseñar ceros.
 
-type RpcError = { message: string } | null;
+import { isMissingRpc } from "@/lib/widget-state";
+
+type RpcError = { message: string; code?: string } | null;
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: RpcError }> };
 
 export async function fetchCampaignMetrics(client: RpcClient, userId: string): Promise<{ data: any[] | null; error: RpcError }> {
   const v2 = await client.rpc("campaign_metrics_v2", { p_user_id: userId });
   if (!v2.error && Array.isArray(v2.data)) return { data: v2.data as any[], error: null };
+  // Sólo si la función NO EXISTE se cae a la de siempre. Cualquier otro fallo (timeout, token
+  // caducado) se devuelve tal cual: la vieja ignora "Reiniciar analíticas" y enseñaría números de
+  // antes del reinicio como si fueran buenos.
+  if (v2.error && !isMissingRpc(v2.error)) return { data: null, error: v2.error };
   const v1 = await client.rpc("campaign_metrics_for_user", { p_user_id: userId });
-  return { data: Array.isArray(v1.data) ? (v1.data as any[]) : null, error: v1.error };
+  return { data: Array.isArray(v1.data) ? (v1.data as any[]) : null, error: v1.error ?? (Array.isArray(v1.data) ? null : { message: "Sin datos de métricas" }) };
 }
 
 /** "21 sept, 20:15" — para el aviso «contando desde…». */

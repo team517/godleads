@@ -1,7 +1,8 @@
 import { fetchBounceBreakdown, fetchCampaignMetrics, type BounceBreakdown } from "@/lib/campaign-metrics";
 import { useState, useEffect } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
-import { isMissingRpc, num } from "@/lib/widget-state";
+import { errorText, isMissingRpc, num } from "@/lib/widget-state";
+import RetryNotice from "@/components/RetryNotice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -95,6 +96,9 @@ export default function Campaigns() {
   const [remixRunning, setRemixRunning] = useState(false);
   const [remixProgress, setRemixProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Fallo de la RPC de métricas (timeout, token caducado): se dice y se ofrece reintentar en vez de
+  // dejar las columnas en "—" o en ceros para siempre.
+  const [metricsError, setMetricsError] = useState<string | null>(null);
 
   const load = async () => {
     if (!user) return;
@@ -127,7 +131,8 @@ export default function Campaigns() {
     const camps: any[] = list ?? campaigns;
     // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer).
     const metricsP = fetchCampaignMetrics(supabase as any, user.id).then(({ data: rows, error }) => {
-      if (error || !Array.isArray(rows)) return;
+      if (error || !Array.isArray(rows)) { setMetricsError(errorText(error)); return; }
+      setMetricsError(null);
       const map: Record<string, any> = {};
       for (const r of rows as any[]) {
         map[r.campaign_id] = {
@@ -454,6 +459,9 @@ export default function Campaigns() {
         campaign={selectedCampaign}
         nameSlot={<EditableCampaignName campaign={selectedCampaign} onSaved={load} compact />}
         metrics={metricsFor(selectedCampaign.id)}
+        rawMetrics={metricsMap[selectedCampaign.id]}
+        metricsError={metricsError}
+        onRetryMetrics={() => { void reloadMetrics(); }}
         onBack={() => setSelectedId(null)}
         onToggleStatus={() => handleStatusToggle(selectedCampaign)}
         onMetricsStale={() => { void reloadMetrics(); }}
@@ -504,6 +512,10 @@ export default function Campaigns() {
             </Button>
           </CardContent>
         </Card>
+      )}
+
+      {metricsError && campaigns.length > 0 && (
+        <RetryNotice what="las métricas de las campañas" error={metricsError} onRetry={() => { void reloadMetrics(); }} stale={Object.keys(metricsMap).length > 0} />
       )}
 
       {campaigns.length === 0 && !loadError ? (

@@ -48,7 +48,12 @@ interface Props {
   campaign: any;
   /** El nombre editable (lo pinta la página, que sabe guardarlo). */
   nameSlot: ReactNode;
+  /** Métricas para la barra de informe (la lista mezcla `contacted` con el progreso de leads). */
   metrics?: any;
+  /** Fila CRUDA de campaign_metrics_v2 para la pestaña Analítica (respeta "Reiniciar analíticas"). */
+  rawMetrics?: any;
+  metricsError?: string | null;
+  onRetryMetrics?: () => void;
   onBack: () => void;
   onToggleStatus: () => void;
   /** Tras "Reiniciar analíticas": la página vuelve a pedir las métricas de las campañas. */
@@ -77,7 +82,7 @@ function SubTabs<T extends string>({ value, onChange, items }: { value: T; onCha
 
 const Loading = () => <div className="py-12 text-center text-sm text-muted-foreground">Cargando…</div>;
 
-export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, onToggleStatus, onMetricsStale }: Props) {
+export default function CampaignDetail({ campaign, nameSlot, metrics, rawMetrics, metricsError, onRetryMetrics, onBack, onToggleStatus, onMetricsStale }: Props) {
   const campaignId: string = campaign.id;
   const [tab, setTab] = useState<Tab>("editor");
   // Envíos/respuestas por día: UNA llamada de 14 días al abrir Analítica, que alimenta la gráfica
@@ -201,7 +206,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, onBack, on
           <SubTabs<"summary" | "sent"> value={analyticsView} onChange={setAnalyticsView} items={[{ id: "summary", label: "Resumen" }, { id: "sent", label: "Enviados" }]} />
           <Suspense fallback={<Loading />}>
             {analyticsView === "summary"
-              ? <CampaignAnalytics campaignId={campaignId} metrics={metrics ?? undefined} daily={daily.data} dailyLoading={daily.loading} dailyError={daily.error} onDailyReload={daily.reload} onMetricsStale={onMetricsStale} />
+              ? <CampaignAnalytics campaignId={campaignId} metrics={rawMetrics ?? undefined} metricsError={metricsError} onRetryMetrics={onRetryMetrics} daily={daily.data} dailyLoading={daily.loading} dailyError={daily.error} onDailyReload={daily.reload} onMetricsStale={onMetricsStale} />
               : <CampaignSentLog campaignId={campaignId} />}
           </Suspense>
         </div>

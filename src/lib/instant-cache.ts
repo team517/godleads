@@ -30,17 +30,30 @@ const PERSIST_KEYS = new Set([
 
 let boundUid: string | null = null;
 
-/** Bind the cache to the signed-in user (null = signed out → purge disk). */
+/** Claves de versiones anteriores que ya no se usan: se borran del disco al arrancar. */
+const STALE_PERSIST_KEYS = ["dash:stats"];
+
+function purgeDisk(onlyStale: boolean): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(PERSIST_PREFIX)) continue;
+      if (onlyStale && !STALE_PERSIST_KEYS.includes(key.slice(PERSIST_PREFIX.length))) continue;
+      localStorage.removeItem(key);
+    }
+  } catch { /* storage unavailable */ }
+}
+
+/** Bind the cache to the signed-in user. Sign-out OR a different user → purge memory and disk,
+ *  so another login on the same browser never sees (or paints) the previous user's data. */
 export function bindCacheUser(uid: string | null): void {
   if (boundUid === uid) return;
+  const switching = boundUid !== null;
   boundUid = uid;
-  if (!uid) {
+  if (!uid || switching) {
     store.clear();
-    try {
-      for (const key of Object.keys(localStorage)) {
-        if (key.startsWith(PERSIST_PREFIX)) localStorage.removeItem(key);
-      }
-    } catch { /* storage unavailable */ }
+    purgeDisk(false);
+  } else {
+    purgeDisk(true);
   }
 }
 

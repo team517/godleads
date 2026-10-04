@@ -39,6 +39,17 @@ describe("useWidget", () => {
     expect(result.current.error).toMatch(/not a function/);
   });
 
+  it("al cambiar las dependencias (otra campaña) no enseña el dato de la anterior", async () => {
+    const load = vi.fn(async ({ id }: { id: string }) => ({ data: `datos-${id}`, error: null }));
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useWidget<string>({ load: () => load({ id }), deps: [id] }), { initialProps: { id: "c1" } });
+    await waitFor(() => expect(result.current.data).toBe("datos-c1"));
+    rerender({ id: "c2" });
+    // Nada más cambiar: sin dato (no "datos-c1") y cargando.
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.loading).toBe(true);
+    await waitFor(() => expect(result.current.data).toBe("datos-c2"));
+  });
+
   it("enabled=false no carga hasta que se active", async () => {
     const load = vi.fn(async () => ({ data: 1, error: null }));
     const { result, rerender } = renderHook(({ on }: { on: boolean }) => useWidget<number>({ enabled: on, load, deps: [] }), { initialProps: { on: false } });
