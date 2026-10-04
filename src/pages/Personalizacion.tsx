@@ -8,13 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil } from "lucide-react";
+import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil, ListChecks, Square } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
 import { crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos } from "@/lib/personalization-store";
+import { columnasDe, csvPersonalizado, estadoTrabajo, hayActivas, nombreDescarga, ordenarCola, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -29,10 +30,19 @@ function persistPrompts(list: SavedPrompt[]) {
   try { localStorage.setItem(PROMPTS_KEY, JSON.stringify(list.slice(0, 50))); } catch { /* quota */ }
 }
 
-/** Flatten an HTML/multiline message into one CSV-safe cell (no raw newlines that
- *  would break Instantly/Smartlead importers). */
-function flattenCell(s: string): string {
-  return (s || "").replace(/>\s+</g, "><").replace(/\r?\n+/g, " ").trim();
+/** Lo que necesita el diálogo "Enviar a campaña": los leads y mensajes de UNA lista concreta
+ *  (la abierta en el editor o cualquiera de la cola), no el estado suelto de la página. */
+type ContextoEnvio = { jobId: string | null; filename: string; columns: string[]; emailColumn: string; rows: Row[]; results: ResultsMap };
+
+/** Descarga un texto como archivo (con BOM: Excel abre los acentos bien). */
+function descargarTexto(nombre: string, texto: string) {
+  const url = URL.createObjectURL(new Blob(["\ufeff" + texto], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -83,8 +93,10 @@ export default function Personalizacion() {
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  /** Registro: las últimas personalizaciones de esta cuenta, para volver a cualquiera. */
-  const [history, setHistory] = useState<any[]>([]);
+  /** Cola y registro: todas las listas de esta cuenta (en cola, generándose, terminadas), en vivo. */
+  const [history, setHistory] = useState<TrabajoCola[]>([]);
+  const [descargando, setDescargando] = useState<string | null>(null);
+  const [cargandoEnvio, setCargandoEnvio] = useState<string | null>(null);
   const [emailColumn, setEmailColumn] = useState<string>("");
 
   const [prompt, setPrompt] = useState(
@@ -116,6 +128,7 @@ export default function Personalizacion() {
 
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; leadCount: number }[]>([]);
   const [sendOpen, setSendOpen] = useState(false);
+  const [sendCtx, setSendCtx] = useState<ContextoEnvio | null>(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -140,16 +153,16 @@ export default function Personalizacion() {
   // Leads that will ACTUALLY be added to a campaign: distinct valid email + a message
   // generated OK (no error). This is the number shown/added — deduped, so no double-send.
   const sendableCount = useMemo(() => {
-    if (!emailColumn) return 0;
+    if (!sendCtx?.emailColumn) return 0;
     const seen = new Set<string>();
-    for (const r of rows) {
-      const e = (r[emailColumn] || "").toString().toLowerCase().trim();
+    for (const r of sendCtx.rows) {
+      const e = (r[sendCtx.emailColumn] || "").toString().toLowerCase().trim();
       if (!e || !EMAIL_RE.test(e) || seen.has(e)) continue;
-      const rr = results[String(r.__idx)];
+      const rr = sendCtx.results[String(r.__idx)];
       if (rr?.message && !rr.error) seen.add(e);
     }
     return seen.size;
-  }, [rows, emailColumn, results]);
+  }, [sendCtx]);
 
   const authToken = async () => (await supabase.auth.getSession()).data.session?.access_token;
 
@@ -160,57 +173,60 @@ export default function Personalizacion() {
     }).catch(() => {});
   };
 
-  // ── Restore the latest job on mount (so a job finished/running with the PC off is here) ──
-  // Two-step so the progress shows INSTANTLY even with 10k rows: first a light query
-  // (just the counters — no heavy rows/results JSON), then load rows/results after.
+  // ── Al entrar: el último prompt usado, listo para la siguiente lista ──
+  // Las listas (en marcha o terminadas) se ven en la cola de arriba, con su progreso y su
+  // descarga; antes se abría la última en el editor, y con varias listas eso estorbaba para
+  // subir la siguiente. Para ver una en el editor está el botón "Abrir" de la cola.
   useEffect(() => {
     if (!user) return;
     let alive = true;
     (async () => {
-      // 1) Light: id + config + progress counters. Renders the progress banner at once.
       const { data: light } = await (supabase as any)
         .from("personalization_csv_jobs")
-        .select("id, filename, prompt, provider, email_column, columns, status, total, done, ok, failed")
+        .select("prompt, provider")
         .eq("user_id", user.id)
-        .neq("status", "uploading")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (!light || !alive) return;
       const d = light as any;
-      setJobId(d.id);
-      setFilename(d.filename || "");
-      setPrompt(d.prompt || "");
+      if (d.prompt) setPrompt(d.prompt);
       setProvider(d.provider === "claude" ? "claude" : "deepseek");
-      setEmailColumn(d.email_column || "");
-      setColumns(Array.isArray(d.columns) ? d.columns : []);
-      setJobStatus(d.status || "");
-      setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
-      // 2) Heavy: rows + results (for the download / send-to-campaign). Loaded after so the
-      // multi-MB payload never blocks the progress from appearing.
-      const heavy = await leerTrabajo(supabase, d.id).catch(() => null);
-      if (!heavy || !alive) return;
-      setRows(heavy.rows as Row[]);
-      setResults(heavy.results);
     })();
     return () => { alive = false; };
   }, [user]);
 
-  // ── Registro de personalizaciones ───────────────────────────────────────────────────
+  // ── Cola de personalizaciones ───────────────────────────────────────────────────────
+  // Cada "Generar todo" crea un trabajo en el servidor; aquí se ven TODOS (en cola, generándose,
+  // terminados) con su progreso en vivo, y de cada uno se descarga su CSV o se manda a campaña.
   const loadHistory = useCallback(async () => {
     if (!user) return;
     const { data } = await (supabase as any)
       .from("personalization_csv_jobs")
-      .select("id, filename, status, total, done, ok, failed, created_at")
+      .select("id, filename, status, total, done, ok, failed, created_at, updated_at, columns, email_column")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
-      .limit(12);
-    setHistory(Array.isArray(data) ? data : []);
+      .limit(40);
+    setHistory(ordenarCola(Array.isArray(data) ? (data as TrabajoCola[]) : []));
   }, [user]);
 
   useEffect(() => { void loadHistory(); }, [loadHistory]);
-  // Cuando una generación cambia de estado, el registro se pone al día solo.
+  // Cuando una generación cambia de estado, la cola se pone al día sola.
   useEffect(() => { if (jobStatus) void loadHistory(); }, [jobStatus, loadHistory]);
+
+  const hayActivos = hayActivas(history);
+  const activos = history.filter((h) => estadoTrabajo(h).activo);
+  // Mientras haya listas en marcha: progreso en vivo y empujón al procesador (así no espera al
+  // cron de cada minuto; el procesador lleva hasta 4 listas a la vez y el resto espera su turno).
+  useEffect(() => {
+    if (!hayActivos) return;
+    let alive = true;
+    const tick = async () => { kickProcessor(); if (alive) await loadHistory(); };
+    kickProcessor();
+    const timer = setInterval(() => { void tick(); }, 3500);
+    return () => { alive = false; clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hayActivos, loadHistory]);
 
   /** Vuelve a abrir una personalización del registro: su archivo, su prompt y sus mensajes. */
   const openHistoryJob = async (id: string) => {
@@ -282,10 +298,8 @@ export default function Personalizacion() {
         if (full && alive) setResults(full);
         return;
       }
-      kickProcessor();
       if (alive) timer = setTimeout(tick, 3500);
     };
-    kickProcessor();
     timer = setTimeout(tick, 800);
     return () => { alive = false; clearTimeout(timer); };
   }, [jobId, jobStatus]);
@@ -354,9 +368,8 @@ export default function Personalizacion() {
     setStarting(true);
     // Fresh job every run (regenerate = new job). Los leads se suben por tandas: con miles de
     // filas, una sola petición de decenas de MB se cortaba ("Failed to fetch").
-    let id = "";
     try {
-      id = await crearTrabajo(supabase,
+      await crearTrabajo(supabase,
         { user_id: user.id, filename, prompt, provider, email_column: emailColumn, columns },
         rows, (hechas, total) => setSubida({ hechas, total }));
     } catch (e: any) {
@@ -365,48 +378,50 @@ export default function Personalizacion() {
       return;
     }
     setStarting(false); setSubida(null);
-    setResults({});
-    setProg({ done: 0, ok: 0, failed: 0, total: rows.length });
-    setJobStatus("pending");
-    setJobId(id);
-    toast.success("Generando en el servidor — puedes cerrar la página, sigue solo.");
-  };
-
-  const handleStop = async () => {
-    if (!jobId) return;
-    // Flip local status FIRST so the poll effect stops kicking the processor immediately,
-    // then persist "cancelled". The server now honours it (won't rewrite "running"), so a
-    // refresh reads "cancelled" and does not resume.
-    setJobStatus("cancelled");
-    await (supabase as any).from("personalization_csv_jobs").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", jobId);
-    const { data } = await (supabase as any).from("personalization_csv_jobs").select("done, ok, failed, total").eq("id", jobId).maybeSingle();
-    if (data) {
-      const d = data as any;
-      setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
-    }
-    const parciales = await leerResultados(supabase, jobId).catch(() => null);
-    if (parciales) setResults(parciales);
-    toast.success("Parado. Puedes descargar/enviar lo generado hasta ahora.");
-  };
-
-  // Descartar el banner: borra el trabajo de la BD (para que no vuelva al refrescar) y
-  // limpia el estado del trabajo. Deja el CSV cargado por si quieres volver a generar.
-  const dismissJob = async () => {
-    const id = jobId;
-    setJobId(null); setJobStatus(""); setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 });
-    if (id) await (supabase as any).from("personalization_csv_jobs").delete().eq("id", id);
-    toast.success("Generación descartada");
-  };
-
-  // Reanudar un trabajo parado: lo devuelve a "pending" para que el procesador lo retome
-  // y CONTINÚE donde se quedó (solo genera las filas que faltan, no repite lo ya hecho).
-  const resumeJob = async () => {
-    if (!jobId) return;
-    setJobStatus("pending"); // reactiva el sondeo + el kick al procesador
-    await (supabase as any).from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", jobId);
+    // A la cola. La página vuelve al paso 1 (el prompt se queda) para poder subir la siguiente
+    // lista; el progreso y la descarga de cada una están en la cola de arriba.
+    const nombre = filename, leads = rows.length, habiaActivas = hayActivos;
+    setRows([]); setColumns([]); setFilename(""); setEmailColumn(""); setPreview("");
+    setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 }); setJobStatus(""); setJobId(null);
+    if (fileRef.current) fileRef.current.value = "";
+    await loadHistory();
     kickProcessor();
-    toast.success("Reanudando generación en el servidor — sigue donde se quedó.");
+    toast.success(habiaActivas
+      ? `En cola: ${nombre} (${leads.toLocaleString("es-ES")} leads). Seguirá cuando acabe la anterior; puedes subir otra lista.`
+      : `Generando en el servidor: ${nombre} (${leads.toLocaleString("es-ES")} leads). Puedes cerrar el PC o subir otra lista.`);
   };
+
+  /** Para una lista (la abierta o cualquiera de la cola). El servidor respeta "cancelled" y no
+   *  vuelve a escribir "running", así que al recargar sigue parada. */
+  const pararTrabajo = async (id: string) => {
+    if (jobId === id) setJobStatus("cancelled"); // primero en local: el sondeo deja de empujar al instante
+    setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, status: "cancelled" } : h)));
+    await (supabase as any).from("personalization_csv_jobs").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+    if (jobId === id) {
+      const { data } = await (supabase as any).from("personalization_csv_jobs").select("done, ok, failed, total").eq("id", id).maybeSingle();
+      if (data) {
+        const d = data as any;
+        setProg({ done: d.done || 0, ok: d.ok || 0, failed: d.failed || 0, total: d.total || 0 });
+      }
+      const parciales = await leerResultados(supabase, id).catch(() => null);
+      if (parciales) setResults(parciales);
+    }
+    void loadHistory();
+    toast.success("Parada. Puedes descargar o enviar lo generado hasta ahora, o reanudarla.");
+  };
+  const handleStop = () => jobId ? pararTrabajo(jobId) : undefined;
+
+  // Reanudar una lista parada: vuelve a "pending" y el procesador CONTINÚA donde se quedó
+  // (sólo genera los leads que faltan, no repite lo ya hecho).
+  const reanudarTrabajo = async (id: string) => {
+    if (jobId === id) setJobStatus("pending"); // reactiva el sondeo del trabajo abierto
+    setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, status: "pending" } : h)));
+    await (supabase as any).from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", id);
+    kickProcessor();
+    void loadHistory();
+    toast.success("Reanudada: sigue donde se quedó.");
+  };
+  const resumeJob = () => jobId ? reanudarTrabajo(jobId) : undefined;
 
   // Los leads que quedaron en error (tras los reintentos automáticos) se vuelven a generar.
   const [retrying, setRetrying] = useState(false);
@@ -436,17 +451,39 @@ export default function Personalizacion() {
   const downloadCsv = async () => {
     if (!rows.length) return;
     const res = await ensureResults();
-    const out = rows.map((r) => {
-      const { __idx, ...orig } = r;
-      const rr = res[String(__idx)];
-      return { ...orig, personalized_message: rr?.error ? `[ERROR] ${rr.error}` : flattenCell(rr?.message || "") };
-    });
-    const csv = Papa.unparse(out);
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = (filename.replace(/\.csv$/i, "") || "leads") + "_personalizado.csv"; a.click();
-    URL.revokeObjectURL(url);
+    descargarTexto(nombreDescarga(filename), csvPersonalizado(columns, rows, res));
+  };
+
+  /** Los leads y mensajes de una lista de la cola: los de la página si es la abierta, si no los
+   *  guardados en el servidor (cada lista queda guardada con su personalización). */
+  const datosDe = async (h: TrabajoCola): Promise<{ rows: Row[]; results: ResultsMap }> => {
+    if (h.id === jobId && rows.length) return { rows, results: await ensureResults() };
+    const datos = await leerTrabajo(supabase, h.id);
+    return { rows: datos.rows as Row[], results: datos.results as ResultsMap };
+  };
+
+  const descargarTrabajo = async (h: TrabajoCola) => {
+    if (descargando) return;
+    setDescargando(h.id);
+    try {
+      const datos = await datosDe(h);
+      if (!datos.rows.length) { toast.error("Esta lista no tiene leads guardados."); return; }
+      descargarTexto(nombreDescarga(h.filename), csvPersonalizado(columnasDe(h.columns, datos.rows), datos.rows, datos.results));
+    } catch (e: any) { toast.error(`No se pudo descargar: ${e?.message || e}`); }
+    finally { setDescargando(null); }
+  };
+
+  /** Abre el diálogo "Enviar a campaña" con los leads de UNA lista. */
+  const abrirEnvio = async (ctx: ContextoEnvio) => {
+    if (!user) return;
+    const { data } = await supabase.from("campaigns").select("id, name, status").eq("user_id", user.id).order("created_at", { ascending: false });
+    const list = (data || []) as { id: string; name: string; status: string }[];
+    // Count the leads each campaign ALREADY has, so you see it before/after adding.
+    const withCounts = await Promise.all(list.map(async (c) => {
+      const { count } = await supabase.from("campaign_leads").select("lead_id", { count: "exact", head: true }).eq("campaign_id", c.id);
+      return { ...c, leadCount: count || 0 };
+    }));
+    setSendCtx(ctx); setCampaigns(withCounts); setSelectedCampaignId(""); setSendOpen(true);
   };
 
   const openSend = async () => {
@@ -456,28 +493,32 @@ export default function Personalizacion() {
     const col = emailColumn || detectEmailColumn(columns, rows);
     if (!col) { toast.error("No encuentro la columna de email. Elígela arriba (paso 1) en el desplegable."); return; }
     if (col !== emailColumn) setEmailColumn(col);
-    await ensureResults(); // load results into state so sendableCount is exact in the dialog
-    const { data } = await supabase.from("campaigns").select("id, name, status").eq("user_id", user.id).order("created_at", { ascending: false });
-    const list = (data || []) as { id: string; name: string; status: string }[];
-    // Count the leads each campaign ALREADY has, so you see it before/after adding.
-    const withCounts = await Promise.all(list.map(async (c) => {
-      const { count } = await supabase.from("campaign_leads").select("lead_id", { count: "exact", head: true }).eq("campaign_id", c.id);
-      return { ...c, leadCount: count || 0 };
-    }));
-    setCampaigns(withCounts); setSelectedCampaignId(""); setSendOpen(true);
+    const res = await ensureResults(); // así el recuento del diálogo es exacto
+    await abrirEnvio({ jobId, filename, columns, emailColumn: col, rows, results: res });
+  };
+
+  const enviarTrabajo = async (h: TrabajoCola) => {
+    if (cargandoEnvio) return;
+    setCargandoEnvio(h.id);
+    try {
+      const datos = await datosDe(h);
+      const cols = columnasDe(h.columns, datos.rows);
+      const col = h.email_column || detectEmailColumn(cols, datos.rows);
+      if (!col) { toast.error("No encuentro la columna de email de esta lista. Ábrela y elígela en el paso 1."); return; }
+      await abrirEnvio({ jobId: h.id, filename: h.filename || "", columns: cols, emailColumn: col, rows: datos.rows, results: datos.results });
+    } catch (e: any) { toast.error(`No se pudieron cargar sus leads: ${e?.message || e}`); }
+    finally { setCargandoEnvio(null); }
   };
 
   const sendToCampaign = async () => {
-    if (!user || !selectedCampaignId) return;
+    if (!user || !selectedCampaignId || !sendCtx) return;
     setSending(true);
     try {
-      const res = await ensureResults();
-      const col = emailColumn || detectEmailColumn(columns, rows);
-      if (!col) { toast.error("No encuentro la columna de email. Elígela en el paso 1."); setSending(false); return; }
+      const { rows: filas, results: res, columns: cols, emailColumn: col } = sendCtx;
       // Dedupe by email so the same address isn't added as two leads (→ emailed twice).
       const seenEmails = new Set<string>();
       let skippedDupes = 0;
-      const usable = rows.filter((r) => {
+      const usable = filas.filter((r) => {
         const email = (r[col] || "").toLowerCase().trim();
         const rr = res[String(r.__idx)];
         if (!(email && EMAIL_RE.test(email) && rr?.message && !rr.error)) return false;
@@ -487,8 +528,8 @@ export default function Personalizacion() {
       });
       if (!usable.length) {
         // Say EXACTLY what's missing so "falla lo del email" is never a mystery.
-        const withEmail = rows.filter((r) => EMAIL_RE.test((r[col] || "").toLowerCase().trim())).length;
-        const withMsg = rows.filter((r) => { const rr = res[String(r.__idx)]; return rr?.message && !rr.error; }).length;
+        const withEmail = filas.filter((r) => EMAIL_RE.test((r[col] || "").toLowerCase().trim())).length;
+        const withMsg = filas.filter((r) => { const rr = res[String(r.__idx)]; return rr?.message && !rr.error; }).length;
         toast.error(
           withEmail === 0 ? `Ninguna fila tiene un email válido en la columna "${col}". Elige la columna correcta en el paso 1.`
           : withMsg === 0 ? "Aún no hay mensajes generados. Pulsa 'Generar todo' primero."
@@ -502,7 +543,7 @@ export default function Personalizacion() {
         const slice = usable.slice(i, i + INSERT_BATCH);
         const batch = slice.map((r) => {
           const custom_fields: Record<string, string> = {};
-          columns.forEach((c) => {
+          cols.forEach((c) => {
             if (c === col) return;
             const v = (r[c] || "").toString().trim();
             if (v) custom_fields[c] = v;
@@ -585,48 +626,130 @@ export default function Personalizacion() {
         ))}
       </div>
 
-      {/* Prominent progress banner — appears the moment you enter while a job is generating,
-          so you always see how many messages llevan sin buscar nada. */}
-      {(running || (jobId && prog.total > 0)) && (
-        <Card className={`border-2 ${running ? "border-primary/40 bg-primary/5" : jobStatus === "completed" ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
-          <CardContent className="p-4 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : jobStatus === "completed" ? <Check className="h-4 w-4 text-success" /> : <ServerCog className="h-4 w-4 text-warning" />}
-                {running ? "Generando mensajes en el servidor…" : jobStatus === "completed" ? "Generación completada" : jobStatus === "cancelled" ? "Generación parada" : "Generación"}
-                {filename && <span className="font-normal text-muted-foreground">· {filename}</span>}
+      {/* La cola: cada lista con su progreso en vivo; de cada una se descarga su CSV con la
+          personalización (queda guardada en el servidor) o se manda a una campaña. */}
+      {history.length > 0 && (
+        <Card className={hayActivos ? "border-primary/30" : ""}>
+          <CardContent className="p-5 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <span className="soft-card-icon"><ListChecks className="h-5 w-5" /></span>
+                <span>
+                  <span className="block font-display text-[17px] font-semibold text-foreground">Cola de personalizaciones</span>
+                  <span className="block text-[12.5px] text-muted-foreground">
+                    {hayActivos
+                      ? `${activos.length} en marcha · se generan en el servidor aunque cierres el PC; las demás esperan su turno`
+                      : "Tus listas, con su personalización guardada: descárgalas o mándalas a una campaña."}
+                  </span>
+                </span>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-sm font-bold tabular-nums">{prog.done}/{prog.total} · {progressPct}%</span>
-                {!running && prog.total > 0 && prog.done < prog.total && (
-                  <button
-                    type="button"
-                    onClick={resumeJob}
-                    title="Reanudar donde se quedó"
-                    className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    <Play className="h-3.5 w-3.5" /> Reanudar
-                  </button>
-                )}
-                {!running && (
-                  <button
-                    type="button"
-                    onClick={dismissJob}
-                    title="Descartar y borrar"
-                    className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+              {hayActivos && (
+                <span className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> generando…
+                </span>
+              )}
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progressPct}%` }} />
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="font-semibold text-success">✓ {prog.ok} generados</span>
-              {prog.failed > 0 && <span className="text-destructive font-medium">✗ {prog.failed} fallidos</span>}
-              {running && <span className="inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> puedes cerrar el PC, sigue solo</span>}
+
+            <div className="overflow-x-auto rounded-[10px] border border-border">
+              <table className="w-full min-w-[900px] border-collapse text-[13px]">
+                <thead>
+                  <tr className="soft-thead">
+                    {["Lista", "Cuándo", "Estado", "Progreso", ""].map((h) => (
+                      <th key={h} className="border-b border-border px-4 py-2.5 text-left text-[12px] font-semibold text-[#536188] dark:text-muted-foreground">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => {
+                    const est = estadoTrabajo(h);
+                    const puesto = est.enCola ? puestoEnCola(history, h.id) : null;
+                    const total = h.total || 0, done = h.done || 0, ok = h.ok || 0, failed = h.failed || 0;
+                    const pct = total ? Math.round((done / total) * 100) : 0;
+                    const when = h.created_at ? new Date(h.created_at) : null;
+                    const puedeReanudar = !est.activo && h.status !== "uploading" && total > 0 && done < total;
+                    return (
+                      <tr key={h.id} className={`soft-row border-b border-border/70 last:border-0 ${jobId === h.id ? "bg-accent/50" : ""}`}>
+                        <td className="max-w-[260px] px-4 py-3">
+                          <span className="block truncate font-medium text-foreground">{h.filename || "sin nombre"}</span>
+                          <span className="block text-[12px] text-muted-foreground">{total.toLocaleString("es-ES")} leads</span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+                          {when && !isNaN(when.getTime()) ? when.toLocaleString("es", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`soft-state ${est.cls}`}>
+                            {est.txt === "Generando" && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {est.txt}{puesto ? ` · ${puesto}º` : ""}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="w-48 space-y-1">
+                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                              <div className={`h-full rounded-full transition-[width] duration-500 ${h.status === "completed" ? "bg-success" : "bg-primary"}`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="flex flex-wrap gap-x-2 text-[11.5px] tabular-nums text-muted-foreground">
+                              <span>{done.toLocaleString("es-ES")}/{total.toLocaleString("es-ES")} · {pct}%</span>
+                              <span className="text-success">✓ {ok.toLocaleString("es-ES")}</span>
+                              {failed > 0 && <span className="text-destructive">✗ {failed.toLocaleString("es-ES")}</span>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void descargarTrabajo(h)}
+                              disabled={ok === 0 || descargando === h.id}
+                              title={ok === 0 ? "Aún no hay mensajes generados" : "Descargar el CSV con la personalización"}
+                              className="soft-control inline-flex h-9 items-center gap-1.5 px-3 text-[12.5px] disabled:opacity-50"
+                            >
+                              {descargando === h.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Descargar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void enviarTrabajo(h)}
+                              disabled={ok === 0 || cargandoEnvio === h.id}
+                              title={ok === 0 ? "Aún no hay mensajes generados" : "Añadir estos leads a una campaña con su mensaje"}
+                              className="soft-control inline-flex h-9 items-center gap-1.5 px-3 text-[12.5px] disabled:opacity-50"
+                            >
+                              {cargandoEnvio === h.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Enviar a campaña
+                            </button>
+                            {est.activo && (
+                              <button type="button" onClick={() => void pararTrabajo(h.id)} title="Parar" aria-label="Parar" className="soft-action">
+                                <Square className="h-[15px] w-[15px]" />
+                              </button>
+                            )}
+                            {puedeReanudar && (
+                              <button type="button" onClick={() => void reanudarTrabajo(h.id)} title="Reanudar donde se quedó" aria-label="Reanudar" className="soft-action">
+                                <Play className="h-[17px] w-[17px]" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void openHistoryJob(h.id)}
+                              disabled={jobId === h.id}
+                              title={jobId === h.id ? "Abierta en el editor" : "Abrir en el editor (ver, reintentar fallidos, regenerar)"}
+                              aria-label="Abrir en el editor"
+                              className="soft-action disabled:opacity-40"
+                            >
+                              <Pencil className="h-[16px] w-[16px]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteHistoryJob(h.id)}
+                              title="Borrar la lista y sus mensajes"
+                              aria-label="Borrar"
+                              className="soft-action soft-action-danger"
+                            >
+                              <Trash2 className="h-[17px] w-[17px]" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
@@ -784,79 +907,6 @@ export default function Personalizacion() {
         </Card>
       )}
 
-      {/* Registro: todo lo que se ha generado antes, para volver a abrirlo o descargarlo. */}
-      {history.length > 0 && (
-        <Card>
-          <CardContent className="p-5 sm:p-6">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3.5">
-                <span className="soft-card-icon"><BookMarked className="h-5 w-5" /></span>
-                <span>
-                  <span className="block font-display text-[17px] font-semibold text-foreground">Registro</span>
-                  <span className="block text-[12.5px] text-muted-foreground">Tus personalizaciones anteriores: ábrelas para verlas, descargarlas o mandarlas a una campaña.</span>
-                </span>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto rounded-[10px] border border-border">
-              <table className="w-full min-w-[720px] border-collapse text-[13px]">
-                <thead>
-                  <tr className="soft-thead">
-                    {["Archivo", "Cuándo", "Estado", "Mensajes", ""].map((h) => (
-                      <th key={h} className="border-b border-border px-4 py-2.5 text-left text-[12px] font-semibold text-[#536188] dark:text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((h) => {
-                    const when = h.created_at ? new Date(h.created_at) : null;
-                    const state = h.status === "completed" ? { cls: "soft-state-good", txt: "Completada" }
-                      : h.status === "running" || h.status === "pending" ? { cls: "soft-state-wait", txt: "En curso" }
-                      : h.status === "uploading" ? { cls: "soft-state-wait", txt: "Subiendo leads" }
-                      : h.status === "cancelled" ? { cls: "soft-state-wait", txt: "Parada" }
-                      : { cls: "soft-state-bad", txt: "Con errores" };
-                    return (
-                      <tr key={h.id} className={`soft-row border-b border-border/70 last:border-0 ${jobId === h.id ? "bg-accent/50" : ""}`}>
-                        <td className="max-w-[280px] truncate px-4 py-3 font-medium text-foreground">{h.filename || "sin nombre"}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                          {when && !isNaN(when.getTime()) ? when.toLocaleString("es", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
-                        </td>
-                        <td className="px-4 py-3"><span className={`soft-state ${state.cls}`}>{state.txt}</span></td>
-                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                          <b className="text-foreground">{h.ok || 0}</b> de {h.total || 0}
-                          {h.failed > 0 ? <span className="text-destructive"> · {h.failed} fallidos</span> : null}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void openHistoryJob(h.id)}
-                              disabled={jobId === h.id}
-                              className="soft-control inline-flex h-9 items-center gap-1.5 px-3 text-[12.5px] disabled:opacity-50"
-                            >
-                              <Play className="h-3.5 w-3.5" /> {jobId === h.id ? "Abierta" : "Abrir"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteHistoryJob(h.id)}
-                              title="Borrar del registro"
-                              aria-label="Borrar del registro"
-                              className="soft-action soft-action-danger"
-                            >
-                              <Trash2 className="h-[17px] w-[17px]" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Step 2 — Prompt */}
       {columns.length > 0 && (
         <Card>
@@ -906,7 +956,14 @@ export default function Personalizacion() {
       {columns.length > 0 && (
         <Card>
           <CardContent className="p-4 sm:p-5 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold"><ServerCog className="h-4 w-4 text-primary" /> 3 · Generar en el servidor ({rows.length} leads)</div>
+            <div className="flex items-center gap-2 text-sm font-semibold"><ServerCog className="h-4 w-4 text-primary" /> 3 · Generar en el servidor ({rows.length.toLocaleString("es-ES")} leads)</div>
+            {!jobId && (
+              <p className="text-[12.5px] text-muted-foreground">
+                {hayActivos
+                  ? `Hay ${activos.length} lista${activos.length === 1 ? "" : "s"} en marcha: esta se pondrá a la cola y seguirá cuando acabe. Puedes subir tantas como quieras.`
+                  : "Se genera en el servidor (puedes cerrar el PC). Al pulsar, la lista pasa a la cola de arriba y puedes subir la siguiente."}
+              </p>
+            )}
             {(running || prog.done > 0) && (
               <div className="space-y-1.5">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -926,7 +983,7 @@ export default function Personalizacion() {
               {!running ? (
                 <Button size="sm" className="gap-2" onClick={handleRun} disabled={!rows.length || starting}>
                   {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{" "}
-                  {subida ? `Subiendo leads… ${subida.hechas.toLocaleString("es-ES")} de ${subida.total.toLocaleString("es-ES")}` : prog.done > 0 ? "Regenerar todo" : "Generar todo"}
+                  {subida ? `Subiendo leads… ${subida.hechas.toLocaleString("es-ES")} de ${subida.total.toLocaleString("es-ES")}` : prog.done > 0 ? "Regenerar todo" : hayActivos ? "Generar todo (a la cola)" : "Generar todo"}
                 </Button>
               ) : (
                 <Button size="sm" variant="outline" className="gap-2" onClick={handleStop}><Loader2 className="h-4 w-4 animate-spin" /> Parar</Button>
@@ -990,6 +1047,7 @@ export default function Personalizacion() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle className="font-display flex items-center gap-2"><Send className="h-5 w-5 text-primary" /> Enviar a una campaña</DialogTitle></DialogHeader>
           <div className="space-y-3">
+            {sendCtx?.filename && <p className="text-[13px] font-medium text-foreground">Lista: {sendCtx.filename}</p>}
             <p className="text-[15px] text-muted-foreground">Se crearán los leads con su <b>mensaje personalizado</b> como <code>personalized_message</code> y se añadirán a la campaña. Úsalo en el email con <code>{"{{personalized_message}}"}</code>.</p>
             <div className="space-y-1.5">
               <Label className="text-xs">Campaña destino</Label>
