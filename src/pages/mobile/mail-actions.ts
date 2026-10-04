@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { buildReplyQuoteHtml, cleanBodyHtml, decodeSubject, getMessageDeduplicationKey, isBounceOrNoise } from "@/lib/unibox-text";
+import { buildReplyQuoteHtml, cleanBodyHtml, decodeSubject, getMessageDeduplicationKey } from "@/lib/unibox-text";
 import { buildForwardHtml, forwardSubject, plainToForwardHtml } from "@/lib/forward";
 import { containsProfanity } from "@/lib/profanity-filter";
 import { quoteHeader, replySubject } from "@/lib/mobile-inbox";
@@ -42,11 +42,15 @@ export interface ThreadMessage {
   forwarded_from?: string | null;
 }
 
-/** El hilo entero con un contacto en un buzón: lo que nos escribió y lo que le enviamos. */
-export async function loadThread(userId: string, accountId: string, contact: string, opts: { all?: boolean } = {}): Promise<ThreadMessage[]> {
+/** El hilo entero con un contacto en un buzón: lo que nos escribió y lo que le enviamos.
+ *  Lo recibido es EXACTAMENTE lo que cuenta la lista (vista previa, último, no leídos): todo lo no
+ *  archivado de ese remitente en ese buzón, warm-up y avisos incluidos. Antes, en Primary, el hilo
+ *  quitaba el warm-up sin enlazar y el ruido de sistema, y una conversación cuyo último mensaje era
+ *  de esos se abría sin él (o vacía, en Others). */
+export async function loadThread(userId: string, accountId: string, contact: string): Promise<ThreadMessage[]> {
   const [inboxRes, sentRes] = await Promise.all([
     db.from("inbox_messages").select("*")
-      .eq("user_id", userId).eq("account_id", accountId).eq("from_email", contact)
+      .eq("user_id", userId).eq("account_id", accountId).eq("from_email", contact).eq("is_archived", false)
       .order("received_at", { ascending: true }),
     db.from("sent_emails").select("*")
       .eq("user_id", userId).eq("account_id", accountId).eq("to_email", contact).eq("status", "sent")
@@ -59,9 +63,6 @@ export async function loadThread(userId: string, accountId: string, contact: str
     const key = getMessageDeduplicationKey(m);
     if (seen.has(key)) continue;
     seen.add(key);
-    // Primary: fuera rebotes y warm-up. Others (opts.all): todo, como en la lista.
-    if (!opts.all && isBounceOrNoise(m.from_email ?? null)) continue;
-    if (!opts.all && m.is_warmup && !m.lead_id && !m.campaign_id) continue;
     thread.push({ ...m, _type: "received", _date: String(m.received_at) });
   }
   const sentIds = new Set<string>();

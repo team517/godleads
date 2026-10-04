@@ -134,8 +134,7 @@ export default function MobileApp() {
   const refreshThread = useCallback(async (c: Conversation) => {
     if (!user) return;
     try {
-      // En Others se enseña el hilo tal cual (warm-up y rebotes incluidos: es lo que se ve en la lista).
-      const t = await loadThread(user.id, c.accountId, c.email, { all: c.tab === "others" });
+      const t = await loadThread(user.id, c.accountId, c.email);
       if (threadFor.current === c.key) { setThread(t); setThreadError(null); }
     } catch (e) {
       if (threadFor.current === c.key) setThreadError(e instanceof Error ? e.message : String(e));
@@ -243,7 +242,8 @@ export default function MobileApp() {
                 onRefresh={() => inbox.reload()}
                 hasMore={filters.tab === "others" && inbox.othersHasMore}
                 loadingMore={inbox.loadingMore}
-                onLoadMore={() => { void inbox.loadMoreOthers(); }}
+                onLoadMore={inbox.loadMoreOthers}
+                othersError={inbox.othersError}
                 banner={<PushBanner userId={user.id} notify={toast.show} />}
               />
             ) : (

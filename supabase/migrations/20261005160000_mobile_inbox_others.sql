@@ -32,12 +32,12 @@ create index if not exists idx_im_user_created_live
 
 -- Carril enlazado de Primary.
 create index if not exists idx_im_user_linked_received
-  on public.inbox_messages (user_id, received_at desc)
+  on public.inbox_messages (user_id, received_at desc, id desc)
   where not is_archived and (lead_id is not null or campaign_id is not null);
 
 -- Carril "resto sin warm-up" de Primary (antes recorría decenas de miles de filas de warm-up).
 create index if not exists idx_im_user_other_received
-  on public.inbox_messages (user_id, received_at desc)
+  on public.inbox_messages (user_id, received_at desc, id desc)
   where not is_archived and lead_id is null and campaign_id is null and is_warmup is not true;
 
 -- ── Primary ──────────────────────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ begin
       where m.user_id = v_uid and not m.is_archived
         and (m.lead_id is not null or m.campaign_id is not null)
         and (p_since is null or m.received_at > p_since)
-      order by m.received_at desc
+      order by m.received_at desc, m.id desc
       limit least(greatest(p_linked, 0), 1000))
     union all
     (select m.id, m.account_id, m.lead_id, m.campaign_id, m.message_id, m.from_email, m.from_name, m.subject,
@@ -111,7 +111,7 @@ begin
         and m.lead_id is null and m.campaign_id is null
         and m.is_warmup is not true
         and (p_since is null or m.received_at > p_since)
-      order by m.received_at desc
+      order by m.received_at desc, m.id desc
       limit least(greatest(p_other, 0), 1000));
   end if;
 

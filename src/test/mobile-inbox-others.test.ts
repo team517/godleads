@@ -3,7 +3,7 @@ import {
   blockedChecker, buildConversations, EMPTY_FILTERS, feedLane, filterConversations, isPrimaryRow, mergeWindow,
   newestCreated, PRIMARY_FEED, sortRows, statusCounts, upsertRows, withinOthersWindow, type InboxRow,
 } from "@/lib/mobile-inbox";
-import { campaignMatchCounts, looksLikePoolReplySubject } from "@/lib/inbox-filters";
+import { campaignMatchCounts } from "@/lib/inbox-filters";
 
 let n = 0;
 const row = (o: Partial<InboxRow>): InboxRow => ({
@@ -30,24 +30,17 @@ describe("isPrimaryRow: la regla única de Primary (móvil) y Campañas (escrito
   });
 });
 
-describe("respuestas del pool que citan nuestros buzones (responde / marca)", () => {
-  it("se reconocen aunque no lleven palabra de oficina", () => {
-    expect(looksLikePoolReplySubject("RE: Finishing 'The Lean Startup'")).toBe(true);
-    expect(looksLikePoolReplySubject("RE: New Hire")).toBe(true);
-    expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "RE: Finishing 'The Lean Startup'" })).toBe(false);
-    expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject: "RE: New Hire" })).toBe(false);
-  });
-  it("las respuestas reales de los últimos 30 días siguen contando", () => {
+describe("responde / marca: las respuestas reales cuentan como campaña (regresión)", () => {
+  it("respuestas cortas en español o inglés no se toman por hilos del pool", () => {
     for (const subject of [
+      "Re: Me interesa", "RE: Mas informacion", "RE: No gracias", "Re: Not interested", "RE: Call next week", "RE: John- Acme Srl",
       "Re: interesad", "RE: XAVI - Swing Maniacs", "Re: no te olvides de esto de Felidarity", "Automatic reply: XAVI - Camunda",
-      "Baja", "Re: te dejaste esto Miguel", "RE: [EXTERNAL] XAVI - Signaturit", "We received your request 💜",
-      "Fuera de la oficina", "RV: te dejaste esto en Macrocopia", "OOO Re: Maria - Affility",
+      "Baja", "RE: [EXTERNAL] XAVI - Signaturit", "Fuera de la oficina", "OOO Re: Maria - Affility",
     ]) {
-      expect(campaignMatchCounts({ in_campaign: true, match_why: "responde", subject }), subject).toBe(true);
+      for (const why of ["responde", "marca"]) {
+        expect(campaignMatchCounts({ in_campaign: true, match_why: why, subject }), `${why}: ${subject}`).toBe(true);
+      }
     }
-    // Las reglas lead / dominio / hilo no cambian.
-    expect(campaignMatchCounts({ in_campaign: true, match_why: "lead", subject: "RE: New Hire" })).toBe(true);
-    expect(campaignMatchCounts({ in_campaign: true, match_why: "hilo", subject: "RE: Finishing 'The Lean Startup'" })).toBe(true);
   });
 });
 
@@ -114,6 +107,17 @@ describe("mezclar lo que llega del servidor", () => {
     expect(ids).toContain(otherOld.id);
     expect(ids).not.toContain(linkedGone.id);
     expect(out).toEqual(sortRows(out));
+  });
+  it("ventana: con varias filas a la misma hora en el corte, las que el servidor dejó fuera se quedan", () => {
+    const t = "2026-10-04T10:00:00Z";
+    // Orden del servidor: received_at desc, id desc. La página cortó tras "id-c": "id-b" y "id-a" quedan fuera.
+    const fresh = [row({ id: "id-z", received_at: "2026-10-04T11:00:00Z" }), row({ id: "id-c", received_at: t })];
+    const existing = [row({ id: "id-b", received_at: t }), row({ id: "id-a", received_at: t }), row({ id: "id-d", received_at: t })];
+    const ids = mergeWindow(existing, fresh).map((r) => r.id);
+    expect(ids).toContain("id-b");          // misma hora, id menor: fuera del corte → se queda
+    expect(ids).toContain("id-a");
+    expect(ids).not.toContain("id-d");      // misma hora, id mayor: dentro de la página y no vino → se va
+    expect(ids).toEqual(["id-z", "id-c", "id-b", "id-a"]);
   });
   it("lo nuevo se pide por fecha de guardado (lo que la sincronización guarda tarde también llega)", () => {
     expect(newestCreated([row({ created_at: "2026-10-04T22:00:00Z" }), row({ created_at: "2026-10-04T22:05:00Z" }), row({})])).toBe("2026-10-04T22:05:00Z");

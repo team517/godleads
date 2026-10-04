@@ -344,21 +344,26 @@ export function upsertRows(existing: InboxRow[], fresh: InboxRow[]): InboxRow[] 
 /**
  * Una página fresca del servidor manda dentro de SU ventana (de su fila más vieja hacia arriba):
  * lo que había ahí y ya no viene (archivado, borrado) se va; lo más viejo que la ventana se queda.
+ * El límite es la ÚLTIMA fila de la página en el orden del servidor (received_at desc, id desc):
+ * con varias filas a la misma hora, las que quedaron fuera del corte (id menor) se conservan.
  * `laneOf` separa los carriles que el servidor corta por separado (enlazado / resto): cada uno
  * tiene su propia ventana. Un carril que no trae nada no toca lo que había de ese carril.
  */
 export function mergeWindow(existing: InboxRow[], fresh: InboxRow[], laneOf: (r: InboxRow) => string = () => "all"): InboxRow[] {
-  const floor = new Map<string, number>();
+  const floor = new Map<string, { t: number; id: string }>();
   for (const r of fresh) {
     const k = laneOf(r);
     const t = ts(r.received_at);
-    if (!floor.has(k) || t < (floor.get(k) as number)) floor.set(k, t);
+    const f = floor.get(k);
+    if (!f || t < f.t || (t === f.t && r.id < f.id)) floor.set(k, { t, id: r.id });
   }
   const ids = new Set(fresh.map((r) => r.id));
   const keep = existing.filter((r) => {
     if (ids.has(r.id)) return false;
     const f = floor.get(laneOf(r));
-    return f === undefined || ts(r.received_at) < f;
+    if (!f) return true;
+    const t = ts(r.received_at);
+    return t < f.t || (t === f.t && r.id < f.id);
   });
   return sortRows([...fresh, ...keep]);
 }

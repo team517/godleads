@@ -21,7 +21,9 @@ interface Props {
   /** Others se pagina en el servidor: queda más hacia atrás. */
   hasMore?: boolean;
   loadingMore?: boolean;
-  onLoadMore?: () => void;
+  onLoadMore?: () => unknown;
+  /** Others no se pudo cargar: se dice en su pestaña (Primary sigue con lo suyo). */
+  othersError?: string | null;
 }
 
 const CHUNK = 60;
@@ -40,21 +42,27 @@ export function ConversationList(p: Props) {
   // Al acercarse al final: primero se montan más filas de las ya cargadas; cuando ya están todas,
   // en Others se pide la página siguiente al servidor (sólo sin filtros ni búsqueda: con un filtro
   // que casi no casa, bajaría el buzón entero solo; entonces va con el botón "Cargar más").
+  // El observador lee lo último por una ref y sólo se crea de nuevo al cambiar de pestaña o al
+  // pasar de "hay algo que cargar" a "no hay": antes se recreaba en cada pintada (cada refresco
+  // traía filas nuevas) y, con el final a la vista, pedía otra página en cada refresco.
   const filtering = !!p.filters.search.trim() || p.activeFilterCount > 0;
   const autoMore = !!p.hasMore && !p.loadingMore && !filtering && !!p.onLoadMore;
-  const { onLoadMore } = p;
+  const latest = useRef({ itemsLen: p.items.length, limit, autoMore, onLoadMore: p.onLoadMore });
+  latest.current = { itemsLen: p.items.length, limit, autoMore, onLoadMore: p.onLoadMore };
+  const active = p.items.length > limit || (!!p.hasMore && !filtering && !!p.onLoadMore);
+  const listShown = p.items.length > 0 || !!p.hasMore;
   useEffect(() => {
     const el = endRef.current;
-    const more = p.items.length > limit;
-    if (!el || (!more && !autoMore)) return;
+    if (!el || !active) return;
     const io = new IntersectionObserver((e) => {
       if (!e.some((x) => x.isIntersecting)) return;
-      if (more) setLimit((l) => Math.min(p.items.length, l + CHUNK));
-      else onLoadMore?.();
+      const s = latest.current;
+      if (s.itemsLen > s.limit) setLimit((l) => Math.min(s.itemsLen, l + CHUNK));
+      else if (s.autoMore) void s.onLoadMore?.();
     }, { root: scrollRef.current, rootMargin: "800px 0px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [p.items.length, limit, autoMore, onLoadMore]);
+  }, [active, listShown, p.filters.tab]);
 
   /* Tirar hacia abajo para actualizar (en la app instalada no hay botón de recargar). */
   const pull = useRef<{ y: number; active: boolean }>({ y: 0, active: false });
@@ -147,6 +155,11 @@ export function ConversationList(p: Props) {
             style={{ transform: pulling ? undefined : `rotate(${pullPx * 4}deg)`, opacity: Math.min(1, pullPx / 40) }} />
         </div>
         {p.banner}
+        {tab === "others" && p.othersError && (
+          <div className="mx-3 mt-3 rounded-[14px] border border-[#FAD3DB] bg-white px-4 py-3 text-[14px] text-[#B4233C]">
+            No se pudo cargar Others: {p.othersError}
+          </div>
+        )}
 
         {p.loading && p.items.length === 0 ? (
           <div className="space-y-3 px-3 pt-3">

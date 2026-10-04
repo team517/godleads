@@ -33,6 +33,11 @@ const REALTIME_DEBOUNCE_MS = 3_000;
 // ya visto: se vuelve a pedir un margen (lo repetido se junta por id).
 const SINCE_OVERLAP_MS = 120_000;
 const CACHE_KEY = "mobile:rows2";
+const CACHE_WRITE_MS = 1_000;
+// Memoria: Others hasta 3.000 filas (lo más nuevo; al pasarse, el final de lo cargado sube) y
+// Primary su ventana más un margen para lo que llega mientras la app está abierta.
+const OTHERS_CAP = 3_000;
+const FEED_CAP = PRIMARY_FEED.linked + PRIMARY_FEED.other + 500;
 
 export interface Folder { id: string; name: string; color: string | null }
 export interface Campaign { id: string; name: string }
@@ -85,20 +90,47 @@ export function useMobileInbox(userId: string | undefined) {
   // Others paginado: hasta dónde se ha cargado (la fila más vieja de la última página) y si queda más.
   const [othersCursor, setOthersCursor] = useState<InboxRow | null>(() => { const o = readCache().others; return o.length ? o[o.length - 1] : null; });
   const [othersHasMore, setOthersHasMore] = useState(true);
+  const [othersError, setOthersError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const dataRef = useRef(data);
   dataRef.current = data;
   const cursorRef = useRef(othersCursor);
   cursorRef.current = othersCursor;
+  const hasMoreRef = useRef(othersHasMore);
+  hasMoreRef.current = othersHasMore;
+  const cacheTimer = useRef<number | null>(null);
+  const retryTimer = useRef<number | null>(null);
+  // Con el tiempo real conectado no hace falta preguntar cada 20 s (queda de reserva si se cae).
+  const realtimeOn = useRef(false);
   // Fecha de guardado más nueva vista: desde ahí se pide lo nuevo.
   const sinceRef = useRef<string | null>(newestCreated([...data.feed, ...data.others]));
   const busyRef = useRef({ load: false, poll: false, more: false });
 
-  const commit = useCallback((next: Rows) => {
+  const commit = useCallback((input: Rows) => {
+    let next = input;
+    if (next.feed.length > FEED_CAP) next = { ...next, feed: next.feed.slice(0, FEED_CAP) };
+    if (next.others.length > OTHERS_CAP) {
+      const kept = next.others.slice(0, OTHERS_CAP);
+      next = { ...next, others: kept };
+      // Lo de abajo se ha soltado: si queda más por bajar, se vuelve a pedir desde aquí.
+      if (hasMoreRef.current) { cursorRef.current = kept[kept.length - 1]; setOthersCursor(kept[kept.length - 1]); }
+    }
     dataRef.current = next;
     setData(next);
     sinceRef.current = newestCreated([...next.feed, ...next.others], sinceRef.current);
-    cacheSet(CACHE_KEY, next);
+    // Al disco como mucho una vez por segundo (el tiempo real puede traer muchos cambios seguidos).
+    if (cacheTimer.current) window.clearTimeout(cacheTimer.current);
+    cacheTimer.current = window.setTimeout(() => { cacheTimer.current = null; cacheSet(CACHE_KEY, dataRef.current); }, CACHE_WRITE_MS);
+  }, []);
+
+  // Al salir: lo pendiente al disco y fuera los temporizadores. La caché de antes ("mobile:rows",
+  // con Primary y Others mezclados) ya no se usa.
+  useEffect(() => {
+    try { localStorage.removeItem("op_cache:mobile:rows"); } catch { /* sin almacenamiento */ }
+    return () => {
+      if (cacheTimer.current) { window.clearTimeout(cacheTimer.current); cacheSet(CACHE_KEY, dataRef.current); }
+      if (retryTimer.current) window.clearTimeout(retryTimer.current);
+    };
   }, []);
 
   /**
@@ -110,11 +142,11 @@ export function useMobileInbox(userId: string | undefined) {
     busyRef.current.load = true;
     if (!opts.quiet) setRefreshing(true);
     try {
-      // Si Others falla, Primary se pinta igual (y se avisa del error).
-      let othersError: string | null = null;
+      // Si Others falla, Primary se pinta igual (y Others enseña el error).
+      let othersErr: string | null = null;
       const [head, page] = await Promise.all([
         feed(FIRST),
-        others({ limit: OTHERS_PAGE }).catch((e) => { othersError = e instanceof Error ? e.message : String(e); return null; }),
+        others({ limit: OTHERS_PAGE }).catch((e) => { othersErr = e instanceof Error ? e.message : String(e); return null; }),
       ]);
       const cur = dataRef.current;
       // Others vuelve a su primera página (lo de más abajo se vuelve a pedir al bajar).
@@ -124,9 +156,12 @@ export function useMobileInbox(userId: string | undefined) {
         setOthersCursor(page.length ? page[page.length - 1] : null);
         setOthersHasMore(page.length >= OTHERS_PAGE);
       }
+      // Sin Others (falló o falta la función): no se pide "más" a ciegas.
+      if (!page && !opts.light) setOthersHasMore(false);
+      setOthersError(othersErr);
+      if (othersErr) console.warn("mobile_inbox_others falló:", othersErr);
       setLoading(false);
-      setError(othersError);
-      if (othersError) console.warn("mobile_inbox_others falló:", othersError);
+      setError(null);
       if (opts.light) return;
       try {
         const all = await feed(FULL);
@@ -137,7 +172,8 @@ export function useMobileInbox(userId: string | undefined) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("mobile_inbox_feed (ventana entera) falló:", msg);
         setError(msg);
-        window.setTimeout(() => { void load({ quiet: true }); }, 15_000);
+        if (retryTimer.current) window.clearTimeout(retryTimer.current);
+        retryTimer.current = window.setTimeout(() => { retryTimer.current = null; void load({ quiet: true }); }, 15_000);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -172,6 +208,8 @@ export function useMobileInbox(userId: string | undefined) {
   const loadMoreOthers = useCallback(async () => {
     const before = cursorRef.current;
     if (!userId || !before || !othersHasMore || busyRef.current.more) return;
+    // Tope de memoria: hasta aquí se puede bajar en una sesión.
+    if (dataRef.current.others.length >= OTHERS_CAP) { setOthersHasMore(false); return; }
     busyRef.current.more = true;
     setLoadingMore(true);
     try {
@@ -180,8 +218,9 @@ export function useMobileInbox(userId: string | undefined) {
       commit({ feed: cur.feed, others: upsertRows(cur.others, page) });
       setOthersCursor(page.length ? page[page.length - 1] : before);
       setOthersHasMore(page.length >= OTHERS_PAGE);
+      setOthersError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setOthersError(e instanceof Error ? e.message : String(e));
     } finally {
       busyRef.current.more = false;
       setLoadingMore(false);
@@ -227,7 +266,7 @@ export function useMobileInbox(userId: string | undefined) {
   useEffect(() => {
     if (!userId) return;
     const visible = () => document.visibilityState === "visible";
-    const poll = window.setInterval(() => { if (visible()) void pollNew(); }, POLL_MS);
+    const poll = window.setInterval(() => { if (visible() && !realtimeOn.current) void pollNew(); }, POLL_MS);
     const safety = window.setInterval(() => { if (visible()) void load({ quiet: true, light: true }); }, SAFETY_MS);
     const onVisible = () => {
       if (visible()) { void load({ quiet: true }); void loadManual(); }
@@ -242,44 +281,57 @@ export function useMobileInbox(userId: string | undefined) {
     };
   }, [userId, pollNew, load, loadManual]);
 
-  // Tiempo real (como la Unibox del escritorio): un correo nuevo → pedir lo nuevo (agrupado en
-  // ~3 s: la sincronización mete varios de golpe); un cambio → se aplica a la fila.
+  // Tiempo real (como la Unibox del escritorio): un correo nuevo → pedir lo nuevo; un cambio
+  // (leído, etiquetas, archivado, carpeta) → se aplica a la fila. Las dos cosas se agrupan ~3 s: la
+  // sincronización y las acciones en bloque del escritorio mandan decenas de eventos seguidos, y
+  // cada uno repintaba la lista entera. (DELETE no se escucha: con el filtro por user_id no llega,
+  // la fila borrada no trae más que el id; lo borrado lo quita el repaso de cada 2 min.)
   useEffect(() => {
     if (!userId || typeof db.channel !== "function") return;
-    let timer: number | null = null;
-    const schedule = () => {
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => { timer = null; void pollNew(); }, REALTIME_DEBOUNCE_MS);
+    let insertTimer: number | null = null;
+    let updateTimer: number | null = null;
+    const pending = new Map<string, Partial<InboxRow>>();
+    const onInsert = () => {
+      if (insertTimer) window.clearTimeout(insertTimer);
+      insertTimer = window.setTimeout(() => { insertTimer = null; void pollNew(); }, REALTIME_DEBOUNCE_MS);
+    };
+    const flushUpdates = () => {
+      updateTimer = null;
+      if (pending.size === 0) return;
+      const patches = new Map(pending);
+      pending.clear();
+      const cur = dataRef.current;
+      let touched = false;
+      const apply = (rows: InboxRow[]) => rows.map((r) => {
+        const p = patches.get(r.id);
+        if (!p) return r;
+        touched = true;
+        return { ...r, ...p };
+      }).filter((r) => !r.is_archived);
+      const next = { feed: apply(cur.feed), others: apply(cur.others) };
+      if (touched) commit(next);
     };
     const onUpdate = (payload: { new?: Partial<InboxRow> & { id?: string } }) => {
       const n = payload?.new;
       if (!n?.id) return;
-      const cur = dataRef.current;
-      if (![...cur.feed, ...cur.others].some((r) => r.id === n.id)) return;
-      const patch = (r: InboxRow): InboxRow => (r.id === n.id ? {
-        ...r,
-        ...(n.is_read !== undefined ? { is_read: n.is_read } : {}),
-        ...(n.labels !== undefined ? { labels: n.labels } : {}),
-        ...(n.is_archived !== undefined ? { is_archived: n.is_archived } : {}),
-        ...(n.folder_id !== undefined ? { folder_id: n.folder_id } : {}),
-      } : r);
-      const drop = (rows: InboxRow[]) => rows.map(patch).filter((r) => !r.is_archived);
-      commit({ feed: drop(cur.feed), others: drop(cur.others) });
-    };
-    const onDelete = (payload: { old?: { id?: string } }) => {
-      const id = payload?.old?.id;
-      if (!id) return;
-      const cur = dataRef.current;
-      commit({ feed: cur.feed.filter((r) => r.id !== id), others: cur.others.filter((r) => r.id !== id) });
+      const patch: Partial<InboxRow> = { ...(pending.get(n.id) || {}) };
+      if (n.is_read !== undefined) patch.is_read = n.is_read;
+      if (n.labels !== undefined) patch.labels = n.labels;
+      if (n.is_archived !== undefined) patch.is_archived = n.is_archived;
+      if (n.folder_id !== undefined) patch.folder_id = n.folder_id;
+      pending.set(n.id, patch);
+      if (updateTimer) window.clearTimeout(updateTimer);
+      updateTimer = window.setTimeout(flushUpdates, REALTIME_DEBOUNCE_MS);
     };
     const filter = `user_id=eq.${userId}`;
     const channel = db.channel(`mobile-inbox-${userId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "inbox_messages", filter }, schedule)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "inbox_messages", filter }, onInsert)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "inbox_messages", filter }, onUpdate)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "inbox_messages", filter }, onDelete)
-      .subscribe();
+      .subscribe((status: string) => { realtimeOn.current = status === "SUBSCRIBED"; });
     return () => {
-      if (timer) window.clearTimeout(timer);
+      realtimeOn.current = false;
+      if (insertTimer) window.clearTimeout(insertTimer);
+      if (updateTimer) window.clearTimeout(updateTimer);
       db.removeChannel(channel);
     };
   }, [userId, pollNew, commit]);
@@ -460,7 +512,7 @@ export function useMobileInbox(userId: string | undefined) {
 
   return {
     rows, conversations, loading, refreshing, error, manual, accountEmails, campaigns, folders,
-    othersFloor, othersHasMore, loadingMore, loadMoreOthers,
+    othersFloor, othersHasMore, othersError, loadingMore, loadMoreOthers,
     reload: load, markRead, markUnread, setStatus, toggleImportant, moveToFolder, removeConversation,
     blockSender, ensureMessage,
   };
