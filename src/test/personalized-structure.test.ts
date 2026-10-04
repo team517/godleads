@@ -40,6 +40,18 @@ describe("personalized_message con estructura → correo", () => {
     expect(texto.trim().endsWith("Saludos,\nSamuel\nOnePulso")).toBe(true);
   });
 
+  it("los que venían en HTML de párrafos (22-09) quedan en el mismo formato y salen igual de maquetados", () => {
+    // Salida real de la función para un mensaje <p>…</p> con <strong> y firma "Un saludo,<br>Eric".
+    const deHtml = "Hola Jorge,\n\nHe investigado <strong>The Modern Kids & Family</strong> en LinkedIn y me he quedado impresionado.\n\n¿Te va bien esta semana para verlo?\n\nUn saludo,\nEric";
+    const html = textToHtmlBody(deHtml);
+    expect(html.match(/<p /g)).toHaveLength(4);
+    expect(html).toContain("<strong>The Modern Kids & Family</strong>");
+    expect(html.endsWith('<p style="margin:0 0 14px">Un saludo,<br>Eric</p>')).toBe(true);
+    // Metido en un paso con más texto alrededor, ese texto conserva sus párrafos (con <p> no).
+    const paso = replaceVariables("Buenas {{first_name}},\n\n{{personalized_message}}\n\nP.D.: te dejo mi web.", { first_name: "Jorge", personalized_message: deHtml });
+    expect(textToHtmlBody(paso).match(/<p /g)).toHaveLength(6);
+  });
+
   it("antes (una sola línea) salía como UN párrafo: por eso llegaba todo junto", () => {
     const plano = FORMATEADO.replace(/<\/?b>/g, "").replace(/\s+/g, " ");
     expect(textToHtmlBody(plano).match(/<p /g)).toHaveLength(1);
