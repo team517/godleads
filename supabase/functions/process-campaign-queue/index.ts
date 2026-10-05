@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
+import { sendableVariantIdx } from "../_shared/pm-guard.ts";
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
@@ -2079,7 +2080,19 @@ serve(async (req) => {
         const matchedIdx: number[] = [];
         const unfilteredIdx: number[] = [];
         variantFilters.forEach((f, i) => { if (f) { if (acctTags.has(f)) matchedIdx.push(i); } else unfilteredIdx.push(i); });
-        const eligibleIdx = matchedIdx.length ? matchedIdx : (unfilteredIdx.length ? unfilteredIdx : allVariants.map((_, i) => i));
+        const tagEligibleIdx = matchedIdx.length ? matchedIdx : (unfilteredIdx.length ? unfilteredIdx : allVariants.map((_, i) => i));
+        // FRENO DEL {{personalized_message}} (05-10-2026, petición del dueño): si la variante usa
+        // la variable y el lead no tiene un mensaje válido (vacío o "[ERROR: …]" de la IA), se envía
+        // otra variante elegible que no la use; si no hay ninguna, a este lead no se le envía nada
+        // y sale de la cola (si se quedara "pending" ocuparía sitio en cada pasada). Antes salieron
+        // 32 correos con "[ERROR: fetch failed]" como cuerpo.
+        const eligibleIdx = sendableVariantIdx(allVariants, tagEligibleIdx, lead.custom_fields as Record<string, unknown>);
+        if (eligibleIdx.length === 0) {
+          console.warn(`Lead ${lead.id} (${campaign.name}, paso ${currentStepIndex + 1}): el paso usa {{personalized_message}}, el lead no tiene uno válido y no hay otra variante → no se envía`);
+          await adminClient.from("campaign_leads").update({ status: "failed" }).eq("id", cl.id);
+          totalSkipped++;
+          continue;
+        }
 
         if (currentStepIndex > 0) {
           // Look up the variant_index used in the FIRST email to this lead in this campaign
