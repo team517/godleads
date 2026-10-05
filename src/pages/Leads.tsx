@@ -22,6 +22,7 @@ import { useSearchParams } from "react-router-dom";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { normalizeLeadQuery } from "@/lib/campaign-metrics";
 import { applyInChunks } from "@/lib/bulk-apply";
+import { leadsCountKey, needsRecount } from "@/lib/leads-paging";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DOMAIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
@@ -139,15 +140,23 @@ export default function Leads() {
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
   const [parseProgress, setParseProgress] = useState({ current: 0, total: 0, active: false });
 
-  const load = async () => {
+  // Para qué (usuario, carpeta) se contó la última vez: pasar de página no vuelve a contar.
+  const countedKeyRef = useRef<string | null>(null);
+
+  /** `recount`: contar el total exacto y los leads de cada carpeta (caro con muchos leads). Por
+   *  defecto sí — toda llamada tras un cambio (alta, borrado, importación) cuenta de nuevo; sólo
+   *  el cambio de página (el efecto de abajo) lo salta cuando ya se contó para esta carpeta. */
+  const load = async (opts?: { recount?: boolean }) => {
     if (!user) return;
+    const recount = opts?.recount !== false;
+    const key = leadsCountKey(user.id, activeList);
     setSearchTick((t) => t + 1);
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     let query = supabase
       .from("leads")
-      .select("*, lead_lists(name)", { count: "exact" })
+      .select("*, lead_lists(name)", recount ? { count: "exact" as const } : undefined)
       .eq("user_id", user.id)
       .eq("is_campaign_only", false);
     if (activeList) query = query.eq("list_id", activeList);
@@ -155,20 +164,26 @@ export default function Leads() {
 
     const [leadsRes, listsRes] = await Promise.all([
       query,
-      supabase.from("lead_lists").select("*, leads(count)").eq("user_id", user.id),
+      recount ? supabase.from("lead_lists").select("*, leads(count)").eq("user_id", user.id) : Promise.resolve(null),
     ]);
     // Si la consulta falla (token caducado, red), se conserva lo que hay: vaciar la lista y
     // cachearla vacía hacía creer al usuario que había perdido sus leads.
     if (leadsRes.error) { setLoading(false); return; }
     setLeads(leadsRes.data || []);
-    setTotalCount(leadsRes.count || 0);
-    if (!listsRes.error) setLists(listsRes.data || []);
+    let listsNow = lists;
+    if (recount) {
+      setTotalCount(leadsRes.count || 0);
+      countedKeyRef.current = key;
+      if (listsRes && !listsRes.error) { listsNow = listsRes.data || []; setLists(listsNow); }
+    }
     // Cache only the default entry view (first page, all lists) for instant re-entry.
-    if (page === 0 && !activeList) cacheSet("leads:first", { leads: leadsRes.data || [], lists: listsRes.data || [] });
+    if (page === 0 && !activeList) cacheSet("leads:first", { leads: leadsRes.data || [], lists: listsNow });
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [user, page, activeList]);
+  useEffect(() => {
+    load({ recount: needsRecount(countedKeyRef.current, leadsCountKey(user?.id, activeList), false) });
+  }, [user, page, activeList]);
 
   useEffect(() => {
     const q = normalizeLeadQuery(search);

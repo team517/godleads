@@ -1,7 +1,6 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SubscriptionProvider } from "@/contexts/SubscriptionContext";
@@ -15,12 +14,9 @@ import { Suspense } from "react";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import { ServiceWorkerBridge } from "@/components/ServiceWorkerBridge";
 import MobileGate from "@/pages/mobile/MobileGate";
-// Lazy: the chatbot pulls in recharts + react-markdown + framer-motion. Loading
-// it eagerly bloated the initial bundle of EVERY page. Now it loads on idle,
-// after the page is interactive.
-const ColdEmailChatbot = lazyWithRetry(() =>
-  import("@/components/ColdEmailChatbot").then((m) => ({ default: m.ColdEmailChatbot })),
-);
+// The PulseBot bubble only: the chat itself (recharts, react-markdown, framer-motion) is
+// downloaded on the first click — see ChatbotLauncher.
+import { ChatbotLauncher } from "@/components/ChatbotLauncher";
 
 const Landing = lazyWithRetry(() => import("./pages/Landing"));
 const Auth = lazyWithRetry(() => import("./pages/Auth"));
@@ -51,7 +47,8 @@ const Partners = lazyWithRetry(() => import("./pages/Partners"));
 const Metrics = lazyWithRetry(() => import("./pages/Metrics"));
 const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
 
-const queryClient = new QueryClient();
+// @tanstack/react-query: no useQuery/useMutation anywhere in src → the provider (and its 8 KB gz
+// chunk on every page) is gone.
 
 const PageLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -61,7 +58,6 @@ const PageLoader = () => (
 
 const App = () => (
   <ErrorBoundary>
-  <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
@@ -118,9 +114,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
-          <Suspense fallback={null}>
-            <ColdEmailChatbot />
-          </Suspense>
+          <ChatbotLauncher />
         </VerificationProvider>
         </ProfileProvider>
         </SubscriptionProvider>
@@ -128,7 +122,6 @@ const App = () => (
       </BrowserRouter>
       </ConfirmProvider>
     </TooltipProvider>
-  </QueryClientProvider>
   </ErrorBoundary>
 );
 

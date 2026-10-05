@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { PROFILE_BOOT_COLS, profileQueryKey, sharedQuery } from "@/lib/boot-queries";
 
 const INFINITE_COINS_EMAILS = ["hello@onepulso.blog", "eric@dekano-core.es", "alex@vioonyx.com"];
 
@@ -38,10 +39,17 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<ProfileData>({ full_name: null, avatar_url: null, company_name: null, contact_email: null, allowed_routes: null, birthday: null, coins: 0, infiniteCoins: false, logo_url: null, brand_color: null, is_client_manager: false, client_login_of: null });
   const [loading, setLoading] = useState(true);
 
-  const refreshProfile = useCallback(async () => {
+  // `shared`: the boot read is shared with SubscriptionContext (same row, one request — see
+  // boot-queries.ts). Explicit refreshes (after saving the profile) always go to the server.
+  // Any argument other than that option (an onClick event, for instance) means "fresh".
+  const refreshProfile = useCallback(async (opts?: { shared?: boolean }) => {
     if (!user) { setLoading(false); return; }
-    const COLS = "full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager, client_login_of";
-    const read = () => (supabase as any).from("profiles").select(COLS).eq("user_id", user.id).single();
+    const shared = !!(opts && typeof opts === "object" && "shared" in opts && opts.shared);
+    const read = () => sharedQuery<{ data: any; error: any }>(
+      profileQueryKey(user.id),
+      () => (supabase as any).from("profiles").select(PROFILE_BOOT_COLS).eq("user_id", user.id).single(),
+      { fresh: !shared },
+    );
     let { data, error } = await read();
     // Un fallo suele ser pasajero (token que se está renovando, red): se reintenta UNA vez.
     if (error) {
@@ -84,7 +92,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     setProfile(prev => ({ ...prev, ...updates }));
   }, [user]);
 
-  useEffect(() => { refreshProfile(); }, [refreshProfile]);
+  useEffect(() => { refreshProfile({ shared: true }); }, [refreshProfile]);
 
   return (
     <ProfileContext.Provider value={{ profile, loading, refreshProfile, updateProfile }}>

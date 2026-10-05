@@ -172,7 +172,16 @@ export default function Personalizacion() {
 
   const authToken = async () => (await supabase.auth.getSession()).data.session?.access_token;
 
-  const kickProcessor = async () => {
+  // Empujón al procesador como mucho cada 30 s: el sondeo de progreso sigue cada 3,5 s, pero
+  // llamar a la función en cada tic era una invocación constante que no aceleraba nada (el
+  // procesador ya lleva hasta 4 listas a la vez). Las acciones del usuario (generar, reanudar,
+  // reintentar) empujan siempre (`force`).
+  const KICK_MIN_GAP_MS = 30_000;
+  const lastKickRef = useRef(0);
+  const kickProcessor = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastKickRef.current < KICK_MIN_GAP_MS) return;
+    lastKickRef.current = now;
     const token = await authToken();
     fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-personalization`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}",
@@ -407,7 +416,7 @@ export default function Personalizacion() {
     setResults({}); setProg({ done: 0, ok: 0, failed: 0, total: 0 }); setJobStatus(""); setJobId(null);
     if (fileRef.current) fileRef.current.value = "";
     await loadHistory();
-    kickProcessor();
+    kickProcessor(true);
     toast.success(habiaActivas
       ? `En cola: ${nombre} (${leads.toLocaleString("es-ES")} leads). Seguirá cuando acabe la anterior; puedes subir otra lista.`
       : `Generando en el servidor: ${nombre} (${leads.toLocaleString("es-ES")} leads). Puedes cerrar el PC o subir otra lista.`);
@@ -439,7 +448,7 @@ export default function Personalizacion() {
     if (jobId === id) setJobStatus("pending"); // reactiva el sondeo del trabajo abierto
     setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, status: "pending" } : h)));
     await (supabase as any).from("personalization_csv_jobs").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", id);
-    kickProcessor();
+    kickProcessor(true);
     void loadHistory();
     toast.success("Reanudada: sigue donde se quedó.");
   };
@@ -456,7 +465,7 @@ export default function Personalizacion() {
       setProg((p) => ({ ...p, done: Math.max(0, p.done - n), failed: Math.max(0, p.failed - n) }));
       setResults({});
       setJobStatus("pending"); // reactiva el sondeo y el empuje al procesador
-      kickProcessor();
+      kickProcessor(true);
       toast.success(`Reintentando ${n} mensaje(s) que habían fallado.`);
     } catch (e: any) { toast.error(`No se pudo reintentar: ${e?.message || e}`); }
     finally { setRetrying(false); }

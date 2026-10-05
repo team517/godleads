@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
+import { lazyWithRetry } from "@/lib/lazy-retry";
+import type { ChartData } from "@/components/chatbot/ChatbotCharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { SparkMark } from "@/components/SparkMark";
@@ -13,16 +14,12 @@ import { contextoParaPulseBot, esPeticionDeCambio, siguePulseBot } from "@/lib/c
 import { TarjetaCambioMini, type AccionCambio, type TarjetaCambioT } from "@/components/chatbot/TarjetaCambioMini";
 import type { IaTarjeta } from "@/lib/ia-mod-view";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend,
-} from "recharts";
 import { format, subDays, parseISO } from "date-fns";
 
-type ChartData = {
-  type: "campaign_comparison" | "daily_activity" | "status_pie";
-  title: string;
-  data: any[];
-};
+// recharts (~100 KB gz) y react-markdown (~50 KB gz) se bajan sólo cuando hay una gráfica o una
+// respuesta que pintar — no con el chat, y mucho menos con el botón flotante.
+const ChatbotChart = lazyWithRetry(() => import("@/components/chatbot/ChatbotCharts"));
+const ChatbotMarkdown = lazyWithRetry(() => import("@/components/chatbot/ChatbotMarkdown"));
 
 type Msg = {
   role: "user" | "assistant" | "charts";
@@ -63,16 +60,11 @@ const quickPrompts = [
   "Estrategias para captar reuniones en frío",
 ];
 
-const CHART_COLORS = [
-  "hsl(var(--primary))",
-  "hsl(var(--chart-2, 173 58% 39%))",
-  "hsl(var(--chart-3, 197 37% 24%))",
-  "hsl(var(--destructive))",
-  "hsl(var(--chart-5, 27 87% 67%))",
-];
-
-export function ColdEmailChatbot() {
-  const [open, setOpen] = useState(false);
+/** `initialOpen`: el botón flotante vive en ChatbotLauncher y monta este componente ya abierto
+ *  al primer clic; desde entonces el chat se queda montado (conversación incluida) y pinta su
+ *  propio botón al cerrarse, como siempre. */
+export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolean } = {}) {
+  const [open, setOpen] = useState(initialOpen);
   const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -434,71 +426,11 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setIsLoading(false);
   };
 
-  const renderChart = (chart: ChartData, isFullscreen: boolean) => {
-    const h = isFullscreen ? 260 : 180;
-
-    if (chart.type === "campaign_comparison") {
-      return (
-        <ResponsiveContainer width="100%" height={h}>
-          <BarChart data={chart.data} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-            <YAxis tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="sent" name="Enviados" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="replied" name="Respondidos" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="bounced" name="Rebotados" fill={CHART_COLORS[3]} radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      );
-    }
-
-    if (chart.type === "daily_activity") {
-      return (
-        <ResponsiveContainer width="100%" height={h}>
-          <AreaChart data={chart.data} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-            <XAxis dataKey="date" tick={{ fontSize: 9 }} interval={4} />
-            <YAxis tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Area type="monotone" dataKey="sent" name="Enviados" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.15} />
-            <Area type="monotone" dataKey="replied" name="Respondidos" stroke={CHART_COLORS[1]} fill={CHART_COLORS[1]} fillOpacity={0.15} />
-            <Area type="monotone" dataKey="bounced" name="Rebotados" stroke={CHART_COLORS[3]} fill={CHART_COLORS[3]} fillOpacity={0.15} />
-          </AreaChart>
-        </ResponsiveContainer>
-      );
-    }
-
-    if (chart.type === "status_pie") {
-      return (
-        <ResponsiveContainer width="100%" height={h}>
-          <PieChart>
-            <Pie
-              data={chart.data}
-              cx="50%"
-              cy="50%"
-              innerRadius={isFullscreen ? 50 : 35}
-              outerRadius={isFullscreen ? 85 : 60}
-              paddingAngle={3}
-              dataKey="value"
-              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-              labelLine={{ strokeWidth: 1 }}
-              style={{ fontSize: isFullscreen ? 11 : 9 }}
-            >
-              {chart.data.map((_: any, i: number) => (
-                <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-          </PieChart>
-        </ResponsiveContainer>
-      );
-    }
-
-    return null;
-  };
+  const renderChart = (chart: ChartData, isFullscreen: boolean) => (
+    <Suspense fallback={<div style={{ height: isFullscreen ? 260 : 180 }} className="flex items-center justify-center text-xs text-muted-foreground"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Cargando gráfico…</div>}>
+      <ChatbotChart chart={chart} isFullscreen={isFullscreen} />
+    </Suspense>
+  );
 
   const chatContent = (isFullscreen: boolean) => (
     <div className={`flex flex-col ${isFullscreen ? "h-full" : "max-h-[600px]"} bg-card`}>
@@ -603,7 +535,10 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 {msg.role === "assistant" ? (
                   <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>li]:my-0.5 [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:rounded-lg [&>blockquote]:py-1 [&>pre]:bg-background/80 [&>pre]:rounded-lg [&>pre]:text-xs">
                     {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">PulseBot · tus campañas</p>}
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    {/* Mientras baja react-markdown (sólo la primera vez) el texto se lee en plano. */}
+                    <Suspense fallback={<p className="whitespace-pre-wrap">{msg.content}</p>}>
+                      <ChatbotMarkdown>{msg.content}</ChatbotMarkdown>
+                    </Suspense>
                     {(msg.cards || []).map((card, j) => (
                       card.type === "cambio" || card.type === "pendiente"
                         ? <TarjetaCambioMini key={card.change_id || j} t={card as TarjetaCambioT} estado={estadosCambio[card.change_id] || (card.type === "pendiente" ? "pending" : "applied")} onAccion={accionCambio} />

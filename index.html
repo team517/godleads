@@ -24,9 +24,14 @@
     <meta name="theme-color" content="#FBFBFB" />
     <meta name="color-scheme" content="light dark" />
     <link rel="manifest" href="/manifest.json" />
+    <!-- La API: el apretón de manos TLS con Supabase empieza antes de que arranque el JS. -->
+    <link rel="preconnect" href="https://iqhhybmhlkmulwhizpzi.supabase.co" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
+    <!-- Las mismas fuentes, sin bloquear el primer pintado: se precargan y se activan al llegar
+         (con un <noscript> para navegadores sin JS). -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" /></noscript>
     <title>OnePulso</title>
     <meta name="description" content="OnePulso - Plataforma de cold email para equipos de ventas B2B">
     <meta name="author" content="OnePulso" />

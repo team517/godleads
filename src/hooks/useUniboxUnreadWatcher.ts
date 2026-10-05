@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, publishUniboxUnread } from "@/lib/uniboxBadge";
+import { cacheGet, cacheSet } from "@/lib/instant-cache";
 
 // Realtime badge bump for NEW prospect replies while the Unibox is CLOSED.
 //
@@ -16,23 +17,42 @@ import { readCachedUniboxUnread, publishUniboxUnread } from "@/lib/uniboxBadge";
 //
 // The Unibox stays the source of truth: whenever it is open it republishes the
 // exact filtered count, correcting any drift this optimistic bump introduces.
+
+/** Misma clave y misma frescura que el Unibox (Unibox.tsx): lo que uno carga lo reutiliza el otro. */
+export const LEAD_DOMAINS_CACHE_KEY = "unibox:leadDomains";
+export const LEAD_DOMAINS_FRESH_MS = 10 * 60_000;
+/** La RPC get_lead_domains tarda ~2 s en las cuentas grandes: se pide pasado el arranque, nunca
+ *  compitiendo con la primera pantalla. */
+export const LEAD_DOMAINS_DEFER_MS = 5_000;
+
 export function useUniboxUnreadWatcher(userId?: string) {
   useEffect(() => {
     if (!userId) return;
     let domains = new Set<string>();
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
-      try {
-        const { data } = await (supabase as any).rpc("get_lead_domains");
-        if (!cancelled && Array.isArray(data)) {
+    const cached = cacheGet<{ at: number; list: string[] }>(LEAD_DOMAINS_CACHE_KEY);
+    if (cached && Date.now() - cached.at < LEAD_DOMAINS_FRESH_MS) {
+      domains = new Set(cached.list);
+    } else {
+      timer = setTimeout(async () => {
+        try {
+          // Pudo cargarlo el Unibox mientras tanto.
+          const again = cacheGet<{ at: number; list: string[] }>(LEAD_DOMAINS_CACHE_KEY);
+          if (again && Date.now() - again.at < LEAD_DOMAINS_FRESH_MS) { domains = new Set(again.list); return; }
+          const { data, error } = await (supabase as any).rpc("get_lead_domains");
+          if (cancelled || error || !Array.isArray(data)) return;
+          const set = new Set<string>();
           for (const r of data) {
             const d = (r?.domain || "").toLowerCase().trim();
-            if (d) domains.add(d);
+            if (d) set.add(d);
           }
-        }
-      } catch { /* non-fatal: lead-linked messages still bump the badge */ }
-    })();
+          domains = set;
+          cacheSet(LEAD_DOMAINS_CACHE_KEY, { at: Date.now(), list: [...set] });
+        } catch { /* non-fatal: lead-linked messages still bump the badge */ }
+      }, LEAD_DOMAINS_DEFER_MS);
+    }
 
     const ch = supabase
       .channel("unibox-badge-watcher")
@@ -50,6 +70,6 @@ export function useUniboxUnreadWatcher(userId?: string) {
       )
       .subscribe();
 
-    return () => { cancelled = true; supabase.removeChannel(ch); };
+    return () => { cancelled = true; if (timer) clearTimeout(timer); supabase.removeChannel(ch); };
   }, [userId]);
 }

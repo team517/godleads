@@ -116,6 +116,46 @@ async function saveSubscription(userId: string, subscription: PushSubscription):
     .delete().eq("user_id", userId).is("device_id", null).lt("created_at", yesterday);
 }
 
+/* ── Sello de "ya comprobado" de ensurePushSubscription ──────────────────────────────────────
+ * La reparación silenciosa escribía en push_subscriptions (upsert + 2 deletes) en CADA arranque.
+ * Se sella en localStorage y no se repite en 24 h — salvo que cambie algo que la invalide: otro
+ * usuario en este navegador, otro endpoint (el token push rotó) o el permiso. Sin sello, o con
+ * un sello que no cuadra, se repara como siempre. */
+const ENSURE_STAMP_KEY = "onepulso-push-ensured";
+export const PUSH_ENSURE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export type PushEnsureStamp = { at: number; userId: string; endpoint: string; permission: string };
+
+/** ¿Vale el sello para saltarse la escritura? Pura — con prueba. */
+export function pushEnsureIsFresh(
+  stamp: PushEnsureStamp | null | undefined,
+  now: { at: number; userId: string; endpoint: string; permission: string },
+  ttlMs = PUSH_ENSURE_TTL_MS,
+): boolean {
+  if (!stamp || typeof stamp.at !== "number") return false;
+  if (now.at - stamp.at < 0 || now.at - stamp.at >= ttlMs) return false;
+  if (stamp.userId !== now.userId) return false;
+  if (!stamp.endpoint || stamp.endpoint !== now.endpoint) return false;
+  if (stamp.permission !== now.permission) return false;
+  return true;
+}
+
+function readEnsureStamp(): PushEnsureStamp | null {
+  try {
+    const raw = localStorage.getItem(ENSURE_STAMP_KEY);
+    return raw ? (JSON.parse(raw) as PushEnsureStamp) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeEnsureStamp(stamp: PushEnsureStamp | null): void {
+  try {
+    if (stamp) localStorage.setItem(ENSURE_STAMP_KEY, JSON.stringify(stamp));
+    else localStorage.removeItem(ENSURE_STAMP_KEY);
+  } catch { /* sin almacenamiento: se repara en cada arranque, como antes */ }
+}
+
 export async function subscribeToPush(userId: string): Promise<boolean> {
   try {
     const permission = await Notification.requestPermission();
@@ -146,6 +186,7 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     }
 
     await saveSubscription(userId, subscription);
+    writeEnsureStamp({ at: Date.now(), userId, endpoint: subscription.endpoint, permission: Notification.permission });
     return true;
   } catch (e) {
     console.error("Push subscribe error:", e);
@@ -187,8 +228,15 @@ export async function ensurePushSubscription(userId: string): Promise<boolean> {
       });
     }
 
+    // Comprobado hace menos de 24 h para este usuario, este endpoint y este permiso: la fila ya
+    // está; no se vuelve a escribir. (Todo lo de arriba es local y sigue reparando una suscripción
+    // rota o con la clave antigua en cada arranque.)
+    const now = { at: Date.now(), userId, endpoint: subscription.endpoint, permission: Notification.permission as string };
+    if (pushEnsureIsFresh(readEnsureStamp(), now)) return true;
+
     // Upsert is cheap and idempotent — cheaper than a select to find out if we must write.
     await saveSubscription(userId, subscription);
+    writeEnsureStamp(now);
     return true;
   } catch (e) {
     console.error("Push ensure error:", e);
@@ -225,6 +273,7 @@ export async function unsubscribeFromPush(userId: string): Promise<boolean> {
     const endpoint = subscription.endpoint;
     const gone = await subscription.unsubscribe();
     if (!gone) return false;
+    writeEnsureStamp(null); // la próxima activación vuelve a escribir la fila
     const { error } = await supabase
       .from("push_subscriptions")
       .delete()

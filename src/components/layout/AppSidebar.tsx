@@ -7,6 +7,7 @@ import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
+import { useSubscription } from "@/contexts/SubscriptionContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
 import { isAgencyAccount } from "@/lib/access";
@@ -75,7 +76,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
   // How many personalization jobs are generating right now → shows an "en curso" badge on the
   // Personalización item from ANY screen, so you always know a batch is still running.
   const [personalizing, setPersonalizing] = useState(0);
-  const [isAdmin, setIsAdmin] = useState(false);
+  // The role was already read at boot by SubscriptionContext: no second user_roles query here.
+  const { isAdmin } = useSubscription();
   const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>(readClosedGroups);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
@@ -112,21 +114,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     return subscribeUniboxUnread(setUnreadCount);
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    const checkAdmin = async () => {
-      const { data } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .single();
-      setIsAdmin(data?.role === "admin");
-    };
-    checkAdmin();
-  }, [user]);
-
   // Poll for a personalization job in progress (light head+count). Only runs when the user can
-  // actually see the Personalización item, and refreshes when you change screen.
+  // actually see the Personalización item. It is only a badge: it does NOT re-query on every
+  // screen change (that was one more request on every navigation); the minute poll is enough.
   useEffect(() => {
     if (!user) return;
     if (allowedRoutes && !allowedRoutes.includes("/personalizacion")) return;
@@ -144,9 +134,10 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     // una petición constante de fondo para un contador que rara vez cambia.
     const t = setInterval(() => { if (!document.hidden) check(); }, 60_000);
     return () => { alive = false; clearInterval(t); };
-  }, [user, allowedRoutes, location.pathname]);
+  }, [user, allowedRoutes]);
 
-  // Prefetch all route chunks in the background after first render.
+  // Prefetch the common route chunks in the background, a few seconds after first render
+  // (never on phones / data-saver — see route-prefetch.ts).
   useEffect(() => { prefetchAllRoutesOnIdle(); }, []);
 
   const handleSoftExit = () => {

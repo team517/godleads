@@ -21,6 +21,11 @@ import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline"
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 import CampaignsTable from "@/components/campaigns/CampaignsTable";
 
+/** Lo que la lista y sus acciones usan de cada campaña (tabla, tarjetas, duplicar, remix, ficha).
+ *  Antes era `*`: cada visita bajaba también la firma HTML y toda la configuración de envío de
+ *  cada campaña, que la ficha ya lee por su cuenta cuando se abre. */
+const CAMPAIGN_LIST_COLS = "id, user_id, name, status, created_at, updated_at, manager_id, client_id, account_tags, daily_limit, send_start_hour, send_end_hour, timezone, send_days, stop_on_reply";
+
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   active: { label: "Activa", variant: "default" },
   paused: { label: "Pausada", variant: "secondary" },
@@ -102,7 +107,7 @@ export default function Campaigns() {
 
   const load = async () => {
     if (!user) return;
-    const { data, error: listError } = await supabase.from("campaigns").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    const { data, error: listError } = await (supabase as any).from("campaigns").select(CAMPAIGN_LIST_COLS).eq("user_id", user.id).order("created_at", { ascending: false });
     // Un fallo de la consulta (token caducado, red, base ocupada) NO es "no tienes campañas":
     // se conserva lo que hubiera en pantalla, se dice lo que pasa y se ofrece reintentar. Antes
     // se guardaba la lista VACÍA en el caché de disco, así que la pantalla seguía mintiendo en

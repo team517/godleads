@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { decideAccess } from "@/lib/access";
+import { PROFILE_BOOT_COLS, profileQueryKey, roleQueryKey, sharedQuery } from "@/lib/boot-queries";
 
 export type PlanTier = "free" | "starter" | "growth" | "scale";
 
@@ -91,6 +92,9 @@ interface SubscriptionContextType {
   trialEnd: string | null;
   trialExpired: boolean;
   trialDaysLeft: number | null;
+  /** user_roles.role, read ONCE at boot (the sidebar used to query it again). null = no row. */
+  role: string | null;
+  isAdmin: boolean;
   refreshSubscription: () => Promise<void>;
 }
 
@@ -105,6 +109,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [trialEnd, setTrialEnd] = useState<string | null>(null);
   const [trialDaysLeft, setTrialDaysLeft] = useState<number | null>(null);
   const [trialExpired, setTrialExpired] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const resetSubscriptionState = useCallback(() => {
@@ -115,6 +120,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     setTrialEnd(null);
     setTrialDaysLeft(null);
     setTrialExpired(false);
+    setRole(null);
   }, []);
 
   const refreshSubscription = useCallback(async () => {
@@ -127,11 +133,16 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const { data: roleData } = await supabase
-        .from("user_roles").select("role").eq("user_id", user.id).single();
-      const { data: profileCheck } = await supabase
-        .from("profiles").select("allowed_routes, contact_email, is_client_manager, created_at")
-        .eq("user_id", user.id).single();
+      // The two reads go IN PARALLEL (they were sequential: one full round trip wasted on every
+      // boot) and are SHARED with the other boot readers (ProfileContext reads the same profile
+      // row; the sidebar used to read the role again) — see boot-queries.ts.
+      const [{ data: roleData }, { data: profileCheck }] = await Promise.all([
+        sharedQuery(roleQueryKey(user.id), () =>
+          supabase.from("user_roles").select("role").eq("user_id", user.id).single()),
+        sharedQuery<{ data: any; error: any }>(profileQueryKey(user.id), () =>
+          (supabase as any).from("profiles").select(PROFILE_BOOT_COLS).eq("user_id", user.id).single()),
+      ]);
+      setRole((roleData as any)?.role ?? null);
 
       const baseInput = {
         email: user.email || null,
@@ -202,7 +213,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const limits = getPlanLimits(tier, isTrialing);
 
   return (
-    <SubscriptionContext.Provider value={{ tier, subscribed, subscriptionEnd, loading, limits, isTrialing, trialEnd, trialExpired, trialDaysLeft, refreshSubscription }}>
+    <SubscriptionContext.Provider value={{ tier, subscribed, subscriptionEnd, loading, limits, isTrialing, trialEnd, trialExpired, trialDaysLeft, role, isAdmin: role === "admin", refreshSubscription }}>
       {children}
     </SubscriptionContext.Provider>
   );

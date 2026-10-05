@@ -70,6 +70,22 @@ const sanitizeEmailValue = (value: string | null | undefined) => sanitizeTextVal
   .replace(/[\s,"'`<>]+/g, "")
   .toLowerCase();
 
+/** Columnas de la vista email_accounts_safe que usa la lista — TODAS menos signature_html: la
+ *  firma (varios KB de HTML × cientos de buzones) no se pinta en la lista y se descargaba
+ *  entera en cada visita. Se pide aparte sólo al abrir el editor de firmas. */
+const ACCOUNT_LIST_COLS = [
+  "id", "user_id", "email", "first_name", "last_name",
+  "imap_username", "imap_host", "imap_port",
+  "smtp_username", "smtp_host", "smtp_port",
+  "status", "tags", "daily_limit", "sent_today",
+  "send_start_hour", "send_end_hour", "last_send_at",
+  "warmup_enabled", "warmup_day", "warmup_limit", "warmup_increment", "warmup_started_at",
+  "warmup_score", "warmup_status_instantly", "warmup_synced_at",
+  "last_health_check", "created_at", "updated_at",
+  "last_uid_inbox", "last_uid_sent", "last_error", "last_sync", "notes",
+  "imap_password", "smtp_password",
+].join(", ");
+
 const normalizeEmailAccount = <T extends Record<string, any>>(account: T): T => ({
   ...account,
   email: sanitizeEmailValue(account.email),
@@ -528,7 +544,7 @@ export default function EmailAccounts() {
       // las cuentas simplemente no salían en pantalla (ni en los alcances "todas").
       const all: any[] = [];
       for (let off = 0; ; off += 1000) {
-        const { data, error } = await supabase.from("email_accounts_safe" as any).select("*").eq("user_id", user.id)
+        const { data, error } = await supabase.from("email_accounts_safe" as any).select(ACCOUNT_LIST_COLS).eq("user_id", user.id)
           .order("created_at", { ascending: false }).order("id").range(off, off + 999);
         // A transient query error / timeout (common on the NANO compute tier) must NOT wipe
         // the list — keep whatever is on screen (cache) instead of showing zero accounts.
@@ -1166,14 +1182,21 @@ export default function EmailAccounts() {
   };
 
   // ── Signature manager ──────────────────────────────────────────────────────
-  const openSignatureManager = () => {
-    // Prefill with an existing signature (the first account that already has one)
-    // so editing/reusing is easy.
-    const existing = (accounts.find(a => ((a as any).signature_html || "").trim()) as any)?.signature_html || "";
-    setSigHtml(existing);
+  const openSignatureManager = async () => {
+    setSigHtml("");
     setSigScope(selectedIds.size > 0 ? "selected" : "all");
     setSigTag(allTags[0] || "");
     setShowSignature(true);
+    // Prefill with an existing signature (the newest account that already has one) so
+    // editing/reusing is easy. Pedida AHORA, no con la lista: la lista ya no trae las firmas.
+    if (!user) return;
+    const { data } = await (supabase as any).from("email_accounts_safe")
+      .select("signature_html").eq("user_id", user.id)
+      .not("signature_html", "is", null).neq("signature_html", "")
+      .order("created_at", { ascending: false }).limit(20);
+    const existing = ((data || []) as { signature_html?: string }[]).find((a) => (a.signature_html || "").trim())?.signature_html || "";
+    // Sólo si el usuario no ha empezado a escribir mientras llegaba.
+    setSigHtml((cur) => (cur ? cur : existing));
   };
 
   // Accounts the signature will be written to, per the chosen scope.

@@ -1,6 +1,6 @@
 import { hasWarmupSubjectTag, isWarmupMessage, isBounceOrFailure } from "@/lib/inbox-filters";
 import { sentBodyHtml } from "@/lib/sent-body";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { isCampaignRelevant, isOwnBrandDomain } from "@/lib/inbox-visibility";
 import { looksBinaryText } from "@/lib/reply-text";
@@ -550,6 +550,9 @@ export default function Unibox() {
 
 
   const [search, setSearch] = useState("");
+  // El filtro local de la lista (cientos de filas) va con una copia DIFERIDA del texto: la tecla se
+  // pinta en el cuadro al instante y la lista se refiltra justo después, sin trabar el teclado.
+  const deferredSearch = useDeferredValue(search);
   const [showWarmup, setShowWarmup] = useState(false);
   const [langNonce, setLangNonce] = useState(0);
   const [tcxAccounts, setTcxAccounts] = useState<Set<string>>(new Set());
@@ -620,7 +623,21 @@ export default function Unibox() {
   const [accountsMap, setAccountsMap] = useState<Record<string, string[]>>({});
   const [accountEmailMap, setAccountEmailMap] = useState<Record<string, string>>({});
   // ── Signature manager (also reachable from Email Accounts) ──
-  const [sigAccounts, setSigAccounts] = useState<{ id: string; email: string; tags: string[]; signature_html?: string }[]>([]);
+  const [sigAccounts, setSigAccounts] = useState<{ id: string; email: string; tags: string[] }[]>([]);
+  // Firma de cada buzón, pedida la primera vez que hace falta (al responder desde él) y
+  // recordada durante la visita; el editor de firmas la actualiza al aplicar.
+  const sigCacheRef = useRef<Map<string, string>>(new Map());
+  const getAccountSignature = useCallback(async (accountId: string): Promise<string> => {
+    if (!accountId) return "";
+    const hit = sigCacheRef.current.get(accountId);
+    if (hit !== undefined) return hit;
+    // Un fallo de red no puede mandar la respuesta sin firma: se reintenta una vez.
+    let { data, error } = await supabase.from("email_accounts").select("signature_html").eq("id", accountId).maybeSingle();
+    if (error) ({ data, error } = await supabase.from("email_accounts").select("signature_html").eq("id", accountId).maybeSingle());
+    const html = String((data as { signature_html?: string | null } | null)?.signature_html || "");
+    if (!error) sigCacheRef.current.set(accountId, html); // un fallo pasajero no se recuerda como "sin firma"
+    return html;
+  }, []);
   const [sigOpen, setSigOpen] = useState(false);
   const [sigHtml, setSigHtml] = useState("");
   const [sigScope, setSigScope] = useState<"all" | "tag" | "account">("all");
@@ -956,7 +973,9 @@ export default function Unibox() {
     const loadAI = async () => {
       const [{ data: prompts }, { data: accounts }, { data: campaignsData }, { data: foldersData }, { data: managersData }] = await Promise.all([
         supabase.from("ai_prompts").select("*").eq("user_id", user.id),
-        supabase.from("email_accounts").select("id, email, tags, signature_html, status, first_name").eq("user_id", user.id),
+        // Sin signature_html: la firma de cada buzón (KB de HTML × cientos de buzones) se pide
+        // sólo al abrir el editor de firmas o al enviar desde ese buzón (getAccountSignature).
+        supabase.from("email_accounts").select("id, email, tags, status, first_name").eq("user_id", user.id),
         (supabase as any).from("campaigns").select("id, name, manager_id").eq("user_id", user.id).order("name"),
         (supabase as any).from("unibox_folders").select("*").eq("user_id", user.id).order("created_at"),
         (supabase as any).from("campaign_managers").select("id, name, color").eq("user_id", user.id).order("name"),
@@ -983,7 +1002,7 @@ export default function Unibox() {
       setOwnDomains(new Set(
         (accounts || []).map((a: any) => String(a.email || "").split("@")[1]?.toLowerCase().trim() || "").filter(Boolean),
       ));
-      setSigAccounts((accounts || []).map((a: any) => ({ id: a.id, email: a.email, tags: a.tags || [], signature_html: a.signature_html || "" })));
+      setSigAccounts((accounts || []).map((a: any) => ({ id: a.id, email: a.email, tags: a.tags || [] })));
       setTcxAccounts(tcx);
     };
     loadAI();
@@ -1584,13 +1603,20 @@ export default function Unibox() {
     if (sigScope === "tag") return sigAccounts.filter(a => (a.tags || []).includes(sigTag)).map(a => a.id);
     return sigAccounts.map(a => a.id); // "all"
   }, [sigScope, sigTag, sigAccountId, sigAccounts]);
-  const openSignature = () => {
-    const existing = sigAccounts.find(a => (a.signature_html || "").trim())?.signature_html || "";
-    setSigHtml(existing);
+  const openSignature = async () => {
+    setSigHtml("");
     setSigScope("all");
     setSigTag(sigAllTags[0] || "");
     setSigAccountId(sigAccounts[0]?.id || "");
     setSigOpen(true);
+    // Prefill: la firma que ya tenga algún buzón (el más nuevo), pedida ahora y no con la lista.
+    if (!user) return;
+    const { data } = await (supabase as any).from("email_accounts")
+      .select("signature_html").eq("user_id", user.id)
+      .not("signature_html", "is", null).neq("signature_html", "")
+      .order("created_at", { ascending: false }).limit(20);
+    const existing = ((data || []) as { signature_html?: string | null }[]).find((a) => (a.signature_html || "").trim())?.signature_html || "";
+    setSigHtml((cur) => (cur ? cur : existing));
   };
   const applyUniboxSignature = async () => {
     if (!user) return;
@@ -1600,8 +1626,8 @@ export default function Unibox() {
     const { error } = await supabase.from("email_accounts").update({ signature_html: sigHtml } as any).in("id", ids);
     setSigSaving(false);
     if (error) { toast.error(`No se pudo aplicar la firma: ${error.message}`); return; }
-    // Reflect locally so the prefill/preview stay in sync without a full reload.
-    setSigAccounts(prev => prev.map(a => (ids.includes(a.id) ? { ...a, signature_html: sigHtml } : a)));
+    // Reflect locally so the next reply from those mailboxes carries the new signature.
+    for (const id of ids) sigCacheRef.current.set(id, sigHtml);
     toast.success(sigHtml.trim() ? `Firma aplicada a ${ids.length} cuenta(s)` : `Firma quitada de ${ids.length} cuenta(s)`);
     setSigOpen(false);
   };
@@ -1733,7 +1759,7 @@ export default function Unibox() {
     // SEARCH (main inbox tabs): when there's a query, show the DB search results — the whole
     // mailbox, ignoring the language/warmup filter and the loaded window. Sigue respetando la
     // pestaña, "Hoy" y la carpeta: buscar con "Interesados" marcado ya no devolvía el buzón entero.
-    if (search.trim().length >= 2 && searchResults !== null) {
+    if (deferredSearch.trim().length >= 2 && searchResults !== null) {
       return searchResults
         .filter(m => !isBlockedSender(m.from_email) || isThreadReply(m))
         .filter(inTab)
@@ -1763,8 +1789,8 @@ export default function Unibox() {
       .filter(inTab)
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
-      .filter(m => !search || searchTextOf(m).includes(search.toLowerCase()));
-  }, [messages, campaignItems, campaignFeed, campaignMatch, searchCampaignMatch, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+      .filter(m => !deferredSearch || searchTextOf(m).includes(deferredSearch.toLowerCase()));
+  }, [messages, campaignItems, campaignFeed, campaignMatch, searchCampaignMatch, searchResults, deferredSearch, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
 
   // Al entrar en Campaigns y cada vez que se recarga el Unibox (la campaña elegida sólo filtra).
   useEffect(() => {
@@ -1821,9 +1847,9 @@ export default function Unibox() {
   const filtered = useMemo(() => {
     // ENVIADOS tab: show the messages YOU sent (newest first), search by recipient/subject.
     if (viewTab === "sent") {
-      const q = search.toLowerCase();
+      const q = deferredSearch.toLowerCase();
       return sentItems.filter(m =>
-        !search || m.to_email?.toLowerCase().includes(q) || m.subject?.toLowerCase().includes(q)
+        !deferredSearch || m.to_email?.toLowerCase().includes(q) || m.subject?.toLowerCase().includes(q)
       );
     }
     // IMPORTANTES tab: UNION of (starred rows loaded straight from the DB) + (any
@@ -1831,12 +1857,12 @@ export default function Unibox() {
     // message is never missing — not to a stale reload, not to a write/read race, not
     // to the 500+500 window.
     if (viewTab === "important") {
-      const q = search.toLowerCase();
+      const q = deferredSearch.toLowerCase();
       const byId = new Map<string, any>();
       for (const m of importantItems) if (!m.is_archived) byId.set(m.id, m);
       for (const m of messages) if (isImportant(m) && !m.is_archived) byId.set(m.id, m);
       return Array.from(byId.values())
-        .filter(m => !search ||
+        .filter(m => !deferredSearch ||
           m.from_email?.toLowerCase().includes(q) ||
           m.from_name?.toLowerCase().includes(q) ||
           decodeSubject(m.subject)?.toLowerCase().includes(q))
@@ -1854,7 +1880,7 @@ export default function Unibox() {
     });
   // aiReplied/isImportant/isReminderDue no están memoizadas: se listan sus fuentes estables.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewTab, sentItems, importantItems, search, preCategory, categoryFilter, aiRepliedSet, reminders]);
+  }, [viewTab, sentItems, importantItems, deferredSearch, preCategory, categoryFilter, aiRepliedSet, reminders]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = { all: preCategory.length };
@@ -2300,7 +2326,7 @@ export default function Unibox() {
       const finalBody = bodyToSend;
       // The sending account's RICH signature (logo/colours/badges) is sent as a SEPARATE
       // field so send-email keeps it intact (the strict body sanitizer would flatten it).
-      const acctSignature = (sigAccounts.find((a) => a.id === selected.account_id)?.signature_html || "").trim();
+      const acctSignature = (await getAccountSignature(selected.account_id)).trim();
 
       // THREADING: reply to the LATEST RECEIVED message in the loaded conversation
       // (its Message-ID is exactly what the recipient's client matches to thread),
