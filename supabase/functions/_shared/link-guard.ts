@@ -12,9 +12,11 @@
 // claro: mejor un error que un "enviado" falso.
 export type LinkFix = { from: string; to: string };
 
-const RULES: { re: RegExp; to: string | null; label: string }[] = [
-  { re: /https?:\/\/(?:www\.)?calendly\.com\/onepulso\/30min\/?(?:\?[^\s"'<>]*)?/gi, to: "https://calendly.com/onepulso", label: "calendly.com/onepulso/30min" },
-];
+// 05-10-2026: the owner asked to send https://calendly.com/onepulso/30min again, complete. The
+// rule that turned it into the profile URL is removed at their request. If the bounces return
+// ("blocked using Spamhaus"; health-monitor warns with `blacklist_bounces`), put it back here:
+//   { re: /https?:\/\/(?:www\.)?calendly\.com\/onepulso\/30min\/?(?:\?[^\s"'<>]*)?/gi, to: "https://calendly.com/onepulso", label: "calendly.com/onepulso/30min" },
+const RULES: { re: RegExp; to: string | null; label: string }[] = [];
 
 export function fixBlockedLinks(text: string): { text: string; fixes: LinkFix[]; blocked: string[] } {
   let out = String(text || "");
