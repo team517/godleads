@@ -145,6 +145,52 @@ export function removeSlot(state: VariantState, slot: number): VariantState {
   }) };
 }
 
+/* ── Apagar o borrar la A ───────────────────────────────────────────────────────────────────
+   El motor siempre envía el texto del propio paso (la A). Para que la A deje de enviarse sin
+   tocar el motor, OTRA versión ocupa su sitio: la primera encendida sin filtro de etiqueta
+   (normalmente la B) pasa a ser la A. La A no puede llevar filtro de etiqueta (el motor la usa
+   de reserva para cualquier cuenta), por eso no sirve una variante filtrada. */
+
+export interface StepText { subject: string; body: string }
+
+/** ¿Qué versión pasaría a ser la A? null si no hay ninguna encendida sin etiqueta. */
+export function promotableSlot(state: VariantState): number | null {
+  const v = versionsOf(state).find((x) => x.slot > 0 && x.enabled && x.variant && !x.variant.tag_filter);
+  return v ? v.slot : null;
+}
+
+/** El texto con el que la variante pasaría a ser la A (lo que tenga vacío lo hereda de la A, como
+ *  hace el motor al enviarla). */
+function promotedText(v: StepVariant, base: StepText): StepText {
+  return { subject: v.subject || base.subject || "", body: v.body || base.body || "" };
+}
+
+/** APAGA la A: la B (o la primera encendida sin etiqueta) pasa a ser la A, y el texto de la A se
+ *  queda guardado, apagado, en el hueco que deja esa versión. Se puede volver a encender. */
+export function disableA(state: VariantState, base: StepText): { state: VariantState; base: StepText; promoted: number } | null {
+  const slot = promotableSlot(state);
+  if (slot === null) return null;
+  const target = find(state, slot);
+  if (!target || !target.variant) return null;
+  return {
+    base: promotedText(target.variant, base),
+    state: {
+      variants: state.variants.filter((_, i) => i !== target.index),
+      off: [...state.off, { subject: base.subject || "", body: base.body || "", tag_filter: null, off_slot: slot }],
+    },
+    promoted: slot,
+  };
+}
+
+/** BORRA la A: la B (o la primera encendida sin etiqueta) pasa a ser la A y las demás suben una letra. */
+export function removeA(state: VariantState, base: StepText): { state: VariantState; base: StepText; promoted: number } | null {
+  const slot = promotableSlot(state);
+  if (slot === null) return null;
+  const target = find(state, slot);
+  if (!target || !target.variant) return null;
+  return { base: promotedText(target.variant, base), state: removeSlot(state, slot), promoted: slot };
+}
+
 /** Cambia el texto (o la etiqueta) de una versión, esté encendida o apagada. */
 export function writeSlot(state: VariantState, slot: number, patch: Partial<StepVariant>): VariantState {
   const target = find(state, slot);

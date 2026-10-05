@@ -185,6 +185,40 @@ describe("Editor de secuencia", { timeout: 20000 }, () => {
     expect(lastFor("campaign_steps", "variants_off")).toEqual([]);
   });
 
+  it("apagar la A: la B pasa a ser la A y la A queda apagada como B (todo en un solo guardado)", async () => {
+    tables.campaign_steps[0].variants = [{ subject: "Asunto B", body: "cuerpo B" }];
+    await renderEditor();
+    fireEvent.click(screen.getByTitle(/Apagar la versión A/));
+    expect(await screen.findByText("¿Apagar la versión A?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apagar la A" }));
+    await waitFor(() => expect(saved.some((x) => x.payload && "variants_off" in x.payload && "subject" in x.payload)).toBe(true));
+    const p = saved.find((x) => x.payload && "variants_off" in x.payload && "subject" in x.payload).payload;
+    expect(p).toEqual({
+      subject: "Asunto B",
+      body: "cuerpo B",
+      variants: [],
+      variants_off: [{ subject: "Una idea para {{company_name}}", body: "Hola, ¿hablamos?", tag_filter: null, off_slot: 1 }],
+    });
+    expect(await screen.findByDisplayValue("cuerpo B")).toBeInTheDocument();       // la A abierta es la antigua B
+    expect(saved.some((x) => x.deleted)).toBe(false);
+  });
+
+  it("borrar la A: la B pasa a ser la A", async () => {
+    tables.campaign_steps[0].variants = [{ subject: "Asunto B", body: "cuerpo B" }, { subject: "Asunto C", body: "cuerpo C" }];
+    await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: /Eliminar versión A/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Eliminar la A" }));
+    await waitFor(() => expect(saved.some((x) => x.payload && "variants_off" in x.payload && "subject" in x.payload)).toBe(true));
+    const p = saved.find((x) => x.payload && "variants_off" in x.payload && "subject" in x.payload).payload;
+    expect(p).toEqual({ subject: "Asunto B", body: "cuerpo B", variants: [{ subject: "Asunto C", body: "cuerpo C" }], variants_off: [] });
+  });
+
+  it("con sólo la A, apagarla no hace nada y lo explica", async () => {
+    await renderEditor();
+    expect(screen.queryByTitle(/Apagar la versión A/)).toBeNull();   // sin versiones no hay interruptores
+    expect(screen.queryByRole("button", { name: /Eliminar versión A/ })).toBeNull();
+  });
+
   it("sin pasos, invita a crear el primero", async () => {
     tables.campaign_steps = [];
     render(<ConfirmProvider><CampaignSequences campaignId="c1" /></ConfirmProvider>);

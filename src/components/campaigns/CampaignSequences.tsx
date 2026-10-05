@@ -15,8 +15,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import {
-  addVariantTo, disableAll, disableSlot, enableAll, enableSlot, hasLiveVariants,
-  readState, removeSlot, versionsOf, writeSlot, type VariantState,
+  addVariantTo, disableA, disableAll, disableSlot, enableAll, enableSlot, hasLiveVariants,
+  promotableSlot, readState, removeA, removeSlot, versionsOf, writeSlot, type VariantState,
 } from "@/lib/step-variants";
 import { toast } from "sonner";
 import { Plus, Trash2, Clock, GitBranch, Zap, Eye, SendHorizonal, Loader2, Bold, Italic, Underline, List, ListOrdered, Braces, Mail, PowerOff, Save, FileText, Link2, Sparkles, WandSparkles, ShieldCheck, Tag, Maximize2, Paperclip, Type, Image as ImageIcon, CalendarDays, Code2 } from "lucide-react";
@@ -531,6 +531,46 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
     applyVariantState(step, removeSlot(readState(step), slot));
     setActiveVariantIndex(0);
     toast.success("Versión eliminada");
+  };
+
+  /** Apagar o borrar la A: otra versión (normalmente la B) pasa a ser la A. Se guarda TODO de una
+   *  vez (asunto, cuerpo y versiones) para que el motor nunca lea el paso a medio cambiar. */
+  const turnOffOrRemoveA = async (step: any, mode: "off" | "remove") => {
+    openStep(step);
+    const state = readState(step);
+    const slot = promotableSlot(state);
+    if (slot === null) {
+      toast.error("Para apagar o borrar la A tiene que haber otra versión encendida y sin filtro de etiqueta: esa pasará a ser la A.");
+      return;
+    }
+    const L = String.fromCharCode(65 + slot);
+    const ok = await confirm(mode === "off"
+      ? {
+          title: "¿Apagar la versión A?",
+          description: `La ${L} pasa a ser la A y se envía en su lugar. El texto de la A actual se guarda apagado como ${L}: no se envía, y puedes volver a encenderlo.`,
+          confirmText: "Apagar la A",
+        }
+      : {
+          title: "¿Eliminar la versión A?",
+          description: `Se borra el texto de la A actual y la ${L} pasa a ser la A. Las demás versiones suben una letra.`,
+          confirmText: "Eliminar la A",
+          destructive: true,
+        });
+    if (!ok) return;
+    await flushSaves(); // lo que estuviera escribiéndose, antes de mover nada
+    const fresh = steps.find((s) => s.id === step.id) || step;
+    const base = { subject: fresh.subject || "", body: fresh.body || "" };
+    const r = mode === "off" ? disableA(readState(fresh), base) : removeA(readState(fresh), base);
+    if (!r) return;
+    cancelSaves(step.id);
+    const patch = { subject: r.base.subject, body: r.base.body, variants: r.state.variants, variants_off: r.state.off };
+    const { error } = await supabase.from("campaign_steps").update(patch as any).eq("id", step.id);
+    if (error) { toast.error(`No se pudo guardar: ${error.message}`); return; }
+    setSteps((prev) => prev.map((x) => (x.id === step.id ? { ...x, ...patch } : x)));
+    setActiveVariantIndex(0);
+    toast.success(mode === "off"
+      ? `La ${L} es ahora la A. La antigua A queda apagada como ${L}.`
+      : `Versión A eliminada: la ${L} es ahora la A.`);
   };
 
   const updateStepField = async (id: string, field: string, value: any) => {
@@ -1199,6 +1239,19 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                           </div>
                         )}
 
+                        {/* La A abierta, con otras versiones: se puede borrar (la B pasa a ser la A) */}
+                        {isSel && activeVariantIndex === 0 && stepVersions.length > 1 && (
+                          <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-muted/40 px-4 py-2.5">
+                            <span className="text-[12.5px] font-medium text-muted-foreground">Versión A · si la apagas o la borras, la B pasa a ser la A</span>
+                            <button
+                              onClick={() => { void turnOffOrRemoveA(step, "remove"); }}
+                              className="ml-auto inline-flex items-center gap-1 rounded-[11px] border border-destructive/40 px-3 py-1.5 text-[12.5px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                            >
+                              <Trash2 className="h-3 w-3" /> Eliminar versión A
+                            </button>
+                          </div>
+                        )}
+
                         {/* Filtro por etiqueta de cuenta de la variante abierta */}
                         {isSel && activeVariantIndex > 0 && (
                           <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-muted/40 px-4 py-3">
@@ -1308,7 +1361,16 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
                                 {v.label}
                               </button>
                               {v.slot === 0 ? (
-                                <span title="La versión A siempre se envía; apaga las otras para dejar solo la A" className="seq2-switch seq2-switch-on mr-3"><span /></span>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={true}
+                                  title="Apagar la versión A: la B pasa a ser la A y esta se guarda apagada"
+                                  onClick={(e) => { e.stopPropagation(); void turnOffOrRemoveA(step, "off"); }}
+                                  className="seq2-switch seq2-switch-on mr-3"
+                                >
+                                  <span />
+                                </button>
                               ) : (
                                 <button
                                   type="button"
