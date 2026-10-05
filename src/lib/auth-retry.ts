@@ -34,6 +34,22 @@ export function withFreshToken(init: RequestInit | undefined, token: string): Re
   return { ...(init || {}), headers };
 }
 
+/** ¿Este mensaje de error (de PostgREST, de una RPC o del cliente) dice que la sesión no vale?
+ *  Sirve para enseñar "tu sesión ha caducado" en vez del texto crudo ("JWT expired", "PGRST301"). */
+export function looksLikeSessionError(message: string | null | undefined): boolean {
+  const m = String(message || "").toLowerCase();
+  if (!m) return false;
+  return /\bjwt\b/.test(m)
+    || m.includes("pgrst301")
+    || m.includes("invalid claim")
+    || /\b401\b/.test(m)
+    || /\bunauthori[sz]ed\b/.test(m)
+    || /refresh[ _]token/.test(m)
+    || /\b(session|sesi[óo]n)\b.*\b(expired|caducad|not found|missing)/.test(m)
+    || /\btoken\b.*\b(expired|invalid|caducad|no v[áa]lido)/.test(m)
+    || /\b(expired|invalid)\b.*\btoken\b/.test(m);
+}
+
 export function announceSessionExpired(): void {
   try { window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT)); } catch { /* sin ventana */ }
 }

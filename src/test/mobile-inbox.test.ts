@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildConversations, deriveStatus, detailDate, displayName, editorToSource, effectiveStatus, EMPTY_FILTERS,
   filterConversations, isMobileReply, labelsForStatus, listDate, quoteHeader, replySubject, statusCounts,
-  statusFromCategory, type InboxRow, type LeadStatus,
+  statusFromCategory, retryOnce, FIRST_LOAD_RETRY_MS, SLOW_LOAD_NOTICE_MS, type InboxRow, type LeadStatus,
 } from "@/lib/mobile-inbox";
 import { isMobileAppPath, mobileAppUrl, notificationTarget, shouldOpenMobileApp, uniboxAllowed } from "@/lib/mobile-app";
 
@@ -221,5 +221,33 @@ describe("cuándo se abre la app del móvil", () => {
     expect(notificationTarget("/unibox?c=abc", "/m")).toBe("/m?c=abc");
     expect(notificationTarget("/unibox?c=abc", "/dashboard")).toBe("/unibox?c=abc");
     expect(notificationTarget("/unibox", "/m")).toBe("/m");
+  });
+});
+
+describe("primera carga: un reintento antes del error (retryOnce)", () => {
+  it("si la primera llamada va bien, no se repite ni se espera", async () => {
+    const fn = vi.fn(async () => "ok");
+    const sleep = vi.fn(async () => {});
+    expect(await retryOnce(fn, 3000, sleep)).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+  it("si falla, espera el plazo y lo intenta otra vez", async () => {
+    let n = 0;
+    const fn = vi.fn(async () => { if (++n === 1) throw new Error("Failed to fetch"); return "ok"; });
+    const sleep = vi.fn(async () => {});
+    expect(await retryOnce(fn, 3000, sleep)).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(3000);
+  });
+  it("si falla las dos veces, sale el SEGUNDO error (y no se intenta una tercera)", async () => {
+    let n = 0;
+    const fn = vi.fn(async () => { throw new Error(`fallo ${++n}`); });
+    await expect(retryOnce(fn, 3000, async () => {})).rejects.toThrow("fallo 2");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+  it("los plazos: 3 s para repetir y 4 s para decir «tardando más de lo normal»", () => {
+    expect(FIRST_LOAD_RETRY_MS).toBe(3000);
+    expect(SLOW_LOAD_NOTICE_MS).toBe(4000);
   });
 });

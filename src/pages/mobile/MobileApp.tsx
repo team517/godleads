@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Ban, Copy as CopyIcon, Folder, FolderMinus, FolderPlus, Loader2, Mail, MailOpen, Star, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { looksLikeSessionError, SESSION_EXPIRED_EVENT } from "@/lib/auth-retry";
 import { ensurePushSubscription, registerServiceWorker } from "@/lib/push-notifications";
 import { startVersionWatcher } from "@/lib/version-check";
 import {
@@ -95,6 +96,24 @@ export default function MobileApp() {
   }, []);
 
   const drawerOpen = layers.includes("drawer");
+
+  /* ── Sesión caducada: en el panel lo dice el SessionExpiredBanner (AppLayout), que aquí no
+     se monta. Se escucha el mismo aviso del cliente (el token no se pudo renovar) y, además, si
+     la carga de la Unibox falla con un error de sesión (JWT caducado, 401), se enseña esto en
+     vez del texto crudo de PostgREST. ── */
+  const [sessionExpired, setSessionExpired] = useState(false);
+  useEffect(() => {
+    const onExpired = () => setSessionExpired(true);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+  const sessionGone = sessionExpired || (!!inbox.error && inbox.conversations.length === 0 && looksLikeSessionError(inbox.error));
+  const [leaving, setLeaving] = useState(false);
+  const reenter = useCallback(async () => {
+    setLeaving(true);
+    try { await signOut(); } catch { /* da igual: a /auth de todas formas */ }
+    navigate("/auth", { replace: true });
+  }, [signOut, navigate]);
 
   /* ── Arranque: avisos, actualizaciones y color de la barra del sistema ── */
   useEffect(() => {
@@ -234,6 +253,7 @@ export default function MobileApp() {
                 filters={filters}
                 activeFilterCount={activeFilterCount}
                 loading={inbox.loading}
+                slow={inbox.slow}
                 refreshing={inbox.refreshing}
                 onSearch={(search) => setFilters((f) => ({ ...f, search }))}
                 onTab={(tab) => { setFilters((f) => ({ ...f, tab })); try { sessionStorage.setItem(TAB_KEY, tab); } catch { /* nada */ } }}
@@ -255,7 +275,7 @@ export default function MobileApp() {
                 notify={toast.show}
               />
             )}
-            {inbox.error && inbox.conversations.length === 0 && nav === "unibox" && (
+            {inbox.error && !sessionGone && inbox.conversations.length === 0 && nav === "unibox" && (
               <div className="absolute inset-x-4 top-[calc(150px+env(safe-area-inset-top))] rounded-[16px] border border-[#FAD3DB] bg-white p-4 text-center shadow-sm">
                 <p className="text-[14.5px] text-[#B4233C]">No se pudo cargar la Unibox: {inbox.error}</p>
                 <button type="button" onClick={() => inbox.reload()} className="m-press m-gradient mt-3 h-10 rounded-[11px] px-5 text-[14.5px] font-semibold text-white">Reintentar</button>
@@ -441,6 +461,27 @@ export default function MobileApp() {
           catch (e) { toast.show(e instanceof Error ? e.message : String(e), "error"); }
           setBusy(false);
         }} />
+
+      {sessionGone && (
+        <div role="alertdialog" aria-modal="true" aria-labelledby="m-session-title"
+          className="fixed inset-0 z-[130] flex items-center justify-center bg-[#0E1330]/55 px-5" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <div className="w-full max-w-[420px] rounded-[22px] bg-white px-6 pb-6 pt-7 text-center shadow-[0_18px_50px_rgba(14,19,48,.25)]">
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#EEF2FE]"><User className="h-7 w-7 text-[#3B6CF6]" strokeWidth={1.8} /></span>
+            <h2 id="m-session-title" className="mt-4 text-[20px] font-semibold text-[#0E1330]">Tu sesión ha caducado</h2>
+            <p className="mt-2 text-[14.5px] leading-snug text-[#6B7192]">
+              Llevabas un tiempo sin entrar y hay que volver a identificarse. Tus conversaciones siguen ahí: entra otra vez y las verás.
+            </p>
+            <button type="button" disabled={leaving} onClick={() => { void reenter(); }}
+              className="m-press m-gradient mt-5 h-[50px] w-full rounded-[14px] text-[15.5px] font-semibold text-white disabled:opacity-60">
+              {leaving ? "Saliendo…" : "Volver a entrar"}
+            </button>
+            <button type="button" onClick={() => window.location.reload()}
+              className="m-press mt-2 h-11 w-full rounded-[14px] text-[14.5px] font-medium text-[#4D6CF3]">
+              Recargar por si fue un tropiezo
+            </button>
+          </div>
+        </div>
+      )}
 
       {toast.node}
     </div>

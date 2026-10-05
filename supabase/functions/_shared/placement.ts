@@ -141,7 +141,17 @@ export function sampleFieldsFor(variables: string[], real: Record<string, unknow
 export interface ContentHint { level: "warn" | "info"; text: string }
 
 // Sin \b: no casa tras vocal acentuada ("aquí") ni tras "%"; los límites son "no-letra" Unicode.
-const SPAM_WORDS = /(?<![\p{L}\p{N}])(gratis|100\s?%|garantizad[oa]s?|ofertas?|descuentos?|urgente|gana dinero|sin compromiso|haz clic|clic aqu[ií]|click aqu[ií]|free|guaranteed?|act now|limited time|winner|cash)(?![\p{L}\p{N}])/giu;
+// Sin lookbehind (`(?<!…)`): iOS Safari < 16.4 no lo sabe ni leer. El límite izquierdo es un
+// carácter consumido (o el principio) en el grupo 1; la palabra va en el grupo 2.
+const SPAM_WORDS = /(^|[^\p{L}\p{N}])(gratis|100\s?%|garantizad[oa]s?|ofertas?|descuentos?|urgente|gana dinero|sin compromiso|haz clic|clic aqu[ií]|click aqu[ií]|free|guaranteed?|act now|limited time|winner|cash)(?![\p{L}\p{N}])/giu;
+
+/** Las palabras "de spam" que aparecen en un texto, en minúsculas y sin repetir. */
+export function spamWords(text: string): string[] {
+  const out = new Set<string>();
+  SPAM_WORDS.lastIndex = 0;
+  for (let hit = SPAM_WORDS.exec(text); hit; hit = SPAM_WORDS.exec(text)) out.add(hit[2].toLowerCase());
+  return [...out];
+}
 
 /** Señales del propio copy que suelen empujar a spam. Orientativo: el veredicto real es la prueba. */
 export function contentHints(subject: string, body: string): ContentHint[] {
@@ -152,7 +162,7 @@ export function contentHints(subject: string, body: string): ContentHint[] {
   if (distinct.size > 2) hints.push({ level: "warn", text: `Hay ${distinct.size} enlaces. En frío, más de 1–2 enlaces empuja a spam.` });
   if ([...distinct].some((l) => /bit\.ly|tinyurl|t\.co\/|goo\.gl|ow\.ly|rebrand\.ly|cutt\.ly/i.test(l))) hints.push({ level: "warn", text: "Hay un enlace acortado (bit.ly y similares): los filtros los penalizan mucho." });
   if (/<img\b/i.test(body)) hints.push({ level: "warn", text: "El cuerpo lleva imágenes. Un primer correo en frío funciona mejor sólo con texto." });
-  const words = [...new Set((`${subject} ${text}`.match(SPAM_WORDS) || []).map((w) => w.toLowerCase()))];
+  const words = spamWords(`${subject} ${text}`);
   if (words.length) hints.push({ level: "warn", text: `Palabras que suelen activar filtros: ${words.slice(0, 6).join(", ")}.` });
   const letters = subject.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g, "");
   if (letters.length >= 6 && letters === letters.toUpperCase()) hints.push({ level: "warn", text: "El asunto está en MAYÚSCULAS." });

@@ -36,6 +36,16 @@ export function uniboxAllowed(allowedRoutes: string[] | null | undefined): boole
   return allowedRoutes.some((r) => r === "/unibox" || r.startsWith("/unibox"));
 }
 
+/**
+ * Una cuenta acotada (allowed_routes) puede abrir la app del móvil si tiene la Unibox entre sus
+ * secciones: /m ES la Unibox en el teléfono. Sin esto, ProtectedRoute la mandaba a su primera
+ * ruta (/unibox), el panel la devolvía a /m y así sin parar (bucle de redirecciones al abrir la
+ * app instalada). Sin la Unibox, no: MobileGate la lleva a su primera sección.
+ */
+export function mobileAppAllowed(pathname: string, allowedRoutes: string[] | null | undefined): boolean {
+  return isMobileAppPath(pathname) && uniboxAllowed(allowedRoutes);
+}
+
 export function shouldOpenMobileApp(input: { pathname: string; phone: boolean; installed: boolean; allowed: boolean }): boolean {
   if (!input.phone || !input.allowed) return false;
   if (input.installed) return true;

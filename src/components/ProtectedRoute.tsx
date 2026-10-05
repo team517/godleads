@@ -7,6 +7,7 @@ import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
 import { isAgencyAccount } from "@/lib/access";
 import { useWelcomeGate } from "@/hooks/useWelcomeGate";
 import { WELCOME_PATH, shouldShowWelcome } from "@/lib/first-run";
+import { mobileAppAllowed } from "@/lib/mobile-app";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -76,9 +77,12 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   if (profile.allowed_routes && profile.allowed_routes.length > 0) {
     const currentPath = location.pathname;
     // /settings y la bienvenida están SIEMPRE permitidas: si no, un cliente con rutas
-    // acotadas rebotaría entre su primera ruta y /bienvenida sin parar.
+    // acotadas rebotaría entre su primera ruta y /bienvenida sin parar. La app del móvil (/m)
+    // cuenta como la Unibox: si puede verla, puede abrirla en el teléfono (si no, el panel la
+    // mandaba a /m y esto la devolvía a /unibox: otro bucle, el de la app instalada).
     const isAllowed = profile.allowed_routes.some(r => currentPath.startsWith(r))
-      || currentPath === "/settings" || currentPath === WELCOME_PATH;
+      || currentPath === "/settings" || currentPath === WELCOME_PATH
+      || mobileAppAllowed(currentPath, profile.allowed_routes);
     if (!isAllowed) {
       return <Navigate to={profile.allowed_routes[0]} replace />;
     }

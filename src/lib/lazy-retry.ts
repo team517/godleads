@@ -65,6 +65,50 @@ export function reloadForStaleChunk(): boolean {
   return true;
 }
 
+// ── Deploy window: when the 12 s guard refuses a second reload ───────────────────────────────
+// Right after a deploy the CDN / service worker can keep serving the old index.html for a few
+// seconds, so the one immediate reload lands on the SAME stale build and the next chunk fails
+// again inside the guard window. Instead of the red "Algo se ha bloqueado" box, keep the calm
+// "Actualizando…" screen and reload again after a short pause — a few times at most, so a real
+// bug can never spin forever.
+const AUTO_RELOAD_KEY = "op:chunk-auto-reloads";
+export const AUTO_RELOAD_DELAY_MS = 6000;
+export const AUTO_RELOAD_MAX = 3;
+/** Attempts older than this don't count: a stale-deploy episode is over in a minute or two. */
+export const AUTO_RELOAD_WINDOW_MS = 120_000;
+
+export type ChunkRecoveryPlan =
+  | { action: "reloading" }                          // reloadForStaleChunk already fired
+  | { action: "schedule"; delayMs: number; attempt: number } // keep "Actualizando…", reload later
+  | { action: "give_up" };                           // show the error screen
+
+/** Pure decision: what to do after a chunk-load error, given whether the immediate reload fired
+ *  and the timestamps of the delayed reloads already scheduled in this tab. */
+export function planChunkRecovery(input: { reloadTriggered: boolean; attempts: number[]; now: number }): ChunkRecoveryPlan {
+  if (input.reloadTriggered) return { action: "reloading" };
+  const recent = input.attempts.filter((t) => Number.isFinite(t) && input.now - t >= 0 && input.now - t < AUTO_RELOAD_WINDOW_MS);
+  if (recent.length >= AUTO_RELOAD_MAX) return { action: "give_up" };
+  return { action: "schedule", delayMs: AUTO_RELOAD_DELAY_MS, attempt: recent.length + 1 };
+}
+
+export function readAutoReloadAttempts(): number[] {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(AUTO_RELOAD_KEY) || "[]");
+    return Array.isArray(raw) ? raw.map(Number).filter((n) => Number.isFinite(n)) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordAutoReloadAttempt(now: number): void {
+  try {
+    const kept = readAutoReloadAttempts().filter((t) => now - t < AUTO_RELOAD_WINDOW_MS);
+    sessionStorage.setItem(AUTO_RELOAD_KEY, JSON.stringify([...kept, now]));
+  } catch {
+    /* sessionStorage blocked — the delayed reload still happens, just uncounted */
+  }
+}
+
 /**
  * Drop-in replacement for React.lazy(). On a chunk-load failure it retries once (covers a
  * transient network hiccup); if it still fails because a new version shipped, it silently

@@ -444,7 +444,12 @@ const INTERESTED = [
   // "producto no disponible", "horario disponible"… (a THING being available, not the
   // person) → false "Interesado" (real case: a Colegio de Aparejadores newsletter).
   // "¿cuándo estás disponible?" is still caught by the when/cuándo meeting pattern below.
-  /(?<!\bno\s)est(oy|amos)\s+disponibl\w*/i, /(i'?m|we'?re)\s+available\b/i, /(mi|nuestra)\s+disponibilidad\b/i,
+  // "Hoy NO estoy disponible" is an absence, not availability. Written WITHOUT a lookbehind
+  // (`(?<!\bno\s)`): iOS Safari < 16.4 cannot parse one and the whole chunk failed to load. The
+  // prefix alternation is exactly the negation of "\bno\s" right before "est…": start of text, a
+  // non-space before, a space not preceded by "o", an "o " not preceded by "n", or a "no " that is
+  // the tail of a longer word (no word boundary before it).
+  /(?:^|\S|(?:^|[^o])\s|(?:^|[^n])o\s|\wno\s)est(oy|amos)\s+disponibl\w*/i, /(i'?m|we'?re)\s+available\b/i, /(mi|nuestra)\s+disponibilidad\b/i,
   // "¿Tenéis hueco el jueves?" — asking for a slot/time to meet = a warm meeting ask.
   /\bhueco\b/i, /(ten[ée]is|tienes|ten[ée]s|hay|te va bien|os va bien|te viene|os viene|te encaja)\b[^.?!]{0,25}(hueco|disponib|un (rato|momento|hueco)|libre|para (hablar|vernos|una (llamada|reuni)))/i,
   // A proposed time ONLY counts as interest when it sits next to a meeting word. A bare

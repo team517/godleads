@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { templatePreview } from "@/pages/mobile/Templates";
-import { iosBottomShim } from "@/lib/mobile-app";
+import { iosBottomShim, mobileAppAllowed } from "@/lib/mobile-app";
 import { campaignMatchCounts, hasWarmupSubjectTag, isDeliveryFailureMessage, isWarmupMessage } from "@/lib/inbox-filters";
 import { buildConversations } from "@/lib/mobile-inbox";
 
@@ -9,6 +9,29 @@ describe("vista previa de una plantilla", () => {
     expect(templatePreview('Buenas, te paso mi calendario\n<a href="https://calendly.com/onepulso">Reservar llamada</a>'))
       .toBe("Buenas, te paso mi calendario Reservar llamada");
     expect(templatePreview("")).toBe("");
+  });
+});
+
+describe("cuenta de cliente acotada: ¿puede abrir la app del móvil? (ProtectedRoute)", () => {
+  it("con la Unibox entre sus secciones, /m está permitida (si no, bucle /m ↔ /unibox)", () => {
+    expect(mobileAppAllowed("/m", ["/unibox", "/campaigns"])).toBe(true);
+    expect(mobileAppAllowed("/m", ["/campaigns", "/unibox"])).toBe(true);
+    expect(mobileAppAllowed("/m/", ["/unibox"])).toBe(true);
+    expect(mobileAppAllowed("/m", ["/unibox/"])).toBe(true);
+  });
+  it("sin la Unibox, no (MobileGate la manda a su primera sección)", () => {
+    expect(mobileAppAllowed("/m", ["/campaigns"])).toBe(false);
+    expect(mobileAppAllowed("/m", ["/campaigns", "/leads"])).toBe(false);
+  });
+  it("sin restricciones, sí", () => {
+    expect(mobileAppAllowed("/m", null)).toBe(true);
+    expect(mobileAppAllowed("/m", [])).toBe(true);
+  });
+  it("sólo vale para /m: otras rutas siguen con la regla normal de allowed_routes", () => {
+    expect(mobileAppAllowed("/metrics", ["/unibox"])).toBe(false);
+    expect(mobileAppAllowed("/modificaciones-ia", ["/unibox"])).toBe(false);
+    expect(mobileAppAllowed("/unibox", ["/unibox"])).toBe(false);
+    expect(mobileAppAllowed("/dashboard", ["/unibox"])).toBe(false);
   });
 });
 

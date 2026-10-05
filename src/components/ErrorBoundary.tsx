@@ -1,13 +1,17 @@
 import { Component, ReactNode } from "react";
-import { isChunkLoadError, reloadForStaleChunk } from "@/lib/lazy-retry";
+import { isChunkLoadError, planChunkRecovery, readAutoReloadAttempts, recordAutoReloadAttempt, reloadForStaleChunk } from "@/lib/lazy-retry";
 
 /** App-wide safety net: if any render throws, show a recover screen instead of a blank
  *  white page. Two cases:
  *   - A stale-deploy chunk error (a new version shipped mid-session) -> recover SILENTLY by
- *     reloading once to pull the fresh build. The user never sees an error screen.
+ *     reloading once to pull the fresh build. The user never sees an error screen. If the
+ *     reload guard refuses (we reloaded seconds ago and landed on the same stale build), the
+ *     calm "Actualizando…" screen stays up and the page reloads again after a short pause —
+ *     a few times at most (planChunkRecovery), then the error screen.
  *   - A genuine crash -> show the recover screen; the button clears caches and reloads. */
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null; reloading: boolean }> {
   state = { error: null as Error | null, reloading: false };
+  private reloadTimer: number | null = null;
 
   static getDerivedStateFromError(error: Error) {
     return { error, reloading: isChunkLoadError(error) };
@@ -16,20 +20,37 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   componentDidCatch(error: Error) {
     if (isChunkLoadError(error)) {
       // New build shipped while they were here — reload once to get the fresh chunks.
-      const triggered = reloadForStaleChunk();
-      if (!triggered) this.setState({ reloading: false }); // reloaded too recently -> show screen
+      const plan = planChunkRecovery({ reloadTriggered: reloadForStaleChunk(), attempts: readAutoReloadAttempts(), now: Date.now() });
+      if (plan.action === "reloading") return;
+      if (plan.action === "schedule") {
+        recordAutoReloadAttempt(Date.now());
+        if (this.reloadTimer) window.clearTimeout(this.reloadTimer);
+        this.reloadTimer = window.setTimeout(() => { try { window.location.reload(); } catch { /* */ } }, plan.delayMs);
+        return; // keep the "Actualizando…" screen
+      }
+      this.setState({ reloading: false }); // gave up -> show the recover screen
       return;
     }
     // eslint-disable-next-line no-console
     console.error("App crash caught by ErrorBoundary:", error);
   }
 
+  componentWillUnmount() {
+    if (this.reloadTimer) window.clearTimeout(this.reloadTimer);
+  }
+
   render() {
     if (this.state.reloading) {
       // Reload is underway; show a calm, minimal message instead of the scary error box.
       return (
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif", color: "#666", background: "#fafafa", fontSize: 14 }}>
-          Actualizando a la última versión…
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, fontFamily: "system-ui, sans-serif", color: "#666", background: "#fafafa", fontSize: 14, textAlign: "center", padding: 24 }}>
+          <div>Actualizando a la última versión…</div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "6px 14px", borderRadius: 8, background: "transparent", color: "#6E58F1", border: "1px solid #d9d4f7", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+          >
+            Recargar ahora
+          </button>
         </div>
       );
     }

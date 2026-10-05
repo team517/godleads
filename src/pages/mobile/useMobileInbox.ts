@@ -3,8 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import {
-  blockedChecker, buildConversations, conversationKey, feedLane, IMPORTANT, isLeadStatus, labelsForStatus,
-  mergeWindow, newestCreated, PRIMARY_FEED, sortRows, upsertRows,
+  blockedChecker, buildConversations, conversationKey, feedLane, FIRST_LOAD_RETRY_MS, IMPORTANT, isLeadStatus, labelsForStatus,
+  mergeWindow, newestCreated, PRIMARY_FEED, retryOnce, SLOW_LOAD_NOTICE_MS, sortRows, upsertRows,
   type Conversation, type InboxRow, type LeadStatus,
 } from "@/lib/mobile-inbox";
 
@@ -82,6 +82,8 @@ export function useMobileInbox(userId: string | undefined) {
   const [loading, setLoading] = useState(() => { const c = readCache(); return c.feed.length + c.others.length === 0; });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // La primera carga lleva más de unos segundos: se dice con calma (no es un error).
+  const [slow, setSlow] = useState(false);
   const [manual, setManual] = useState<Map<string, LeadStatus>>(new Map());
   const [accountEmails, setAccountEmails] = useState<Record<string, string>>(() => cacheGet<Record<string, string>>("mobile:accounts") || {});
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -142,10 +144,12 @@ export function useMobileInbox(userId: string | undefined) {
     busyRef.current.load = true;
     if (!opts.quiet) setRefreshing(true);
     try {
-      // Si Others falla, Primary se pinta igual (y Others enseña el error).
+      // Si Others falla, Primary se pinta igual (y Others enseña el error). La petición de
+      // cabecera se repite UNA vez (a los 3 s) antes de dar el error: la primera llamada al abrir
+      // la app instalada cae a veces por la red del teléfono.
       let othersErr: string | null = null;
       const [head, page] = await Promise.all([
-        feed(FIRST),
+        retryOnce(() => feed(FIRST), FIRST_LOAD_RETRY_MS),
         others({ limit: OTHERS_PAGE }).catch((e) => { othersErr = e instanceof Error ? e.message : String(e); return null; }),
       ]);
       const cur = dataRef.current;
@@ -260,6 +264,13 @@ export function useMobileInbox(userId: string | undefined) {
     void loadManual();
     void loadSide();
   }, [userId, load, loadManual, loadSide]);
+
+  // Sin nada que enseñar y la carga sin terminar a los 4 s: "tardando más de lo normal".
+  useEffect(() => {
+    if (!loading) { setSlow(false); return; }
+    const t = window.setTimeout(() => setSlow(true), SLOW_LOAD_NOTICE_MS);
+    return () => window.clearTimeout(t);
+  }, [loading]);
 
   // Con la app delante: lo nuevo cada 20 s y un repaso cada 2 min (lo leído en el ordenador, lo
   // archivado…). Al volver a ella: todo otra vez.
@@ -511,7 +522,7 @@ export function useMobileInbox(userId: string | undefined) {
   }, [commit, allRows]);
 
   return {
-    rows, conversations, loading, refreshing, error, manual, accountEmails, campaigns, folders,
+    rows, conversations, loading, slow, refreshing, error, manual, accountEmails, campaigns, folders,
     othersFloor, othersHasMore, othersError, loadingMore, loadMoreOthers,
     reload: load, markRead, markUnread, setStatus, toggleImportant, moveToFolder, removeConversation,
     blockSender, ensureMessage,

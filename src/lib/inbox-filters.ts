@@ -76,7 +76,10 @@ const HYPHEN_WHITELIST = /\b(e-?mail|follow-?up|cold-?email|in-?house|third-?par
 // ("state-of-the-art"). The boundaries also reject ACCENTED neighbours (À-ɏ) so a real
 // Spanish compound like "técnico-comercial" or "socio-económico" is NOT mis-split into a fake
 // ASCII pair ("cnico-comercial") and wrongly counted as warm-up — that hid real replies.
-const WARMUP_PAIR_RE = /(?<![a-zÀ-ɏ-])[a-z]{3,9}-[a-z]{3,9}(?![a-zÀ-ɏ-])/g;
+// NO lookbehind here: iOS Safari < 16.4 cannot even PARSE `(?<!…)` ("invalid group specifier
+// name"), which killed the whole mobile-app chunk. The left boundary is a consumed char (or the
+// start of the text) in group 1 and the pair itself is group 2 — see warmupPairCount.
+const WARMUP_PAIR_RE = /(^|[^a-zÀ-ɏ-])([a-z]{3,9}-[a-z]{3,9})(?![a-zÀ-ɏ-])/g;
 const WARMUP_SUBJECT_RE = /^(re|fw|fwd|rv)?\s*:?\s*(book (club|recommendation)|(upcoming |virtual |quarterly |weekly |monthly |team )?(project|team|marketing|sales|client|budget|planning|strategy|status|kickoff|sync|review) (meeting|update|review|recap|reminder)|sprint retrospective|retrospective meeting|(annual|upcoming) (conference|industry conference|networking event|training( event)?)|webinar invite|volunteer program|wellness workshop|customer service workshop|leadership training|feature request|task priorities|financial report|sales performance|quarterly performance review|year-end review|new (software|internal compliance) (training|policy)|corporate social responsibility|travel plans|operations improvement)\b/i;
 const BASE64_BODY_RE = /^\s*(?:BODY\[TEXT\](?:<\d+>)?\s*\{\d+\}\s*)?[A-Za-z0-9+\/=]{40,}(?:\s+[A-Za-z0-9+\/=]{16,})*\s*$/;
 
@@ -97,7 +100,9 @@ export function warmupPairCount(text: string | null, strict = true): number {
     .replace(/(https?:\/\/|www\.)\S+/gi, " ")
     .replace(/\b[a-z0-9][a-z0-9-]*\.(com|es|eu|net|org|io|info|store|online|cat|fr|it|de|uk|co|ai|app|dev|pro|group|tech|biz)\b/gi, " ");
   let n = 0;
-  for (const m of t.match(WARMUP_PAIR_RE) || []) {
+  WARMUP_PAIR_RE.lastIndex = 0;
+  for (let hit = WARMUP_PAIR_RE.exec(t); hit; hit = WARMUP_PAIR_RE.exec(t)) {
+    const m = hit[2];
     if (HYPHEN_WHITELIST.test(m)) continue;
     if (strict) { const [a, b] = m.split("-"); if (COMPOUND_SIDE_RE.test(a) || COMPOUND_SIDE_RE.test(b)) continue; }
     n++;

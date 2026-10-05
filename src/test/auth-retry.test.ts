@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isAuthFailure, isGuardedUrl, withFreshToken, announceSessionExpired, makeGuardedFetch, SESSION_EXPIRED_EVENT } from "@/lib/auth-retry";
+import { isAuthFailure, isGuardedUrl, withFreshToken, announceSessionExpired, looksLikeSessionError, makeGuardedFetch, SESSION_EXPIRED_EVENT } from "@/lib/auth-retry";
 
 const URL_BASE = "https://iqhhybmhlkmulwhizpzi.supabase.co";
 
@@ -114,5 +114,31 @@ describe("el interceptor completo (makeGuardedFetch)", () => {
     const g = makeGuardedFetch({ fetchImpl: async () => fail(401), refresh, onExpired: () => {} });
     expect((await g(`${URL_BASE}/auth/v1/token?grant_type=password`, {})).status).toBe(401);
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("¿este error dice que la sesión no vale? (la app del móvil lo enseña como «sesión caducada»)", () => {
+  it("los textos de PostgREST y del cliente de Supabase", () => {
+    expect(looksLikeSessionError("JWT expired")).toBe(true);
+    expect(looksLikeSessionError("invalid JWT: unable to parse or verify signature")).toBe(true);
+    expect(looksLikeSessionError("PGRST301: JWT expired")).toBe(true);
+    expect(looksLikeSessionError("401 Unauthorized")).toBe(true);
+    expect(looksLikeSessionError("Invalid Refresh Token: Refresh Token Not Found")).toBe(true);
+    expect(looksLikeSessionError("refresh_token_not_found")).toBe(true);
+    expect(looksLikeSessionError("Auth session missing!")).toBe(true);
+    expect(looksLikeSessionError("Session expired")).toBe(true);
+    expect(looksLikeSessionError("invalid claim: missing sub claim")).toBe(true);
+    expect(looksLikeSessionError("Token expired")).toBe(true);
+    expect(looksLikeSessionError("expired access token")).toBe(true);
+  });
+  it("otros errores, no (se enseñan tal cual con «Reintentar»)", () => {
+    expect(looksLikeSessionError("Failed to fetch")).toBe(false);
+    expect(looksLikeSessionError("function public.mobile_inbox_feed(p_linked => integer) does not exist")).toBe(false);
+    expect(looksLikeSessionError("canceling statement due to statement timeout")).toBe(false);
+    expect(looksLikeSessionError("permission denied for table inbox_messages")).toBe(false);
+    expect(looksLikeSessionError("el cliente pidió 4010 tokens")).toBe(false);
+    expect(looksLikeSessionError("")).toBe(false);
+    expect(looksLikeSessionError(null)).toBe(false);
+    expect(looksLikeSessionError(undefined)).toBe(false);
   });
 });

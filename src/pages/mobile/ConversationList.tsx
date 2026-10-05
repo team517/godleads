@@ -10,6 +10,8 @@ interface Props {
   filters: MobileFilters;
   activeFilterCount: number;
   loading: boolean;
+  /** La primera carga lleva ya unos segundos: se dice con calma debajo de los esqueletos. */
+  slow?: boolean;
   refreshing: boolean;
   onSearch: (q: string) => void;
   onTab: (t: "primary" | "others") => void;
@@ -163,6 +165,11 @@ export function ConversationList(p: Props) {
 
         {p.loading && p.items.length === 0 ? (
           <div className="space-y-3 px-3 pt-3">
+            {p.slow && (
+              <p className="px-1 pb-1 text-center text-[13.5px] text-[#7A809B]" role="status">
+                Tardando más de lo normal… Seguimos cargando tus conversaciones.
+              </p>
+            )}
             {[0, 1, 2, 3, 4].map((i) => (
               <div key={i} className="m-card flex gap-3.5 rounded-[18px] p-4">
                 <span className="m-skeleton h-10 w-10 shrink-0 rounded-full" />

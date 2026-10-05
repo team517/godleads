@@ -547,3 +547,24 @@ export function editorToSource(root: Node): string {
     .replace(/^\n+/, "")
     .replace(/\s+$/, "");
 }
+
+/* ── Primera carga: un reintento antes de dar el error ───────────────────── */
+
+/** Cuánto se espera antes de repetir la primera petición, y a partir de cuándo se dice
+ *  "tardando más de lo normal" (sin asustar: no es un error, es que va lento). */
+export const FIRST_LOAD_RETRY_MS = 3_000;
+export const SLOW_LOAD_NOTICE_MS = 4_000;
+
+/**
+ * Ejecuta `fn`; si falla, espera `delayMs` y lo intenta UNA vez más. Sólo si falla las dos veces
+ * sale el error. Al abrir la app instalada la primera petición cae a veces por la red del
+ * teléfono (vuelve del fondo, cambia de wifi a datos…) y antes eso ya pintaba la caja roja.
+ */
+export async function retryOnce<T>(fn: () => Promise<T>, delayMs: number, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await sleep(delayMs);
+    return await fn();
+  }
+}
