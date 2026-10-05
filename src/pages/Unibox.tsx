@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import RichReplyEditor, { type RichReplyHandle } from "@/components/unibox/RichReplyEditor";
 import { buildForwardHtml, forwardSubject, plainToForwardHtml } from "@/lib/forward";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Archive, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil, Star } from "lucide-react";
+import { Search, Archive, ArchiveRestore, RefreshCw, Send, Inbox as InboxIcon, Mail, MailOpen, User, Sparkles, X, Loader2, Bell, Clock, Trash2, ArchiveX, Link2, Megaphone, ArrowLeft, Languages, Ban, ShieldBan, Globe, Forward, UserX, Paperclip, FileText, FolderInput, Maximize2, Minimize2, Download, Check, Pencil, Star } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -677,6 +677,11 @@ export default function Unibox() {
   const [campaignMatch, setCampaignMatch] = useState<Map<string, string | null>>(new Map());
   const [searchCampaignMatch, setSearchCampaignMatch] = useState<Map<string, string | null>>(new Map());
   const [campaignItemsLoading, setCampaignItemsLoading] = useState(false);
+  // Con UNA campaña elegida: todas sus respuestas, pedidas al servidor (campaign_inbox_feed), sin la
+  // ventana de las 700 más recientes y con las archivadas marcadas. Antes la campaña decía
+  // "respondido" y aquí no salía nada: la respuesta estaba archivada o era más vieja que la ventana.
+  const [campaignFeed, setCampaignFeed] = useState<{ id: string; rows: any[] } | null>(null);
+  const [campaignFeedLoading, setCampaignFeedLoading] = useState(false);
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
   // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
@@ -1158,6 +1163,23 @@ export default function Unibox() {
     setCampaignItems(rows.map((r) => ({ ...r, user_id: user.id, is_warmup: false })));
   }, [user]);
 
+  // La campaña elegida, entera. La última petición manda: si se cambia de campaña a media carga,
+  // la respuesta vieja se descarta.
+  const campaignFeedReq = useRef(0);
+  const loadCampaignFeed = useCallback(async (campaignId: string) => {
+    if (!user) return;
+    const req = ++campaignFeedReq.current;
+    setCampaignFeedLoading(true);
+    const { data, error } = await (supabase as any).rpc("campaign_inbox_feed", { p_campaign: campaignId });
+    if (req !== campaignFeedReq.current) return;
+    setCampaignFeedLoading(false);
+    if (error) { console.warn("campaign_inbox_feed failed, keeping current list:", error.message); return; }
+    const rows = ((data || []) as any[])
+      .filter((r) => isPrimaryRow(r))
+      .map((r) => ({ ...r, user_id: user.id, is_warmup: false }));
+    setCampaignFeed({ id: campaignId, rows });
+  }, [user]);
+
   const loadImportant = useCallback(async () => {
     if (!user) return;
     const { data, error } = await (supabase as any)
@@ -1341,7 +1363,10 @@ export default function Unibox() {
 
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
-  const selected = useMemo(() => messages.find(m => m.id === selectedId) || (searchResults || []).find(m => m.id === selectedId) || importantItems.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || null, [messages, sentItems, searchResults, importantItems, selectedId]);
+  // Las filas de la pestaña Campañas (campaignItems / campaignFeed) también se abren: antes, una
+  // respuesta de campaña fuera de la ventana de 500 del resto de pestañas salía en la lista pero al
+  // pulsarla no se abría nada.
+  const selected = useMemo(() => messages.find(m => m.id === selectedId) || (searchResults || []).find(m => m.id === selectedId) || importantItems.find(m => m.id === selectedId) || sentItems.find(m => m.id === selectedId) || campaignItems.find(m => m.id === selectedId) || (campaignFeed?.rows || []).find(m => m.id === selectedId) || null, [messages, sentItems, searchResults, importantItems, campaignItems, campaignFeed, selectedId]);
 
   // ── "Añadir persona" (persistent per-conversation Cc) ──
   const ccThreadKey = (selected?.from_email || "").toLowerCase();
@@ -1663,9 +1688,13 @@ export default function Unibox() {
   const preCategory = useMemo(() => {
     if (viewTab === "sent" || viewTab === "important") return [] as any[];
     const now24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    // La campaña elegida, entera desde el servidor (archivadas incluidas, con su marca).
+    const feedRows = viewTab === "campaigns" && selectedCampaignId !== "all" && campaignFeed?.id === selectedCampaignId ? campaignFeed.rows : null;
+    const feedIds = feedRows ? new Set<string>(feedRows.map((m: any) => m.id)) : null;
     const inTab = (m: any) => {
       if (viewTab === "reminders") return !!reminders[m.id];
       if (viewTab === "campaigns") {
+        if (feedIds && feedIds.has(m.id)) return true;   // de la campaña elegida (servidor)
         const camp = campaignMatch.has(m.id) ? campaignMatch.get(m.id) : searchCampaignMatch.get(m.id);
         if (camp === undefined) return false;   // no es de campaña
         return selectedCampaignId === "all" || camp === selectedCampaignId;
@@ -1691,7 +1720,8 @@ export default function Unibox() {
       const byId = new Map<string, any>();
       for (const m of campaignItems) byId.set(m.id, m);
       for (const m of messages) if (campaignMatch.has(m.id)) byId.set(m.id, m); // lo más reciente (tiempo real) gana
-      source = Array.from(byId.values());
+      if (feedRows) for (const m of feedRows) if (!byId.has(m.id)) byId.set(m.id, m);
+      source = Array.from(byId.values()).sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
     }
     return source
       // Blocked senders never show — unless it is their reply inside a real thread. Blocking
@@ -1705,13 +1735,19 @@ export default function Unibox() {
       .filter(m => !showTodayOnly || new Date(m.received_at) >= now24h)
       .filter(m => !folderFilter || m.folder_id === folderFilter)
       .filter(m => !search || searchTextOf(m).includes(search.toLowerCase()));
-  }, [messages, campaignItems, campaignMatch, searchCampaignMatch, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
+  }, [messages, campaignItems, campaignFeed, campaignMatch, searchCampaignMatch, searchResults, search, showTodayOnly, folderFilter, viewTab, selectedCampaignId, reminders, showWarmup, hiddenFromClean, isBlockedSender, isThreadReply, langNonce, mailboxMode]);
 
   // Al entrar en Campaigns y cada vez que se recarga el Unibox (la campaña elegida sólo filtra).
   useEffect(() => {
     if (viewTab !== "campaigns") return;
     void loadCampaignItems();
   }, [viewTab, loadCampaignItems, messages.length]);
+
+  // Una campaña elegida: todas sus respuestas (al elegirla y cada vez que se recarga el Unibox).
+  useEffect(() => {
+    if (viewTab !== "campaigns" || selectedCampaignId === "all") return;
+    void loadCampaignFeed(selectedCampaignId);
+  }, [viewTab, selectedCampaignId, loadCampaignFeed, messages.length]);
 
   // Buscando en Campaigns: lo que encuentra el buscador (todo el buzón) pasa por la misma regla.
   useEffect(() => {
@@ -1888,9 +1924,20 @@ export default function Unibox() {
   const handleArchive = async (id: string) => {
     const { error } = await supabase.from("inbox_messages").update({ is_archived: true }).eq("id", id);
     if (error) { toast.error(error.message); return; }
+    setCampaignFeed((prev) => (prev ? { ...prev, rows: prev.rows.map((m) => (m.id === id ? { ...m, is_archived: true } : m)) } : prev));
     const remaining = dropMessageLocally(id);
     setSelectedId((current) => (current === id ? (isMobile ? null : remaining[0]?.id ?? null) : current));
     toast.success("Archivado");
+  };
+
+  // Recuperar una respuesta archivada (sale en la campaña elegida con la marca "Archivada").
+  const handleUnarchive = async (id: string) => {
+    if (!user) return;
+    const { error } = await supabase.from("inbox_messages").update({ is_archived: false }).eq("id", id).eq("user_id", user.id);
+    if (error) { toast.error(error.message); return; }
+    setCampaignFeed((prev) => (prev ? { ...prev, rows: prev.rows.map((m) => (m.id === id ? { ...m, is_archived: false } : m)) } : prev));
+    toast.success("Recuperada: vuelve a estar en el Unibox");
+    void loadCampaignItems();
   };
 
   const handleDeleteMessage = async (id: string) => {
@@ -1929,7 +1976,7 @@ export default function Unibox() {
     // unread real replies are about to be archived.
     const unreadReal = messages.filter((m) => !m.is_read && !hiddenFromClean(m)).length;
     const warn = unreadReal > 0
-      ? `Vas a archivar TODO el Unibox, incluidas ${unreadReal} respuesta(s) sin leer. Podrás recuperarlas en "Archivados". ¿Seguro?`
+      ? `Vas a archivar TODO el Unibox, incluidas ${unreadReal} respuesta(s) sin leer. Las de campaña se pueden recuperar eligiendo su campaña en la pestaña Campañas. ¿Seguro?`
       : "Vas a archivar todos los mensajes del Unibox. ¿Seguro?";
     if (!window.confirm(warn)) return;
     const { error } = await supabase
@@ -2810,7 +2857,7 @@ export default function Unibox() {
                         {/* Bottom row: AI-replied tag REPLACES the intent tag for messages the AI
                             answered (so a contradictory "Fuera / Auto" never shows on an AI reply);
                             otherwise the normal classification mini-tag + campaign tag + folder. */}
-                        {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder) && (
+                        {(catCfg.label || aiReplied(msg.from_email) || campaignName || msgFolder || msg.is_archived) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {aiReplied(msg.from_email) ? (
                               <span className={`${CHIP_MINI} bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300`} title="La IA respondió automáticamente a este contacto">
@@ -2844,6 +2891,21 @@ export default function Unibox() {
                                 {msgFolder.name}
                               </span>
                             )}
+                            {msg.is_archived && (
+                              <>
+                                <span className={`${CHIP_MINI} bg-muted text-muted-foreground`} title="Archivada o eliminada desde el Unibox. La campaña la cuenta como respondida.">
+                                  <Archive className="h-3 w-3" /> Archivada
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); void handleUnarchive(msg.id); }}
+                                  className={`${CHIP_MINI} border border-border bg-card text-foreground hover:bg-muted`}
+                                  title="Devolverla al Unibox"
+                                >
+                                  <ArchiveRestore className="h-3 w-3" /> Recuperar
+                                </button>
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2866,7 +2928,7 @@ export default function Unibox() {
               )}
               {filtered.length === 0 && (
                 <div className="p-8 text-center text-sm text-muted-foreground">
-                  {viewTab === "campaigns" && campaignItemsLoading
+                  {viewTab === "campaigns" && (campaignItemsLoading || (selectedCampaignId !== "all" && campaignFeedLoading))
                     ? "Cargando las respuestas de campaña…"
                     : viewTab === "campaigns"
                       ? (selectedCampaignId === "all" ? "Aún no hay respuestas de ninguna campaña" : "Esta campaña aún no tiene respuestas")
