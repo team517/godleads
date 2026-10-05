@@ -20,6 +20,8 @@ export interface TrabajoCola {
   /** Columnas del CSV tal como se subió (jsonb); puede faltar en trabajos antiguos. */
   columns?: unknown;
   email_column?: string | null;
+  /** Etiqueta libre para saber de quién o para qué es la lista ("Lucy", "Juan software"…). */
+  label?: string | null;
 }
 
 export type EstadoCola = {
@@ -91,6 +93,43 @@ export function csvPersonalizado(cols: string[], rows: FilaCsv[], results: Resul
   return Papa.unparse({ fields: [...base, "personalized_message"], data });
 }
 
-export function nombreDescarga(filename: string | null | undefined): string {
-  return `${(filename || "").replace(/\.csv$/i, "") || "leads"}_personalizado.csv`;
+export function nombreDescarga(filename: string | null | undefined, label?: string | null): string {
+  const base = `${(filename || "").replace(/\.csv$/i, "") || "leads"}_personalizado.csv`;
+  const tag = limpiarEtiqueta(label).replace(/[\\/:*?"<>|]+/g, "-");
+  return tag ? `${tag} - ${base}` : base;
+}
+
+/* ── Etiquetas de las listas (05-10-2026) ── */
+
+/** Lo que se guarda: sin espacios de sobra y como mucho 40 caracteres. Vacía = sin etiqueta. */
+export function limpiarEtiqueta(s: string | null | undefined): string {
+  return String(s || "").replace(/\s+/g, " ").trim().slice(0, 40);
+}
+
+/** Las etiquetas usadas, sin repetir (sin distinguir mayúsculas), por orden de uso, con cuántas listas. */
+export function etiquetasDe(lista: Pick<TrabajoCola, "label">[]): { label: string; n: number }[] {
+  const m = new Map<string, { label: string; n: number }>();
+  for (const h of lista) {
+    const l = limpiarEtiqueta(h.label);
+    if (!l) continue;
+    const k = l.toLowerCase();
+    const cur = m.get(k);
+    if (cur) cur.n++; else m.set(k, { label: l, n: 1 });
+  }
+  return [...m.values()];
+}
+
+/** ¿Pasa el filtro de etiqueta? null = todas; "" = las que no tienen. */
+export function pasaFiltroEtiqueta(h: Pick<TrabajoCola, "label">, filtro: string | null): boolean {
+  if (filtro === null) return true;
+  return limpiarEtiqueta(h.label).toLowerCase() === filtro.toLowerCase();
+}
+
+/** Un color estable por etiqueta (la misma etiqueta, el mismo color siempre). */
+const PALETA = ["#6E58F1", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#8B5CF6", "#14B8A6", "#F97316", "#64748B"];
+export function colorEtiqueta(label: string | null | undefined): string {
+  const s = limpiarEtiqueta(label).toLowerCase();
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return PALETA[h % PALETA.length];
 }

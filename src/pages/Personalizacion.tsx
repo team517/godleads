@@ -8,14 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil, ListChecks, Square } from "lucide-react";
+import { Upload, UploadCloud, Sparkles, Download, Send, Loader2, FileText, Wand2, Check, ServerCog, BookMarked, Trash2, Save, Play, Pencil, ListChecks, Square, Tag } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConfirm } from "@/hooks/useConfirm";
 import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
 import { crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos } from "@/lib/personalization-store";
-import { columnasDe, csvPersonalizado, estadoTrabajo, hayActivas, nombreDescarga, ordenarCola, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
+import { colorEtiqueta, columnasDe, csvPersonalizado, estadoTrabajo, etiquetasDe, hayActivas, limpiarEtiqueta, nombreDescarga, ordenarCola, pasaFiltroEtiqueta, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -90,6 +90,12 @@ export default function Personalizacion() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [filename, setFilename] = useState("");
+  // Etiqueta de la próxima lista ("Lucy"…). Se queda puesta para la siguiente, como el prompt.
+  const [etiqueta, setEtiqueta] = useState("");
+  // Filtro de la cola por etiqueta: null = todas.
+  const [filtroEtiqueta, setFiltroEtiqueta] = useState<string | null>(null);
+  // Fila de la cola cuya etiqueta se está editando, y lo escrito.
+  const [editandoEtiqueta, setEditandoEtiqueta] = useState<{ id: string; valor: string } | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -203,7 +209,7 @@ export default function Personalizacion() {
     if (!user) return;
     const { data } = await (supabase as any)
       .from("personalization_csv_jobs")
-      .select("id, filename, status, total, done, ok, failed, created_at, updated_at, columns, email_column")
+      .select("id, filename, status, total, done, ok, failed, created_at, updated_at, columns, email_column, label")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(40);
@@ -250,6 +256,22 @@ export default function Personalizacion() {
       setResults(heavy.results);
     } catch (e: any) { toast.error(`No se pudieron cargar sus leads: ${e?.message || e}`); return; }
     toast.success(`Abierta: ${d.filename || "personalización"}`);
+  };
+
+  /** Guarda la etiqueta de una lista de la cola (vacía = la quita). */
+  const guardarEtiqueta = async (id: string, valor: string) => {
+    setEditandoEtiqueta(null);
+    const label = limpiarEtiqueta(valor) || null;
+    const antes = history.find((h) => h.id === id)?.label ?? null;
+    if ((antes || null) === label) return;
+    setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, label } : h)));
+    const { error } = await (supabase as any).from("personalization_csv_jobs").update({ label }).eq("id", id);
+    if (error) {
+      setHistory((prev) => prev.map((h) => (h.id === id ? { ...h, label: antes } : h)));
+      toast.error(`No se pudo guardar la etiqueta: ${error.message}`);
+      return;
+    }
+    toast.success(label ? `Etiqueta: ${label}` : "Etiqueta quitada");
   };
 
   const deleteHistoryJob = async (id: string) => {
@@ -370,7 +392,7 @@ export default function Personalizacion() {
     // filas, una sola petición de decenas de MB se cortaba ("Failed to fetch").
     try {
       await crearTrabajo(supabase,
-        { user_id: user.id, filename, prompt, provider, email_column: emailColumn, columns },
+        { user_id: user.id, filename, prompt, provider, email_column: emailColumn, columns, label: limpiarEtiqueta(etiqueta) || null },
         rows, (hechas, total) => setSubida({ hechas, total }));
     } catch (e: any) {
       setStarting(false); setSubida(null);
@@ -451,7 +473,7 @@ export default function Personalizacion() {
   const downloadCsv = async () => {
     if (!rows.length) return;
     const res = await ensureResults();
-    descargarTexto(nombreDescarga(filename), csvPersonalizado(columns, rows, res));
+    descargarTexto(nombreDescarga(filename, history.find((h) => h.id === jobId)?.label), csvPersonalizado(columns, rows, res));
   };
 
   /** Los leads y mensajes de una lista de la cola: los de la página si es la abierta, si no los
@@ -468,7 +490,7 @@ export default function Personalizacion() {
     try {
       const datos = await datosDe(h);
       if (!datos.rows.length) { toast.error("Esta lista no tiene leads guardados."); return; }
-      descargarTexto(nombreDescarga(h.filename), csvPersonalizado(columnasDe(h.columns, datos.rows), datos.rows, datos.results));
+      descargarTexto(nombreDescarga(h.filename, h.label),csvPersonalizado(columnasDe(h.columns, datos.rows), datos.rows, datos.results));
     } catch (e: any) { toast.error(`No se pudo descargar: ${e?.message || e}`); }
     finally { setDescargando(null); }
   };
@@ -650,6 +672,34 @@ export default function Personalizacion() {
               )}
             </div>
 
+            {/* Filtro por etiqueta: sólo si alguna lista tiene una */}
+            {etiquetasDe(history).length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filtrar por etiqueta">
+                <button
+                  type="button"
+                  onClick={() => setFiltroEtiqueta(null)}
+                  className={`rounded-full border px-3 py-1 text-[12.5px] font-medium transition-colors ${filtroEtiqueta === null ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}
+                >
+                  Todas · {history.length}
+                </button>
+                {etiquetasDe(history).map((e) => {
+                  const on = filtroEtiqueta !== null && filtroEtiqueta.toLowerCase() === e.label.toLowerCase();
+                  const c = colorEtiqueta(e.label);
+                  return (
+                    <button
+                      key={e.label}
+                      type="button"
+                      onClick={() => setFiltroEtiqueta(on ? null : e.label)}
+                      className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-medium transition-colors"
+                      style={on ? { backgroundColor: c, borderColor: c, color: "#fff" } : { borderColor: c + "55", color: c, backgroundColor: c + "12" }}
+                    >
+                      <Tag className="h-3 w-3" /> {e.label} · {e.n}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="overflow-x-auto rounded-[10px] border border-border">
               <table className="w-full min-w-[900px] border-collapse text-[13px]">
                 <thead>
@@ -660,7 +710,7 @@ export default function Personalizacion() {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((h) => {
+                  {history.filter((h) => pasaFiltroEtiqueta(h, filtroEtiqueta)).map((h) => {
                     const est = estadoTrabajo(h);
                     const puesto = est.enCola ? puestoEnCola(history, h.id) : null;
                     const total = h.total || 0, done = h.done || 0, ok = h.ok || 0, failed = h.failed || 0;
@@ -669,9 +719,47 @@ export default function Personalizacion() {
                     const puedeReanudar = !est.activo && h.status !== "uploading" && total > 0 && done < total;
                     return (
                       <tr key={h.id} className={`soft-row border-b border-border/70 last:border-0 ${jobId === h.id ? "bg-accent/50" : ""}`}>
-                        <td className="max-w-[260px] px-4 py-3">
+                        <td className="max-w-[300px] px-4 py-3">
                           <span className="block truncate font-medium text-foreground">{h.filename || "sin nombre"}</span>
-                          <span className="block text-[12px] text-muted-foreground">{total.toLocaleString("es-ES")} leads</span>
+                          <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted-foreground">
+                            {total.toLocaleString("es-ES")} leads
+                            {editandoEtiqueta?.id === h.id ? (
+                              <input
+                                autoFocus
+                                list="personalizacion-etiquetas"
+                                value={editandoEtiqueta.valor}
+                                maxLength={40}
+                                placeholder="Ej.: Lucy"
+                                aria-label="Etiqueta de la lista"
+                                onChange={(e) => setEditandoEtiqueta({ id: h.id, valor: e.target.value })}
+                                onBlur={() => void guardarEtiqueta(h.id, editandoEtiqueta.valor)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); void guardarEtiqueta(h.id, editandoEtiqueta.valor); }
+                                  if (e.key === "Escape") setEditandoEtiqueta(null);
+                                }}
+                                className="h-6 w-32 rounded-md border border-primary/50 bg-card px-2 text-[12px] text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                              />
+                            ) : h.label ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditandoEtiqueta({ id: h.id, valor: h.label || "" })}
+                                title="Cambiar la etiqueta (déjala vacía para quitarla)"
+                                className="inline-flex max-w-[160px] items-center gap-1 rounded-full border px-2 py-[1px] text-[11.5px] font-semibold"
+                                style={{ borderColor: colorEtiqueta(h.label) + "55", color: colorEtiqueta(h.label), backgroundColor: colorEtiqueta(h.label) + "14" }}
+                              >
+                                <Tag className="h-3 w-3 flex-shrink-0" /> <span className="truncate">{h.label}</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setEditandoEtiqueta({ id: h.id, valor: "" })}
+                                title="Ponle un nombre o etiqueta (Lucy, Juan software…) para saber de quién es"
+                                className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-[1px] text-[11.5px] text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                              >
+                                <Tag className="h-3 w-3" /> Etiqueta
+                              </button>
+                            )}
+                          </span>
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
                           {when && !isNaN(when.getTime()) ? when.toLocaleString("es", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
@@ -979,6 +1067,22 @@ export default function Personalizacion() {
                 </div>
               </div>
             )}
+            {!jobId && (
+              <label className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                <Tag className="h-3.5 w-3.5" /> Etiqueta de la lista <span className="text-[12px]">(opcional: Lucy, Juan software…)</span>
+                <input
+                  list="personalizacion-etiquetas"
+                  value={etiqueta}
+                  maxLength={40}
+                  onChange={(e) => setEtiqueta(e.target.value)}
+                  placeholder="Ej.: Lucy"
+                  className="h-8 w-48 rounded-md border border-border bg-card px-2.5 text-[13px] text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </label>
+            )}
+            <datalist id="personalizacion-etiquetas">
+              {etiquetasDe(history).map((e) => <option key={e.label} value={e.label} />)}
+            </datalist>
             <div className="flex flex-wrap gap-2">
               {!running ? (
                 <Button size="sm" className="gap-2" onClick={handleRun} disabled={!rows.length || starting}>

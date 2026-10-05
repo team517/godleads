@@ -48,6 +48,8 @@ async function conReintentos<T>(op: () => PromiseLike<{ data?: T; error: { messa
 
 export interface NuevoTrabajo {
   user_id: string; filename: string; prompt: string; provider: string; email_column: string; columns: string[];
+  /** Etiqueta libre de la lista ("Lucy"…); null sin etiqueta. */
+  label?: string | null;
 }
 
 /**

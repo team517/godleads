@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import Papa from "papaparse";
-import { columnasDe, csvPersonalizado, estadoTrabajo, hayActivas, nombreDescarga, ordenarCola, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
+import { colorEtiqueta, columnasDe, csvPersonalizado, estadoTrabajo, etiquetasDe, hayActivas, limpiarEtiqueta, nombreDescarga, ordenarCola, pasaFiltroEtiqueta, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
 
 const t = (p: Partial<TrabajoCola> & { id: string; status: string; created_at: string }): TrabajoCola => ({
   filename: `${p.id}.csv`, total: 100, done: 0, ok: 0, failed: 0, ...p,
@@ -55,5 +55,39 @@ describe("cola de personalizaciones", () => {
     expect(columnasDe(null, [{ __idx: 0, b: "1", a: "2" }, { __idx: 1, c: "3" }])).toEqual(["b", "a", "c"]);
     expect(nombreDescarga("Leads 2MKAPITAL.CSV")).toBe("Leads 2MKAPITAL_personalizado.csv");
     expect(nombreDescarga("")).toBe("leads_personalizado.csv");
+  });
+});
+
+describe("etiquetas de las listas (Lucy, Juan software…)", () => {
+  it("se guarda limpia y como mucho de 40 caracteres; vacía = sin etiqueta", () => {
+    expect(limpiarEtiqueta("  Lucy   onepulso ")).toBe("Lucy onepulso");
+    expect(limpiarEtiqueta("   ")).toBe("");
+    expect(limpiarEtiqueta(null)).toBe("");
+    expect(limpiarEtiqueta("x".repeat(60))).toHaveLength(40);
+  });
+
+  it("el CSV descargado lleva la etiqueta delante (sin caracteres que rompan el nombre del archivo)", () => {
+    expect(nombreDescarga("B2B ONEPULSO 10K - Leads.csv", "Lucy")).toBe("Lucy - B2B ONEPULSO 10K - Leads_personalizado.csv");
+    expect(nombreDescarga("lista.csv", "Juan/Xavi: software")).toBe("Juan-Xavi- software - lista_personalizado.csv");
+    expect(nombreDescarga("lista.csv", "")).toBe("lista_personalizado.csv");
+    expect(nombreDescarga("lista.csv", null)).toBe("lista_personalizado.csv");
+  });
+
+  it("lista de etiquetas usadas, sin repetir por mayúsculas, con cuántas listas tiene cada una", () => {
+    const lista = [{ label: "Lucy" }, { label: "lucy " }, { label: "Juan" }, { label: null }, { label: "" }];
+    expect(etiquetasDe(lista)).toEqual([{ label: "Lucy", n: 2 }, { label: "Juan", n: 1 }]);
+  });
+
+  it("filtro: null = todas; si no, sólo las de esa etiqueta (sin distinguir mayúsculas)", () => {
+    expect(pasaFiltroEtiqueta({ label: "Lucy" }, null)).toBe(true);
+    expect(pasaFiltroEtiqueta({ label: null }, null)).toBe(true);
+    expect(pasaFiltroEtiqueta({ label: "lucy" }, "Lucy")).toBe(true);
+    expect(pasaFiltroEtiqueta({ label: "Juan" }, "Lucy")).toBe(false);
+    expect(pasaFiltroEtiqueta({ label: null }, "Lucy")).toBe(false);
+  });
+
+  it("la misma etiqueta tiene siempre el mismo color", () => {
+    expect(colorEtiqueta("Lucy")).toBe(colorEtiqueta(" lucy"));
+    expect(colorEtiqueta("Lucy")).toMatch(/^#[0-9A-F]{6}$/);
   });
 });
