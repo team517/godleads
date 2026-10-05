@@ -566,13 +566,11 @@ export default function Unibox() {
   const [aiRepliedSet, setAiRepliedSet] = useState<Set<string>>(new Set());
   const aiReplied = (email?: string | null) => !!email && aiRepliedSet.has(String(email).toLowerCase());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncLockRef = useRef(false);
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const replyDraftRef = useRef(""); // mirrors `reply` so the debounced reload can skip while composing
   const readingThreadRef = useRef<string | null>(null); // mirrors selectedId → skip auto-reload while a conversation is OPEN (don't yank the thread under the user)
   const backgroundSyncOffsetRef = useRef(0);
-  const lastAutoSyncAttemptRef = useRef(0);
   const replyRef = useRef<RichReplyHandle>(null);
   const replyDraftSaved = useRef("");  // guarda el borrador si se cierra el lector, para restaurarlo
   const getReply = useCallback(() => replyRef.current?.getSource() ?? replyDraftSaved.current, []);
@@ -671,10 +669,14 @@ export default function Unibox() {
   const [importantItems, setImportantItems] = useState<any[]>([]); // messages you starred (label "Importante")
   // Pestaña Campaigns: sus correos se piden a la BD (los enlazados a una campaña, o a la elegida),
   // para no depender de la ventana de 500+500 del resto de pestañas.
-  const [campaignItems, setCampaignItems] = useState<any[]>([]);
+  // Se pinta al instante con la última copia (memoria o disco) y se refresca detrás: la consulta
+  // de la pestaña tarda segundos en frío en las cuentas grandes (support@: 5,8 s).
+  const [campaignItems, setCampaignItems] = useState<any[]>(() => cacheGet<any[]>("unibox:campaigns") || []);
   // Mensajes DE CAMPAÑA (regla de inbox_campaign_match) → su campaña (o null si no se sabe cuál).
   // Lo que no está aquí no sale en la pestaña Campañas. Aparte, lo que el buscador encuentra.
-  const [campaignMatch, setCampaignMatch] = useState<Map<string, string | null>>(new Map());
+  const [campaignMatch, setCampaignMatch] = useState<Map<string, string | null>>(
+    () => new Map((cacheGet<any[]>("unibox:campaigns") || []).map((r) => [r.id, r.campaign_id || r.campaign_hint || null] as [string, string | null])),
+  );
   const [searchCampaignMatch, setSearchCampaignMatch] = useState<Map<string, string | null>>(new Map());
   const [campaignItemsLoading, setCampaignItemsLoading] = useState(false);
   // Con UNA campaña elegida: todas sus respuestas, pedidas al servidor (campaign_inbox_feed), sin la
@@ -682,6 +684,8 @@ export default function Unibox() {
   // "respondido" y aquí no salía nada: la respuesta estaba archivada o era más vieja que la ventana.
   const [campaignFeed, setCampaignFeed] = useState<{ id: string; rows: any[] } | null>(null);
   const [campaignFeedLoading, setCampaignFeedLoading] = useState(false);
+  // Sube cada vez que termina una carga del Unibox: la pestaña Campañas se refresca con ella.
+  const [loadTick, setLoadTick] = useState(0);
   // Recipients you PERSONALLY replied to from the Unibox (campaign_id null). Any
   // inbound from one of these is a real conversation → it must always show in the
   // clean bandeja ("Todos"), whatever language it is in. Loaded on mount so the
@@ -787,6 +791,7 @@ export default function Unibox() {
     setMessages(msgs);
     cacheSet("unibox:messages", msgs); // instant paint on next visit
     setLoading(false);
+    setLoadTick((n) => n + 1); // la pestaña Campañas se refresca detrás (con su propio freno de 20 s)
 
     // Auto-label from the classifier. Labels used to be ADDITIVE and sticky: a message that
     // was once (wrongly) tagged "Interesado" kept it forever, and a later classification just
@@ -943,16 +948,6 @@ export default function Unibox() {
       if (!silent) setSyncing(false);
     }
   }, [user, load]);
-
-  /** Silent background IMAP sync – no toasts, no loading state */
-  const autoSync = useCallback(async () => {
-    if (typeof document !== "undefined" && document.hidden) return;
-    const now = Date.now();
-    // Throttle to ~50s so the background IMAP sync runs about once a minute.
-    if (now - lastAutoSyncAttemptRef.current < 50_000) return;
-    lastAutoSyncAttemptRef.current = now;
-    await syncInbox({ silent: true });
-  }, [syncInbox]);
 
   // Load AI prompts and account tags
   useEffect(() => { if (user) loadTemplates(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user]);
@@ -1149,26 +1144,45 @@ export default function Unibox() {
   // pegado a una campaña salía aquí ("Lucy - coffee? | KK5XRDN 0396QKE", 03-10-2026). Trae lo
   // enlazado (1.000 más recientes) y lo demás que no es warm-up (400): así entran también los
   // compañeros de la empresa de un lead, que no traen campaign_id, con la campaña de su lead.
-  const loadCampaignItems = useCallback(async () => {
-    if (!user) return;
+  // Una sola petición a la vez y como mucho una cada 20 s (salvo forzada): antes cada recarga del
+  // Unibox volvía a lanzar la consulta entera de la pestaña.
+  const campaignItemsBusy = useRef(false);
+  const campaignItemsAt = useRef(0);
+  const loadCampaignItems = useCallback(async (force = false) => {
+    if (!user || campaignItemsBusy.current) return;
+    if (!force && Date.now() - campaignItemsAt.current < 20_000) return;
+    campaignItemsBusy.current = true;
+    // El "Cargando…" sólo cuando no hay nada que enseñar; con la copia anterior se refresca detrás.
     setCampaignItemsLoading(true);
-    // La MISMA ventana y la MISMA regla que Primary en la app del móvil (isPrimaryRow).
-    const { data, error } = await (supabase as any).rpc("mobile_inbox_feed", { p_linked: PRIMARY_FEED.linked, p_other: PRIMARY_FEED.other, p_since: null });
-    setCampaignItemsLoading(false);
-    if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
-    const rows = ((data || []) as any[]).filter((r) => isPrimaryRow(r));
-    const match = new Map<string, string | null>();
-    for (const r of rows) match.set(r.id, r.campaign_id || r.campaign_hint || null);
-    setCampaignMatch(match);
-    setCampaignItems(rows.map((r) => ({ ...r, user_id: user.id, is_warmup: false })));
+    try {
+      // La MISMA ventana y la MISMA regla que Primary en la app del móvil (isPrimaryRow).
+      const { data, error } = await (supabase as any).rpc("mobile_inbox_feed", { p_linked: PRIMARY_FEED.linked, p_other: PRIMARY_FEED.other, p_since: null });
+      if (error) { console.warn("loadCampaignItems failed, keeping current list:", error.message); return; }
+      campaignItemsAt.current = Date.now();
+      const rows = ((data || []) as any[]).filter((r) => isPrimaryRow(r)).map((r) => ({ ...r, user_id: user.id, is_warmup: false }));
+      const match = new Map<string, string | null>();
+      for (const r of rows) match.set(r.id, r.campaign_id || r.campaign_hint || null);
+      setCampaignMatch(match);
+      setCampaignItems(rows);
+      cacheSet("unibox:campaigns", rows);
+    } finally {
+      campaignItemsBusy.current = false;
+      setCampaignItemsLoading(false);
+    }
   }, [user]);
 
   // La campaña elegida, entera. La última petición manda: si se cambia de campaña a media carga,
-  // la respuesta vieja se descarta.
+  // la respuesta vieja se descarta. Volver a una campaña ya vista la pinta al instante (memoria).
   const campaignFeedReq = useRef(0);
-  const loadCampaignFeed = useCallback(async (campaignId: string) => {
+  const campaignFeedAt = useRef<{ id: string; at: number }>({ id: "", at: 0 });
+  const loadCampaignFeed = useCallback(async (campaignId: string, onlyIfOld = false) => {
     if (!user) return;
+    // Con cada recarga del Unibox, sólo si la copia tiene más de 60 s (elegir la campaña, siempre).
+    if (onlyIfOld && campaignFeedAt.current.id === campaignId && Date.now() - campaignFeedAt.current.at < 60_000) return;
+    campaignFeedAt.current = { id: campaignId, at: Date.now() };
     const req = ++campaignFeedReq.current;
+    const cached = cacheGet<any[]>(`unibox:campfeed:${campaignId}`);
+    if (cached) setCampaignFeed({ id: campaignId, rows: cached });
     setCampaignFeedLoading(true);
     const { data, error } = await (supabase as any).rpc("campaign_inbox_feed", { p_campaign: campaignId });
     if (req !== campaignFeedReq.current) return;
@@ -1177,6 +1191,7 @@ export default function Unibox() {
     const rows = ((data || []) as any[])
       .filter((r) => isPrimaryRow(r))
       .map((r) => ({ ...r, user_id: user.id, is_warmup: false }));
+    cacheSet(`unibox:campfeed:${campaignId}`, rows);
     setCampaignFeed({ id: campaignId, rows });
   }, [user]);
 
@@ -1294,17 +1309,18 @@ export default function Unibox() {
 
 
 
-  // Initial load + initial IMAP sync + reminders + blocklist (for filtering)
+  // Initial load + reminders + blocklist (for filtering).
+  // Sin sincronización IMAP desde el navegador (05-10-2026): los crons del servidor revisan TODOS
+  // los buzones cada 1-2 min (support@ con su cron propio: 889 de 891 al día en 5 min) y el correo
+  // nuevo llega por tiempo real. Con el Unibox abierto, el navegador repetía ese trabajo cada minuto
+  // (support@: hasta 40 llamadas seguidas de 4 buzones) y recargaba la lista al acabar. "Actualizar"
+  // sigue sincronizando a mano.
   useEffect(() => {
     load();
     loadReminders();
     loadBlockedEntries();
-    const syncTimeout = setTimeout(() => {
-      autoSync();
-    }, 1500);
-    return () => clearTimeout(syncTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, autoSync, loadReminders]);
+  }, [load, loadReminders]);
 
   // Keep a ref of the reply draft so the debounced reload can tell if the user is
   // mid-compose without re-creating the callback on every keystroke.
@@ -1341,7 +1357,14 @@ export default function Unibox() {
     if (!user) return;
     const channel = supabase
       .channel("unibox-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` }, () => scheduleReload())
+      // El warm-up sin enlazar (support@: 42.644 de 44.763 mensajes, casi uno por minuto) no recarga
+      // la lista: no sale en ninguna pestaña salvo "Todos"/"Mostrar warmup", que se refrescan con la
+      // recarga de seguridad de cada 2 min. Antes cada uno volvía a pedir 1.000 mensajes.
+      .on("postgres_changes", { event: "*", schema: "public", table: "inbox_messages", filter: `user_id=eq.${user.id}` }, (payload: any) => {
+        const row = payload?.new;
+        if (row && row.is_warmup === true && !row.lead_id && !row.campaign_id) return;
+        scheduleReload();
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user, scheduleReload]);
@@ -1356,10 +1379,7 @@ export default function Unibox() {
   }, [scheduleReload]);
 
   // Auto-sync IMAP every 60 seconds (no manual "Sincronizar" needed)
-  useEffect(() => {
-    syncIntervalRef.current = setInterval(() => { autoSync(); }, 60_000);
-    return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
-  }, [autoSync]);
+  // (Antes: sincronización IMAP desde el navegador cada 60 s. La hacen los crons; ver arriba.)
 
   // Detail opens in a modal — no auto-selection so closing actually closes.
 
@@ -1418,6 +1438,14 @@ export default function Unibox() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    // En la sesión se reutiliza 10 min: la consulta cuesta ~2 s en las cuentas grandes
+    // (support@: 56.235 dominios) y se lanzaba en cada entrada al Unibox.
+    const cached = cacheGet<{ at: number; list: string[] }>("unibox:leadDomains");
+    if (cached && Date.now() - cached.at < 10 * 60_000) {
+      setLeadDomains(new Set(cached.list));
+      setLeadDomainsReady(true);
+      return;
+    }
     (async () => {
       for (let attempt = 0; attempt < 4 && !cancelled; attempt++) {
         const { data, error } = await (supabase as any).rpc("get_lead_domains");
@@ -1427,6 +1455,7 @@ export default function Unibox() {
             const d = (r?.domain || "").toLowerCase().trim();
             if (d) set.add(d);
           }
+          cacheSet("unibox:leadDomains", { at: Date.now(), list: [...set] });
           if (!cancelled) { setLeadDomains(set); setLeadDomainsReady(true); }
           return;
         }
@@ -1741,13 +1770,18 @@ export default function Unibox() {
   useEffect(() => {
     if (viewTab !== "campaigns") return;
     void loadCampaignItems();
-  }, [viewTab, loadCampaignItems, messages.length]);
+  }, [viewTab, loadCampaignItems, loadTick]);
 
   // Una campaña elegida: todas sus respuestas (al elegirla y cada vez que se recarga el Unibox).
   useEffect(() => {
     if (viewTab !== "campaigns" || selectedCampaignId === "all") return;
     void loadCampaignFeed(selectedCampaignId);
-  }, [viewTab, selectedCampaignId, loadCampaignFeed, messages.length]);
+  }, [viewTab, selectedCampaignId, loadCampaignFeed]);
+  useEffect(() => {
+    if (viewTab !== "campaigns" || selectedCampaignId === "all" || loadTick === 0) return;
+    void loadCampaignFeed(selectedCampaignId, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadTick]);
 
   // Buscando en Campaigns: lo que encuentra el buscador (todo el buzón) pasa por la misma regla.
   useEffect(() => {
@@ -1937,7 +1971,7 @@ export default function Unibox() {
     if (error) { toast.error(error.message); return; }
     setCampaignFeed((prev) => (prev ? { ...prev, rows: prev.rows.map((m) => (m.id === id ? { ...m, is_archived: false } : m)) } : prev));
     toast.success("Recuperada: vuelve a estar en el Unibox");
-    void loadCampaignItems();
+    void loadCampaignItems(true);
   };
 
   const handleDeleteMessage = async (id: string) => {

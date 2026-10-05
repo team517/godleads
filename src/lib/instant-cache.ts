@@ -13,6 +13,7 @@ const store = new Map<string, unknown>();
 const PERSIST_PREFIX = "op_cache:";
 const PERSIST_KEYS = new Set([
   "unibox:messages",
+  "unibox:campaigns",
   "campaigns:list",
   "leads:first",
   "accounts:list",
@@ -62,6 +63,13 @@ export function bindCacheUser(uid: string | null): void {
 function shrinkForDisk(key: string, value: unknown): unknown {
   if (key === "unibox:messages" && Array.isArray(value)) {
     return value.slice(0, 150).map((m: any) => ({
+      ...m,
+      body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 600) : m.body_text,
+    }));
+  }
+  // Pestaña Campañas del Unibox: lo más nuevo basta para pintar al instante; la carga en vivo trae el resto.
+  if (key === "unibox:campaigns" && Array.isArray(value)) {
+    return value.slice(0, 200).map((m: any) => ({
       ...m,
       body_text: typeof m.body_text === "string" ? m.body_text.slice(0, 600) : m.body_text,
     }));

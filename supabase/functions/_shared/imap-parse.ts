@@ -92,6 +92,20 @@ export function detectCharset(raw: string): string {
   return normalizeCharset(m ? m[1] : "utf-8");
 }
 
+/** base64 → bytes, tolerante: ignora saltos y basura, rehace el relleno "=" y descarta un último
+ *  grupo incompleto (cuerpo cortado por el FETCH parcial). atob() a secas fallaba con "…NCg=" (un
+ *  "=" de relleno perdido) y el cuerpo se guardaba en base64: ~1.100 correos al día desde el
+ *  02-10-2026, y el detector de warm-up, que lee el cuerpo, dejaba pasar algunos a Campañas. */
+export function base64ToBytesLenient(b64: string): Uint8Array {
+  let s = b64.replace(/[^A-Za-z0-9+/]/g, "");
+  if (s.length % 4 === 1) s = s.slice(0, -1);
+  while (s.length % 4 !== 0) s += "=";
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 /** Detect the Content-Transfer-Encoding (quoted-printable, base64, 7bit, 8bit, binary) */
 export function detectTransferEncoding(raw: string): string {
   const m = raw.match(/Content-Transfer-Encoding\s*:\s*([^\r\n;]+)/i);
@@ -158,7 +172,7 @@ export function decodeMultipartPlain(raw: string, defaultCharset: string): strin
   const cs = (pick.hdr.match(/charset="?([^"\s;]+)"?/i)?.[1] || defaultCharset).toLowerCase();
   let body = pick.body;
   if (cte === "base64") {
-    try { const bin = atob(body.replace(/\s+/g, "")); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); body = safeDecode(bytes, cs); } catch { return null; }
+    try { body = safeDecode(base64ToBytesLenient(body), cs); } catch { return null; }
   } else if (cte === "quoted-printable") {
     body = body.replace(/=\r?\n/g, "").replace(/(?:=[0-9A-Fa-f]{2})+/g, (m) => { const by: number[] = []; for (let i = 0; i < m.length; i += 3) by.push(parseInt(m.substring(i + 1, i + 3), 16)); return safeDecode(new Uint8Array(by), cs); });
   } else if (cs !== "utf-8" && /[\x80-\xFF]/.test(body)) {
@@ -198,16 +212,14 @@ export function cleanBody(raw: string, defaultCharset = "utf-8"): string {
   text = text.replace(/Content-Disposition:[^\n]+/gi, "");
   text = text.replace(/charset="?[^"\s;]+"?/gi, "");
   text = text.replace(/<meta[^>]*>/gi, "");
-  text = text.replace(/=\r?\n/g, "");
+  // "=" + salto es el salto blando de quoted-printable. En base64 ese "=" es RELLENO: quitarlo
+  // rompía la decodificación (el cuerpo se guardaba en base64).
+  if (transferEnc !== "base64") text = text.replace(/=\r?\n/g, "");
 
   if (transferEnc === "base64") {
     // The whole body is base64 — decode bytes with the declared charset
     try {
-      const cleaned = text.replace(/\s+/g, "");
-      const binary = atob(cleaned);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      text = safeDecode(bytes, charset);
+      text = safeDecode(base64ToBytesLenient(text), charset);
     } catch { /* fall through */ }
   } else {
     // Quoted-printable: decode each =XX run with the declared charset
@@ -226,10 +238,7 @@ export function cleanBody(raw: string, defaultCharset = "utf-8"): string {
   // Last resort: if what we have is still one pure base64 blob (headers missing/misread), decode it.
   if (/^[A-Za-z0-9+\/=\s]{40,}$/.test(text) && !/\s[a-z]{2,}\s[a-z]{2,}\s/i.test(text)) {
     try {
-      const bin = atob(text.replace(/\s+/g, ""));
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const dec = safeDecode(bytes, charset);
+      const dec = safeDecode(base64ToBytesLenient(text), charset);
       if (dec && !/\uFFFD{3,}/.test(dec) && /[A-Za-z]{3,}/.test(dec)) text = dec;
     } catch { /* keep as is */ }
   }
@@ -271,11 +280,7 @@ export function extractHtml(raw: string): string {
 
     if (transferEnc === "base64") {
       try {
-        const cleaned = html.replace(/\s+/g, "");
-        const binary = atob(cleaned);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        html = safeDecode(bytes, charset);
+        html = safeDecode(base64ToBytesLenient(html), charset);
       } catch { /* fall through */ }
     } else {
       html = html.replace(/=\r?\n/g, "");
