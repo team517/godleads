@@ -2,6 +2,7 @@ import { hasWarmupSubjectTag, isWarmupMessage, isBounceOrFailure } from "@/lib/i
 import { sentBodyHtml } from "@/lib/sent-body";
 import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from "react";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+import { pendingDomains, readLeadDomainMemo, resolveLeadDomains } from "@/lib/lead-domains";
 import { isCampaignRelevant, isOwnBrandDomain } from "@/lib/inbox-visibility";
 import { looksBinaryText } from "@/lib/reply-text";
 import { containsProfanity } from "@/lib/profanity-filter";
@@ -1451,38 +1452,27 @@ export default function Unibox() {
     return bucket;
   }, []);
 
-  // Load ALL of this user's lead domains ONCE (get_lead_domains RPC, auth.uid-scoped).
-  // Complete + deterministic → English is gated strictly with no per-message lazy
-  // lookups and no leaks. Retries a few times on failure.
+  // Lead domains: only those of the LOADED messages (lead_domains_in), and remembered during the
+  // session. Before, get_lead_domains walked every lead of the user (support@: 59,064 domains,
+  // 2.5–6 s cold) and PostgREST only returned 1,000 of them, so the filter was incomplete.
+  // A failed request leaves those domains pending, and they are retried on the next load.
   useEffect(() => {
     if (!user) return;
+    const memo = readLeadDomainMemo();
+    if (memo.hits.size) setLeadDomains((prev) => (prev.size ? prev : memo.hits));
+    const emails = [...messages, ...campaignItems].map((m: any) => m?.from_email);
+    const todo = pendingDomains(emails, memo.asked);
+    if (todo.length === 0) { if (messages.length || !loading) setLeadDomainsReady(true); return; }
     let cancelled = false;
-    // En la sesión se reutiliza 10 min: la consulta cuesta ~2 s en las cuentas grandes
-    // (support@: 56.235 dominios) y se lanzaba en cada entrada al Unibox.
-    const cached = cacheGet<{ at: number; list: string[] }>("unibox:leadDomains");
-    if (cached && Date.now() - cached.at < 10 * 60_000) {
-      setLeadDomains(new Set(cached.list));
-      setLeadDomainsReady(true);
-      return;
-    }
     (async () => {
-      for (let attempt = 0; attempt < 4 && !cancelled; attempt++) {
-        const { data, error } = await (supabase as any).rpc("get_lead_domains");
-        if (!error && Array.isArray(data)) {
-          const set = new Set<string>();
-          for (const r of data) {
-            const d = (r?.domain || "").toLowerCase().trim();
-            if (d) set.add(d);
-          }
-          cacheSet("unibox:leadDomains", { at: Date.now(), list: [...set] });
-          if (!cancelled) { setLeadDomains(set); setLeadDomainsReady(true); }
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-      }
+      const r = await resolveLeadDomains((fn, args) => (supabase as any).rpc(fn, args), todo);
+      if (cancelled) return;
+      setLeadDomains(r.hits);
+      setLeadDomainsReady(true);
     })();
     return () => { cancelled = true; };
-  }, [user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, messages, campaignItems]);
 
   // Warm-up classification — revealed by "Mostrar warmup". Rules:
   //  1) A message with ≥2 random letters+digits codes (e.g. "FJRI829FJSC CHBV6J7")
