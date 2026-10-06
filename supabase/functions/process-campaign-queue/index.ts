@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } from "../_shared/mime-headers.ts";
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { sendableVariantIdx } from "../_shared/pm-guard.ts";
+import { plainTextBody } from "../_shared/text-only.ts";
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
@@ -636,7 +637,9 @@ async function sendSmtpEmail(
       // alternatives diverged materially (a documented spam signal). htmlToPlainText renders
       // "label (href)". The textOnly branch deliberately keeps removeUrlsAndTracking: a
       // "solo texto" campaign is link-free on purpose.
-      opts.textOnly ? wrapPlainTextNaturally(removeUrlsAndTracking(htmlToPlainText(normalizedBody))) : wrapPlainTextNaturally(htmlToPlainText(fullHtml)),
+      // Sólo texto: el cuerpo ya viene convertido (plainTextBody); los enlaces se conservan
+      // enteros (antes removeUrlsAndTracking los borraba todos, Calendly incluido).
+      opts.textOnly ? wrapPlainTextNaturally(plainTextBody(normalizedBody)) : wrapPlainTextNaturally(htmlToPlainText(fullHtml)),
       // No "--" signature delimiter: Gmail treats it as a sig boundary and collapses
       // everything after it into the "•••" (show trimmed content) pill.
       // SÓLO en modo "solo texto": en modo HTML la firma YA va dentro de fullHtml, y añadirla
@@ -2154,8 +2157,11 @@ serve(async (req) => {
         // If the personalized body carries explicit HTML (e.g. a {{personalized_message}}
         // with <p>…</p> markup from the CSV), force HTML delivery so it renders with real
         // paragraph spacing. Sending HTML through the text-only path would leak raw tags.
-        const bodyHasHtml = hasExplicitHtml(personalizedBody);
-        const forceTextOnly = !bodyHasHtml && (textOnlyEmails || (isFirstStep && firstEmailTextOnly));
+        // "Sólo texto" (06-10-2026): antes bastaba una negrita <b> en el cuerpo para que el modo se
+        // desactivara en silencio (592 de 594 envíos de support@ salieron en HTML con las campañas
+        // marcadas "sólo texto"). Ahora el cuerpo con etiquetas se CONVIERTE a texto bien
+        // estructurado (plainTextBody) y el modo se respeta siempre que la campaña lo pida.
+        const forceTextOnly = textOnlyEmails || (isFirstStep && firstEmailTextOnly);
         // Signature: PREFER the per-account signature (set in Email Accounts → bulk
         // edit) and fall back to the campaign-level one. Appended on every HTML send;
         // a text-only cold email can't carry HTML so it stays clean.
@@ -2166,7 +2172,7 @@ serve(async (req) => {
         const signatureHtml = shouldIncludeSignature ? effectiveSignature : undefined;
 
         const finalBody = forceTextOnly
-          ? removeUrlsAndTracking(personalizedBody)
+          ? plainTextBody(personalizedBody)
           : textToHtml(personalizedBody);
 
         // ═══ Threading: use REAL Message-IDs from DB for proper threading ═══
