@@ -1135,9 +1135,18 @@ serve(async (req) => {
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
                   body: JSON.stringify({ retry_of: hit.id }),
                 }).then(async (r) => {
-                  if (!r.ok) console.warn(`Reenvío automático ${hit.id}: HTTP ${r.status} ${(await r.text()).slice(0, 160)}`);
-                  else console.log(`Reenvío automático de la respuesta ${hit.id} a ${hit.to_email}`);
-                }).catch((e) => console.warn(`Reenvío automático ${hit.id}: ${(e as Error).message}`));
+                  const texto = await r.text();
+                  // Sin reenvío (tope de 3 envíos alcanzado, copia no guardada…): la nota de
+                  // "reenviado" sobra y el hilo tiene que enseñar "No entregado" tal cual.
+                  const sinReenvio = !r.ok || /"skipped"\s*:\s*true/.test(texto);
+                  if (sinReenvio) {
+                    await adminClient.from("sent_emails").update({ error_message: motivo }).eq("id", hit.id);
+                    console.warn(`Reenvío automático ${hit.id}: no se reenvía (${r.status} ${texto.slice(0, 120)})`);
+                  } else console.log(`Reenvío automático de la respuesta ${hit.id} a ${hit.to_email}`);
+                }).catch(async (e) => {
+                  await adminClient.from("sent_emails").update({ error_message: motivo }).eq("id", hit.id).then(() => {}, () => {});
+                  console.warn(`Reenvío automático ${hit.id}: ${(e as Error).message}`);
+                });
                 // El envío tarda hasta ~1 min: que no frene la sincronización, pero que no se corte.
                 const rt = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
                 if (rt?.waitUntil) rt.waitUntil(resend); else await resend;
