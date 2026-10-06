@@ -17,6 +17,10 @@ describe("guardián de enlaces", () => {
     const r = fixBlockedLinks("ver https://www.calendly.com/onepulso/30min/?month=2026-10 ya");
     expect(r.text).toBe("ver https://calendly.com/onepulso ya");
   });
+  it("cualquier otro evento de esa cuenta de Calendly también va por el perfil", () => {
+    const r = fixBlockedLinks('<a href="https://calendly.com/onepulso/15min">reserva</a> y https://calendly.com/onepulso/demo-rapida');
+    expect(r.text).toBe('<a href="https://calendly.com/onepulso">reserva</a> y https://calendly.com/onepulso');
+  });
   it("no toca lo que entrega", () => {
     for (const s of ["Hola, https://calendly.com/onepulso", "https://calendly.com/kingofleadsdigital/30min", "sin enlaces", ""]) {
       const r = fixBlockedLinks(s);

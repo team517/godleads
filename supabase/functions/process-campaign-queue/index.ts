@@ -3,6 +3,7 @@ import { hasHtmlMarkup, encodeMimeHeaderFolded, foldHeader, textToHtmlBody } fro
 import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize.ts";
 import { sendableVariantIdx } from "../_shared/pm-guard.ts";
 import { plainTextBody } from "../_shared/text-only.ts";
+import { fixBlockedLinks } from "../_shared/link-guard.ts";
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
@@ -2306,7 +2307,8 @@ serve(async (req) => {
         const textOnlyEmails = (campaign as any).text_only_emails === true;
         const firstEmailTextOnly = (campaign as any).first_email_text_only === true;
 
-        const personalizedBody = replaceVariables(finalBodyTemplate, fields, templateLang).trim();
+        // Guardián de enlaces (06-10-2026): nada sale con un enlace que IONOS enruta por su servidor en Spamhaus.
+        const personalizedBody = fixBlockedLinks(replaceVariables(finalBodyTemplate, fields, templateLang).trim()).text;
         // If the personalized body carries explicit HTML (e.g. a {{personalized_message}}
         // with <p>…</p> markup from the CSV), force HTML delivery so it renders with real
         // paragraph spacing. Sending HTML through the text-only path would leak raw tags.
@@ -2322,7 +2324,7 @@ serve(async (req) => {
         const campaignSignature = ((campaign as any).signature_html || "").trim();
         const effectiveSignature = accountSignature || campaignSignature;
         const shouldIncludeSignature = !forceTextOnly && !!effectiveSignature;
-        const signatureHtml = shouldIncludeSignature ? effectiveSignature : undefined;
+        const signatureHtml = shouldIncludeSignature ? fixBlockedLinks(effectiveSignature).text : undefined;
 
         const finalBody = forceTextOnly
           ? plainTextBody(personalizedBody)

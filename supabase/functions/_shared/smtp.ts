@@ -32,6 +32,7 @@ export function textToHtml(text: string): string {
 import { encodeMimeHeaderFolded, foldHeader, threadHeaders, htmlToPlainText } from "./mime-headers.ts";
 import { assertPublicMailHost } from "./host-guard.ts";
 import { makeBudget, readSmtpReply, sanitizeServerText, withTimeout } from "./smtp-wire.ts";
+import { fixBlockedLinks } from "./link-guard.ts";
 
 function fromHeaderStr(name: string, addr: string): string {
   const clean = (name || "").replace(/[\r\n]/g, "").trim();
@@ -303,6 +304,8 @@ export async function sendSmtpReply(
   inReplyTo: string | null, references: string | null,
   fromName: string | null
 ): Promise<{ ok: boolean; error?: string }> {
+  // Guardián de enlaces (06-10-2026): nada sale con un enlace que IONOS enruta por su servidor en Spamhaus.
+  body = fixBlockedLinks(body).text;
   let sess: SmtpSession | null = null;
   try {
     const budget = makeBudget(SMTP_BUDGET_MS);
@@ -347,7 +350,9 @@ export async function sendSmtpWithAttachments(opts: {
   attachments: { filename: string; mime: string; base64: string }[];
   headerFrom?: string;
 }): Promise<{ ok: boolean; error?: string; transcript?: string[] }> {
-  const { host, port, username, password, from, fromName, to, subject, body, attachments } = opts;
+  const { host, port, username, password, from, fromName, to, subject, attachments } = opts;
+  // Guardián de enlaces (06-10-2026): nada sale con un enlace que IONOS enruta por su servidor en Spamhaus.
+  const body = fixBlockedLinks(opts.body).text;
   const visibleFrom = opts.headerFrom || from;
   const log: string[] = [];
   let sess: SmtpSession | null = null;

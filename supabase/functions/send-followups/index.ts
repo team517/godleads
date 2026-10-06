@@ -5,10 +5,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { fixBlockedLinks } from "../_shared/link-guard.ts";
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const wrapId = (id: string) => { const t = (id || "").trim(); return !t ? "" : (t.startsWith("<") ? t : `<${t}>`); };
-function toHtml(text: string): string {
+function toHtml(raw: string): string {
+  // Guardián de enlaces (06-10-2026): nada sale con un enlace que IONOS enruta por su servidor en Spamhaus.
+  const text = fixBlockedLinks(raw).text;
   if (/<(p|div|br|a)\b/i.test(text)) return text;
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="margin:0 0 10px">${p.replace(/\n/g, "<br>")}</p>`).join("") || `<p>${(text || "").replace(/\n/g, "<br>")}</p>`;
 }

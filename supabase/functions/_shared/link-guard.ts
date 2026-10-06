@@ -19,6 +19,9 @@ export type LinkFix = { from: string; to: string };
 // 0 blacklist on 02-10) and the lead books the same 30 min from it.
 const RULES: { re: RegExp; to: string | null; label: string }[] = [
   { re: /https?:\/\/(?:www\.)?calendly\.com\/onepulso\/30min\/?(?:\?[^\s"'<>]*)?/gi, to: "https://calendly.com/onepulso", label: "calendly.com/onepulso/30min" },
+  // Cualquier otro evento de esa cuenta de Calendly (/15min, /demo…) va igual por el perfil: desde
+  // ahí se reserva el mismo evento y la URL de perfil es la única que se sabe que entrega.
+  { re: /https?:\/\/(?:www\.)?calendly\.com\/onepulso\/[A-Za-z0-9][A-Za-z0-9_-]*\/?(?:\?[^\s"'<>]*)?/gi, to: "https://calendly.com/onepulso", label: "calendly.com/onepulso/…" },
 ];
 
 export function fixBlockedLinks(text: string): { text: string; fixes: LinkFix[]; blocked: string[] } {

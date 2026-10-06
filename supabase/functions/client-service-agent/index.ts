@@ -24,6 +24,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { fixBlockedLinks } from "../_shared/link-guard.ts";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.1";
 import { buildCopyDoc } from "../_shared/report/buildCopyPdf.ts";
 import { ONEPULSO_LOGO_WHITE_DATAURL, ONEPULSO_LOGO_RATIO } from "../_shared/report/onepulsoLogoWhite.ts";
@@ -265,6 +266,8 @@ const wrapId = (id: string) => { const t = (id || "").trim(); return !t ? "" : (
 // share the same subject ("Re: Empezamos con tu campaña"), the reply could land in the wrong
 // conversation. Message-ID threading pins it to the exact original thread.
 async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string }> {
+  // Guardián de enlaces (06-10-2026): nada sale con un enlace que IONOS enruta por su servidor en Spamhaus.
+  bodyHtml = fixBlockedLinks(bodyHtml).text;
   try {
     port = Number(port) || 587; // coerce (a string port would skip the TLS/STARTTLS branches)
     let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
