@@ -7,7 +7,7 @@ import TodayMessages from "@/components/dashboard/TodayMessages";
 import RetryNotice from "@/components/RetryNotice";
 import { useWidget } from "@/hooks/useWidget";
 import { num } from "@/lib/widget-state";
-import { fetchMetricsExtra, sumMetricsExtra } from "@/lib/campaign-health";
+import { fetchCampaignTotals, globalReplyRate, type CampaignTotals } from "@/lib/campaign-totals";
 
 type Summary = { sent?: unknown; contacted?: unknown; replied?: unknown };
 type CampaignRow = { id: string; name: string; status: string; created_at?: string };
@@ -26,11 +26,10 @@ export default function Dashboard() {
     load: () => (supabase as any).rpc("user_email_stats"),
     deps: [uid],
   });
-  // Respuestas de PERSONAS (sin fuera de oficina ni avisos automáticos), suma de las campañas. Si no
-  // está (función sin aplicar o fallo) la tasa se calcula como antes.
-  const split = useWidget<{ human: number; auto: number } | null>({
-    cacheKey: "dash:replies-split", enabled: !!uid,
-    load: async () => ({ data: sumMetricsExtra(await fetchMetricsExtra(supabase as any)), error: null }),
+  // Totales globales = suma de las campañas (las mismas cifras de la tabla de Campañas).
+  const totals = useWidget<CampaignTotals | null>({
+    cacheKey: "dash:campaign-totals", enabled: !!uid,
+    load: () => fetchCampaignTotals(supabase as any, uid!),
     deps: [uid],
   });
   // "Cuentas ACTIVAS" = buzones conectados, no todas las filas de la tabla.
@@ -56,10 +55,10 @@ export default function Dashboard() {
   });
 
   const s = summary.data || {};
-  const stats = { sent: num(s.sent), contacted: num(s.contacted), replied: num(s.replied) };
-  // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
-  const repliesShown = split.data ? split.data.human : stats.replied;
-  const responseRate = stats.contacted > 0 ? ((repliesShown / stats.contacted) * 100).toFixed(1) : "0";
+  const t = totals.data ?? null;
+  const stats = { sent: t ? t.sent : num(s.sent), contacted: t ? t.contacted : num(s.contacted), replied: t ? t.replied : num(s.replied) };
+  // Tasa REAL = respondidos totales ÷ LEADS contactados totales (no la media de porcentajes).
+  const responseRate = globalReplyRate(stats).toFixed(1);
 
   const pending = (w: { data: unknown; loading: boolean }) => w.data === undefined && w.loading;
   const failedNoData = (w: { data: unknown; error: string | null }) => w.data === undefined && !!w.error;

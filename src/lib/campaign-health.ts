@@ -157,13 +157,16 @@ export async function fetchMetricsExtra(client: RpcClient): Promise<Record<strin
 type ReplyFields = { replied?: number; repliedHuman?: number | null; repliedAuto?: number | null };
 
 /**
- * Qué enseñar en "Respuestas": las humanas (con el desglose cargado) o, mientras no lo hay, la cifra de
- * siempre (`replied`, que mezcla autorrespuestas) sin el "+N automáticas".
+ * Qué enseñar en "Respondidos" (06-10-2026, decisión del dueño): TODOS los destinatarios que han
+ * contestado, también las respuestas automáticas, en una sola cifra y sin «+N automáticas». Con el
+ * desglose cargado se suman humanas + automáticas (cuenta por mensajes entrantes de la campaña); sin
+ * él, la cifra de siempre (`replied`). `split` queda siempre en false: no se pinta el aparte.
  */
 export function repliesView(m: ReplyFields | null | undefined): { shown: number; auto: number; split: boolean } {
   if (!m) return { shown: 0, auto: 0, split: false };
   if (typeof m.repliedHuman === "number") {
-    return { shown: m.repliedHuman, auto: Math.max(0, Number(m.repliedAuto) || 0), split: true };
+    const total = m.repliedHuman + Math.max(0, Number(m.repliedAuto) || 0);
+    return { shown: Math.max(total, Number(m.replied) || 0), auto: 0, split: false };
   }
   return { shown: Number(m.replied) || 0, auto: 0, split: false };
 }
@@ -175,7 +178,7 @@ export function autoRepliesLabel(auto: number): string {
 }
 
 export const REPLIES_TOOLTIP =
-  "Respuestas = destinatarios que han contestado una persona. Las automáticas (fuera de oficina, avisos del servidor) se cuentan aparte, en «+N automáticas».";
+  "Destinatarios que han contestado, incluidas las respuestas automáticas (fuera de oficina…).";
 
 /** Tooltip de "Enviados": son aceptados por el servidor, no entregados. */
 export function sentTooltip(sent: number, unconfirmed: number | null | undefined): string {

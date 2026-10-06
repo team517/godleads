@@ -43,14 +43,13 @@ export type BounceBreakdown = { policy: number; recipient_gone: number; temporar
  * buzón inexistente —calidad de la lista—. Sin desglose, sólo el total.
  */
 export function bounceBreakdownText(total: number, b: BounceBreakdown | null | undefined): string {
-  if (!total) return "Sin rebotes";
+  // 06-10-2026: "Rebotados" sólo suma los rebotes por la dirección del lead (bounce_is_lead_fault);
+  // los bloqueos del servidor emisor (lista negra/reputación: IONOS, Spamhaus) se dicen aparte.
+  const blocked = b && b.policy > 0 ? `Aparte, ${b.policy.toLocaleString("es-ES")} bloqueos del servidor emisor (IONOS/Spamhaus) que no cuentan como rebote` : "";
+  if (!total) return blocked || "Sin rebotes";
   const parts: string[] = [`${total.toLocaleString("es-ES")} rebotes`];
-  if (b) {
-    if (b.policy > 0) parts.push(`${b.policy.toLocaleString("es-ES")} por bloqueo del servidor emisor (lista negra/reputación: IONOS, Spamhaus)`);
-    if (b.recipient_gone > 0) parts.push(`${b.recipient_gone.toLocaleString("es-ES")} buzón inexistente`);
-    if (b.temporary > 0) parts.push(`${b.temporary.toLocaleString("es-ES")} temporales`);
-    if (b.other > 0) parts.push(`${b.other.toLocaleString("es-ES")} otros`);
-  }
+  if (b && b.recipient_gone > 0) parts.push(`${b.recipient_gone.toLocaleString("es-ES")} buzón inexistente`);
+  if (blocked) parts.push(blocked);
   return parts.join(" · ");
 }
 

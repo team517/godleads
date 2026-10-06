@@ -79,15 +79,15 @@ describe("campaignHealthReason — por qué una campaña Activa no envía", () =
   });
 });
 
-describe("repliesView — Respuestas = personas, automáticas aparte", () => {
-  it("con desglose: humanas y +N automáticas", () => {
-    expect(repliesView({ replied: 22, repliedHuman: 10, repliedAuto: 12 })).toEqual({ shown: 10, auto: 12, split: true });
+describe("repliesView — Respondidos = todos los que contestan, en una cifra (06-10-2026)", () => {
+  it("con desglose: humanas + automáticas, sin «+N» aparte", () => {
+    expect(repliesView({ replied: 22, repliedHuman: 10, repliedAuto: 12 })).toEqual({ shown: 22, auto: 0, split: false });
   });
-  it("sin desglose (migración sin aplicar): la cifra de siempre y nada de «+N»", () => {
+  it("sin desglose (migración sin aplicar): la cifra de siempre", () => {
     expect(repliesView({ replied: 22 })).toEqual({ shown: 22, auto: 0, split: false });
   });
-  it("0 humanas es 0, no se cae a replied", () => {
-    expect(repliesView({ replied: 5, repliedHuman: 0, repliedAuto: 5 })).toEqual({ shown: 0, auto: 5, split: true });
+  it("nunca por debajo de replied", () => {
+    expect(repliesView({ replied: 9, repliedHuman: 3, repliedAuto: 4 })).toEqual({ shown: 9, auto: 0, split: false });
   });
   it("sin métricas", () => expect(repliesView(null)).toEqual({ shown: 0, auto: 0, split: false }));
   it("etiqueta en singular y plural", () => {

@@ -8,7 +8,7 @@ import RetryNotice from "@/components/RetryNotice";
 import { useWidget } from "@/hooks/useWidget";
 import { num } from "@/lib/widget-state";
 import { sumPoints, toDayPoints, type DailyRpcRow, type DayPoint } from "@/lib/daily-rows";
-import { autoRepliesLabel, fetchMetricsExtra, sumMetricsExtra } from "@/lib/campaign-health";
+import { fetchCampaignTotals, globalReplyRate, type CampaignTotals } from "@/lib/campaign-totals";
 
 type Summary = { sent?: unknown; contacted?: unknown; bounced?: unknown; opened?: unknown; replied?: unknown; failed?: unknown };
 
@@ -29,12 +29,11 @@ export default function Stats() {
     load: () => (supabase as any).rpc("user_email_stats"),
     deps: [user?.id],
   });
-  // Respuestas de personas vs automáticas (suma de las campañas). Aparte del resumen: si falla o la
-  // función no existe, "Respuestas" se queda como antes y avisa de que incluye automáticas.
-  const extraW = useWidget<{ human: number; auto: number } | null>({
-    cacheKey: "stats:replies-split",
+  // Totales globales = suma de las cifras de cada campaña (las mismas de la tabla de Campañas).
+  const totalsW = useWidget<CampaignTotals | null>({
+    cacheKey: "stats:campaign-totals",
     enabled: !!user,
-    load: async () => ({ data: sumMetricsExtra(await fetchMetricsExtra(supabase as any)), error: null }),
+    load: () => fetchCampaignTotals(supabase as any, user!.id),
     deps: [user?.id],
   });
   const dailyW = useWidget<DailyRpcRow[]>({
@@ -45,15 +44,18 @@ export default function Stats() {
   });
 
   const s = summary.data || {};
-  const sent = num(s.sent);
-  const bounced = num(s.bounced);
+  // Enviados, contactados, respondidos y rebotados: suma de las campañas. Mientras no llega (o si
+  // falla), el resumen de siempre. Fallidos sale siempre del resumen.
+  const t = totalsW.data ?? null;
+  const sent = t ? t.sent : num(s.sent);
+  const bounced = t ? t.bounced : num(s.bounced);
   const stats = {
     sent,
-    contacted: num(s.contacted),
+    contacted: t ? t.contacted : num(s.contacted),
     bounced,
     delivered: Math.max(0, sent - bounced),
     opened: num(s.opened),
-    replied: num(s.replied),
+    replied: t ? t.replied : num(s.replied),
     failed: num(s.failed),
   };
   const daily: DayPoint[] = toDayPoints(dailyW.data);
@@ -65,18 +67,15 @@ export default function Stats() {
     { name: "Fallidos", value: stats.failed, color: "hsl(var(--warning))" },
   ];
 
-  // "Respuestas" = personas; las automáticas (fuera de oficina…) van aparte. Sin el desglose, la cifra
-  // de siempre (que las incluye) y se dice.
-  const split = extraW.data ?? null;
-  const repliesShown = split ? split.human : stats.replied;
-  const replyRate = stats.contacted > 0 ? (repliesShown / stats.contacted) * 100 : 0;
+  // Tasa global = respondidos totales ÷ contactados totales (no la media de los porcentajes).
+  const replyRate = globalReplyRate(stats);
 
   // Primary — the numbers that matter, each with a clarifying sub-label so "leads" (personas)
   // is never confused with "correos" (con follow-ups) again.
   const primaryStats = [
     { label: "Leads contactados", value: stats.contacted.toLocaleString("es"), sub: "personas únicas", highlight: false },
     { label: "Correos enviados", value: stats.sent.toLocaleString("es"), sub: "con follow-ups", highlight: false },
-    { label: "Respuestas", value: repliesShown.toLocaleString("es"), sub: split ? (autoRepliesLabel(split.auto) || "de personas") : "incluye automáticas", highlight: false },
+    { label: "Respuestas", value: stats.replied.toLocaleString("es"), sub: "recibidas", highlight: false },
     { label: "Tasa de respuesta", value: `${replyRate.toFixed(1)}%`, sub: "por lead contactado", highlight: true },
   ];
   const secondaryStats = [

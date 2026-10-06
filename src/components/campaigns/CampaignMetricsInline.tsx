@@ -17,7 +17,7 @@ export default function CampaignMetricsInline({ metrics }: { campaignId?: string
   // Reply rate is over CONTACTED leads (people), not emails sent (which include
   // follow-ups). Fall back to sent for old cached metrics with no `contacted`.
   const denom = (m?.contacted ?? 0) || (m?.sent ?? 0);
-  // "Respuestas" = personas; las automáticas van aparte (sin el desglose, la cifra de siempre).
+  // "Respondidos" = todos los que han contestado (también automáticas), una sola cifra.
   const rv = repliesView(m);
   const replyPct = m && denom > 0 ? `${((rv.shown / denom) * 100).toFixed(1)}%` : "0%";
 
@@ -26,7 +26,7 @@ export default function CampaignMetricsInline({ metrics }: { campaignId?: string
     // variants one shade lighter so the numbers stay readable on a dark background.
     { label: "Enviados",    value: m?.sent ?? 0,      sub: null,                 icon: Send,               color: "text-indigo-600 dark:text-indigo-400", hint: sentTooltip(m?.sent ?? 0, m?.sentUnconfirmed) },
     { label: "Contactados", value: m?.contacted ?? 0, sub: null,               icon: Users,              color: "text-violet-600 dark:text-violet-400" },
-    { label: "Respuestas",  value: rv.shown,          sub: replyPct,             extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
+    { label: "Respondidos", value: rv.shown,          sub: replyPct,             extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { label: "Positivos",   value: m?.positive ?? 0,  sub: null,                 icon: Smile,              color: "text-emerald-600 dark:text-emerald-400" },
     { label: "Rebotados",   value: m?.bounced ?? 0,   sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
     // "Sender B." (failed-send recipients) removed: it conflated transient SMTP

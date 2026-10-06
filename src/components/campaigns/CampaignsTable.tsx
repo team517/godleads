@@ -357,9 +357,9 @@ export default function CampaignsTable({
               <HeadCell icon={Users} label="Leads" />
               <HeadCell icon={Send} label="Enviados" title="Aceptados por el servidor de correo (no garantiza la entrega). Los rebotes confirmados salen aparte en «Rebotados»." />
               <HeadCell icon={UserCheck} label="Contactados" />
-              <HeadCell icon={MessageSquareReply} label="Respuestas" title={REPLIES_TOOLTIP} />
+              <HeadCell icon={MessageSquareReply} label="Respondidos" title={REPLIES_TOOLTIP} />
               <HeadCell icon={Smile} label="Positivos" />
-              <HeadCell icon={AlertTriangle} label="Rebotados" title="Rebotes confirmados: el servidor del destinatario rechazó el correo." />
+              <HeadCell icon={AlertTriangle} label="Rebotados" title="Direcciones que han rebotado (no existen o no aceptan correo). Los bloqueos del servidor emisor no cuentan aquí." />
               <HeadCell icon={Settings2} label="Acciones" className="text-right" />
             </tr>
           </thead>

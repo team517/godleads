@@ -35,7 +35,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp, heal
   // Reply rate over CONTACTED leads (people), not emails sent (which include
   // follow-ups). Fall back to sent for old cached metrics with no `contacted`.
   const denom = (m.contacted || 0) || m.sent;
-  // "Respuestas" = personas; las automáticas van aparte. Sin el desglose, la cifra de siempre.
+  // "Respondidos" = todos los que han contestado (también automáticas), una sola cifra.
   const rv = repliesView(m);
   const replyPct = denom > 0 ? `${((rv.shown / denom) * 100).toFixed(2)}%` : "0%";
   const meta = statusMeta[campaign.status] || statusMeta.draft;
@@ -44,7 +44,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp, heal
   const metrics: { key: string; label: string; value: number; sub: string | null; extra?: string | null; hint?: string; icon: typeof Send; color: string; link?: boolean }[] = [
     { key: "sent",     label: "Enviados",      value: m.sent,          sub: null,            icon: Send,               color: "text-primary", hint: sentTooltip(m.sent, m.sentUnconfirmed) },
     { key: "contacted",label: "Contactados",   value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
-    { key: "replied",  label: "Respuestas",    value: rv.shown,        sub: replyPct,        extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
+    { key: "replied",  label: "Respondidos",   value: rv.shown,        sub: replyPct,        extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { key: "positive", label: "Positivos",     value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
     { key: "bounced",  label: "Rebotados",     value: m.bounced,       sub: pct(m.bounced),  hint: "Rebotes confirmados: el servidor del destinatario rechazó el correo.", icon: AlertTriangle, color: "text-red-500 dark:text-red-400" },
     // "Sender Bounced" removed — it counted transient SMTP failures (e.g. an IONOS

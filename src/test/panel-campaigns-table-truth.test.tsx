@@ -34,13 +34,14 @@ function renderTable(metrics: Record<string, CampaignMetrics>, healthFor?: (id: 
 const rowOf = (name: string) => screen.getByText(name).closest("tr") as HTMLElement;
 
 describe("CampaignsTable — el panel dice la verdad", () => {
-  it("«Respuestas» enseña las humanas y, aparte, «+N automáticas»", () => {
+  it("«Respondidos» es una sola cifra con las automáticas incluidas (sin «+N automáticas»)", () => {
     renderTable({ c1: split, c2: legacy });
-    expect(screen.getByRole("columnheader", { name: /Respuestas/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Respondidos/ })).toBeInTheDocument();
     const row = rowOf("Prospección Q1");
-    expect(within(row).getByText("+12 automáticas")).toBeInTheDocument();
-    // 10 humanas ÷ 50 contactados = 20 %; no 22 (las automáticas no inflan el porcentaje).
-    expect(within(row).getByText("20.0%")).toBeInTheDocument();
+    expect(within(row).queryByText(/automática/)).not.toBeInTheDocument();
+    // 10 humanas + 12 automáticas = 22 ÷ 50 contactados = 44 %.
+    expect(within(row).getByText("22")).toBeInTheDocument();
+    expect(within(row).getByText("44.0%")).toBeInTheDocument();
   });
 
   it("sin el desglose (RPC sin aplicar) se ve la cifra de siempre y sin «+N»", () => {
