@@ -559,7 +559,9 @@ export function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   html = html.replace(/<!--[\s\S]*?-->/g, "");
 
   // Remove tracking pixels: 1x1 images, known tracking domains
-  html = html.replace(/<img[^>]*(?:width\s*=\s*["']?\s*1\s*["']?|height\s*=\s*["']?\s*1\s*["']?)[^>]*\/?>/gi, "");
+  // Sólo un píxel de 1×1 de verdad: antes `width="1` casaba también con width="107" o "189" y se
+  // llevaba por delante los logos de las firmas (Anasinf, DUOK, 06-10-2026).
+  html = html.replace(/<img[^>]*(?:width\s*=\s*["']?\s*1\s*(?:px)?\s*(?:["'\s/>])|height\s*=\s*["']?\s*1\s*(?:px)?\s*(?:["'\s/>]))[^>]*\/?>/gi, "");
   html = html.replace(/<img[^>]*(?:mailtrack|hubspot|sendgrid|mailchimp|track\.|pixel|beacon|open\.|click\.)[^>]*\/?>/gi, "");
 
   // Remove elements with display:none or visibility:hidden

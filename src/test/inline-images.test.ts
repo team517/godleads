@@ -23,3 +23,15 @@ describe("imágenes incrustadas", () => {
     expect(out).toContain('alt="GrupoBGO"');
   });
 });
+
+describe("el filtro de píxeles de seguimiento no se lleva los logos (06-10-2026)", () => {
+  it("quita sólo las imágenes de 1×1; width=107 o height=137 se quedan", async () => {
+    const { cleanBodyHtml } = await import("@/lib/unibox-text");
+    const html = '<p>Hola</p><img width="1" height="1" src="https://t.example/p.gif"><img width="107" height="26" src="https://ejemplo.es/instagram.png" alt="instagram"><img width="189" height="137" src="https://ejemplo.es/logo.png" alt="logo"><img width=1 src="https://t.example/q.gif">';
+    const out = cleanBodyHtml(html);
+    expect(out).not.toContain("p.gif");
+    expect(out).not.toContain("q.gif");
+    expect(out).toContain('alt="instagram"');
+    expect(out).toContain('alt="logo"');
+  });
+});
