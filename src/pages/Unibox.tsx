@@ -750,13 +750,9 @@ export default function Unibox() {
     setReminders(map);
   }, [user]);
 
-  // "Mostrar warmup" en un ref: load() lo lee sin cambiar de identidad (no relanza los efectos).
-  const showWarmupRef = useRef(showWarmup);
-  showWarmupRef.current = showWarmup;
-
   const load = useCallback(async () => {
     if (!user) return;
-    // TWO-LANE LOAD (+ carril 3 de warm-up bajo demanda). A single "latest 800" window let warm-up floods crowd real
+    // TWO-LANE LOAD. A single "latest 800" window let warm-up floods crowd real
     // replies out of view (live check: 800 latest = only 5 lead-linked, ~700
     // warmup). Lane 1 always brings the latest LEAD-LINKED messages (real
     // replies); lane 2 brings the latest unlinked ones. Real replies can never
@@ -769,11 +765,7 @@ export default function Unibox() {
     // folder_id/labels/etc.), so a literal column list would fail TS validation
     // even though the columns exist at runtime. Widening to string skips that.
     const LIST_COLS: string = INBOX_LIST_COLS;
-    // Carril 2 = lo SIN enlazar que NO es warm-up. Antes incluía el warm-up: en la cuenta más grande
-    // el warm-up sin enlazar llega casi a uno por minuto y las últimas 500 filas sólo cubrían ~1,6 h
-    // de correo real. El warm-up se pide aparte (carril 3), sólo con "Mostrar warmup" activo.
-    const wantWarmup = showWarmupRef.current;
-    const [linkedRes, unlinkedRes, warmupRes] = await Promise.all([
+    const [linkedRes, unlinkedRes] = await Promise.all([
       supabase
         .from("inbox_messages")
         .select(LIST_COLS)
@@ -789,33 +781,20 @@ export default function Unibox() {
         .eq("is_archived", false)
         .is("lead_id", null)
         .is("campaign_id", null)
-        .or("is_warmup.is.null,is_warmup.eq.false")
         .order("received_at", { ascending: false })
         .limit(500),
-      wantWarmup
-        ? (supabase as any)
-            .from("inbox_messages")
-            .select(LIST_COLS)
-            .eq("user_id", user.id)
-            .eq("is_archived", false)
-            .is("lead_id", null)
-            .is("campaign_id", null)
-            .eq("is_warmup", true)
-            .order("received_at", { ascending: false })
-            .limit(300)
-        : Promise.resolve({ data: [] as any[], error: null as { message: string } | null }),
     ]);
     // Un token caducado o un corte de red dejaban el Unibox vacío, sin aviso, y ese vacío se
     // guardaba en el caché para la visita siguiente. Ahora se conserva lo que hay y se avisa.
-    if (linkedRes.error || unlinkedRes.error || warmupRes.error) {
-      const msg = (linkedRes.error || unlinkedRes.error || warmupRes.error)?.message || "error de red";
+    if (linkedRes.error || unlinkedRes.error) {
+      const msg = (linkedRes.error || unlinkedRes.error)?.message || "error de red";
       console.warn("Unibox load failed, keeping current list:", msg);
       toast.error(`No se pudo cargar el Unibox: ${msg}`);
       setLoading(false);
       return;
     }
     const seenIds = new Set<string>();
-    const raw = [...((linkedRes.data as any[]) || []), ...((unlinkedRes.data as any[]) || []), ...((warmupRes.data as any[]) || [])]
+    const raw = [...((linkedRes.data as any[]) || []), ...((unlinkedRes.data as any[]) || [])]
       .filter((m) => (seenIds.has(m.id) ? false : (seenIds.add(m.id), true)))
       .sort((a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime());
 
@@ -1363,14 +1342,6 @@ export default function Unibox() {
     loadBlockedEntries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, loadReminders]);
-
-  // Al activar "Mostrar warmup" se pide el carril de warm-up (el carril 2 ya no lo trae).
-  const warmupLaneInitRef = useRef(true);
-  useEffect(() => {
-    if (warmupLaneInitRef.current) { warmupLaneInitRef.current = false; return; }
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showWarmup]);
 
   // Keep a ref of the reply draft so the debounced reload can tell if the user is
   // mid-compose without re-creating the callback on every keystroke.
