@@ -68,10 +68,10 @@ serve(async (req) => {
     );
     if (!hit.ok) return json({ ok: false, reason: hit.reason, detail: hit.detail, attachments: [] });
 
-    // De todo lo adjunto nos quedamos con los ARCHIVOS: los logos de la firma (imágenes
-    // pequeñas incrustadas) no son archivos que el remitente haya mandado.
-    const found = extractAttachments(hit.raw).filter((a) => !looksInline(a));
-    const stored: { name: string; mime: string; size: number; path: string; oversized?: boolean }[] = [];
+    // Los ARCHIVOS y, marcadas como inline, las imágenes de la firma/cuerpo (src="cid:…"): el
+    // Unibox las usa para pintar la firma con su logo y no las lista como archivos (06-10-2026).
+    const found = extractAttachments(hit.raw).map((a) => (looksInline(a) ? { ...a, inline: true } : a));
+    const stored: { name: string; mime: string; size: number; path: string; oversized?: boolean; inline?: boolean; cid?: string }[] = [];
     const msgKey = (msg.message_id || msg.id).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 90) || "msg";
     const used: Record<string, number> = {};
 
@@ -89,7 +89,7 @@ serve(async (req) => {
           .from("inbox-attachments")
           .upload(path, bytes, { contentType: att.mime, upsert: true });
         if (upErr) continue;
-        stored.push({ name: att.name, mime: att.mime, size: bytes.length, path });
+        stored.push({ name: att.name, mime: att.mime, size: bytes.length, path, ...(att.inline ? { inline: true } : {}), ...(att.cid ? { cid: att.cid } : {}) });
       } catch (_e) { /* ese archivo se queda fuera, los demás siguen */ }
     }
 

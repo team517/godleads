@@ -93,3 +93,21 @@ describe("correos sin adjuntos", () => {
     expect(extractAttachments("Hola, ¿hablamos mañana?")).toEqual([]);
   });
 });
+
+describe("imágenes de la firma con Content-ID (06-10-2026)", () => {
+  const conCid = [
+    "------=_X_2",
+    'Content-Type: image/png; name="logo.png"',
+    "Content-Transfer-Encoding: base64",
+    "Content-ID: <image001.png@01DD5592.F851A7B0>",
+    "Content-Disposition: inline; filename=\"logo.png\"",
+    "",
+    PNG_B64,
+    "------=_X_2--",
+  ].join("\r\n");
+  it("guarda el cid para que el Unibox pinte la firma", () => {
+    const [logo] = extractAttachments(conCid);
+    expect(logo?.cid).toBe("image001.png@01DD5592.F851A7B0");
+    expect(logo?.inline).toBe(true);
+  });
+});

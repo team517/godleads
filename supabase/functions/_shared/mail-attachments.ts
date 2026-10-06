@@ -16,6 +16,8 @@ export interface RawAttachment {
   oversized?: boolean;
   /** Va DENTRO del mensaje (logo de la firma, imagen del cuerpo), no es un archivo aparte. */
   inline?: boolean;
+  /** Content-ID sin los <>: el HTML del correo la referencia como src="cid:…" (06-10-2026). */
+  cid?: string;
 }
 
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
@@ -80,11 +82,13 @@ export function extractAttachments(raw: string, opts?: { maxBytes?: number; max?
     const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
     // Content-Disposition: inline (o un Content-ID) = la imagen la usa el propio cuerpo.
     const inline = /Content-Disposition:\s*inline/i.test(header) || /Content-ID:\s*</i.test(header);
+    const cidM = header.match(/Content-ID:\s*<([^>\r\n]+)>/i);
+    const cid = cidM ? cidM[1].trim().slice(0, 200) : undefined;
     const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
     if (b64.length < 40) continue;
     const size = Math.floor(b64.length * 0.75);
-    if (size > maxBytes) { out.push({ name, mime, base64: "", size, oversized: true, inline }); continue; }
-    out.push({ name, mime, base64: b64, size, inline });
+    if (size > maxBytes) { out.push({ name, mime, base64: "", size, oversized: true, inline, ...(cid ? { cid } : {}) }); continue; }
+    out.push({ name, mime, base64: b64, size, inline, ...(cid ? { cid } : {}) });
   }
   return out;
 }

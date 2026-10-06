@@ -564,8 +564,11 @@ export function parseInboundItem(item: FetchItem, ctx: { accountEmail: string; i
       to_emails: sanitizeForPostgres(decodeMimeWords(hv("To")).slice(0, 2000)),
       cc_emails: sanitizeForPostgres(decodeMimeWords(hv("Cc")).slice(0, 2000)),
       reply_to: addressOf(hv("Reply-To")),
-      // Los logos de la firma NO son archivos adjuntos.
-      attachments: extractAttachments(rawBody).filter((a) => !looksInline(a)),
+      // Los archivos adjuntos y, marcadas como inline, las imágenes de la firma/cuerpo (src="cid:…"):
+      // antes se tiraban y las firmas salían sin logo (06-10-2026). Sólo si el HTML las referencia.
+      attachments: extractAttachments(rawBody).flatMap((a) => looksInline(a)
+        ? (/src=["']?cid:/i.test(rawBody) ? [{ ...a, inline: true }] : [])
+        : [a]),
       kind,
       auto_signal: autoSig,
       automated_sender: isAutomatedSender(fromEmail),

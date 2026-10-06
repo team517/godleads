@@ -6,7 +6,8 @@ import { detailDate, type Conversation, type LeadStatus } from "@/lib/mobile-inb
 import { attachmentUrl, type ThreadMessage } from "./mail-actions";
 import { Avatar, Bolt, SquareButton, Waves } from "./ui";
 import { STATUS_BY_ID } from "@/lib/mobile-inbox";
-import { isAutoResent } from "@/lib/unibox-text";
+import { isAutoResent, type InlineImage } from "@/lib/unibox-text";
+import MailHtml from "@/components/unibox/MailHtml";
 
 interface Props {
   conv: Conversation;
@@ -202,11 +203,11 @@ const MessageCard = memo(function MessageCard({ m, open, onToggle, contactEmail,
       </div>
       <div className="my-4 h-px bg-[#E6E9F2]" />
       {html
-        ? <div className="m-mail px-0.5" dangerouslySetInnerHTML={{ __html: html }} />
+        ? <MailHtml className="m-mail px-0.5" html={html} attachments={sent ? null : (m.attachments as InlineImage[] | null | undefined)} messageId={sent ? null : m.id} />
         : <div className="m-mail m-mail-plain px-0.5">{plain || <span className="text-[#9AA0BA]">(sin texto)</span>}</div>}
       {!sent && Array.isArray(m.attachments) && m.attachments.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-2">
-          {m.attachments.filter((a) => a && a.path && !a.oversized).map((a) => (
+          {m.attachments.filter((a) => a && a.path && !a.oversized && !(a as { inline?: boolean }).inline).map((a) => (
             <button key={a.path} type="button"
               onClick={async () => { const url = await attachmentUrl(a.path); if (url) window.open(url, "_blank", "noopener"); }}
               className="m-press flex max-w-full items-center gap-2 rounded-[11px] border border-[#E3E7F2] bg-[#F7F8FC] px-3 py-2 text-left">

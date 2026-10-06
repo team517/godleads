@@ -1006,3 +1006,42 @@ export const LABEL_TO_CATEGORY: Record<string, MessageCategory> = Object.fromEnt
 export function isAutoResent(errorMessage: string | null | undefined): boolean {
   return /Reenviado automáticamente/.test(String(errorMessage || ""));
 }
+
+
+/* ── Imágenes incrustadas (firmas con logo) ───────────────────────────────────────────────────
+   El HTML del correo las referencia como src="cid:X" y la imagen viaja dentro del correo. La
+   sincronización las guarda en inbox-attachments con `inline: true` y su `cid`; aquí se cambian por
+   un enlace y, si no hay imagen para un cid, se quita la <img> (antes salía el icono roto). */
+export type InlineImage = { path?: string; cid?: string; name?: string; inline?: boolean; mime?: string };
+
+/** Los cid que el HTML referencia (sin "cid:", decodificados). */
+export function inlineImageCids(html: string | null | undefined): string[] {
+  const out = new Set<string>();
+  for (const m of String(html || "").matchAll(/<img[^>]*\ssrc\s*=\s*["']?cid:([^"'\s>]+)/gi)) {
+    try { out.add(decodeURIComponent(m[1])); } catch { out.add(m[1]); }
+  }
+  return Array.from(out);
+}
+
+/** La imagen guardada que corresponde a un cid: por Content-ID o, si no lo trae, por nombre de archivo. */
+export function inlineImageFor(cid: string, atts: InlineImage[] | null | undefined): InlineImage | null {
+  const list = (atts || []).filter((a) => a && a.path && (a.inline || a.cid));
+  const c = cid.toLowerCase();
+  const byCid = list.find((a) => String(a.cid || "").toLowerCase() === c);
+  if (byCid) return byCid;
+  const base = c.split("@")[0];
+  return list.find((a) => String(a.name || "").toLowerCase() === base || String(a.name || "").toLowerCase() === c) || null;
+}
+
+/** Sustituye cada src="cid:X" por la URL que devuelva `urlFor` (null = quitar la imagen). */
+export function replaceCidImages(html: string, urlFor: (cid: string) => string | null): string {
+  return String(html || "").replace(/<img\b[^>]*>/gi, (tag) => {
+    const m = tag.match(/\ssrc\s*=\s*["']?cid:([^"'\s>]+)/i);
+    if (!m) return tag;
+    let cid = m[1];
+    try { cid = decodeURIComponent(cid); } catch { /* tal cual */ }
+    const url = urlFor(cid);
+    if (!url) return "";
+    return tag.replace(m[0], ` src="${url.replace(/"/g, "&quot;")}"`);
+  });
+}

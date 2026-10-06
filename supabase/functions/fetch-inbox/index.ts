@@ -1440,7 +1440,7 @@ serve(async (req) => {
           }
           for (const msg of withAtt) {
             if (msg.message_id && alreadyStored.has(msg.message_id)) { (msg as unknown as { _stored: unknown[] })._stored = []; continue; }
-            const stored: { name: string; mime: string; size: number; path: string; oversized?: boolean }[] = [];
+            const stored: { name: string; mime: string; size: number; path: string; oversized?: boolean; inline?: boolean; cid?: string }[] = [];
             const msgKey = (msg.message_id || `${msg.from_email}-${msg.date}`).replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 90) || "msg";
             const nameCount: Record<string, number> = {};
             for (const att of msg.attachments) {
@@ -1459,7 +1459,7 @@ serve(async (req) => {
                 const { error: upErr } = await adminClient.storage
                   .from("inbox-attachments")
                   .upload(path, bytes, { contentType: att.mime, upsert: true });
-                if (!upErr) stored.push({ name: att.name, mime: att.mime, size: bytes.length, path });
+                if (!upErr) stored.push({ name: att.name, mime: att.mime, size: bytes.length, path, ...(att.inline ? { inline: true } : {}), ...(att.cid ? { cid: att.cid } : {}) });
               } catch (_e) { /* skip this attachment */ }
             }
             (msg as unknown as { _stored: unknown[] })._stored = stored;

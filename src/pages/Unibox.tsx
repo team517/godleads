@@ -9,6 +9,7 @@ import { containsProfanity } from "@/lib/profanity-filter";
 import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import { isPrimaryRow, PRIMARY_FEED } from "@/lib/mobile-inbox";
 import DOMPurify from "dompurify";
+import MailHtml from "@/components/unibox/MailHtml";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SavedSignatures } from "@/components/SavedSignatures";
@@ -196,7 +197,7 @@ function humanBytes(bytes: number): string {
   return Math.max(1, Math.round(bytes / 1024)) + " KB";
 }
 
-export type StoredAttachment = { name: string; mime: string; size: number; path: string; oversized?: boolean };
+export type StoredAttachment = { name: string; mime: string; size: number; path: string; oversized?: boolean; inline?: boolean; cid?: string };
 
 /** Attachment whose binary lives in Supabase Storage. Opens/downloads via a
  *  short-lived signed URL; images get an inline thumbnail. */
@@ -382,7 +383,8 @@ function AttachmentChips({ bodyText, bodyHtml, stored, messageId }: { bodyText?:
   const [pullDone, setPullDone] = useState(false);
   const effective = pulled ?? stored;
   // Prefer attachments stored in Storage by the sync (real binary → view/download).
-  const storedAtts = useMemo(() => (Array.isArray(effective) ? effective.filter((a) => a && a.path && !a.oversized) : []), [effective]);
+  // Las imágenes incrustadas de la firma (inline) no son archivos: las pinta MailHtml dentro del cuerpo.
+  const storedAtts = useMemo(() => (Array.isArray(effective) ? effective.filter((a) => a && a.path && !a.oversized && !a.inline) : []), [effective]);
   // Too big to store (e.g. a large video) — shown as a name/size chip so it's never invisible.
   const oversizedAtts = useMemo(() => (Array.isArray(effective) ? effective.filter((a) => a && a.oversized) : []), [effective]);
 
@@ -3261,9 +3263,11 @@ export default function Unibox() {
                                   {translatedBody}
                                 </div>
                               ) : renderableHtml(tm.body_html, showFullEmail) ? (
-                                <div
+                                <MailHtml
                                   className={`${MAIL_PAPER} ${MAIL_PROSE}`}
-                                  dangerouslySetInnerHTML={{ __html: renderableHtml(tm.body_html, showFullEmail) }}
+                                  html={renderableHtml(tm.body_html, showFullEmail)}
+                                  attachments={tm.attachments}
+                                  messageId={tm.id}
                                 />
                               ) : (
                                 <div className={MAIL_PLAIN}>
@@ -3297,9 +3301,11 @@ export default function Unibox() {
                               {translatedBody}
                             </div>
                           ) : renderableHtml(selected.body_html, showFullEmail) ? (
-                            <div
+                            <MailHtml
                               className={`${MAIL_PAPER} ${MAIL_PROSE}`}
-                              dangerouslySetInnerHTML={{ __html: renderableHtml(selected.body_html, showFullEmail) }}
+                              html={renderableHtml(selected.body_html, showFullEmail)}
+                              attachments={selected.attachments}
+                              messageId={selected.id}
                             />
                           ) : (
                             <div className={MAIL_PLAIN}>
