@@ -67,8 +67,8 @@ export default function Stats() {
     { name: "Fallidos", value: stats.failed, color: "hsl(var(--warning))" },
   ];
 
-  // Tasa global = respondidos totales ÷ contactados totales (no la media de los porcentajes).
-  const replyRate = globalReplyRate(stats);
+  // Tasa global = media de los % de la columna «Respondidos» de Campañas (decisión del dueño).
+  const replyRate = globalReplyRate(t);
 
   // Primary — the numbers that matter, each with a clarifying sub-label so "leads" (personas)
   // is never confused with "correos" (con follow-ups) again.

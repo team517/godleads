@@ -7,6 +7,7 @@ import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnigh
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
+import { domainAcceptsMail } from "../_shared/recipient-check.ts";
 import { allocateMix, interleave, laneAllowance, resolveNewPct, roomForNewLead, type MixPlan } from "../_shared/lead-mix.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -1262,6 +1263,8 @@ serve(async (req) => {
     // successes-only counter, but each attempt still costs up to ~15s.
     let sendAttemptsThisRun = 0;
     let recentCheckWarned = false; // aviso único si falta user_emailed_recently
+    // Dominio → ¿recibe correo? (DNS una vez por dominio y pasada; null = no se sabe).
+    const mailDomainCache: Record<string, boolean | null> = {};
 
     // ═══ Cross-campaign account coordination (shared across ALL campaigns in
     // this invocation) ═══
@@ -2439,6 +2442,37 @@ serve(async (req) => {
             } else if (yaEscrito === true) {
               await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
               console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} ya recibió un correo de campaña de este cliente en los últimos 90 días → no se envía el primer correo`);
+              totalSkipped++;
+              continue;
+            }
+          }
+        }
+
+        // DIRECCIONES QUE NO RECIBEN CORREO (06-10-2026, "que no salgan tantos rebotes"): antes de
+        // escribir se mira si esa dirección ya rebotó como inexistente (en cualquier campaña o cliente:
+        // tabla invalid_recipients) y, en el primer correo, si su dominio tiene servidor de correo
+        // (DNS MX/A). Si no, el lead queda 'bounced' SIN enviar: un rebote seguro sólo daña al buzón.
+        // Con cualquier duda (función sin aplicar, DNS que no contesta) se envía como siempre.
+        {
+          const { data: motivoMalo, error: badErr } = await adminClient.rpc("recipient_invalid_reason", { p_email: leadEmail });
+          if (!badErr && typeof motivoMalo === "string" && motivoMalo) {
+            await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
+            console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} ya rebotó antes como dirección inexistente → no se envía (${motivoMalo.slice(0, 80)})`);
+            totalSkipped++;
+            continue;
+          }
+          if (currentStepIndex === 0) {
+            const dominio = leadEmail.split("@")[1] || "";
+            if (!(dominio in mailDomainCache)) {
+              mailDomainCache[dominio] = await domainAcceptsMail(dominio, (d, t) => Deno.resolveDns(d, t) as Promise<unknown[]>);
+            }
+            if (mailDomainCache[dominio] === false) {
+              await adminClient.from("invalid_recipients").upsert(
+                { address: `@${dominio}`, reason: "El dominio no tiene servidor de correo (sin registro MX ni A)" },
+                { onConflict: "address", ignoreDuplicates: true },
+              );
+              await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
+              console.warn(`Lead ${lead.id} (${campaign.name}): el dominio de ${leadEmail} no recibe correo (sin MX) → no se envía`);
               totalSkipped++;
               continue;
             }

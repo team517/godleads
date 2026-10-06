@@ -57,8 +57,8 @@ export default function Dashboard() {
   const s = summary.data || {};
   const t = totals.data ?? null;
   const stats = { sent: t ? t.sent : num(s.sent), contacted: t ? t.contacted : num(s.contacted), replied: t ? t.replied : num(s.replied) };
-  // Tasa REAL = respondidos totales ÷ LEADS contactados totales (no la media de porcentajes).
-  const responseRate = globalReplyRate(stats).toFixed(1);
+  // Tasa = media de los % de la columna «Respondidos» de Campañas (decisión del dueño).
+  const responseRate = globalReplyRate(t).toFixed(1);
 
   const pending = (w: { data: unknown; loading: boolean }) => w.data === undefined && w.loading;
   const failedNoData = (w: { data: unknown; error: string | null }) => w.data === undefined && !!w.error;

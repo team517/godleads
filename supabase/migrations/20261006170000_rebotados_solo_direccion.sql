@@ -7,6 +7,8 @@
 --     TenantInboundAttribution, "no permite reenvío externo", "unable to receive", "policy").
 -- Siguen contando: buzón que no existe, inactivo, dirección rechazada, etc. (lo que de verdad dice
 -- que la dirección está mal). Nada se borra: sólo cambia lo que suma la columna.
+-- Y (misma petición) un correo que REBOTÓ no cuenta como enviado: "Enviados" y "Contactados" sólo
+-- suman lo que no ha rebotado, y en la tabla los leads rebotados no cuentan como contactados.
 create or replace function public.bounce_is_lead_fault(p_error text)
 returns boolean
 language sql immutable
@@ -54,9 +56,10 @@ as $function$
     from (
       -- Una pasada por los envíos de ESTA campaña (índice por campaign_id).
       select
-        count(*) filter (where (s.sent_at is not null or s.status = 'sent') and coalesce(s.sent_at, s.created_at) >= c.since) as sent,
+        -- Enviados / contactados: sólo lo que NO rebotó (un rebote no cuenta como envío).
+        count(*) filter (where (s.sent_at is not null or s.status = 'sent') and s.bounced_at is null and coalesce(s.sent_at, s.created_at) >= c.since) as sent,
         count(distinct coalesce(s.lead_id::text, lower(coalesce(s.to_email, ''))))
-          filter (where (s.sent_at is not null or s.status = 'sent') and coalesce(s.sent_at, s.created_at) >= c.since) as contacted,
+          filter (where (s.sent_at is not null or s.status = 'sent') and s.bounced_at is null and coalesce(s.sent_at, s.created_at) >= c.since) as contacted,
         count(*) filter (where s.opened_at is not null and s.opened_at >= c.since) as opened,
         -- Sólo los rebotes por la dirección del lead (ver bounce_is_lead_fault).
         count(*) filter (where s.bounced_at is not null and s.bounced_at >= c.since and public.bounce_is_lead_fault(s.error_message)) as bounced,
@@ -83,3 +86,18 @@ as $function$
   left join pos on pos.campaign_id = c.id
   left join seq on seq.campaign_id = c.id;
 $function$;
+
+-- "Contactados" de la tabla (leads ya escritos): sin los leads rebotados.
+create or replace function public.campaign_lead_counts(p_campaign_ids uuid[])
+returns table(campaign_id uuid, leads_total bigint, leads_sent bigint)
+language sql stable security definer set search_path to 'public'
+as $function$
+  select c.id,
+         (select count(*) from public.campaign_leads cl where cl.campaign_id = c.id),
+         (select count(*) from public.campaign_leads cl where cl.campaign_id = c.id and cl.last_sent_at is not null and cl.status <> 'bounced')
+  from public.campaigns c
+  where c.user_id = auth.uid()
+    and c.id = any(coalesce(p_campaign_ids, '{}'::uuid[]));
+$function$;
+revoke all on function public.campaign_lead_counts(uuid[]) from public;
+grant execute on function public.campaign_lead_counts(uuid[]) to authenticated;
