@@ -335,7 +335,9 @@ function isForeignMessage(subject: string, body: string): boolean {
 
 // Per-folder UID high-water mark, persisted in email_accounts.imap_uid_state as
 // { "INBOX": { v: <UIDVALIDITY>, u: <last UID synced> }, "Spam": {...} }.
-type UidState = Record<string, { v: number; u: number }>;
+// h = UID que el servidor dijo que existe pero no devolvió (y cuántas pasadas lleva así).
+type UidState = Record<string, { v: number; u: number; h?: { u: number; n: number } }>;
+type MissingUids = { folder: string; uidv: number; uids: number[]; abandoned: boolean };
 
 /** Un mensaje leído, con el sitio exacto del buzón del que salió. */
 type FetchedMessage = InboundMessage & { folder: string; uidv: number; recovered?: boolean };
@@ -384,7 +386,7 @@ const imapQuote = (s: string) => '"' + String(s ?? "").replace(/\\/g, "\\\\").re
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50,
   uidState: UidState | null = null, budgetMs = 45_000, rescan: RescanPlan | null = null
-): Promise<{ ok: boolean; messages: FetchedMessage[]; skips: Skip[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[]; firstSync?: string[]; truncated?: boolean; unparsed?: boolean; folders?: string[]; rescan?: RescanResult; cutAt?: CutAt | null }> {
+): Promise<{ ok: boolean; messages: FetchedMessage[]; skips: Skip[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[]; firstSync?: string[]; truncated?: boolean; unparsed?: boolean; folders?: string[]; rescan?: RescanResult; cutAt?: CutAt | null; missing?: MissingUids[] }> {
   // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
   // block the whole rotating window forever. On timeout the socket is dropped
   // and the account fails cleanly (recorded in errors[] + last_sync stays old).
@@ -483,6 +485,7 @@ async function fetchImapMessages(
     // per-mailbox time budget guarantees one pathological mailbox can never hog a wave.
     const uidStateOut: UidState = {};
     const unchangedFolders: string[] = [];
+    const missingUids: MissingUids[] = [];
     const firstSync: string[] = [];
     let maxUidSeen = 0; // reset per folder; the highest UID actually parsed
     const mailboxStart = Date.now();
@@ -502,7 +505,11 @@ async function fetchImapMessages(
       for (const r of parsed.suppress) bouncedRecipients.add(r);
       if (parsed.status === "skipped") {
         // La copia de un envío nuestro no es correo entrante: no se anota (serían miles).
-        if (parsed.reason !== "own_copy") skips.push({ folder, uidv, uid: parsed.uid, reason: parsed.reason, from: parsed.from, subject: parsed.subject, message_id: parsed.message_id, date: parsed.date });
+        // …salvo que parezca una RESPUESTA ("Re:"): si alguna vez se tirase una respuesta por tomarla
+        // por copia propia, que quede anotado (06-10-2026).
+        if (parsed.reason !== "own_copy" || /^\s*(re|fw|fwd|rv|aw|tr)\s*:/i.test(parsed.subject || "")) {
+          skips.push({ folder, uidv, uid: parsed.uid, reason: parsed.reason === "own_copy" ? "copia_propia" : parsed.reason, from: parsed.from, subject: parsed.subject, message_id: parsed.message_id, date: parsed.date });
+        }
         return;
       }
       const msg = parsed.msg;
@@ -600,6 +607,33 @@ async function fetchImapMessages(
           }
           if (cut) break;
         }
+        // Red de seguridad (06-10-2026): antes de dar el tramo por leído se pregunta al servidor qué
+        // UIDs EXISTEN en él. Si devolvió alguno de menos (pasó con 4 respuestas de TCX el 05/06-10:
+        // UIDs ya asignados cuyo correo todavía no se podía leer), la marca se queda justo debajo
+        // del primero que falta y se vuelve a pedir en la pasada siguiente; a la tercera vez se deja
+        // al repaso diario y se anota, para que el buzón nunca se quede parado.
+        let holdBelow = 0;
+        let holdCount = 0;
+        if (useUid && !cut && !broken && ranges.length > 0) {
+          try {
+            const sr = await sendC(nextTag(), `UID SEARCH UID ${prev!.u + 1}:${uidHi}`);
+            if (sr.done === "OK") {
+              const found = (sr.text.match(/\* SEARCH([^\r\n]*)/i)?.[1] || "").trim().split(/\s+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+              const missing = found.filter((u) => !tickUids.has(u));
+              if (missing.length > 0) {
+                const first = Math.min(...missing);
+                const prevHold = prev?.h && prev.h.u === first ? prev.h.n : 0;
+                if (prevHold >= 2) {
+                  missingUids.push({ folder, uidv: uidValidity, uids: missing, abandoned: true });
+                } else {
+                  holdBelow = first;
+                  holdCount = prevHold + 1;
+                  missingUids.push({ folder, uidv: uidValidity, uids: missing, abandoned: false });
+                }
+              }
+            }
+          } catch { /* sin la comprobación se avanza como antes */ }
+        }
         // Persist the folder's high-water mark. Advance ONLY to the highest UID we ACTUALLY parsed
         // whenever we did not cleanly drain the whole new range this tick — a budget cut (`cut`), a
         // capped backlog, or a truncated FETCH — so the unread tail resumes next tick instead of
@@ -614,7 +648,8 @@ async function fetchImapMessages(
           } else {
             advanceTo = Math.max(prev?.u || 0, maxUidSeen);
           }
-          if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo };
+          if (holdBelow > 0) advanceTo = Math.max(prev?.u || 0, Math.min(advanceTo, holdBelow - 1));
+          if (advanceTo > 0) uidStateOut[folder] = { v: uidValidity, u: advanceTo, ...(holdBelow > 0 ? { h: { u: holdBelow, n: holdCount } } : {}) };
         }
         if (cut && rs) rs.done = false;
         }
@@ -672,7 +707,7 @@ async function fetchImapMessages(
     if (!broken) { try { await send(nextTag(), "LOGOUT"); } catch { /* da igual */ } }
     try { conn.close(); } catch { /* ya cerrada */ }
 
-    return { ok: true, messages, skips, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders, firstSync, truncated: broken, unparsed, folders: targets, rescan: rs || undefined, cutAt };
+    return { ok: true, messages, skips, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders, firstSync, truncated: broken, unparsed, folders: targets, rescan: rs || undefined, cutAt, missing: missingUids };
   } catch (e) {
     return { ok: false, messages: [], skips: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
   }
@@ -1019,6 +1054,15 @@ serve(async (req) => {
         // Lectura cortada o ilegible (06-10-2026): antes sólo salía en el log de la función y nadie lo
         // veía. Una fila por buzón y HORA (uid = hora; el índice único descarta las repetidas) para
         // que el monitor de salud pueda contarlas. La carpeta y la marca de UID van en el detalle.
+        // Correos que el servidor dice que existen en el tramo y no devolvió (06-10-2026): una fila
+        // por carpeta y hora. "pendiente" = se vuelve a pedir; "perdido" = tras 3 pasadas se deja
+        // al repaso diario, que lo trae por su Message-ID.
+        for (const mu of result.missing || []) {
+          logRows.push(logRow({ folder: `(sincronizacion:${mu.folder})`, uidv: mu.uidv, uid: Math.floor(Date.now() / 3600_000), date: nowIso }, {
+            kind: "sync", result: mu.abandoned ? "perdido" : "pendiente", reason: "uid_sin_correo",
+            detail: `el servidor no devolvió ${mu.uids.length} correo(s) del tramo (UID ${mu.uids.slice(0, 20).join(", ")})${mu.abandoned ? " · se deja al repaso" : " · se vuelve a pedir"}`.slice(0, 300),
+          }));
+        }
         if ((result.truncated || result.unparsed) && result.cutAt) {
           const c = result.cutAt;
           logRows.push(logRow({ folder: "(sincronizacion)", uidv: 0, uid: Math.floor(Date.now() / 3600_000), date: nowIso }, {
