@@ -111,3 +111,26 @@ describe("imágenes de la firma con Content-ID (06-10-2026)", () => {
     expect(logo?.inline).toBe(true);
   });
 });
+
+describe("logo de firma sin nombre de archivo (06-10-2026)", () => {
+  const sinNombre = [
+    "------=_X_3",
+    "Content-Type: image/png",
+    "Content-Transfer-Encoding: base64",
+    "Content-ID: <lettermark-fullcolour@4x_0d8282fd.png>",
+    "Content-Disposition: inline",
+    "",
+    PNG_B64,
+    "------=_X_3--",
+  ].join("\r\n");
+  it("se guarda igual, con un nombre sacado del cid", () => {
+    const [logo] = extractAttachments(sinNombre);
+    expect(logo?.cid).toBe("lettermark-fullcolour@4x_0d8282fd.png");
+    expect(logo?.inline).toBe(true);
+    expect(logo?.name).toMatch(/\.png$/);
+  });
+  it("una parte de texto sin nombre sigue sin contar como archivo", () => {
+    const texto = ["------=_X_4", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", "", PNG_B64, "------=_X_4--"].join("\r\n");
+    expect(extractAttachments(texto)).toEqual([]);
+  });
+});

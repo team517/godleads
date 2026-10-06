@@ -76,14 +76,18 @@ export function extractAttachments(raw: string, opts?: { maxBytes?: number; max?
     if (sp.length < 2) continue;
     const header = (sp[0] || "").replace(/=\r?\n[ \t]*/g, "").replace(/\r?\n[ \t]+/g, "");
     const nameM = header.match(/(?:file)?name\*?=\s*(?:"([^"\r\n]+)"|([^\s";\r\n]+))/i);
-    if (!nameM) continue;                                   // sin nombre no es un archivo: es el cuerpo
-    const name = decodeFilename(nameM[1] || nameM[2] || "adjunto").slice(0, 200);
     const typeM = header.match(/Content-Type:\s*([^;\r\n]+)/i);
     const mime = (typeM ? typeM[1].trim() : "application/octet-stream").toLowerCase().slice(0, 120);
-    // Content-Disposition: inline (o un Content-ID) = la imagen la usa el propio cuerpo.
-    const inline = /Content-Disposition:\s*inline/i.test(header) || /Content-ID:\s*</i.test(header);
     const cidM = header.match(/Content-ID:\s*<([^>\r\n]+)>/i);
     const cid = cidM ? cidM[1].trim().slice(0, 200) : undefined;
+    // Sin nombre no es un archivo (es el cuerpo)… salvo una IMAGEN con Content-ID: el logo de una
+    // firma puede venir sin filename (Ma Montreal, 06-10-2026) y el HTML lo referencia por su cid.
+    if (!nameM && !(cid && mime.startsWith("image/"))) continue;
+    const name = nameM
+      ? decodeFilename(nameM[1] || nameM[2] || "adjunto").slice(0, 200)
+      : `${(cid || "imagen").split("@")[0].replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80) || "imagen"}.${mime.split("/")[1]?.replace(/[^a-z0-9]/g, "") || "png"}`;
+    // Content-Disposition: inline (o un Content-ID) = la imagen la usa el propio cuerpo.
+    const inline = /Content-Disposition:\s*inline/i.test(header) || /Content-ID:\s*</i.test(header);
     const b64 = sp.slice(1).join("\n").replace(/[^A-Za-z0-9+/=]/g, "");
     if (b64.length < 40) continue;
     const size = Math.floor(b64.length * 0.75);
