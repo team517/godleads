@@ -2,7 +2,8 @@
 // Vive aparte de index.ts para poder ejercitarla también desde una prueba controlada.
 import {
   ESCRITURAS, IA_MOD_TOOLS, entero, historialParaModelo, leerArgs, paraModelo, sistemaIaMod,
-  slotDeLetra, variantesDePaso,
+  slotDeLetra, variantesDePaso, diferencias, dichoAplicado, enlacesATexto, limpiarMarcas, ordenDeAplicar, parseVersiones, igualesValor, mensajeResultado,
+  type ResultadoCambio,
 } from "../_shared/ia-mod.ts";
 import { cuerpoATexto } from "../_shared/sequence-copy.ts";
 import { addVariantTo, readState, removeSlot, versionsOf, writeSlot } from "../_shared/step-variants.ts";
@@ -114,8 +115,8 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
   const inicio = Date.now();
   const { data: estados } = await db.from("ia_mod_changes").select("id, status").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(300);
   const estadoDe = new Map(((estados || []) as any[]).map((e) => [e.id, e.status]));
-  const ESTADO_TXT: Record<string, string> = { applied: "aplicado", pending: "PENDIENTE de Confirmar", undone: "deshecho", cancelled: "cancelado" };
-  const { data: recientes } = await db.from("ia_mod_changes").select("summary, status, created_at").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(15);
+  const ESTADO_TXT: Record<string, string> = { applied: "aplicado", pending: "PENDIENTE de Confirmar (NO aplicado)", undone: "deshecho", cancelled: "cancelado", failed: "FALLÓ (NO se aplicó)" };
+  const { data: recientes } = await db.from("ia_mod_changes").select("id, summary, status, created_at").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(15);
   const [{ data: filas }, { data: nota }, { data: camps }] = await Promise.all([
     db.from("ia_mod_messages").select("role, content, cards").eq("client_user_id", cliente.id).order("created_at", { ascending: false }).limit(40),
     db.from("ia_mod_notes").select("notes, resumen").eq("client_user_id", cliente.id).maybeSingle(),
@@ -157,7 +158,11 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
 
   const mensajes: any[] = [{ role: "system", content: system }, ...historial];
   const tarjetas: Tarjeta[] = [];
-  const ctx: Ctx = { db, cliente, autor, tarjetas, apiKey };
+  const turno: Turno = { hechas: 0, pendientes: 0, fallos: [] };
+  // `filas` viene del más nuevo al más viejo (se le dio la vuelta arriba): el último mensaje del usuario es la orden de este turno.
+  const ultimoUsuario = ((filas || []) as any[]).find((f) => f.role === "user")?.content || "";
+  const ctx: Ctx = { db, cliente, autor, tarjetas, apiKey, turno, ordenAplicar: ordenDeAplicar(String(ultimoUsuario)) };
+  let corregido = false;
 
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     const ultima = vuelta === MAX_VUELTAS - 1 || Date.now() - inicio > PLAZO_MS - 25_000;
@@ -166,20 +171,72 @@ export async function conversar(db: Db, apiKey: string, cliente: Cliente, autor:
     if (!msg) throw new Error("La IA no ha respondido");
     const llamadas = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
     if (!llamadas.length || ultima) {
-      return { texto: String(msg.content || "").trim() || "Hecho.", tarjetas };
+      const texto = String(msg.content || "").trim();
+      // La IA da algo por hecho y en este turno ninguna herramienta de cambio devolvió ok: se le pide
+      // UNA vez que lo haga de verdad o que lo corrija (antes se le creía y el cambio no existía).
+      if (texto && !ultima && !corregido && turno.hechas === 0 && dichoAplicado(texto)) {
+        corregido = true;
+        mensajes.push({ role: "assistant", content: texto });
+        mensajes.push({ role: "user", content: CORRECCION_SIN_ESCRITURA });
+        continue;
+      }
+      return { texto: textoFinal(texto, turno, tarjetas), tarjetas };
     }
     mensajes.push({ role: "assistant", content: msg.content || "", tool_calls: llamadas });
     for (const ll of llamadas) {
+      const nombre = String(ll.function?.name || "");
       let resultado: unknown;
       try {
-        resultado = await ejecutar(ctx, String(ll.function?.name || ""), leerArgs(ll.function?.arguments));
+        resultado = await ejecutar(ctx, nombre, leerArgs(ll.function?.arguments));
       } catch (e) {
         resultado = { error: e instanceof Error ? e.message : String(e) };
       }
+      contarEscritura(turno, nombre, resultado);
       mensajes.push({ role: "tool", tool_call_id: ll.id, content: paraModelo(resultado) });
     }
   }
-  return { texto: "He llegado al límite de pasos de este turno. Dime si sigo.", tarjetas };
+  return { texto: textoFinal("He llegado al límite de pasos de este turno. Dime si sigo.", turno, tarjetas), tarjetas };
+}
+
+/** Lo que de verdad pasó con las herramientas que escriben, en este turno. */
+export interface Turno { hechas: number; pendientes: number; fallos: string[] }
+
+const CORRECCION_SIN_ESCRITURA = `AVISO DEL SISTEMA: tu respuesta da un cambio por HECHO, pero en este turno NINGUNA herramienta de cambio ha devuelto ok. Repásalo: (a) si de verdad hay que cambiarlo, llama ahora a la herramienta (editar_mensaje, editar_variante, ajustar_campana, confirmar_cambio…); (b) si hablas de un cambio de turnos anteriores que el ESTADO REAL marca como APLICADO, mantenlo diciendo cuál; (c) si algo quedó pendiente o falló, dilo tal cual. No des por aplicado nada que no lo esté.`;
+
+/** Apunta si una herramienta que escribe hizo su trabajo (ok), quedó pendiente de Confirmar o falló. */
+export function contarEscritura(turno: Turno, nombre: string, r: unknown) {
+  if (!ESCRITURAS.has(nombre)) return;
+  const x = (r && typeof r === "object" ? r : {}) as Record<string, unknown>;
+  const etiqueta = nombre.replace(/_/g, " ");
+  if (x.error) turno.fallos.push(`${etiqueta}: ${String(x.error).slice(0, 200)}`);
+  else if (x.pendiente) turno.pendientes++;
+  else if (x.ok || x.hecho) {
+    turno.hechas++;
+    // Un fallo que la IA reintentó con éxito (p. ej. otra versión) ya no cuenta como pendiente de explicar.
+    turno.fallos = turno.fallos.filter((f) => !f.startsWith(`${etiqueta}:`));
+  }
+}
+
+/**
+ * La respuesta que ve el usuario. Si la IA no dijo nada, sale del resultado real (nunca un "Hecho." a ciegas).
+ * Si da algo por hecho y no lo está (nada aplicado, o hubo fallos), se le añade la verdad al final.
+ */
+export function textoFinal(texto: string, turno: Turno, tarjetas: Tarjeta[]): string {
+  const resumen = (tipo: string) => tarjetas.filter((t) => t.type === tipo).map((t) => String((t as any).summary || "")).filter(Boolean);
+  if (!texto) {
+    const hechos = resumen("cambio"), pend = resumen("pendiente");
+    const partes = [
+      hechos.length && `Aplicado y comprobado: ${hechos.join("; ")}.`,
+      pend.length && `Pendiente de Confirmar (aún NO aplicado): ${pend.join("; ")}. Pulsa Confirmar o escribe «aplícalo».`,
+      turno.fallos.length && `NO se ha podido aplicar: ${turno.fallos.join("; ")}.`,
+    ].filter(Boolean);
+    return partes.length ? partes.join("\n\n") : "No he hecho ningún cambio en este turno.";
+  }
+  const afirma = dichoAplicado(texto);
+  const notas: string[] = [];
+  if (afirma && turno.fallos.length) notas.push(`Ojo, esto NO se ha podido aplicar: ${turno.fallos.join("; ")}.`);
+  if (afirma && turno.hechas === 0 && turno.pendientes > 0) notas.push("Ojo: ese cambio sigue PENDIENTE (aún no está aplicado). Pulsa Confirmar o escribe «aplícalo».");
+  return notas.length ? `${texto}\n\n${notas.join("\n")}` : texto;
 }
 
 /* ── Memoria larga sin llenar el almacenamiento ─────────────────────────────────────────
@@ -255,6 +312,10 @@ async function llamarModelo(apiKey: string, messages: any[], conHerramientas: bo
 interface Ctx {
   db: Db; cliente: Cliente; autor: string; tarjetas: Tarjeta[];
   apiKey?: string;
+  /** Qué hicieron de verdad las herramientas que escriben en este turno. */
+  turno?: Turno;
+  /** El último mensaje del usuario pide aplicar (autoriza confirmar_cambio). */
+  ordenAplicar?: boolean;
   /** Para las pruebas: sustituye a la IA que lee cada respuesta. */
   clasificar?: (asunto: string | null, texto: string) => Promise<AiVerdict | null>;
 }
@@ -393,9 +454,10 @@ async function fotoCuentas(db: Db, clientId: string, ids: string[]) {
 }
 
 /** Aplica un cambio de configuración (cuentas o campaña) y devuelve el "antes" para deshacer. */
-async function aplicarConfig(db: Db, clientId: string, kind: string, p: any): Promise<unknown> {
+async function aplicarConfig(db: Db, clientId: string, kind: string, p: any, guardar: (antes: unknown) => void = () => {}): Promise<unknown> {
   if (kind === "cuentas_tags") {
     const antes = await fotoCuentas(db, clientId, p.ids);
+    guardar(antes);
     for (let i = 0; i < p.ids.length; i += 500) {
       const { error } = await db.rpc("ia_accounts_set_tags", { p_user: clientId, p_ids: p.ids.slice(i, i + 500), p_add: p.poner, p_remove: p.quitar, p_replace: !!p.solo });
       if (error) throw new Error(`No se pudieron cambiar las etiquetas: ${error.message}`);
@@ -404,6 +466,7 @@ async function aplicarConfig(db: Db, clientId: string, kind: string, p: any): Pr
   }
   if (kind === "cuentas_rampa") {
     const antes = await fotoCuentas(db, clientId, p.ids);
+    guardar(antes);
     const cambio = p.activar
       ? { warmup_enabled: true, warmup_increment: p.incremento, warmup_limit: p.maximo, warmup_day: p.inicio, warmup_started_at: new Date().toISOString() }
       : { warmup_enabled: false };
@@ -417,6 +480,7 @@ async function aplicarConfig(db: Db, clientId: string, kind: string, p: any): Pr
     const { data: c } = await db.from("campaigns").select("account_tags").eq("id", p.campaign_id).single();
     const { data: dir } = await db.from("campaign_accounts").select("account_id").eq("campaign_id", p.campaign_id);
     const antes = { account_tags: (c as any)?.account_tags || [], directas: ((dir || []) as any[]).map((d) => d.account_id) };
+    guardar(antes);
     const { error } = await db.from("campaigns").update({ account_tags: p.account_tags }).eq("id", p.campaign_id);
     if (error) throw new Error(`No se pudo cambiar la campaña: ${error.message}`);
     await ponerDirectas(db, p.campaign_id, antes.directas, p.directas);
@@ -425,11 +489,68 @@ async function aplicarConfig(db: Db, clientId: string, kind: string, p: any): Pr
   if (kind === "campana_ajustes") {
     const campos = Object.keys(p.cambios || {});
     const { data: c } = await db.from("campaigns").select(campos.join(", ")).eq("id", p.campaign_id).single();
+    const antes = Object.fromEntries(campos.map((k) => [k, (c as any)?.[k] ?? null]));
+    guardar(antes);
     const { error } = await db.from("campaigns").update(p.cambios).eq("id", p.campaign_id);
     if (error) throw new Error(`No se pudo ajustar la campaña: ${error.message}`);
-    return Object.fromEntries(campos.map((k) => [k, (c as any)?.[k] ?? null]));
+    return antes;
   }
   throw new Error("Cambio desconocido");
+}
+
+/** Relee lo que dejó una escritura de configuración y lo compara con lo pedido: [] = coincide. */
+async function verificarConfig(db: Db, clientId: string, kind: string, p: any): Promise<string[]> {
+  if (kind === "campana_ajustes") {
+    const campos = Object.keys(p.cambios || {});
+    const { data } = await db.from("campaigns").select(campos.join(", ")).eq("id", p.campaign_id).maybeSingle();
+    return diferencias(p.cambios || {}, data as Record<string, unknown> | null);
+  }
+  if (kind === "campana_cuentas") {
+    const { data: c } = await db.from("campaigns").select("account_tags").eq("id", p.campaign_id).maybeSingle();
+    const { data: dir } = await db.from("campaign_accounts").select("account_id").eq("campaign_id", p.campaign_id);
+    const out = diferencias({ account_tags: p.account_tags || [] }, c as Record<string, unknown> | null, ["account_tags"]);
+    const reales = ((dir || []) as any[]).map((d) => d.account_id);
+    if (!igualesValor(p.directas || [], reales, true)) out.push(`cuentas añadidas a mano: se querían ${(p.directas || []).length} y hay ${reales.length}`);
+    return out;
+  }
+  if (kind === "cuentas_tags" || kind === "cuentas_rampa") {
+    const filas: any[] = [];
+    for (let i = 0; i < p.ids.length; i += 200) {
+      const { data } = await db.from("email_accounts").select(CAMPOS_RAMPA).eq("user_id", clientId).in("id", p.ids.slice(i, i + 200));
+      filas.push(...(data || []));
+    }
+    if (filas.length < p.ids.length) return [`sólo se encuentran ${filas.length} de ${p.ids.length} cuentas`];
+    const malas = filas.filter((f) => {
+      if (kind === "cuentas_rampa") {
+        return p.activar
+          ? !(f.warmup_enabled === true && Number(f.warmup_increment) === Number(p.incremento) && Number(f.warmup_limit) === Number(p.maximo) && Number(f.warmup_day) === Number(p.inicio))
+          : f.warmup_enabled !== false;
+      }
+      const tags: string[] = f.tags || [];
+      if (p.solo) return !igualesValor(p.poner, tags, true);
+      return !p.poner.every((t: string) => tags.includes(t)) || p.quitar.some((t: string) => tags.includes(t) && !p.poner.includes(t));
+    });
+    return malas.length ? [`${malas.length} de ${filas.length} cuentas no quedaron como se pidió`] : [];
+  }
+  return [];
+}
+
+/** aplicarConfig + comprobación: si lo releído no coincide, devuelve lo anterior y falla diciendo por qué. */
+async function aplicarConfigVerificado(db: Db, clientId: string, kind: string, p: any): Promise<unknown> {
+  let foto: unknown;
+  let antes: unknown;
+  try {
+    antes = await aplicarConfig(db, clientId, kind, p, (a) => { foto = a; });
+  } catch (e) {
+    if (foto !== undefined) { try { await deshacer(db, { kind, before: foto, campaign_id: p.campaign_id }, clientId); } catch { /* ya falla por el error de abajo */ } }
+    throw e;
+  }
+  const dif = await verificarConfig(db, clientId, kind, p);
+  if (dif.length) {
+    try { await deshacer(db, { kind, before: antes, campaign_id: p.campaign_id }, clientId); } catch { /* se avisa igual */ }
+    throw new Error(`No quedó guardado como se pidió (${dif.slice(0, 3).join("; ")}); se ha restaurado lo anterior`);
+  }
+  return antes;
 }
 
 /** Deja en campaign_accounts exactamente estas cuentas. */
@@ -437,10 +558,12 @@ async function ponerDirectas(db: Db, campaignId: string, actuales: string[], nue
   const quitar = actuales.filter((id) => !nuevas.includes(id));
   const poner = nuevas.filter((id) => !actuales.includes(id));
   for (let i = 0; i < quitar.length; i += 200) {
-    await db.from("campaign_accounts").delete().eq("campaign_id", campaignId).in("account_id", quitar.slice(i, i + 200));
+    const { error } = await db.from("campaign_accounts").delete().eq("campaign_id", campaignId).in("account_id", quitar.slice(i, i + 200));
+    if (error) throw new Error(`No se pudieron quitar cuentas de la campaña: ${error.message}`);
   }
   for (let i = 0; i < poner.length; i += 500) {
-    await db.from("campaign_accounts").insert(poner.slice(i, i + 500).map((account_id) => ({ campaign_id: campaignId, account_id })));
+    const { error } = await db.from("campaign_accounts").insert(poner.slice(i, i + 500).map((account_id) => ({ campaign_id: campaignId, account_id })));
+    if (error) throw new Error(`No se pudieron añadir cuentas a la campaña: ${error.message}`);
   }
 }
 
@@ -449,12 +572,19 @@ async function guardarOAplicar(ctx: Ctx, c: { kind: string; payload: any; summar
   if (c.pendiente) {
     const id = await registrar(ctx, { kind: c.kind, campaign_id: c.campaign_id ?? null, summary: c.summary, payload: c.payload, status: "pending" });
     tarjetaCambio(ctx, id, c.summary, true, { lineas: c.lineas, aviso: "Afecta a una campaña activa: pulsa Confirmar para aplicarlo." });
-    return { pendiente: true, change_id: id, resumen: c.summary, detalle: c.lineas, mensaje: "Pendiente de que el usuario pulse Confirmar" };
+    return { pendiente: true, change_id: id, resumen: c.summary, detalle: c.lineas, mensaje: "NO aplicado todavía: queda pendiente de que el usuario pulse Confirmar o escriba «aplícalo»" };
   }
-  const antes = await aplicarConfig(ctx.db, ctx.cliente.id, c.kind, c.payload);
+  let antes: unknown;
+  try {
+    antes = await aplicarConfigVerificado(ctx.db, ctx.cliente.id, c.kind, c.payload);
+  } catch (e) {
+    const motivo = e instanceof Error ? e.message : String(e);
+    await registrarFallo(ctx, { kind: c.kind, campaign_id: c.campaign_id ?? null, summary: c.summary }, motivo);
+    throw new Error(motivo);
+  }
   const id = await registrar(ctx, { kind: c.kind, campaign_id: c.campaign_id ?? null, summary: c.summary, payload: c.payload, before: antes, after: c.payload });
   tarjetaCambio(ctx, id, c.summary, false, { lineas: c.lineas });
-  return { hecho: true, change_id: id, resumen: c.summary, detalle: c.lineas };
+  return { hecho: true, verificado: true, change_id: id, resumen: c.summary, detalle: c.lineas };
 }
 
 async function registrar(ctx: Ctx, c: {
@@ -475,8 +605,44 @@ function tarjetaCambio(ctx: Ctx, change_id: string, summary: string, pendiente: 
   ctx.tarjetas.push({ type: pendiente ? "pendiente" : "cambio", change_id, summary, ...extra });
 }
 
-const asunto = (v: unknown) => String(v ?? "").trim().slice(0, 300);
-const cuerpo = (v: unknown) => cuerpoATexto(String(v ?? "")).slice(0, 12000);
+const asunto = (v: unknown) => limpiarMarcas(String(v ?? "")).trim().slice(0, 300);
+// Texto plano: sin HTML (los enlaces <a> quedan como "texto (url)") y sin markdown literal (**negrita**).
+const cuerpo = (v: unknown) => limpiarMarcas(cuerpoATexto(enlacesATexto(String(v ?? "")))).slice(0, 12000);
+
+/** Escribe en un paso y COMPRUEBA releyendo que quedó lo pedido; si no, lo deja como estaba y falla con el motivo. */
+async function escribirPasoVerificado(db: Db, stepId: string, patch: Record<string, unknown>, antes: Record<string, unknown>) {
+  const { error } = await db.from("campaign_steps").update(patch).eq("id", stepId);
+  if (error) throw new Error(`La base de datos rechazó el cambio: ${error.message}`);
+  const { data: real } = await db.from("campaign_steps").select(Object.keys(patch).join(", ")).eq("id", stepId).maybeSingle();
+  const dif = diferencias(patch, real as Record<string, unknown> | null);
+  if (dif.length) {
+    await db.from("campaign_steps").update(antes).eq("id", stepId);
+    throw new Error(`No se guardó bien (${dif.join("; ")}); se ha dejado como estaba`);
+  }
+}
+
+/** Lo que había en estas columnas del paso, para poder devolverlo si la escritura no se comprueba. */
+const antesDe = (st: Record<string, any>, claves: string[]) => Object.fromEntries(claves.map((k) => [k, st[k] ?? null]));
+
+/** Tras insertar un paso (ia_step_insert): ¿existe, es de esa campaña y tiene el asunto y el cuerpo pedidos? null = bien. */
+async function comprobarPasoNuevo(db: Db, id: string | null | undefined, campaignId: string, datos: { subject: string; body: string }): Promise<string | null> {
+  if (!id) return "La base de datos no devolvió el mensaje nuevo";
+  const { data } = await db.from("campaign_steps").select("id, campaign_id, subject, body").eq("id", id).maybeSingle();
+  if (!data) return "El mensaje nuevo no aparece al volver a leer la campaña";
+  if ((data as any).campaign_id !== campaignId) return "El mensaje nuevo quedó en otra campaña";
+  const dif = diferencias({ subject: datos.subject, body: datos.body }, data as Record<string, unknown>);
+  return dif.length ? `El mensaje nuevo no quedó como se pidió (${dif.join("; ")})` : null;
+}
+
+/** Un cambio que se intentó y falló queda registrado (para saber qué se propuso y no se aplicó). */
+async function registrarFallo(ctx: Ctx, c: { kind: string; campaign_id?: string | null; step_id?: string | null; summary: string }, error: string) {
+  try {
+    await ctx.db.from("ia_mod_changes").insert({
+      client_user_id: ctx.cliente.id, author_email: ctx.autor, kind: c.kind, campaign_id: c.campaign_id ?? null, step_id: c.step_id ?? null,
+      summary: c.summary, payload: {}, after: { error }, status: "failed", resolved_at: new Date().toISOString(),
+    });
+  } catch { /* el registro del fallo no debe tapar el fallo */ }
+}
 
 export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>): Promise<unknown> {
   const { db, cliente } = ctx;
@@ -847,6 +1013,18 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       return await guardarOAplicar(ctx, { kind: "campana_ajustes", payload: { campaign_id: camp.id, cambios }, summary: `Ajustes de "${camp.name}"`, lineas, pendiente: camp.status === "active", campaign_id: camp.id });
     }
 
+    case "confirmar_cambio": {
+      // Sólo si el último mensaje del usuario pide aplicar: la IA no puede confirmar por su cuenta.
+      if (!ctx.ordenAplicar) return { error: "El usuario no ha pedido aplicar nada en su último mensaje, así que no se confirma. Dile que el cambio sigue pendiente y que pulse Confirmar o escriba «aplícalo»." };
+      const { data: ch } = await db.from("ia_mod_changes").select("*").eq("id", String(a.change_id || "")).eq("client_user_id", cliente.id).maybeSingle();
+      if (!ch) return { error: "No existe ese cambio (usa el id del ESTADO REAL DE LOS CAMBIOS)" };
+      if ((ch as any).status !== "pending") return { error: `Ese cambio no está pendiente (estado: ${(ch as any).status})` };
+      const r = await confirmarCambio(db, ch);
+      if (r.status !== "applied") return { error: r.error || "No se pudo aplicar", resumen: r.summary };
+      tarjetaCambio(ctx, (ch as any).id, r.summary, false, { lineas: r.detalle ? [`Comprobado: ${r.detalle}`] : [] });
+      return { ok: true, verificado: true, resumen: r.texto ?? r.summary, comprobado: r.detalle };
+    }
+
     case "leer_web": {
       const texto = await fetchWebsiteText(String(a.url || ""));
       return texto ? { texto } : { error: "No se ha podido leer esa web" };
@@ -880,30 +1058,88 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
         const summary = `Meter un mensaje nuevo en la posición ${pos} de "${camp.name}"`;
         const id = await registrar(ctx, { kind: "step_insert", campaign_id: camp.id, summary, payload: { pos, ...datos }, status: "pending" });
         tarjetaCambio(ctx, id, summary, true, { campaign_name: camp.name, posicion: pos, asunto: datos.subject, cuerpo: datos.body, espera_dias: datos.delay_days, aviso: count ? `${count} leads en curso lo recibirán cuando les toque` : "" });
-        return { pendiente: true, change_id: id, mensaje: "Pendiente de que el usuario pulse Confirmar" };
+        return { pendiente: true, change_id: id, mensaje: "NO aplicado todavía: queda pendiente de que el usuario pulse Confirmar o escriba «aplícalo»" };
       }
+      const summary = `Mensaje ${pos} añadido a "${camp.name}"`;
       const { data: nuevo, error } = await db.rpc("ia_step_insert", { p_campaign: camp.id, p_pos: pos, p_subject: datos.subject, p_body: datos.body, p_delay: datos.delay_days, p_variants: [] });
       if (error) throw new Error(error.message);
-      const summary = `Mensaje ${pos} añadido a "${camp.name}"`;
+      const fallo = await comprobarPasoNuevo(db, nuevo as string, camp.id, datos);
+      if (fallo) {
+        await registrarFallo(ctx, { kind: "step_insert", campaign_id: camp.id, summary }, fallo);
+        throw new Error(fallo);
+      }
       const id = await registrar(ctx, { kind: "step_insert", campaign_id: camp.id, step_id: nuevo as string, summary, payload: { pos, ...datos }, after: { id: nuevo } });
       tarjetaCambio(ctx, id, summary, false, { campaign_name: camp.name, posicion: pos, asunto: datos.subject, cuerpo: datos.body, espera_dias: datos.delay_days, activa: camp.status === "active" });
-      return { ok: true, step_id: nuevo, posicion: pos, campana_activa: camp.status === "active" };
+      return { ok: true, verificado: true, step_id: nuevo, posicion: pos, campana_activa: camp.status === "active" };
     }
 
     case "editar_mensaje": {
       const { st, camp, posicion } = await pasoDelCliente(ctx, a.step_id);
+      const estado = readState(st);
+      const versiones = versionsOf(estado);
+      const vivas = versiones.filter((v) => v.slot > 0 && v.enabled);
       const patch: Record<string, unknown> = {};
       if (a.asunto !== undefined) patch.subject = asunto(a.asunto);
       if (a.cuerpo !== undefined) { patch.body = cuerpo(a.cuerpo); if (!patch.body) throw new Error("El cuerpo no puede quedar vacío"); }
       if (a.espera_dias !== undefined) patch.delay_days = entero(a.espera_dias, st.delay_days ?? 0, 0, 60);
       if (!Object.keys(patch).length) return { error: "No hay nada que cambiar" };
-      const before = { subject: st.subject, body: st.body, delay_days: st.delay_days };
-      const { error } = await db.from("campaign_steps").update(patch).eq("id", st.id);
-      if (error) throw new Error(error.message);
-      const summary = `Mensaje ${posicion} de "${camp.name}" editado`;
-      const id = await registrar(ctx, { kind: "step_update", campaign_id: camp.id, step_id: st.id, summary, before, after: { ...before, ...patch } });
-      tarjetaCambio(ctx, id, summary, false, { campaign_name: camp.name, posicion, asunto: (patch.subject ?? st.subject) as string, cuerpo: (patch.body ?? st.body) as string, espera_dias: (patch.delay_days ?? st.delay_days) as number, antes: before, activa: camp.status === "active" });
-      return { ok: true, campana_activa: camp.status === "active" };
+
+      // ¿A qué versiones va el texto? El motor envía la A y TAMBIÉN las variantes B/C encendidas: si sólo se
+      // toca la A, parte de los leads seguiría recibiendo el texto viejo aunque el bot diga "cambiado".
+      const cambiaTexto = patch.subject !== undefined || patch.body !== undefined;
+      let slots = [0];
+      if (cambiaTexto) {
+        const pedidas = parseVersiones(a.versiones, versiones.map((v) => v.slot));
+        if (a.versiones !== undefined && String(a.versiones).trim() && !pedidas) {
+          return { ok: false, aclaracion_necesaria: `No entiendo las versiones "${String(a.versiones)}": este mensaje tiene ${versiones.map((v) => v.label).join(", ")}. Usa 'A', 'B', 'A,B' o 'todas'.` };
+        }
+        if (pedidas) slots = pedidas;
+        else if (vivas.length) {
+          return {
+            ok: false,
+            aclaracion_necesaria: `Este mensaje tiene variantes ${vivas.map((v) => v.label).join(", ")} ENCENDIDAS (se envían repartidas con la A). Vuelve a llamar indicando en \`versiones\` a cuáles va el cambio: 'todas' si es el mensaje en general, o sólo las letras que haya nombrado el usuario.`,
+            variantes: variantesDePaso(st),
+          };
+        }
+      }
+
+      let next = estado;
+      const textoVariante: Record<string, string> = {};
+      if (patch.subject !== undefined) textoVariante.subject = patch.subject as string;
+      if (patch.body !== undefined) textoVariante.body = patch.body as string;
+      for (const s of slots) if (s > 0) next = writeSlot(next, s, textoVariante);
+      const tocaVariantes = slots.some((s) => s > 0);
+      const aEscribir: Record<string, unknown> = { ...(slots.includes(0) ? patch : { ...(patch.delay_days !== undefined ? { delay_days: patch.delay_days } : {}) }) };
+      if (tocaVariantes) { aEscribir.variants = next.variants; aEscribir.variants_off = next.off; }
+      if (!Object.keys(aEscribir).length) return { error: "No hay nada que cambiar" };
+
+      const claves = Object.keys(aEscribir);
+      const before: Record<string, unknown> = { subject: st.subject, body: st.body, delay_days: st.delay_days, ...(tocaVariantes ? { variants: estado.variants, variants_off: estado.off } : {}) };
+      const letras = slots.map((s) => String.fromCharCode(65 + s));
+      const apagadas = slots.filter((s) => s > 0 && !versiones.find((v) => v.slot === s)?.enabled).map((s) => String.fromCharCode(65 + s));
+      const summaryBase = `Mensaje ${posicion} de "${camp.name}" editado`;
+      try {
+        await escribirPasoVerificado(db, st.id, aEscribir, antesDe(st, claves));
+      } catch (e) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        await registrarFallo(ctx, { kind: "step_update", campaign_id: camp.id, step_id: st.id, summary: summaryBase }, motivo);
+        throw new Error(motivo);
+      }
+      const summary = cambiaTexto && (vivas.length || slots.some((s) => s > 0)) ? `${summaryBase} (${letras.length > 1 ? "versiones" : "versión"} ${letras.join(", ")})` : summaryBase;
+      const id = await registrar(ctx, { kind: "step_update", campaign_id: camp.id, step_id: st.id, summary, before, after: { ...before, ...aEscribir } });
+      const noTocadas = vivas.filter((v) => !slots.includes(v.slot)).map((v) => v.label);
+      tarjetaCambio(ctx, id, summary, false, {
+        campaign_name: camp.name, posicion, asunto: (patch.subject ?? st.subject) as string, cuerpo: (patch.body ?? st.body) as string,
+        espera_dias: (patch.delay_days ?? st.delay_days) as number, antes: { subject: st.subject, body: st.body, delay_days: st.delay_days }, activa: camp.status === "active",
+        lineas: [`Versiones cambiadas: ${letras.join(", ")}${noTocadas.length ? ` · sin tocar: ${noTocadas.join(", ")}` : ""}`],
+      });
+      return {
+        ok: true, verificado: true, mensaje: posicion, campana: camp.name, campana_activa: camp.status === "active",
+        campos_cambiados: [patch.subject !== undefined && "asunto", patch.body !== undefined && "cuerpo", patch.delay_days !== undefined && "espera"].filter(Boolean),
+        versiones_cambiadas: letras,
+        ...(noTocadas.length ? { variantes_encendidas_sin_tocar: noTocadas } : {}),
+        ...(apagadas.length ? { aviso: `La variante ${apagadas.join(", ")} está APAGADA: se ha cambiado pero no se envía` } : {}),
+      };
     }
 
     case "eliminar_mensaje": {
@@ -911,7 +1147,7 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       const summary = `Borrar el mensaje ${posicion} de "${camp.name}"`;
       const id = await registrar(ctx, { kind: "step_delete", campaign_id: camp.id, step_id: st.id, summary, status: "pending", before: st });
       tarjetaCambio(ctx, id, summary, true, { campaign_name: camp.name, posicion, asunto: st.subject, cuerpo: st.body });
-      return { pendiente: true, change_id: id, mensaje: "Pendiente de que el usuario pulse Confirmar" };
+      return { pendiente: true, change_id: id, mensaje: "NO aplicado todavía: queda pendiente de que el usuario pulse Confirmar o escriba «aplícalo»" };
     }
 
     case "crear_variante": {
@@ -920,20 +1156,29 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       const body = cuerpo(a.cuerpo);
       if (!body) throw new Error("La variante no tiene cuerpo");
       const { state, slot } = addVariantTo(estado, { subject: asunto(a.asunto) || st.subject || "", body });
-      const { error } = await db.from("campaign_steps").update({ variants: state.variants, variants_off: state.off }).eq("id", st.id);
-      if (error) throw new Error(error.message);
-      if (!(await db.from("campaigns").select("ab_test_enabled").eq("id", camp.id).single()).data?.ab_test_enabled) {
-        await db.from("campaigns").update({ ab_test_enabled: true }).eq("id", camp.id);
-      }
       const letra = String.fromCharCode(65 + slot);
       const summary = `Variante ${letra} añadida al mensaje ${posicion} de "${camp.name}"`;
+      try {
+        await escribirPasoVerificado(db, st.id, { variants: state.variants, variants_off: state.off }, antesDe(st, ["variants", "variants_off"]));
+        if (!(await db.from("campaigns").select("ab_test_enabled").eq("id", camp.id).single()).data?.ab_test_enabled) {
+          await db.from("campaigns").update({ ab_test_enabled: true }).eq("id", camp.id);
+          const { data: ab } = await db.from("campaigns").select("ab_test_enabled").eq("id", camp.id).single();
+          if (!(ab as any)?.ab_test_enabled) throw new Error("No se pudo activar la prueba A/B de la campaña, así que la variante no se enviaría");
+        }
+      } catch (e) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        await registrarFallo(ctx, { kind: "variant_state", campaign_id: camp.id, step_id: st.id, summary }, motivo);
+        throw new Error(motivo);
+      }
       const id = await registrar(ctx, { kind: "variant_state", campaign_id: camp.id, step_id: st.id, summary, before: { variants: estado.variants, variants_off: estado.off }, after: { variants: state.variants, variants_off: state.off } });
       tarjetaCambio(ctx, id, summary, false, { campaign_name: camp.name, posicion, letra, asunto: asunto(a.asunto) || st.subject || "", cuerpo: body, activa: camp.status === "active" });
-      return { ok: true, letra };
+      return { ok: true, verificado: true, letra, mensaje: posicion };
     }
 
     case "editar_variante": {
       const { st, camp, posicion } = await pasoDelCliente(ctx, a.step_id);
+      // La "A" es el propio mensaje: se edita con editar_mensaje (así no falla si la IA pide la A por aquí).
+      if (String(a.letra || "").trim().toUpperCase() === "A") return await ejecutar(ctx, "editar_mensaje", { step_id: a.step_id, asunto: a.asunto, cuerpo: a.cuerpo, versiones: "A" });
       const slot = slotDeLetra(a.letra);
       const estado = readState(st);
       const v = versionsOf(estado).find((x) => x.slot === slot);
@@ -941,13 +1186,19 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       const patch: Record<string, string> = {};
       if (a.asunto !== undefined) patch.subject = asunto(a.asunto);
       if (a.cuerpo !== undefined) { patch.body = cuerpo(a.cuerpo); if (!patch.body) throw new Error("El cuerpo no puede quedar vacío"); }
+      if (!Object.keys(patch).length) return { error: "No hay nada que cambiar" };
       const next = writeSlot(estado, slot, patch);
-      const { error } = await db.from("campaign_steps").update({ variants: next.variants, variants_off: next.off }).eq("id", st.id);
-      if (error) throw new Error(error.message);
       const summary = `Variante ${v.label} del mensaje ${posicion} de "${camp.name}" editada`;
+      try {
+        await escribirPasoVerificado(db, st.id, { variants: next.variants, variants_off: next.off }, antesDe(st, ["variants", "variants_off"]));
+      } catch (e) {
+        const motivo = e instanceof Error ? e.message : String(e);
+        await registrarFallo(ctx, { kind: "variant_state", campaign_id: camp.id, step_id: st.id, summary }, motivo);
+        throw new Error(motivo);
+      }
       const id = await registrar(ctx, { kind: "variant_state", campaign_id: camp.id, step_id: st.id, summary, before: { variants: estado.variants, variants_off: estado.off }, after: { variants: next.variants, variants_off: next.off } });
       tarjetaCambio(ctx, id, summary, false, { campaign_name: camp.name, posicion, letra: v.label, asunto: patch.subject ?? v.variant?.subject ?? "", cuerpo: patch.body ?? v.variant?.body ?? "", activa: camp.status === "active" });
-      return { ok: true };
+      return { ok: true, verificado: true, letra: v.label, mensaje: posicion, ...(v.enabled ? {} : { aviso: `La variante ${v.label} está APAGADA: se ha cambiado pero no se envía` }) };
     }
 
     case "eliminar_variante": {
@@ -958,7 +1209,7 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       const summary = `Borrar la variante ${v.label} del mensaje ${posicion} de "${camp.name}"`;
       const id = await registrar(ctx, { kind: "variant_delete", campaign_id: camp.id, step_id: st.id, summary, payload: { slot }, status: "pending" });
       tarjetaCambio(ctx, id, summary, true, { campaign_name: camp.name, posicion, letra: v.label, asunto: v.variant?.subject || "", cuerpo: v.variant?.body || "" });
-      return { pendiente: true, change_id: id, mensaje: "Pendiente de que el usuario pulse Confirmar" };
+      return { pendiente: true, change_id: id, mensaje: "NO aplicado todavía: queda pendiente de que el usuario pulse Confirmar o escriba «aplícalo»" };
     }
 
     case "ver_archivo": {
@@ -1050,7 +1301,7 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
       return {
         pendiente: true, change_id: id, nuevos, ya_estaban: ya.size, invalidos: plan.invalidos, repetidos: plan.duplicados,
         variables_de_los_mensajes: usadas, variables_sin_columna_en_el_csv: faltan,
-        mensaje: "Pendiente de que el usuario pulse Confirmar",
+        mensaje: "NO aplicado todavía: queda pendiente de que el usuario pulse Confirmar o escriba «aplícalo»",
       };
     }
 
@@ -1107,32 +1358,37 @@ export async function ejecutar(ctx: Ctx, nombre: string, a: Record<string, any>)
 
 /* ── Confirmar, deshacer ───────────────────────────────────────────────────────────────── */
 
-export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
-  const ahora = new Date().toISOString();
+/** Lo que hace de verdad cada tipo de cambio pendiente. NO marca el cambio como aplicado: eso lo hace confirmarCambio tras comprobarlo. */
+async function ejecutarPendiente(db: Db, ch: any): Promise<{ texto: string; detalle: string; fila: Record<string, unknown> }> {
   if (ch.kind === "step_insert") {
     const p = ch.payload || {};
     const { data: camp } = await db.from("campaigns").select("id").eq("id", ch.campaign_id).maybeSingle();
     if (!camp) throw new Error("La campaña ya no existe");
     const { data: nuevo, error } = await db.rpc("ia_step_insert", { p_campaign: ch.campaign_id, p_pos: p.pos, p_subject: p.subject, p_body: p.body, p_delay: p.delay_days, p_variants: [] });
     if (error) throw new Error(error.message);
-    await db.from("ia_mod_changes").update({ status: "applied", step_id: nuevo, after: { id: nuevo }, resolved_at: ahora }).eq("id", ch.id);
-    return ch.summary;
+    const fallo = await comprobarPasoNuevo(db, nuevo as string, ch.campaign_id, { subject: p.subject, body: p.body });
+    if (fallo) {
+      if (nuevo) await db.rpc("ia_step_delete", { p_step: nuevo });
+      throw new Error(fallo);
+    }
+    return { texto: ch.summary, detalle: "el mensaje nuevo existe y su asunto y cuerpo coinciden", fila: { step_id: nuevo, after: { id: nuevo } } };
   }
   if (ch.kind === "step_delete") {
     const { data: fila, error } = await db.rpc("ia_step_delete", { p_step: ch.step_id });
     if (error) throw new Error(error.message);
     if (!fila) throw new Error("Ese mensaje ya no existe");
-    await db.from("ia_mod_changes").update({ status: "applied", before: fila, resolved_at: ahora }).eq("id", ch.id);
-    return ch.summary;
+    const { data: sigue } = await db.from("campaign_steps").select("id").eq("id", ch.step_id).maybeSingle();
+    if (sigue) throw new Error("El mensaje sigue en la campaña después de borrarlo");
+    return { texto: ch.summary, detalle: "el mensaje ya no está en la campaña", fila: { before: fila } };
   }
   if (ch.kind === "variant_delete") {
     const { data: st } = await db.from("campaign_steps").select("*").eq("id", ch.step_id).maybeSingle();
     if (!st) throw new Error("Ese mensaje ya no existe");
     const estado = readState(st);
     const next = removeSlot(estado, Number(ch.payload?.slot));
-    await db.from("campaign_steps").update({ variants: next.variants, variants_off: next.off }).eq("id", ch.step_id);
-    await db.from("ia_mod_changes").update({ status: "applied", before: { variants: estado.variants, variants_off: estado.off }, after: { variants: next.variants, variants_off: next.off }, resolved_at: ahora }).eq("id", ch.id);
-    return ch.summary;
+    if (igualesValor({ variants: next.variants, variants_off: next.off }, { variants: estado.variants, variants_off: estado.off })) throw new Error("Esa variante ya no existe");
+    await escribirPasoVerificado(db, ch.step_id, { variants: next.variants, variants_off: next.off }, antesDe(st, ["variants", "variants_off"]));
+    return { texto: ch.summary, detalle: "la variante ya no está en el mensaje", fila: { before: { variants: estado.variants, variants_off: estado.off }, after: { variants: next.variants, variants_off: next.off } } };
   }
   if (ch.kind === "leads_import") {
     const { data: up } = await db.from("ia_mod_uploads").select("*").eq("id", ch.payload?.upload_id).maybeSingle();
@@ -1140,19 +1396,85 @@ export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
     const { data: camp } = await db.from("campaigns").select("id, user_id").eq("id", ch.campaign_id).maybeSingle();
     if (!camp || (camp as any).user_id !== ch.client_user_id) throw new Error("La campaña ya no existe");
     const r = await importarLeads(db, ch.client_user_id, ch.campaign_id, up, ch.payload?.renombrar || {}, ch.payload?.formato === "todas" ? "todas" : "plantilla");
-    await db.from("ia_mod_changes").update({
-      status: "applied", resolved_at: ahora,
-      after: { nuevos: r.nuevos, saltados: r.saltados, invalidos: r.invalidos, repetidos: r.repetidos },
-      before: { actualizados: r.actualizados },
-    }).eq("id", ch.id);
-    return `${r.nuevos.length} leads añadidos${r.actualizados.length ? `, ${r.actualizados.length} actualizados` : ""}${r.saltados ? `, ${r.saltados} saltados por estar bloqueados` : ""}`;
+    let dentro = 0;
+    for (let i = 0; i < r.nuevos.length; i += 300) {
+      const { count } = await db.from("campaign_leads").select("id", { count: "exact", head: true }).eq("campaign_id", ch.campaign_id).in("lead_id", r.nuevos.slice(i, i + 300));
+      dentro += count || 0;
+    }
+    if (dentro < r.nuevos.length) throw new Error(`Sólo ${dentro} de ${r.nuevos.length} leads nuevos quedaron dentro de la campaña`);
+    return {
+      texto: `${r.nuevos.length} leads añadidos${r.actualizados.length ? `, ${r.actualizados.length} actualizados` : ""}${r.saltados ? `, ${r.saltados} saltados por estar bloqueados` : ""}`,
+      detalle: `${dentro} leads nuevos comprobados dentro de la campaña`,
+      fila: { after: { nuevos: r.nuevos, saltados: r.saltados, invalidos: r.invalidos, repetidos: r.repetidos }, before: { actualizados: r.actualizados } },
+    };
   }
   if (["cuentas_tags", "cuentas_rampa", "campana_cuentas", "campana_ajustes"].includes(ch.kind)) {
-    const antes = await aplicarConfig(db, ch.client_user_id, ch.kind, ch.payload || {});
-    await db.from("ia_mod_changes").update({ status: "applied", before: antes, after: ch.payload, resolved_at: ahora }).eq("id", ch.id);
-    return ch.summary;
+    const antes = await aplicarConfigVerificado(db, ch.client_user_id, ch.kind, ch.payload || {});
+    return { texto: ch.summary, detalle: "releído de la base de datos y coincide con lo pedido", fila: { before: antes, after: ch.payload } };
   }
   throw new Error("Este cambio no se puede confirmar");
+}
+
+export interface Confirmado extends ResultadoCambio { texto?: string }
+
+/**
+ * Aplica un cambio PENDIENTE (botón Confirmar o "aplícalo" escrito: el mismo camino). Sólo lo marca
+ * "applied" cuando lo guardado se ha vuelto a leer y coincide; si algo falla queda "failed" con el motivo.
+ */
+export async function confirmarCambio(db: Db, ch: any): Promise<Confirmado> {
+  const summary = String(ch.summary || "");
+  if (ch.status !== "pending") return { summary, status: ch.status === "applied" ? "applied" : "failed", error: `Ese cambio ya no está pendiente (estado: ${ch.status})` };
+  try {
+    const r = await ejecutarPendiente(db, ch);
+    const { error } = await db.from("ia_mod_changes").update({ ...r.fila, status: "applied", resolved_at: new Date().toISOString() }).eq("id", ch.id);
+    if (error) await db.from("ia_mod_changes").update({ status: "applied", resolved_at: new Date().toISOString() }).eq("id", ch.id);
+    return { summary, status: "applied", detalle: r.detalle, texto: r.texto };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await db.from("ia_mod_changes").update({ status: "failed", after: { error }, resolved_at: new Date().toISOString() }).eq("id", ch.id);
+    return { summary, status: "failed", error };
+  }
+}
+
+/** Igual que confirmarCambio pero lanza si no se pudo (lo usan las pruebas y quien sólo quiere el texto). */
+export async function aplicarPendiente(db: Db, ch: any): Promise<string> {
+  const r = await confirmarCambio(db, ch);
+  if (r.status !== "applied") throw new Error(r.error || "No se pudo aplicar");
+  return r.texto ?? ch.summary;
+}
+
+/**
+ * El usuario ha escrito "sí / aplícalo / hazlo" (o "cancela"): se resuelven los cambios PENDIENTES de la última
+ * respuesta del bot, con el mismo código que el botón. null = no hay nada pendiente ahí (lo atiende la IA).
+ * El texto que se devuelve sale del resultado real.
+ */
+export async function aplicarPorTexto(db: Db, cliente: { id: string }, intencion: "confirmar" | "cancelar"): Promise<{ texto: string; tarjetas: Tarjeta[]; estados: Record<string, string> } | null> {
+  const { data: ult } = await db.from("ia_mod_messages").select("cards, created_at").eq("client_user_id", cliente.id).eq("role", "assistant").order("created_at", { ascending: false }).limit(1);
+  // Sólo vale si la última respuesta del bot es reciente: un "sí" no debe aplicar algo de hace días.
+  if (!(ult as any[])?.[0] || Date.now() - Date.parse((ult as any[])[0].created_at) > 12 * 3600_000) return null;
+  const cards = Array.isArray((ult as any[])?.[0]?.cards) ? (ult as any[])[0].cards : [];
+  const ids = [...new Set(cards.filter((c: any) => c?.change_id && c.type === "pendiente").map((c: any) => String(c.change_id)))] as string[];
+  if (!ids.length) return null;
+  const { data: chs } = await db.from("ia_mod_changes").select("*").eq("client_user_id", cliente.id).in("id", ids).eq("status", "pending");
+  const pendientes = ((chs || []) as any[]).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  if (!pendientes.length) return null;
+
+  const resultados: ResultadoCambio[] = [];
+  const tarjetas: Tarjeta[] = [];
+  const estados: Record<string, string> = {};
+  for (const ch of pendientes) {
+    if (intencion === "cancelar") {
+      await db.from("ia_mod_changes").update({ status: "cancelled", resolved_at: new Date().toISOString() }).eq("id", ch.id);
+      resultados.push({ summary: ch.summary, status: "cancelled" });
+      estados[ch.id] = "cancelled";
+      continue;
+    }
+    const r = await confirmarCambio(db, ch);
+    resultados.push(r);
+    estados[ch.id] = r.status;
+    if (r.status === "applied") tarjetas.push({ type: "cambio", change_id: ch.id, summary: ch.summary, lineas: r.detalle ? [`Comprobado: ${r.detalle}`] : [] });
+  }
+  return { texto: mensajeResultado(resultados), tarjetas, estados };
 }
 
 export async function deshacer(db: Db, ch: any, clientId: string): Promise<string | void> {

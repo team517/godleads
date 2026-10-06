@@ -3,9 +3,10 @@
 // recipient hides their whole conversation, and the mistake is silent.
 
 /** Check if a sender is automated/spam */
+// 06-10-2026: sólo la parte local entera (o tras . _ - +): "jbounce@" o "tonoreply@" son personas.
 export function isAutomatedSender(email: string): boolean {
-  const patterns = [/noreply@/i, /no-reply@/i, /mailer-daemon@/i, /postmaster@/i, /bounce@/i];
-  return patterns.some(p => p.test(email));
+  const e = (email || "").trim().toLowerCase();
+  return /^(?:[^@\s]*[._+-])?(?:no-?reply|do-?not-?reply|bounces?)@/.test(e) || /^(?:mailer-daemon|postmaster)@/.test(e);
 }
 
 /**
@@ -124,6 +125,39 @@ const B_POLICY =
 const B_SUBJECT =
   /^\s*(?:undeliverable|undelivered mail|delivery status notification|returned mail|mail delivery (?:failed|failure|subsystem)|failure notice|delivery (?:has )?failed|delivery incomplete|message not delivered|no se (?:pudo|puede|ha podido) entregar|correo no entregado|mensaje no entregado|no entregado|non remis|unzustellbar|mancata consegna|mensagem n[aã]o entregue)/i;
 
+// Aviso nuevo de IONOS (06-10-2026): "Your email could not be delivered / The following recipient
+// address(es) could not be reached: * dir" + una lista FIJA de posibles causas, con Status 5.0.0 y
+// sin Diagnostic-Code. Era el 38% de los rebotes "other". El motivo real, cuando viene, va después
+// de la dirección (en su línea o más abajo); la lista de "Possible reasons" no dice nada y no se lee.
+const IONOS_BOILER_HEAD = /^(?:possible reasons|what you can do|m[öo]gliche (?:ursachen|gr[üu]nde)|was (?:sie|k[öo]nnen sie) tun|posibles (?:causas|motivos)|qu[ée] puede hacer|raisons possibles|que pouvez-vous faire)\b/i;
+const IONOS_REASON_HINT = /\b[45][0-9]{2}\b|\b[45]\.\d{1,3}\.\d{1,3}\b|spamhaus|blocked|black\s*list|block\s*list|does not exist|doesn'?t exist|unknown|not found|no such|unavailable|requested action not taken|rejected|refused|denied|disabled|timed? ?out|quota|mailbox full|unrouteable|host or domain|no mx|spam|policy/i;
+
+/** El motivo de un aviso de IONOS "could not be reached", sin la lista genérica de causas. "" si no lo trae. */
+export function ionosNoticeReason(notice: string): string {
+  const m = (notice || "").match(/could not be reached:?([\s\S]*)$/i);
+  if (!m) return "";
+  // Hasta la siguiente parte MIME (el informe técnico estándar ya se lee por su cuenta).
+  const tail = m[1].split(/\r?\n--[^\r\n]*\r?\n|\r?\nContent-Type:/i)[0];
+  const out: string[] = [];
+  let boiler = false;
+  for (const raw of tail.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line) { if (out.length) break; continue; } // el motivo acaba en la línea en blanco
+    if (IONOS_BOILER_HEAD.test(line)) { if (out.length) break; boiler = true; continue; }
+    if (boiler && /^[-•*·]/.test(line)) continue;
+    boiler = false;
+    // "* juan@acme.com" (la dirección) o "* juan@acme.com: 550 5.1.1 ..." (dirección y motivo).
+    const addr = line.match(/^\*?\s*<?[^\s<>@]+@[^\s<>:;,]+>?[:;,]?\s*(.*)$/);
+    if (addr) { line = addr[1].trim(); if (!line) continue; }
+    line = line.replace(/^(?:technical details|error details|details|reason|motivo|grund|raison)\s*[:\-]\s*/i, "").trim();
+    if (!line) continue;
+    if (out.length === 0 && !IONOS_REASON_HINT.test(line)) continue;
+    out.push(line);
+    if (out.join(" ").length > 300 || out.length >= 4) break;
+  }
+  return out.join(" ").replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
 /** ¿Es un aviso de entrega fallida? Devuelve su ficha, o null si es un correo normal. */
 export function bounceInfo(fromEmail: string, subject: string, contentType: string, rawBody: string, xFailedRecipients = ""): BounceInfo | null {
   const from = (fromEmail || "").toLowerCase();
@@ -157,6 +191,7 @@ export function bounceInfo(fromEmail: string, subject: string, contentType: stri
   const explain = (
     notice.match(/reason:\s*([^\n]{3,300}(?:\r?\n[ \t]+[^\s][^\n]{0,300}){0,4})/i)?.[1]
     || notice.match(/Diagnostic-Code:\s*([^\n]+(?:\n[ \t]+[^\n]+)*)/i)?.[1]
+    || ionosNoticeReason(notice)
     || notice.match(/(?:address(?:\(es\))?\s+failed|could not be delivered[^\n]*|no se pudo entregar[^\n]*)[:\s]*\n+\s*<?\S+@\S+>?:?[ \t]*\n?\s*([^\n]{5,300})/i)?.[1]
     || notice.match(/^[^\n]*\b[45][0-9]{2}[ -][^\n]{4,300}/im)?.[0]
     || ""
@@ -169,7 +204,9 @@ export function bounceInfo(fromEmail: string, subject: string, contentType: stri
   const diag = diagLines.join("\n");
   const status = diag.match(/Status:\s*([245]\.\d+\.\d+)/i)?.[1] || diag.match(/\b([45]\.\d+\.\d+)\b/)?.[1] || "";
   const smtp = diag.match(/\b([45][0-9]{2})[ -]/)?.[1] || "";
-  const code = status || smtp;
+  // IONOS pone "Status: 5.0.0" (genérico) y el código de verdad va en la explicación (06-10-2026).
+  const specific = explain.match(/\b([45]\.\d{1,3}\.\d{1,3})\b/)?.[1] || "";
+  const code = (/^[45]\.0\.0$/.test(status) && specific && specific[0] === status[0]) ? specific : (status || smtp);
   const failedAction = /^Action:\s*failed/im.test(diag);
   const delayed = !failedAction && (/^Action:\s*delayed/im.test(diag) || /^4/.test(code) || /delayed|retras|still being retried|se seguir[aá] intentando/i.test(subject || ""));
   const permanent = !delayed;

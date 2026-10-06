@@ -4,6 +4,7 @@ import { es } from "date-fns/locale";
 import {
   AlertTriangle,
   Building2,
+  Clock,
   Copy,
   MessageSquareReply,
   Megaphone,
@@ -25,6 +26,10 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { bounceBreakdownText, type BounceBreakdown } from "@/lib/campaign-metrics";
+import {
+  autoRepliesLabel, campaignHealthReason, healthChipClass, repliesView, sentTooltip, REPLIES_TOOLTIP,
+  type CampaignHealthRow, type HealthReason,
+} from "@/lib/campaign-health";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
 import BulkEditCampaigns from "@/components/campaigns/BulkEditCampaigns";
 
@@ -37,6 +42,11 @@ export type CampaignMetrics = {
   bounced: number;
   senderBounced?: number;
   sequences?: number;
+  /** Respuestas de personas / sólo automáticas (campaign_metrics_extra); ausentes si la función no existe. */
+  repliedHuman?: number;
+  repliedAuto?: number;
+  /** Envíos dados por enviados sin confirmación final (timeout tras DATA). */
+  sentUnconfirmed?: number;
 };
 
 export type CampaignManager = { id: string; name: string; color: string };
@@ -55,6 +65,8 @@ export interface CampaignsTableProps {
   metricsFor: (id: string) => CampaignMetrics | null | undefined;
   /** Rebotes por causa de una campaña (tooltip de la celda); sin él, sólo el total. */
   bounceBreakdownFor?: (id: string) => BounceBreakdown | null;
+  /** Salud de una campaña activa (campaign_health_mine); sin él no hay chip junto a "Activa". */
+  healthFor?: (id: string) => CampaignHealthRow | null;
   onSelect: (id: string) => void;
   onToggleStatus: (campaign: any) => void;
   onDuplicate: (campaign: any) => void;
@@ -115,19 +127,40 @@ const ringColor: Record<string, string> = {
   draft: "hsl(var(--muted-foreground))",
 };
 
+/** Chip junto a "Activa": la primera razón por la que no está enviando (null = no se pinta). */
+export function CampaignHealthChip({ reason, compact }: { reason: HealthReason | null; compact?: boolean }) {
+  if (!reason) return null;
+  const Icon = reason.tone === "warn" ? AlertTriangle : Clock;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-[2px] font-semibold leading-none",
+        compact ? "text-[10.5px]" : "text-[11.5px]",
+        healthChipClass(reason.tone),
+      )}
+      title={reason.title}
+    >
+      <Icon className="h-3 w-3" aria-hidden />
+      {reason.label}
+    </span>
+  );
+}
+
 const pctOf = (n: number, d: number) => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : null);
 
 function HeadCell({
   icon: Icon,
   label,
   className,
+  title,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   className?: string;
+  title?: string;
 }) {
   return (
-    <th scope="col" className={cn("px-4 py-2.5 text-left font-semibold whitespace-nowrap", className)}>
+    <th scope="col" title={title} className={cn("px-4 py-2.5 text-left font-semibold whitespace-nowrap", className)}>
       <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-muted-foreground">
         <Icon className="h-3.5 w-3.5" /> {label}
       </span>
@@ -142,6 +175,7 @@ function Metric({
   icon: Icon,
   warn,
   title,
+  extra,
 }: {
   value: number | null;
   pct?: string | null;
@@ -150,12 +184,15 @@ function Metric({
   warn?: boolean;
   /** Explicación al pasar el ratón (p. ej. los rebotes por causa). */
   title?: string;
+  /** Texto pequeño secundario junto a la cifra (p. ej. «+12 automáticas»). */
+  extra?: string | null;
 }) {
   return (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap" title={title}>
       {Icon && <Icon className={cn("h-3.5 w-3.5 self-center", className)} />}
       <span className={cn("text-[15px] font-semibold tabular-nums", className)}>{value === null ? "—" : value}</span>
       {value !== null && pct && <span className="text-[13px] font-semibold text-muted-foreground">{pct}</span>}
+      {value !== null && extra && <span className="text-[11.5px] font-medium text-muted-foreground">{extra}</span>}
       {warn && <AlertTriangle className="h-3.5 w-3.5 self-center text-warning" aria-label="Tasa de rebote alta" />}
     </span>
   );
@@ -168,6 +205,7 @@ export default function CampaignsTable({
   progressMap,
   metricsFor,
   bounceBreakdownFor,
+  healthFor,
   onSelect,
   onToggleStatus,
   onDuplicate,
@@ -317,11 +355,11 @@ export default function CampaignsTable({
               </th>
               <HeadCell icon={Megaphone} label="Campaña" className="min-w-[280px]" />
               <HeadCell icon={Users} label="Leads" />
-              <HeadCell icon={Send} label="Enviados" />
+              <HeadCell icon={Send} label="Enviados" title="Aceptados por el servidor de correo (no garantiza la entrega). Los rebotes confirmados salen aparte en «Rebotados»." />
               <HeadCell icon={UserCheck} label="Contactados" />
-              <HeadCell icon={MessageSquareReply} label="Respondidos" />
+              <HeadCell icon={MessageSquareReply} label="Respuestas" title={REPLIES_TOOLTIP} />
               <HeadCell icon={Smile} label="Positivos" />
-              <HeadCell icon={AlertTriangle} label="Rebotados" />
+              <HeadCell icon={AlertTriangle} label="Rebotados" title="Rebotes confirmados: el servidor del destinatario rechazó el correo." />
               <HeadCell icon={Settings2} label="Acciones" className="text-right" />
             </tr>
           </thead>
@@ -341,7 +379,9 @@ export default function CampaignsTable({
               const prog = progressMap[campaign.id] || { sent: 0, total: 0 };
               const m = metricsFor(campaign.id) || null;
               const sent = m?.sent ?? 0;
-              const replied = m?.replied ?? 0;
+              // "Respuestas" = personas; las automáticas van aparte (sin el desglose, la cifra de siempre).
+              const rv = repliesView(m);
+              const replied = rv.shown;
               const contacted = (m?.contacted ?? 0) || sent;
               const bounced = m?.bounced ?? 0;
               const bounceRate = sent > 0 ? (bounced / sent) * 100 : 0;
@@ -378,6 +418,8 @@ export default function CampaignsTable({
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
                             {pill.label}
                           </span>
+                          {/* Por qué una "Activa" no envía (sin buzones, fuera de horario, tope…). */}
+                          <CampaignHealthChip reason={campaignHealthReason(campaign.status, healthFor?.(campaign.id))} />
                           {/* Cliente de la campaña — chip CUADRADO (6px), no pastilla. */}
                           {client && (
                             <span
@@ -422,7 +464,11 @@ export default function CampaignsTable({
                     <Metric value={prog.total} className="text-violet-600 dark:text-violet-400" />
                   </td>
                   <td className="px-4 py-[17px]">
-                    <Metric value={m === null ? null : sent} className="text-indigo-600 dark:text-indigo-400" />
+                    <Metric
+                      value={m === null ? null : sent}
+                      className="text-indigo-600 dark:text-indigo-400"
+                      title={m === null ? undefined : sentTooltip(sent, m.sentUnconfirmed)}
+                    />
                   </td>
                   <td className="px-4 py-[17px]">
                     {/* Contactados = leads distintos alcanzados (no cuenta los follow-ups),
@@ -438,6 +484,8 @@ export default function CampaignsTable({
                       value={m === null ? null : replied}
                       pct={pctOf(replied, contacted)}
                       className="text-teal-600 dark:text-teal-400"
+                      extra={rv.split ? autoRepliesLabel(rv.auto) : null}
+                      title={m === null ? undefined : REPLIES_TOOLTIP}
                     />
                   </td>
                   <td className="px-4 py-[17px]">

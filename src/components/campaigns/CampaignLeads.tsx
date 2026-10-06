@@ -140,7 +140,7 @@ export default function CampaignLeads({ campaignId }: Props) {
       // Por tandas de 200: la URL de `.in(...)` se rompe entre 600 y 900 uuids.
       const accs: any[] = [];
       for (const part of chunk(allAccIds, 200)) {
-        const { data, error } = await supabase.from("email_accounts").select("*").in("id", part).eq("status", "connected");
+        const { data, error } = await supabase.from("email_accounts").select("id, email, status").in("id", part).eq("status", "connected");
         // Si falla se conserva lo que ya hay: quedarse sin cuentas bloquea "Enviar ahora".
         if (error) { toast.error(`No se pudieron cargar las cuentas: ${error.message}`); return; }
         accs.push(...(data || []));

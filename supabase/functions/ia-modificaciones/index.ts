@@ -6,9 +6,9 @@
 //
 // Acciones: clients | history | campaigns | upload_start | upload_append | chat | confirm | cancel | undo | clear | save_notes
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { puedeUsarIaMod } from "../_shared/ia-mod.ts";
+import { intencionDeConfirmar, mensajeResultado, puedeUsarIaMod } from "../_shared/ia-mod.ts";
 import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
-import { aplicarPendiente, cargarCliente, cargarPropio, conversar, deshacer, listarClientes, mantenerMemoria, type ModeloIa } from "./agente.ts";
+import { aplicarPorTexto, cargarCliente, cargarPropio, confirmarCambio, conversar, deshacer, listarClientes, mantenerMemoria, type ModeloIa } from "./agente.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,8 +99,10 @@ Deno.serve(async (req) => {
       }
       if (action === "confirm") {
         if ((ch as any).status !== "pending") return json({ error: "Ese cambio ya no está pendiente" }, 409);
-        const r = await aplicarPendiente(db, ch as any);
-        return json({ status: "applied", summary: r });
+        // Mismo camino que el "aplícalo" escrito: se aplica, se relee lo guardado y sólo entonces queda "applied".
+        const r = await confirmarCambio(db, ch as any);
+        if (r.status !== "applied") return json({ status: "failed", error: r.error, summary: mensajeResultado([r]) });
+        return json({ status: "applied", summary: r.texto && r.texto !== r.summary ? `Aplicado y comprobado: ${r.texto}.` : mensajeResultado([r]) });
       }
       if ((ch as any).status !== "applied") return json({ error: "Sólo se puede deshacer un cambio aplicado" }, 409);
       const nota = await deshacer(db, ch as any, clientId);
@@ -145,11 +147,27 @@ Deno.serve(async (req) => {
       }
       const texto = (String(body.message || "").trim() || (adjunto ? `Te adjunto el archivo ${adjunto.nombre}.` : "")).slice(0, 6000);
       if (!texto) return json({ error: "Mensaje vacío" }, 400);
-      if (!apiKey) return json({ error: "Falta la clave de IA de la plataforma" }, 500);
+      // "Aplícalo" no necesita la IA: se resuelve sin ella (por eso la clave sólo se exige para conversar).
+      // Si viene `contexto` es que el turno anterior lo llevó el consultor, no PulseBot: entonces el "aplícalo" no se refiere a
+      // ninguna tarjeta pendiente de PulseBot y lo decide la IA con ese contexto.
+      const intencion = adjunto || String(body.contexto || "").trim() ? null : intencionDeConfirmar(texto);
+      if (!apiKey && !intencion) return json({ error: "Falta la clave de IA de la plataforma" }, 500);
 
       const { data: filaUsuario } = await db.from("ia_mod_messages")
         .insert({ client_user_id: clientId, author_email: email, role: "user", content: texto, cards: adjunto ? [adjunto] : [] })
         .select("id, role, content, cards, author_email, created_at").single();
+      // Confirmar o cancelar ESCRITO ("sí", "aplícalo", "hazlo", "cancela"): se resuelven los pendientes de la última
+      // respuesta del bot con el mismo código que el botón y el texto sale del resultado real, no de lo que la IA crea.
+      if (intencion) {
+        const directo = await aplicarPorTexto(db, cliente, intencion);
+        if (directo) {
+          const { data: fila } = await db.from("ia_mod_messages")
+            .insert({ client_user_id: clientId, author_email: "ia", role: "assistant", content: directo.texto, cards: directo.tarjetas })
+            .select("id, role, content, cards, author_email, created_at").single();
+          return json({ message: fila, user_message: filaUsuario, changes: directo.estados });
+        }
+      }
+      if (!apiKey) return json({ error: "Falta la clave de IA de la plataforma" }, 500);
       const reply = await conversar(db, apiKey, cliente, email, { contexto: String(body.contexto || "").slice(0, 3000), ia });
       const { data: row } = await db.from("ia_mod_messages")
         .insert({ client_user_id: clientId, author_email: "ia", role: "assistant", content: reply.texto, cards: reply.tarjetas })

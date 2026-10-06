@@ -631,23 +631,28 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
 
   // ── Attachments (per step): uploaded to Storage, referenced from campaign_steps.attachments.
   // The engine (process-campaign-queue) downloads each file and sends it with EVERY email of
-  // the step. Files live in the shared `godtube-media` bucket under a per-campaign/step path. ──
+  // the step. Files live in the PRIVATE bucket `campaign-attachments` under `<user_id>/<campaign>/<step>/`
+  // (auditoría 06-10-2026: antes iban al bucket público `godtube-media`, listable y descargable por cualquiera).
+  // Los adjuntos antiguos conservan su bucket legado: el campo `bucket` decide dónde borrar/descargar. ──
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadingAttach, setUploadingAttach] = useState(false);
   const MAX_ATTACH_BYTES = 5 * 1024 * 1024; // 5 MB per file (provider limits + keeps the SMTP session sane)
   const stepAttachments: any[] = selectedStep && Array.isArray(selectedStep.attachments) ? selectedStep.attachments : [];
   const fmtBytes = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
+  const ATTACH_BUCKET = "campaign-attachments";
+  const attachBucket = (a: any): string => (a?.bucket === ATTACH_BUCKET ? ATTACH_BUCKET : "godtube-media");
+
   const uploadAttachment = async (file: File) => {
-    if (!selectedStep) return;
+    if (!selectedStep || !user) return;
     if (file.size > MAX_ATTACH_BYTES) { toast.error(`"${file.name}" supera 5 MB — usa un archivo más pequeño`); return; }
     setUploadingAttach(true);
     try {
       const safe = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 120) || "archivo";
-      const path = `campaign-attachments/${campaignId}/${selectedStep.id}/${crypto.randomUUID()}-${safe}`;
-      const { error: upErr } = await supabase.storage.from("godtube-media").upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+      const path = `${user.id}/${campaignId}/${selectedStep.id}/${crypto.randomUUID()}-${safe}`;
+      const { error: upErr } = await supabase.storage.from(ATTACH_BUCKET).upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
       if (upErr) throw upErr;
-      const entry = { name: file.name, path, mime: file.type || "application/octet-stream", size: file.size };
+      const entry = { name: file.name, bucket: ATTACH_BUCKET, path, mime: file.type || "application/octet-stream", size: file.size };
       const next = [...stepAttachments, entry];
       await updateStepField(selectedStep.id, "attachments", next);
       setSteps((prev) => prev.map((s) => (s.id === selectedStep.id ? { ...s, attachments: next } : s)));
@@ -666,7 +671,7 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
     const next = stepAttachments.filter((_, i) => i !== idx);
     await updateStepField(selectedStep.id, "attachments", next);
     setSteps((prev) => prev.map((s) => (s.id === selectedStep.id ? { ...s, attachments: next } : s)));
-    if (target?.path) { try { await supabase.storage.from("godtube-media").remove([target.path]); } catch { /* non-fatal orphan */ } }
+    if (target?.path) { try { await supabase.storage.from(attachBucket(target)).remove([target.path]); } catch { /* non-fatal orphan */ } }
     toast.success("Adjunto quitado");
   };
 
@@ -677,7 +682,7 @@ export default function CampaignSequences({ campaignId, preview, onPreviewChange
     for (const a of stepAttachments) {
       if (!a?.path) continue;
       try {
-        const { data, error } = await supabase.storage.from("godtube-media").download(a.path);
+        const { data, error } = await supabase.storage.from(attachBucket(a)).download(a.path);
         if (error || !data) continue;
         const buf = new Uint8Array(await data.arrayBuffer());
         let binary = "";

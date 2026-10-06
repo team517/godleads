@@ -155,9 +155,11 @@ export default function ModificacionesIA() {
   const accionCambio = async (change_id: string, action: "confirm" | "cancel" | "undo") => {
     if (!sel) return;
     try {
-      const r = await llamar<{ status: string; summary?: string | null }>({ action, client_id: sel.id, change_id });
+      const r = await llamar<{ status: string; summary?: string | null; error?: string }>({ action, client_id: sel.id, change_id });
       setCambios((c) => ({ ...c, [change_id]: r.status }));
-      toast.success(r.summary || (action === "confirm" ? "Hecho" : action === "undo" ? "Cambio deshecho" : "Cancelado"));
+      // El servidor aplica, relee lo guardado y sólo entonces dice "applied"; si no, "failed" con el motivo.
+      if (r.status === "failed") toast.error(r.summary || r.error || "No se ha podido aplicar el cambio", { duration: 9000 });
+      else toast.success(r.summary || (action === "confirm" ? "Hecho" : action === "undo" ? "Cambio deshecho" : "Cancelado"));
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -713,7 +715,7 @@ function TarjetaCambio({ t, estado, onCambio }: {
   const [trabajando, setTrabajando] = useState(false);
   const [abierto, setAbierto] = useState(true);
   const hacer = async (a: "confirm" | "cancel" | "undo") => { setTrabajando(true); await onCambio(t.change_id, a); setTrabajando(false); };
-  const marco = estado === "applied" ? "border-emerald-200 bg-emerald-50/50" : estado === "pending" ? "border-amber-200 bg-amber-50/50" : "border-[#ECE8F7] bg-card";
+  const marco = estado === "applied" ? "border-emerald-200 bg-emerald-50/50" : estado === "pending" ? "border-amber-200 bg-amber-50/50" : estado === "failed" ? "border-red-200 bg-red-50/50" : "border-[#ECE8F7] bg-card";
   return (
     <div className={`rounded-2xl border ${marco} p-4 space-y-3 dark:border-border dark:bg-card`}>
       <div className="flex items-center justify-between gap-2">
@@ -725,8 +727,8 @@ function TarjetaCambio({ t, estado, onCambio }: {
           <ChevronDown className={`h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform ${abierto ? "" : "-rotate-90"}`} />
         </button>
         <span className={`flex-shrink-0 rounded-md border px-2 py-0.5 text-[12px] font-medium ${
-          estado === "applied" ? "border-emerald-300 text-emerald-700" : estado === "pending" ? "border-amber-300 text-amber-700" : "text-muted-foreground"
-        }`}>{ESTADO_CAMBIO[estado] || estado}</span>
+          estado === "applied" ? "border-emerald-300 text-emerald-700" : estado === "pending" ? "border-amber-300 text-amber-700" : estado === "failed" ? "border-red-300 text-red-700" : "text-muted-foreground"
+        }`}>{estado === "failed" ? "No aplicado" : ESTADO_CAMBIO[estado] || estado}</span>
       </div>
       {abierto && (
         <div className="space-y-2">

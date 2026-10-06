@@ -2,8 +2,11 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
-import { hasWarmupSubjectTag, isWarmupMessage } from "../_shared/inbox-filters.ts";
-import { BOUNCE_CLOCK_SLACK_MS, BOUNCE_LOOKBACK_MS, chooseBouncedSend, type BounceCandidate, type BounceMatch } from "../_shared/bounce-match.ts";
+import { hasWarmupSubjectTag, isWarmupMessage, refersToOwnDomain } from "../_shared/inbox-filters.ts";
+import {
+  BOUNCE_CLOCK_SLACK_MS, BOUNCE_LOOKBACK_MS, bounceDismissal, chooseBouncedSend, decideBounce, parentRef, repliedToSend,
+  type BounceCandidate, type BounceMatch, type BouncedSend,
+} from "../_shared/bounce-match.ts";
 import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
 import {
   INBOUND_FETCH_ITEMS, addressOf, autoSignal, decodeMimeWords, headerValue, imapCompleted, parseInboundItem, pickFolders, refIds, splitFetchItems,
@@ -335,6 +338,24 @@ type UidState = Record<string, { v: number; u: number }>;
 
 /** Un mensaje leído, con el sitio exacto del buzón del que salió. */
 type FetchedMessage = InboundMessage & { folder: string; uidv: number; recovered?: boolean };
+/** Dónde se cortó la lectura de un buzón (06-10-2026): carpeta y marca de UID, para dejarlo anotado. */
+type CutAt = { folder: string; uidv: number; uid: number; why: "cortado" | "ilegible" };
+
+/** Asunto de respuesta: "Re:", "RE:", "AW:" (alemán), "SV:" (nórdico). */
+const REPLY_SUBJECT = /^\s*(?:re|aw|sv)\s*:/i;
+const normReplySubject = (s: string | null | undefined) =>
+  String(s || "").replace(/^\s*(?:(?:re|aw|sv|antw|rv|wg|fwd?|tr)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim().toLowerCase();
+/** ¿Es "Re: <uno de nuestros asuntos>"? (06-10-2026) */
+function repliesToOurSubject(subject: string | null | undefined, sentSubjects: string[] | undefined): boolean {
+  if (!REPLY_SUBJECT.test(subject || "")) return false;
+  const core = normReplySubject(subject);
+  return !!core && (sentSubjects || []).some((s) => normReplySubject(s) === core);
+}
+/** Asuntos con los que un remitente automático (noreply@…) SÍ contesta: se guarda aunque no se pueda atar a nada. */
+const KEEP_AUTOMATED_SUBJECT = /^\s*(?:(?:re|aw|sv)\s*:|out[- ]of[- ](?:the[- ])?office|respuesta autom[aá]tica|automatic reply|mensaje detectado como spam)/i;
+/** Clave de un correo entrante para casar lo insertado con lo construido (Message-ID, o remitente + fecha). */
+const inboundKey = (mid: string | null | undefined, from: string | null | undefined, at: string | null | undefined) =>
+  mid ? `m:${mid}` : `f:${String(from || "").toLowerCase()}|${Date.parse(at || "")}`;
 /** Un mensaje que NO se guarda como correo entrante, con el motivo (se anota, no se tira). */
 type Skip = { folder: string; uidv: number; uid: number; reason: string; from: string; subject: string; message_id: string; date: string };
 
@@ -362,7 +383,7 @@ const imapQuote = (s: string) => '"' + String(s ?? "").replace(/\\/g, "\\\\").re
 async function fetchImapMessages(
   host: string, port: number, username: string, password: string, accountEmail: string, imapUsername: string, fetchLimit = 50,
   uidState: UidState | null = null, budgetMs = 45_000, rescan: RescanPlan | null = null
-): Promise<{ ok: boolean; messages: FetchedMessage[]; skips: Skip[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[]; firstSync?: string[]; truncated?: boolean; unparsed?: boolean; folders?: string[]; rescan?: RescanResult }> {
+): Promise<{ ok: boolean; messages: FetchedMessage[]; skips: Skip[]; bouncedRecipients?: string[]; error?: string; uidState?: UidState; unchangedFolders?: string[]; firstSync?: string[]; truncated?: boolean; unparsed?: boolean; folders?: string[]; rescan?: RescanResult; cutAt?: CutAt | null }> {
   // Deadline wrapper: a hung IMAP peer (tarpit/greylist/firewall) must never
   // block the whole rotating window forever. On timeout the socket is dropped
   // and the account fails cleanly (recorded in errors[] + last_sync stays old).
@@ -469,6 +490,7 @@ async function fetchImapMessages(
     // comando siguiente), así que se deja de usar esta conexión. Lo ya leído ENTERO vale.
     let broken = false;
     let unparsed = false;
+    let cutAt: CutAt | null = null;
     const rs: RescanResult | null = rescan ? { cur: { ...(rescan.cur || {}) }, checked: 0, wanted: 0, fetched: 0, done: true, folders: allFolders } : null;
 
     /** Un elemento de FETCH ya troceado → a `messages` o a `skips`. */
@@ -559,14 +581,22 @@ async function fetchImapMessages(
           // (o alguno llega sin UID), NO se da el rango por leído. Mejor un buzón parado y visible
           // que una marca que avanza por encima de correos sin leer.
           const usable = items.filter((it) => it.complete && (it.header || it.text));
-          if ((usable.length === 0 && /BODY\[/i.test(fr.text)) || usable.some((it) => !it.uid)) { unparsed = true; cut = true; break; }
+          if ((usable.length === 0 && /BODY\[/i.test(fr.text)) || usable.some((it) => !it.uid)) {
+            unparsed = true; cut = true;
+            cutAt = cutAt || { folder, uidv: uidValidity, uid: maxUidSeen || prev?.u || 0, why: "ilegible" };
+            break;
+          }
           for (const item of items) {
             if (!item.complete) continue;                    // a medias: se relee en la pasada siguiente
             if (overBudget()) { cut = true; break; }         // un cuerpo patológico no puede comerse la pasada
             take(item, folder, uidValidity);
             if (item.uid) { maxUidSeen = Math.max(maxUidSeen, item.uid); tickUids.add(item.uid); }
           }
-          if (fr.done !== "OK" || truncated) { cut = true; broken = true; break; }
+          if (fr.done !== "OK" || truncated) {
+            cut = true; broken = true;
+            cutAt = cutAt || { folder, uidv: uidValidity, uid: maxUidSeen || prev?.u || 0, why: "cortado" };
+            break;
+          }
           if (cut) break;
         }
         // Persist the folder's high-water mark. Advance ONLY to the highest UID we ACTUALLY parsed
@@ -603,7 +633,7 @@ async function fetchImapMessages(
           const ch = uids.slice(i, i + 200);
           const hr = await sendC(nextTag(), `UID FETCH ${ch[0]}:${ch[ch.length - 1]} (UID BODY.PEEK[HEADER.FIELDS (FROM MESSAGE-ID IN-REPLY-TO REFERENCES AUTO-SUBMITTED X-AUTOREPLY X-AUTORESPOND CONTENT-TYPE X-FAILED-RECIPIENTS)])`);
           const split = splitFetchItems(hr.text);
-          if (hr.done !== "OK" || split.truncated) { rs.done = false; broken = true; break; }
+          if (hr.done !== "OK" || split.truncated) { rs.done = false; broken = true; cutAt = cutAt || { folder, uidv: uidValidity, uid: ch[0], why: "cortado" }; break; }
           const heads: RescanItem[] = [];
           for (const it of split.items) {
             if (!it.uid || !pending.has(it.uid)) continue;
@@ -630,7 +660,7 @@ async function fetchImapMessages(
             const fr = await sendC(nextTag(), `UID FETCH ${group.join(",")} ${INBOUND_FETCH_ITEMS}`);
             const got = splitFetchItems(fr.text);
             for (const item of got.items) { if (item.complete) { take(item, folder, uidValidity, true); rs.fetched++; } }
-            if (fr.done !== "OK" || got.truncated) { stoppedAt = group[0]; broken = true; break; }
+            if (fr.done !== "OK" || got.truncated) { stoppedAt = group[0]; broken = true; cutAt = cutAt || { folder, uidv: uidValidity, uid: group[0], why: "cortado" }; break; }
           }
           if (stoppedAt) { rs.cur[folder] = Math.max(from, stoppedAt - 1); rs.done = false; break; }
           rs.cur[folder] = ch[ch.length - 1];
@@ -641,7 +671,7 @@ async function fetchImapMessages(
     if (!broken) { try { await send(nextTag(), "LOGOUT"); } catch { /* da igual */ } }
     try { conn.close(); } catch { /* ya cerrada */ }
 
-    return { ok: true, messages, skips, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders, firstSync, truncated: broken, unparsed, folders: targets, rescan: rs || undefined };
+    return { ok: true, messages, skips, bouncedRecipients: Array.from(bouncedRecipients), uidState: uidStateOut, unchangedFolders, firstSync, truncated: broken, unparsed, folders: targets, rescan: rs || undefined, cutAt };
   } catch (e) {
     return { ok: false, messages: [], skips: [], bouncedRecipients: [], error: `IMAP error: ${e.message}` };
   }
@@ -985,6 +1015,16 @@ serve(async (req) => {
         for (const sk of result.skips || []) {
           logRows.push(logRow({ ...sk, from_email: sk.from }, { reason: sk.reason === "no_from" ? "sin_remitente" : sk.reason }));
         }
+        // Lectura cortada o ilegible (06-10-2026): antes sólo salía en el log de la función y nadie lo
+        // veía. Una fila por buzón y HORA (uid = hora; el índice único descarta las repetidas) para
+        // que el monitor de salud pueda contarlas. La carpeta y la marca de UID van en el detalle.
+        if ((result.truncated || result.unparsed) && result.cutAt) {
+          const c = result.cutAt;
+          logRows.push(logRow({ folder: "(sincronizacion)", uidv: 0, uid: Math.floor(Date.now() / 3600_000), date: nowIso }, {
+            kind: "sync", result: "cortado", reason: result.unparsed ? "ilegible" : c.why,
+            detail: `carpeta ${c.folder} · marca UID ${c.uid} · UIDVALIDITY ${c.uidv}`.slice(0, 300),
+          }));
+        }
         // Rebotes (avisos de entrega fallida): no son una respuesta, así que no van al Unibox ni
         // marcan al lead como "respondido". Se anotan con su código y su clase, y si son
         // definitivos el envío queda marcado como rebotado (antes sólo se marcaba cuando el
@@ -1014,7 +1054,23 @@ serve(async (req) => {
           }
           matchTally[match.how] = (matchTally[match.how] || 0) + 1;
           const hit = match.hit;
-          if (hit && info.permanent && !hit.bounced_at) {
+          // Una respuesta MANUAL que el destinatario ya contestó (su correo cita ESE envío como el
+          // que contesta) llegó, diga lo que diga el aviso: no se marca (06-10-2026).
+          let repliedToIt = false;
+          if (hit && !hit.campaign_id && info.permanent && !hit.bounced_at && hit.to_email) {
+            try {
+              const { data: se } = await adminClient.from("sent_emails").select("smtp_message_id").eq("id", hit.id).maybeSingle();
+              const mid0 = (se as { smtp_message_id?: string | null } | null)?.smtp_message_id || "";
+              if (mid0) {
+                const { data: later } = await adminClient.from("inbox_messages").select("ref_chain")
+                  .eq("user_id", account.user_id).gte("received_at", hit.created_at)
+                  .ilike("from_email", hit.to_email).not("ref_chain", "is", null).limit(50);
+                repliedToIt = repliedToSend(mid0, ((later || []) as { ref_chain: string | null }[]).map((r) => r.ref_chain));
+              }
+            } catch { /* sin la comprobación se decide como antes */ }
+          }
+          const decision = decideBounce(info, match, bounceAt, repliedToIt);
+          if (hit && decision.mark) {
             // El motivo queda en error_message: el hilo del Unibox enseña "No entregado" y por qué.
             const motivo = `Rebote ${info.code || ""}: ${info.diag || "el servidor del destinatario devolvió el correo"}`.replace(/\s+/g, " ").trim().slice(0, 500);
             const { data: marked } = await adminClient.from("sent_emails")
@@ -1022,7 +1078,9 @@ serve(async (req) => {
               .eq("id", hit.id).is("bounced_at", null).select("id");
             // Una respuesta MANUAL (sin campaña) que rebota avisa al móvil: el dueño pulsó enviar,
             // vio "enviada" y el correo no llegó (03-10-2026). Los envíos de campaña no avisan.
-            if (marked && marked.length > 0 && !hit.campaign_id && hit.user_id) {
+            // 06-10-2026: sólo un fallo definitivo 5.x.x casado por Message-ID (o único envío
+            // posible y reciente). Un retraso 4.x.x o un casado por asunto no suena (decideBounce).
+            if (marked && marked.length > 0 && decision.push && hit.user_id) {
               try {
                 const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
                 await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
@@ -1040,10 +1098,12 @@ serve(async (req) => {
           }
           ingest.bounces++;
           const sinEnvio = match.how === "ambiguo" ? `sin envío claro (${match.candidates} candidatos)` : "";
+          // Casado con un envío pero sin marcarlo: queda el porqué (otro destinatario, ya contestó…).
+          const noMarca = hit && !decision.mark && decision.why !== "ya_marcado" ? `no marcado: ${decision.why}` : "";
           logRows.push(logRow(b, {
             to_email: info.recipients.join(", ") || null, kind: "bounce", result: "registrado", reason: info.cls,
             bounce_code: info.code || null, bounce_class: info.cls,
-            detail: [info.diag || "", sinEnvio].filter(Boolean).join(" · ") || null,
+            detail: [info.diag || "", sinEnvio, noMarca, hit ? `casado por ${match.how}` : ""].filter(Boolean).join(" · ").slice(0, 600) || null,
             sent_email_id: hit?.id || null, lead_id: hit?.lead_id || null, campaign_id: hit?.campaign_id || null,
           }));
         }
@@ -1309,6 +1369,52 @@ serve(async (req) => {
           }
         }
 
+        // Remitente automático (noreply@…) que contesta a algo NUESTRO (06-10-2026): si su cadena de
+        // hilo cita un Message-ID de un dominio de los buzones del usuario, es respuesta a un envío
+        // nuestro (de godleads o de otro sistema) y no se tira. Dominios: el de este buzón y los de
+        // los demás buzones del usuario que aparezcan citados (una consulta, sólo si hace falta).
+        const ownDomains = new Set<string>([String(account.email || "").split("@")[1]?.toLowerCase().trim() || ""].filter(Boolean));
+        {
+          const refDoms = [...new Set(result.messages.filter((m) => m.automated_sender && m.ref_chain)
+            .flatMap((m) => refIds(m.ref_chain).map((r) => (r.replace(/>$/, "").split("@")[1] || "").trim())))]
+            .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d) && !ownDomains.has(d)).slice(0, 20);
+          if (refDoms.length > 0) {
+            try {
+              const { data: acc } = await adminClient.from("email_accounts").select("email").eq("user_id", account.user_id)
+                .or(refDoms.map((d) => `email.ilike.*@${d}`).join(",")).limit(200);
+              for (const r of (acc || []) as { email: string }[]) { const d = String(r.email || "").split("@")[1]?.toLowerCase(); if (d) ownDomains.add(d); }
+            } catch { /* sin esto sólo cuenta el dominio de este buzón */ }
+          }
+        }
+        const citesOwnDomain = (rc: string) => !!rc && [...ownDomains].some((d) => refersToOwnDomain(rc, `x@${d}`));
+
+        // Enlace SÓLO por dominio (un compañero del lead): asuntos que le mandamos, para saber si su
+        // correo es una respuesta ("RE: <nuestro asunto>") o un aviso cualquiera de esa empresa
+        // ("Email Domain Migrated from…") que no debe dejar al lead como "respondido" (06-10-2026).
+        const domLeadSubjects = new Map<string, string[]>();
+        {
+          const leadIds = [...new Set(result.messages.map((m) => {
+            const fe = m.from_email.toLowerCase();
+            const d = fe.split("@")[1] || "";
+            if (emailSent.has(fe) || leadsMap.has(fe) || threadOf(m.ref_chain) || !REPLY_SUBJECT.test(m.subject || "")) return "";
+            return domainSent.get(d)?.lead_id || "";
+          }).filter(Boolean))].slice(0, 100);
+          if (leadIds.length > 0) {
+            try {
+              const { data: ss } = await adminClient.from("sent_emails").select("lead_id, subject")
+                .eq("user_id", account.user_id).in("lead_id", leadIds).limit(1000);
+              for (const r of (ss || []) as { lead_id: string; subject: string | null }[]) {
+                if (!r.lead_id || !r.subject) continue;
+                const arr = domLeadSubjects.get(r.lead_id) || [];
+                arr.push(r.subject);
+                domLeadSubjects.set(r.lead_id, arr);
+              }
+            } catch { /* sin asuntos: el correo se enlaza igual, sin marcar "respondido" */ }
+          }
+        }
+        // Correos que se guardan enlazados pero NO marcan al lead/campaña como respondido.
+        const noMarkKeys = new Set<string>();
+
         tResolve = Date.now();
         // ── Attachments → Storage ──────────────────────────────────────────
         // Bootstrap the column/bucket/policy if missing. If it fails, sync
@@ -1394,9 +1500,19 @@ serve(async (req) => {
           // noreply@ / no-reply@ / postmaster@… que no es un rebote: un acuse automático de la
           // empresa de un lead SÍ es una respuesta (antes se tiraba). Sin relación con nada
           // nuestro (un boletín, un aviso del proveedor) no entra en el Unibox, pero se anota.
-          if (msg.automated_sender && !related) {
+          // 06-10-2026: tampoco se tira si cita un Message-ID de nuestros dominios, si es un contestador
+          // (fuera de oficina) o si el asunto es de respuesta ("Re:", "Mensaje detectado como spam"…)
+          // y trae texto. Sólo el boletín / aviso sin relación sigue fuera, anotado.
+          const keepAutomated = msg.kind === "auto_reply" || citesOwnDomain(msg.ref_chain)
+            || (KEEP_AUTOMATED_SUBJECT.test(msg.subject || "") && (msg.body_text || "").trim().length > 0);
+          if (msg.automated_sender && !related && !keepAutomated) {
             logRows.push(logRow(msg, { kind: msg.kind, reason: "remitente_automatico_sin_relacion" }));
             return null;
+          }
+          // Enlazado SÓLO por dominio: se ata a la campaña (y al lead, para enseñarlo) pero no lo deja
+          // como "respondido" salvo que conteste a uno de nuestros asuntos (06-10-2026).
+          if (domHit && !warmupTagged && !repliesToOurSubject(msg.subject, domLeadSubjects.get(domHit.lead_id))) {
+            noMarkKeys.add(inboundKey(msg.message_id || null, msg.from_email, parsedDate));
           }
           const row = {
             user_id: account.user_id,
@@ -1468,7 +1584,7 @@ serve(async (req) => {
           const { data: inserted, error: insertError } = await adminClient
             .from("inbox_messages")
             .upsert(chunk, { onConflict: "user_id,dedupe_hash", ignoreDuplicates: true })
-            .select("id, lead_id, campaign_id, received_at, message_id");
+            .select("id, lead_id, campaign_id, received_at, message_id, from_email");
 
           if (insertError) {
             // If batch fails (likely due to dedupe), fall back to individual inserts
@@ -1501,7 +1617,7 @@ serve(async (req) => {
               }
               if (!e && ins) {
                 newCount++;
-                if (row.lead_id && !(row as any).is_warmup) {
+                if (row.lead_id && !(row as any).is_warmup && !noMarkKeys.has(inboundKey(row.message_id, row.from_email, row.received_at))) {
                   const esAuto = !!(row as any).auto_signal; // fuera de oficina: cuenta, pero no para la secuencia
                   if (!esAuto) await adminClient.from("leads").update({ status: "replied" }).eq("id", row.lead_id);
                   await adminClient.from("sent_emails").update({ replied_at: row.received_at })
@@ -1525,6 +1641,10 @@ serve(async (req) => {
             }
             // Mark replied for leads that produced a new message
             const warmIds = new Set(rows.filter((r: any) => r.is_warmup).map((r: any) => r.message_id).filter(Boolean));
+            // Enlazado sólo por dominio y sin ser respuesta a un asunto nuestro: no marca nada (06-10-2026).
+            if (noMarkKeys.size > 0) {
+              for (const r of inserted as any[]) if (noMarkKeys.has(inboundKey(r.message_id, r.from_email, r.received_at))) r.lead_id = null;
+            }
             // Un fuera de oficina (correo con cabecera de respuesta automática) cuenta en las
             // estadísticas de respuestas, como siempre, pero NO deja al lead como "respondido" ni
             // para su secuencia: no ha dicho ni que sí ni que no. Si el contestador da otro
@@ -1552,6 +1672,37 @@ serve(async (req) => {
             }
           }
         }
+        // Rebote desmentido (06-10-2026): una respuesta MANUAL quedó como "No entregado" y ahora el
+        // destinatario contesta a ESE correo (su In-Reply-To es nuestro Message-ID): llegó. Se quita
+        // la marca y el motivo queda como "Rebote descartado: respondió · …". Por el Message-ID del
+        // correo al que contesta (índice lower(smtp_message_id)); sin esa función, por este buzón.
+        try {
+          const replies = pairs.filter((p) => !(p.row as { is_warmup?: boolean }).is_warmup && parentRef(p.msg.ref_chain));
+          if (replies.length > 0) {
+            const parents = [...new Set(replies.map((p) => parentRef(p.msg.ref_chain)))].slice(0, 200);
+            let sends: BouncedSend[] = [];
+            const { data: viaRpc, error: rpcErr } = await adminClient.rpc("bounced_sends_by_refs", { p_user: account.user_id, p_refs: parents });
+            if (!rpcErr) sends = (viaRpc || []) as BouncedSend[];
+            else {
+              const froms = [...new Set(replies.map((p) => p.msg.from_email.toLowerCase()))].slice(0, 100);
+              const { data: viaAcct } = await adminClient.from("sent_emails")
+                .select("id, to_email, smtp_message_id, bounced_at, campaign_id, error_message, created_at")
+                .eq("account_id", account.id).in("to_email", froms).is("campaign_id", null).not("bounced_at", "is", null)
+                .gte("created_at", new Date(Date.now() - 30 * 86400_000).toISOString()).limit(200);
+              sends = (viaAcct || []) as BouncedSend[];
+            }
+            for (const s of sends) {
+              for (const p of replies) {
+                const motivo = bounceDismissal(s, { from_email: p.msg.from_email, ref_chain: p.msg.ref_chain, received_at: (p.row as { received_at: string }).received_at });
+                if (!motivo) continue;
+                const { data: cleared } = await adminClient.from("sent_emails").update({ bounced_at: null, error_message: motivo })
+                  .eq("id", s.id).not("bounced_at", "is", null).select("id");
+                if (cleared && cleared.length > 0) console.log(`Rebote descartado ${s.id}: el destinatario contestó a ese correo`);
+                break;
+              }
+            }
+          }
+        } catch (e) { console.error("rebote descartado:", (e as Error).message); }
         await finish();
       } catch (accountErr) {
         console.error(`Error processing account ${account.email}:`, accountErr);

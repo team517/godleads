@@ -6,6 +6,7 @@ import { plainTextBody } from "../_shared/text-only.ts";
 import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
+import { assertPublicMailHost } from "../_shared/host-guard.ts";
 import { allocateMix, interleave, laneAllowance, resolveNewPct, roomForNewLead, type MixPlan } from "../_shared/lead-mix.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -333,23 +334,29 @@ function safeAttachmentName(name: string): string {
 // {filename, mime, base64} parts by downloading each file from Storage (service-role).
 // Cached by storage path so a step's file is fetched once, not once per lead.
 const _attachmentCache = new Map<string, { filename: string; mime: string; base64: string }>();
-async function resolveStepAttachments(adminClient: any, step: any): Promise<{ filename: string; mime: string; base64: string }[]> {
+async function resolveStepAttachments(adminClient: any, step: any, campaign: { id: string; user_id: string }): Promise<{ filename: string; mime: string; base64: string }[]> {
   const list = Array.isArray(step?.attachments) ? step.attachments : [];
   if (!list.length) return [];
   if (_attachmentCache.size > 100) _attachmentCache.clear();
   const out: { filename: string; mime: string; base64: string }[] = [];
   for (const a of list) {
-    const path = String(a?.path || "").trim();
-    if (!path) continue;
-    let cached = _attachmentCache.get(path);
+    // Sólo archivos de ESTA campaña (06-10-2026): con la clave de servicio se descargaba
+    // cualquier ruta que alguien escribiera en attachments (archivos de otros clientes).
+    const src = attachmentSource(a, campaign);
+    if (!src) {
+      if (a?.path) console.warn(`Adjunto ignorado en la campaña ${campaign.id}: ruta fuera de la campaña (${String(a.path).slice(0, 120)})`);
+      continue;
+    }
+    const cacheKey = `${src.bucket}/${src.path}`;
+    let cached = _attachmentCache.get(cacheKey);
     if (!cached) {
       try {
-        const { data, error } = await adminClient.storage.from("godtube-media").download(path);
+        const { data, error } = await adminClient.storage.from(src.bucket).download(src.path);
         if (error || !data) continue;
         const buf = new Uint8Array(await data.arrayBuffer());
         if (buf.byteLength > 8 * 1024 * 1024) continue; // 8MB raw cap — provider limits + protect the SMTP session
         cached = { filename: safeAttachmentName(a?.name || "adjunto"), mime: String(a?.mime || "application/octet-stream").replace(/[\r\n]/g, ""), base64: bytesToBase64(buf) };
-        _attachmentCache.set(path, cached);
+        _attachmentCache.set(cacheKey, cached);
       } catch { continue; }
     }
     out.push(cached);
@@ -407,7 +414,9 @@ function classifySmtpError(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'un
   // PERMANENT credential failures ONLY → disconnect the account.
   if (/535|534|authentication failed|invalid login|bad credentials|invalid credentials|password (in)?correct|auth\w* (failed|invalid|denied|rejected)/i.test(e)) return 'auth';
   // Hard bounces — recipient permanently invalid
-  if (/550|551|553|554|5\.1\.[0-9]|5\.7\.1|mailbox unavailable|user unknown|does not exist|no such user|invalid recipient|address rejected|recipient rejected/i.test(e)) return 'hard';
+  // 556 (RFC 7504, "domain does not accept mail" = MX nulo) añadido el 06-10-2026: quedaba
+  // 'unknown' y la dirección se reintentaba hasta el tope.
+  if (/550|551|553|554|\b556\b|does not accept mail|5\.1\.[0-9]|5\.7\.1|mailbox unavailable|user unknown|does not exist|no such user|invalid recipient|address rejected|recipient rejected/i.test(e)) return 'hard';
   // Connection / TLS / DNS — soft errors
   if (/connection|timeout|timed out|econnrefused|enotfound|tls|certificate|network|reset/i.test(e)) return 'soft';
   return 'unknown';
@@ -435,7 +444,7 @@ function senderStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unk
 // Positive invalid-mailbox wording keeps 'hard' (suppress); reputation → 'rate' (back the
 // account off, retry later); content/policy → 'soft' (retry the lead). Ambiguous stays as
 // classified (unchanged behaviour).
-const RECIPIENT_INVALID_RE = /user unknown|unknown user|does not exist|doesn'?t exist|no such user|no such recipient|no such mailbox|mailbox unavailable|mailbox not found|invalid recipient|recipient unknown|user not found|address (unknown|not found|does not exist)|5\.1\.[0-9]|no mailbox|account (that you tried to reach )?does not exist|recipient address rejected/i;
+const RECIPIENT_INVALID_RE = /user unknown|unknown user|does not exist|doesn'?t exist|no such user|no such recipient|no such mailbox|mailbox unavailable|mailbox not found|invalid recipient|recipient unknown|user not found|address (unknown|not found|does not exist)|5\.1\.[0-9]|no mailbox|account (that you tried to reach )?does not exist|recipient address rejected|does not accept mail|\b556\b/i;
 const REPUTATION_RE = /spamhaus|spamcop|barracuda|proofpoint|senderscore|\brbl\b|\bdnsbl\b|black\s*list|block\s*list|blocklist|blacklist|blocked\b|listed (in|at|by|on)|poor reputation|bad reputation|reputation of|ip .*reputation/i;
 const POLICY_SPAM_RE = /spam|unsolicited|\bbulk\b|not authoriz|unauthoriz|policy|5\.7\.[0-9]|rejected due to|message rejected|content|denied/i;
 function recipientStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | 'unknown' {
@@ -446,6 +455,90 @@ function recipientStageClass(err: string): 'hard' | 'soft' | 'auth' | 'rate' | '
   if (REPUTATION_RE.test(e)) return 'rate';          // our IP/domain is the problem → back off
   if (POLICY_SPAM_RE.test(e)) return 'soft';         // content/policy → retry, don't burn
   return 'hard';                                      // ambiguous → unchanged
+}
+
+// After this many TRANSIENT send failures to the SAME recipient on the SAME
+// step, the lead is parked as undeliverable instead of retried forever.
+const MAX_SEND_ATTEMPTS_PER_STEP = 5;
+
+// ¿Este fallo guardado cuenta contra el DESTINATARIO para el tope de 5? (antes iba en línea en
+// el bucle; misma regla). 06-10-2026: los fallos del REMITENTE (MAIL FROM rechazado, servidor SMTP
+// no permitido) ya no cuentan: con un buzón muerto el lead perdía sus 5 intentos sin culpa.
+function countsAgainstRecipient(msg: string): boolean {
+  const m = msg || "";
+  if (/^(Sender rejected:|Servidor SMTP no permitido)/i.test(m)) return false;
+  // Sender/account-side failures (throttling '451/rate', temporary 'auth') must NOT
+  // burn the RECIPIENT's retry budget — otherwise an IONOS 503 storm or a briefly
+  // throttled mailbox parks perfectly good leads as "undeliverable" forever.
+  // En la fase del destinatario se clasifica igual que al enviar (recipientStageClass): un bloqueo
+  // por reputación (Spamhaus…) es culpa de NUESTRA IP, no gasta los intentos del lead.
+  const c = /^(Recipient rejected|Send failed|DATA rejected):/i.test(m) ? recipientStageClass(m) : classifySmtpError(m);
+  if (c !== "rate" && c !== "auth") return true;
+  // …but a 45x answered at RCPT TO for THIS recipient, while the same account keeps
+  // sending to everyone else, is the recipient's problem, not throttling. IONOS says
+  // "451 local error in processing" for an address it cannot route — forever. Left
+  // uncounted, one dead address was retried every minute for two days (seen live:
+  // 303, 255 and 191 attempts), each one eating that account's only slot per tick.
+  // Real throttling / greylisting wording stays exempt.
+  return /^Recipient rejected:\s*45[0-2]/i.test(m)
+    && !/throttl|rate limit|too many|421|greylist|try again/i.test(m);
+}
+
+// Reintento CON ESPERA (06-10-2026): un 451 "local error in processing" se reintentaba en la
+// pasada siguiente y a los 5 minutos el lead quedaba 'failed' (98 de 171 en 7 días). Ahora cada
+// fallo pasajero del destinatario aplaza el lead: 10 min, 1 h, 4 h y 24 h; al 5.º, 'failed'.
+const RETRY_BACKOFF_MS = [10 * 60_000, 60 * 60_000, 4 * 3600_000, 24 * 3600_000];
+/** Qué hacer con el LEAD tras un fallo. priorCounted = fallos anteriores que ya contaban.
+ *  null = nada (lo decide la clase: rebote, cuenta, remitente…), 'cap' = se marca 'failed'. */
+function leadRetryPlan(errClass: string | undefined, msg: string, priorCounted: number):
+  { kind: "retry"; delayMs: number } | { kind: "cap" } | null {
+  if (errClass === "hard" || errClass === "auth" || errClass === "sender" || errClass === "sent_unconfirmed") return null;
+  if (isDeadSenderError(msg)) return null;
+  const counted = countsAgainstRecipient(msg);
+  // Un 4xx del destinatario que NO cuenta (greylisting…) también espera, sin gastar intentos.
+  const recipient4xx = /^(Recipient rejected|Send failed|DATA rejected):\s*4\d\d/i.test(msg || "");
+  if (!counted && !recipient4xx) return null;   // problema de la cuenta: reintenta otra pasada
+  const n = priorCounted + (counted ? 1 : 0);
+  if (counted && n >= MAX_SEND_ATTEMPTS_PER_STEP) return { kind: "cap" };
+  return { kind: "retry", delayMs: RETRY_BACKOFF_MS[Math.min(Math.max(n, 1) - 1, RETRY_BACKOFF_MS.length - 1)] };
+}
+
+// Buzón REMITENTE muerto (06-10-2026): senderStageClass rebaja todo fallo de MAIL FROM a 'rate',
+// así que "Sender rejected: 550 mailbox unavailable" nunca marcaba la cuenta y seguía cogiendo
+// leads cada pasada. Un 55x permanente en MAIL FROM (sin palabras de reputación ni de límite)
+// pasa la cuenta a 'error'; health-monitor la vuelve a probar sola.
+function isDeadSenderError(msg: string): boolean {
+  const m = msg || "";
+  if (!/^Sender rejected:\s*55[0-4]/i.test(m)) return false;
+  if (REPUTATION_RE.test(m)) return false;
+  return !/exceed|too many|\blimit|throttl|\brate\b|temporar|try again|\b503\b/i.test(m);
+}
+
+// Adjuntos permitidos (06-10-2026): sólo los de ESTA campaña. Legado: bucket público godtube-media
+// con ruta "campaign-attachments/<campaña>/…"; nuevo: bucket privado campaign-attachments con ruta
+// "<usuario>/<campaña>/<paso>/<archivo>". Cualquier otra cosa → null (no se descarga).
+function attachmentSource(a: any, campaign: { id: string; user_id: string }): { bucket: string; path: string } | null {
+  const path = String(a?.path || "").trim();
+  if (!path || path.startsWith("/") || path.includes("..") || path.includes("\\")) return null;
+  const bucket = String(a?.bucket || "").trim();
+  if (bucket === "campaign-attachments") {
+    return path.startsWith(`${campaign.user_id}/${campaign.id}/`) ? { bucket, path } : null;
+  }
+  if (bucket === "" || bucket === "godtube-media") {
+    return path.startsWith(`campaign-attachments/${campaign.id}/`) ? { bucket: "godtube-media", path } : null;
+  }
+  return null;
+}
+
+// ¿Respuesta SMTP completa? (06-10-2026) Sólo si el texto acumulado acaba en CRLF y la última
+// línea es "NNN " o "NNN" (RFC 5321). Antes valía un "250" a medias sin CRLF: si el paquete se
+// cortaba en "250" y lo siguiente era "-PIPELINING…", se leía la respuesta incompleta y la
+// sesión se desfasaba (respuestas de un comando atribuidas al siguiente).
+function smtpReplyComplete(acc: string): boolean {
+  if (!acc.endsWith("\r\n")) return false;
+  const lines = acc.split("\r\n").filter((l) => l.length > 0);
+  const last = lines[lines.length - 1] || "";
+  return /^\d{3}(?: |$)/.test(last);
 }
 
 // Promise with timeout — prevents hung connections from killing the cron
@@ -590,6 +683,9 @@ async function sendInstantlyEmail(
 
 
 // ─── SMTP sender with full deliverability headers ───
+
+// Resultado de assertPublicMailHost por "host:puerto" (resuelve DNS: una vez, no en cada envío).
+const _hostGuardCache = new Map<string, string | null>();
 
 async function sendSmtpEmail(
   host: string, port: number, username: string, password: string,
@@ -739,6 +835,21 @@ async function sendSmtpEmail(
     // (notably IONOS on :465) routinely take 15-25s to complete the TLS handshake, which
     // showed up as ~900 "Timeout: connect smtp.ionos.es" errors/day. 25s lets those succeed
     // on the first try instead of failing + retrying. The 90s tick deadline still bounds it.
+    // Sólo servidores de correo PÚBLICOS (06-10-2026, SSRF): un smtp_host apuntando a una IP
+    // interna (169.254.169.254, 10.x, localhost…) se conectaba tal cual desde el servidor. Clase
+    // 'sender' = problema del BUZÓN: la cuenta pasa a 'error' y el lead no pierde nada (ni rebote
+    // ni intento gastado). No es 'auth' porque las credenciales no tienen la culpa.
+    const hostKey = `${endpoint.host.toLowerCase()}:${endpoint.port}`;
+    let hostProblem = _hostGuardCache.get(hostKey);
+    if (hostProblem === undefined) {
+      hostProblem = await assertPublicMailHost(endpoint.host, endpoint.port);
+      if (_hostGuardCache.size > 200) _hostGuardCache.clear();
+      _hostGuardCache.set(hostKey, hostProblem);
+    }
+    if (hostProblem) {
+      return { ok: false, error: `Servidor SMTP no permitido: ${hostProblem}`, errorClass: "sender" };
+    }
+
     let conn: Deno.Conn;
     if (endpoint.port === 465) {
       conn = await withTimeout(Deno.connectTls({ hostname: endpoint.host, port: endpoint.port }), 25000, `connect ${endpoint.host}:${endpoint.port}`);
@@ -762,10 +873,8 @@ async function sendSmtpEmail(
         const n = await conn.read(buf);
         if (!n) break;
         result += decoder.decode(buf.subarray(0, n));
-        const lines = result.split('\r\n').filter(l => l.length > 0);
-        if (lines.length === 0) continue;
-        const last = lines[lines.length - 1];
-        if (/^\d{3}[ ]/.test(last) || /^\d{3}$/.test(last)) break;
+        // Completa sólo con CRLF final y última línea "NNN " (06-10-2026, ver smtpReplyComplete).
+        if (smtpReplyComplete(result)) break;
       }
       return result;
     };
@@ -828,10 +937,7 @@ async function sendSmtpEmail(
             const n = await conn.read(buf);
             if (!n) break;
             result += decoder.decode(buf.subarray(0, n));
-            const lines = result.split('\r\n').filter(l => l.length > 0);
-            if (lines.length === 0) continue;
-            const last = lines[lines.length - 1];
-            if (/^\d{3}[ ]/.test(last) || /^\d{3}$/.test(last)) break;
+            if (smtpReplyComplete(result)) break;
           }
           return result;
         };
@@ -889,7 +995,14 @@ async function sendSmtpEmail(
           return { ok: false, error: `Recipient rejected: ${rcptResp.trim()}`, errorClass: recipientStageClass(rcptResp) };
         }
 
-        await sendTls("DATA");
+        // El servidor tiene que contestar 354 antes de recibir el mensaje (06-10-2026). Antes se
+        // escribía el correo igualmente: si DATA se rechazaba, el cuerpo se leía como comandos.
+        const dataCmdResp = await sendTls("DATA");
+        if (!dataCmdResp.trim().startsWith("354")) {
+          try { await sendTls("QUIT"); } catch {}
+          try { conn.close(); } catch {}
+          return { ok: false, error: `DATA rejected: ${dataCmdResp.trim()}`, errorClass: recipientStageClass(dataCmdResp) };
+        }
         let dataResp: string;
         try {
           dataResp = await writeRawTls(fullMessage);
@@ -945,10 +1058,18 @@ async function sendSmtpEmail(
     if (!rcptResp.startsWith("250")) {
       try { await send("QUIT"); } catch {}
       try { conn.close(); } catch {}
-      return { ok: false, error: `Recipient rejected: ${rcptResp.trim()}`, errorClass: classifySmtpError(rcptResp) };
+      // Igual que en STARTTLS (06-10-2026): con classifySmtpError un "550 blocked using Spamhaus"
+      // o "554 rejected as spam" en :465 (2.376 de 2.416 buzones) contaba como rebote del lead y
+      // se suprimía una dirección buena. recipientStageClass lo deja en 'rate' (culpa de la IP).
+      return { ok: false, error: `Recipient rejected: ${rcptResp.trim()}`, errorClass: recipientStageClass(rcptResp) };
     }
 
-    await send("DATA");
+    const dataCmdResp = await send("DATA");
+    if (!dataCmdResp.trim().startsWith("354")) {
+      try { await send("QUIT"); } catch {}
+      try { conn.close(); } catch {}
+      return { ok: false, error: `DATA rejected: ${dataCmdResp.trim()}`, errorClass: recipientStageClass(dataCmdResp) };
+    }
     let dataResp: string;
     try {
       dataResp = await writeRaw(fullMessage);
@@ -964,7 +1085,7 @@ async function sendSmtpEmail(
     try { conn.close(); } catch {}
     return sent
       ? { ok: true, messageId: msgId }
-      : { ok: false, error: `Send failed: ${dataResp.trim()}`, errorClass: classifySmtpError(dataResp) };
+      : { ok: false, error: `Send failed: ${dataResp.trim()}`, errorClass: recipientStageClass(dataResp) };
   } catch (e) {
     const msg = e?.message || String(e);
     return { ok: false, error: `SMTP error: ${msg}`, errorClass: classifySmtpError(msg) };
@@ -1122,14 +1243,25 @@ serve(async (req) => {
     // campañas de hoy siguen en 4— y hasta 24 (un tercio de la pasada) para las grandes. Lo de
     // arriba sigue siendo verdad: ningún BUZÓN envía más rápido (1 por pasada, 6–9 min, 30/día);
     // sólo pueden coincidir más buzones distintos de la misma campaña en un mismo minuto.
-    // After this many TRANSIENT send failures to the SAME recipient on the SAME
-    // step, the lead is parked as undeliverable instead of retried forever.
-    const MAX_SEND_ATTEMPTS_PER_STEP = 5;
+    // (MAX_SEND_ATTEMPTS_PER_STEP vive arriba, junto a countsAgainstRecipient / leadRetryPlan.)
+    // ¿Existe ya campaign_leads.next_attempt_at? (migración 20261006140000). Si aún no se ha
+    // aplicado, el motor funciona como antes: sin filtro ni esperas, nada se rompe (06-10-2026).
+    let hasNextAttemptCol = false;
+    {
+      const { error: naErr } = await adminClient.from("campaign_leads").select("next_attempt_at").limit(1);
+      hasNextAttemptCol = !naErr;
+      if (naErr) console.warn(`campaign_leads.next_attempt_at no disponible (${naErr.message}): reintentos sin espera`);
+    }
+    // Filtro de la consulta de leads: fuera los que esperan su reintento.
+    const notWaiting = (q: any) => hasNextAttemptCol
+      ? q.or(`next_attempt_at.is.null,next_attempt_at.lte."${new Date().toISOString()}"`)
+      : q;
     // Counts every real SMTP attempt (success AND failure/timeout). Capping on
     // this — not just successful sends — is what actually bounds worst-case
     // wall-clock: a string of failing/hung accounts would never trip a
     // successes-only counter, but each attempt still costs up to ~15s.
     let sendAttemptsThisRun = 0;
+    let recentCheckWarned = false; // aviso único si falta user_emailed_recently
 
     // ═══ Cross-campaign account coordination (shared across ALL campaigns in
     // this invocation) ═══
@@ -1449,18 +1581,18 @@ serve(async (req) => {
       // ya se conoce el reparto del día. Con el reparto apagado todo sigue exactamente igual.
       const mixWanted = (campaign as any).mix_mode === "auto" || (campaign as any).mix_mode === "manual";
       const [followupRes, newRes] = await Promise.all([
-        mixWanted ? Promise.resolve({ data: [] as any[] }) : adminClient
+        mixWanted ? Promise.resolve({ data: [] as any[] }) : notWaiting(adminClient
           .from("campaign_leads")
           .select("*, leads(*)")
           .eq("campaign_id", campaign.id)
-          .eq("status", "in_progress")
+          .eq("status", "in_progress"))
           .order("last_sent_at", { ascending: true, nullsFirst: true })
           .limit(LEAD_FETCH_CAP),
-        adminClient
+        notWaiting(adminClient
           .from("campaign_leads")
           .select("*, leads(*)")
           .eq("campaign_id", campaign.id)
-          .eq("status", "pending")
+          .eq("status", "pending"))
           .order("id", { ascending: true })
           .limit(LEAD_FETCH_CAP),
       ]);
@@ -1576,9 +1708,9 @@ serve(async (req) => {
         // (seguimientos primero) y se vuelve a intentar en la pasada siguiente.
         const comoSiempre = async (motivo: string) => {
           console.error(`Campaign "${campaign.name}": reparto no disponible (${motivo}) — esta pasada envía como siempre`);
-          const { data: legacy } = await adminClient
+          const { data: legacy } = await notWaiting(adminClient
             .from("campaign_leads").select("*, leads(*)")
-            .eq("campaign_id", campaign.id).eq("status", "in_progress")
+            .eq("campaign_id", campaign.id).eq("status", "in_progress"))
             .order("last_sent_at", { ascending: true, nullsFirst: true }).limit(LEAD_FETCH_CAP);
           campaignLeads = [...(legacy || []), ...(newRes.data || [])];
         };
@@ -1765,9 +1897,17 @@ serve(async (req) => {
         // Ritmo por EMPRESA, ANTES del tope de revisión: es una comprobación en memoria, así que un
         // lead de una empresa ya servida hoy no gasta el tope y el motor llega a las demás aunque
         // media campaña sea de la misma empresa.
+        // Lead esperando su reintento (también los que llegan por campaign_due_followups).
+        if ((cl as any).next_attempt_at && Date.parse((cl as any).next_attempt_at) > now.getTime()) {
+          totalSkipped++;
+          continue;
+        }
         {
           const dom0 = String(cl.leads?.email || "").split("@")[1]?.toLowerCase() || "";
-          if (esEmpresa(dom0) && puedeEscribirEmpresa(ritmoEmpresa.get(`${campaign.user_id}|${dom0}`), now.getTime(), cupoEmpresa, huecoEmpresaMin) !== "si") {
+          // Cupo diario por empresa sólo para PRIMEROS correos (06-10-2026); los seguimientos sólo
+          // respetan el hueco de 90 min. Con el cupo, 482 seguimientos llevaban >7 días de retraso.
+          const primerCorreo = (cl.current_step || 0) === 0;
+          if (esEmpresa(dom0) && puedeEscribirEmpresa(ritmoEmpresa.get(`${campaign.user_id}|${dom0}`), now.getTime(), cupoEmpresa, huecoEmpresaMin, primerCorreo) !== "si") {
             totalSkipped++;
             continue;
           }
@@ -2006,8 +2146,18 @@ serve(async (req) => {
           }
           // Respect daily caps even on the bound account
           if (account.sent_today >= getEffectiveLimit(account)) {
-            totalSkipped++;
-            continue;
+            // PRESTADO por saturación (06-10-2026): un seguimiento con MÁS DE 2 DÍAS de retraso
+            // cuyo buzón llega lleno cada día sale de un buzón hermano, igual que cuando el buzón
+            // está desconectado. El lead sigue asignado al original (no se toca assigned_account_id).
+            const dueMs = cl.last_sent_at ? Date.parse(cl.last_sent_at) + (step.delay_days || 0) * 86_400_000 : NaN;
+            const overdue2d = currentStepIndex > 0 && Number.isFinite(dueMs) && now.getTime() - dueMs > 2 * 86_400_000;
+            const sibling = overdue2d && account.id === boundId ? selectAccount() : null;
+            if (!sibling) {
+              totalSkipped++;
+              continue;
+            }
+            console.warn(`Lead ${lead.id}: buzón ${account.email} lleno y seguimiento con >2 días de retraso; este envío sale de ${sibling.email} (el lead sigue asignado al original)`);
+            account = sibling;
           }
           // Respect 7–9 min cooldown on the bound account
           if (isAccountOnCooldown(account)) {
@@ -2229,6 +2379,7 @@ serve(async (req) => {
         // the SAME email already received THIS step, advance this lead WITHOUT sending
         // (it shadows the primary and completes silently). Runs only for leads that
         // already passed every gate and are about to send — a handful per tick.
+        let priorRecipientFailures = 0; // fallos previos que cuentan (para la espera del reintento)
         {
           const { data: priorRows } = await adminClient
             .from("sent_emails")
@@ -2257,23 +2408,10 @@ serve(async (req) => {
           // logged 101 `failed` rows in 5h, wrecking the campaign's Sender-Bounced %.
           // After MAX_SEND_ATTEMPTS_PER_STEP transient failures we give up on this
           // address for THIS step and park the lead as undeliverable (never re-queued).
-          const failedAttempts = (priorRows || []).filter((r: any) => {
-            if (r.status !== "failed") return false;
-            // Sender/account-side failures (throttling '451/rate', temporary 'auth') must NOT
-            // burn the RECIPIENT's retry budget — otherwise an IONOS 503 storm or a briefly
-            // throttled mailbox parks perfectly good leads as "undeliverable" forever.
-            const c = classifySmtpError(r.error_message || "");
-            if (c !== "rate" && c !== "auth") return true;
-            // …but a 45x answered at RCPT TO for THIS recipient, while the same account keeps
-            // sending to everyone else, is the recipient's problem, not throttling. IONOS says
-            // "451 local error in processing" for an address it cannot route — forever. Left
-            // uncounted, one dead address was retried every minute for two days (seen live:
-            // 303, 255 and 191 attempts), each one eating that account's only slot per tick.
-            // Real throttling / greylisting wording stays exempt.
-            const msg = r.error_message || "";
-            return /^Recipient rejected:\s*45[0-2]/i.test(msg)
-              && !/throttl|rate limit|too many|421|greylist|try again/i.test(msg);
-          }).length;
+          // (La regla de qué fallo cuenta vive en countsAgainstRecipient, arriba.)
+          const failedAttempts = (priorRows || []).filter((r: any) =>
+            r.status === "failed" && countsAgainstRecipient(r.error_message || "")).length;
+          priorRecipientFailures = failedAttempts;
           if (failedAttempts >= MAX_SEND_ATTEMPTS_PER_STEP) {
             await adminClient.from("campaign_leads")
               .update({ status: "failed", last_sent_at: now.toISOString() })
@@ -2282,12 +2420,30 @@ serve(async (req) => {
             totalSkipped++;
             continue;
           }
+          // MISMA DIRECCIÓN DESDE OTRA CAMPAÑA (06-10-2026): una "(copia)" de campaña volvía a
+          // mandar el primer correo a quien ya lo había recibido. Para el PRIMER correo se mira si
+          // este cliente ya envió cualquier correo de campaña a esa dirección en los últimos 90
+          // días (función user_emailed_recently, índice idx_se_user_to_email_lower). Si es así, el
+          // lead se da por terminado ('completed', como un bloqueado) para que no vuelva cada pasada.
+          if (currentStepIndex === 0) {
+            const { data: yaEscrito, error: recErr } = await adminClient.rpc("user_emailed_recently", {
+              p_user: campaign.user_id, p_email: leadEmail,
+              p_since: new Date(now.getTime() - 90 * 86_400_000).toISOString(),
+            });
+            if (recErr) {
+              // Sin la función (migración sin aplicar) se envía como antes; con otro error se
+              // espera a la pasada siguiente en vez de arriesgar un duplicado.
+              const sinFuncion = recErr.code === "PGRST202" || /could not find the function|does not exist/i.test(recErr.message || "");
+              if (!sinFuncion) { totalSkipped++; continue; }
+              if (!recentCheckWarned) { recentCheckWarned = true; console.warn(`user_emailed_recently no disponible: ${recErr.message}`); }
+            } else if (yaEscrito === true) {
+              await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
+              console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} ya recibió un correo de campaña de este cliente en los últimos 90 días → no se envía el primer correo`);
+              totalSkipped++;
+              continue;
+            }
+          }
         }
-
-        // inbox/reply ops on existing campaigns. We always send via local SMTP
-        // (with quoted-printable bodies and the List-Unsubscribe / List-Unsubscribe-Post
-        // and Reply-To headers; Feedback-ID is deliberately NOT emitted).
-        const transportUsed: 'instantly' | 'smtp' = 'smtp';
 
         // Opt-out — when the campaign enabled it AND this sending account is in the
         // chosen scope. The RFC 8058 HEADER goes on EVERY step (Gmail/Yahoo bulk-sender
@@ -2311,7 +2467,22 @@ serve(async (req) => {
         }
 
         // Files attached to THIS step (from Storage, cached by path) ride along with every send.
-        const stepAttachments = await resolveStepAttachments(adminClient, step);
+        const stepAttachments = await resolveStepAttachments(adminClient, step, campaign);
+
+        // RESERVA del seguimiento (06-10-2026): el paso 0 ya se reserva con assigned_account_id;
+        // los seguimientos no tenían reserva. Se "toma" el lead moviendo last_sent_at a ahora SÓLO
+        // si nadie lo ha tocado desde que se leyó; si otra pasada se adelantó, éste no se envía.
+        // Si el envío falla, record() devuelve last_sent_at a su valor (el plazo no se mueve).
+        let claimIso: string | null = null;
+        if (currentStepIndex > 0) {
+          const claimAt = now.toISOString();
+          let claimQ = adminClient.from("campaign_leads").update({ last_sent_at: claimAt }).eq("id", cl.id);
+          claimQ = cl.last_sent_at ? claimQ.eq("last_sent_at", cl.last_sent_at) : claimQ.is("last_sent_at", null);
+          const { data: claimedFu, error: claimFuErr } = await claimQ.select("id").maybeSingle();
+          if (claimFuErr) console.error(`follow-up claim failed for lead ${lead.id}: ${claimFuErr.message}`);
+          if (!claimedFu) { totalSkipped++; continue; }
+          claimIso = claimAt;
+        }
 
         // The SMTP handoff as a thunk — run inline (sequential) or dispatched with
         // a concurrent batch (parallel). All captured vars are already finalised here.
@@ -2363,12 +2534,12 @@ serve(async (req) => {
           error_message: result.error || null,
           variant_index: variantIndex,
           smtp_message_id: thisMsgId,
-          transport: transportUsed,
         };
-        const insertWithTransport = await adminClient.from("sent_emails").insert(sentEmailPayload);
-        if (insertWithTransport.error && /transport/i.test(insertWithTransport.error.message || "")) {
-          const { transport: _transport, ...fallbackPayload } = sentEmailPayload;
-          await adminClient.from("sent_emails").insert(fallbackPayload);
+        // Sin "transport" (06-10-2026): la columna no existe en producción, así que CADA envío
+        // hacía un insert fallido (42703) y otro sin ella, cuyo error nadie miraba.
+        const { error: insErr } = await adminClient.from("sent_emails").insert(sentEmailPayload);
+        if (insErr) {
+          console.error(`sent_emails insert failed (${insErr.code || "?"}) lead=${lead.id} step=${step.id} status=${finalStatus}: ${insErr.message}`);
         }
 
         if (treatAsSent) {
@@ -2402,6 +2573,8 @@ serve(async (req) => {
             // (el original estaba desconectado) no lo cambia.
             assigned_account_id: boundId || account.id,
             status: newStep >= steps.length ? "completed" : "in_progress",
+            // Enviado: se acaba cualquier espera de reintento.
+            ...(hasNextAttemptCol ? { next_attempt_at: null } : {}),
           }).eq("id", cl.id);
 
           await adminClient.from("campaigns").update({
@@ -2423,6 +2596,14 @@ serve(async (req) => {
           // Smart error reaction (Instantly behaviour)
           console.warn(`SMTP fail [${errClass}] account=${account.email} → ${lead.email}: ${result.error}`);
 
+          // Seguimiento reservado y no enviado: last_sent_at vuelve a su valor (si nadie lo cambió).
+          if (claimIso) {
+            const { error: undoErr } = await adminClient.from("campaign_leads")
+              .update({ last_sent_at: cl.last_sent_at ?? null })
+              .eq("id", cl.id).eq("last_sent_at", claimIso);
+            if (undoErr) console.error(`follow-up claim undo failed for lead ${lead.id}: ${undoErr.message}`);
+          }
+
           // Class-agnostic circuit breaker: back a mailbox off for the rest of the
           // run after MAX_ACCOUNT_FAIL_STREAK consecutive misses, so a throttled or
           // desynced server (any error class, incl. 'unknown'/'soft') can't be
@@ -2435,11 +2616,35 @@ serve(async (req) => {
             console.warn(`Circuit breaker: ${account.email} backed off for this run after ${accountFailStreak[account.id]} consecutive failures`);
           }
 
-          if (errClass === 'auth') {
-            // Special bypass: never disconnect Dekano accounts (keep campaigns running)
-            const NEVER_DISCONNECT_USERS = new Set<string>([
-              "e6d759aa-c8e0-4bc3-820f-2d64d88cda06", // eric@dekano-core.es
-            ]);
+          // Special bypass: never disconnect Dekano accounts (keep campaigns running)
+          const NEVER_DISCONNECT_USERS = new Set<string>([
+            "e6d759aa-c8e0-4bc3-820f-2d64d88cda06", // eric@dekano-core.es
+          ]);
+          // BUZÓN REMITENTE INSERVIBLE (06-10-2026): MAIL FROM rechazado con un 55x permanente
+          // ("Sender rejected: 550 mailbox unavailable") o servidor SMTP no permitido (clase
+          // 'sender'). La cuenta pasa a 'error' con su motivo (health-monitor la vuelve a probar
+          // sola) y el lead no pierde nada: un primer correo se suelta para que lo coja otro buzón;
+          // un seguimiento sigue asignado y la pasada siguiente sale prestado de un hermano.
+          const deadSender = errClass === 'sender' || (errClass === 'rate' && isDeadSenderError(result.error || ""));
+          if (deadSender) {
+            rateLimitedThisRun.add(account.id);
+            const didx = accounts.findIndex((a: any) => a.id === account.id);
+            if (didx >= 0) accounts.splice(didx, 1);
+            if (!NEVER_DISCONNECT_USERS.has(account.user_id)) {
+              const { error: deadErr } = await adminClient.from("email_accounts")
+                .update({ status: "error", last_error: String(result.error || "").slice(0, 500) })
+                .eq("id", account.id);
+              if (deadErr) console.error(`could not mark ${account.email} as error: ${deadErr.message}`);
+              else console.warn(`Buzón ${account.email} marcado 'error' (remitente rechazado): ${result.error}`);
+            } else {
+              console.warn(`[bypass] sender error on ${account.email} ignored — account kept active`);
+            }
+            if (currentStepIndex === 0) {
+              await adminClient.from("campaign_leads")
+                .update({ assigned_account_id: null })
+                .eq("id", cl.id).eq("current_step", 0).eq("assigned_account_id", account.id);
+            }
+          } else if (errClass === 'auth') {
             if (!NEVER_DISCONNECT_USERS.has(account.user_id)) {
               // Credential problem — disconnect account so it stops being used
               await adminClient.from("email_accounts")
@@ -2476,6 +2681,21 @@ serve(async (req) => {
             if (idx >= 0) accounts.splice(idx, 1);
           }
           // 'soft' / 'unknown' → leave campaign_lead pending, will retry next cron cycle
+
+          // Reintento CON ESPERA del lead (06-10-2026, ver leadRetryPlan): 10 min, 1 h, 4 h, 24 h;
+          // al 5.º fallo que cuenta, 'failed'. Sin la columna next_attempt_at, como antes.
+          const plan = deadSender ? null : leadRetryPlan(errClass, result.error || "", priorRecipientFailures);
+          if (plan?.kind === "cap") {
+            await adminClient.from("campaign_leads")
+              .update({ status: "failed", last_sent_at: now.toISOString() })
+              .eq("id", cl.id).in("status", ["pending", "in_progress"]);
+            console.warn(`RETRY CAP hit: ${leadEmail} failed ${priorRecipientFailures + 1}× on step ${currentStepIndex} → parked as undeliverable`);
+          } else if (plan?.kind === "retry" && hasNextAttemptCol) {
+            const { error: naErr } = await adminClient.from("campaign_leads")
+              .update({ next_attempt_at: new Date(Date.now() + plan.delayMs).toISOString() })
+              .eq("id", cl.id);
+            if (naErr) console.error(`next_attempt_at update failed for lead ${lead.id}: ${naErr.message}`);
+          }
         }
         }; // ── end record() thunk ──
 

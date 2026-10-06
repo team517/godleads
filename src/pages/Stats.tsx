@@ -8,6 +8,7 @@ import RetryNotice from "@/components/RetryNotice";
 import { useWidget } from "@/hooks/useWidget";
 import { num } from "@/lib/widget-state";
 import { sumPoints, toDayPoints, type DailyRpcRow, type DayPoint } from "@/lib/daily-rows";
+import { autoRepliesLabel, fetchMetricsExtra, sumMetricsExtra } from "@/lib/campaign-health";
 
 type Summary = { sent?: unknown; contacted?: unknown; bounced?: unknown; opened?: unknown; replied?: unknown; failed?: unknown };
 
@@ -26,6 +27,14 @@ export default function Stats() {
     cacheKey: "stats:summary",
     enabled: !!user,
     load: () => (supabase as any).rpc("user_email_stats"),
+    deps: [user?.id],
+  });
+  // Respuestas de personas vs automáticas (suma de las campañas). Aparte del resumen: si falla o la
+  // función no existe, "Respuestas" se queda como antes y avisa de que incluye automáticas.
+  const extraW = useWidget<{ human: number; auto: number } | null>({
+    cacheKey: "stats:replies-split",
+    enabled: !!user,
+    load: async () => ({ data: sumMetricsExtra(await fetchMetricsExtra(supabase as any)), error: null }),
     deps: [user?.id],
   });
   const dailyW = useWidget<DailyRpcRow[]>({
@@ -56,14 +65,18 @@ export default function Stats() {
     { name: "Fallidos", value: stats.failed, color: "hsl(var(--warning))" },
   ];
 
-  const replyRate = stats.contacted > 0 ? (stats.replied / stats.contacted) * 100 : 0;
+  // "Respuestas" = personas; las automáticas (fuera de oficina…) van aparte. Sin el desglose, la cifra
+  // de siempre (que las incluye) y se dice.
+  const split = extraW.data ?? null;
+  const repliesShown = split ? split.human : stats.replied;
+  const replyRate = stats.contacted > 0 ? (repliesShown / stats.contacted) * 100 : 0;
 
   // Primary — the numbers that matter, each with a clarifying sub-label so "leads" (personas)
   // is never confused with "correos" (con follow-ups) again.
   const primaryStats = [
     { label: "Leads contactados", value: stats.contacted.toLocaleString("es"), sub: "personas únicas", highlight: false },
     { label: "Correos enviados", value: stats.sent.toLocaleString("es"), sub: "con follow-ups", highlight: false },
-    { label: "Respuestas", value: stats.replied.toLocaleString("es"), sub: "recibidas", highlight: false },
+    { label: "Respuestas", value: repliesShown.toLocaleString("es"), sub: split ? (autoRepliesLabel(split.auto) || "de personas") : "incluye automáticas", highlight: false },
     { label: "Tasa de respuesta", value: `${replyRate.toFixed(1)}%`, sub: "por lead contactado", highlight: true },
   ];
   const secondaryStats = [

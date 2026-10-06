@@ -1,5 +1,6 @@
 import { fetchBounceBreakdown, fetchCampaignMetrics, type BounceBreakdown } from "@/lib/campaign-metrics";
 import { useState, useEffect } from "react";
+import { campaignHealthReason, fetchCampaignHealth, fetchMetricsExtra, type CampaignHealthRow, type MetricsExtra } from "@/lib/campaign-health";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { errorText, isMissingRpc, num } from "@/lib/widget-state";
 import RetryNotice from "@/components/RetryNotice";
@@ -19,7 +20,7 @@ import CampaignDetail from "@/components/campaigns/CampaignDetail";
 import EmptyShowcase from "@/components/EmptyShowcase";
 import CampaignMetricsInline from "@/components/campaigns/CampaignMetricsInline";
 import CampaignProgressRing from "@/components/campaigns/CampaignProgressRing";
-import CampaignsTable from "@/components/campaigns/CampaignsTable";
+import CampaignsTable, { CampaignHealthChip } from "@/components/campaigns/CampaignsTable";
 
 /** Lo que la lista y sus acciones usan de cada campaña (tabla, tarjetas, duplicar, remix, ficha).
  *  Antes era `*`: cada visita bajaba también la firma HTML y toda la configuración de envío de
@@ -90,6 +91,12 @@ export default function Campaigns() {
   const [metricsMap, setMetricsMap] = useState<Record<string, any>>(() => cacheGet<Record<string, any>>("campaigns:metrics") || {});
   // Rebotes por causa (tooltip de la celda "Rebotados"); llega después de las métricas.
   const [bounceMap, setBounceMap] = useState<Record<string, BounceBreakdown>>({});
+  // Respuestas humanas vs automáticas y envíos sin confirmar (campaign_metrics_extra). Llega después
+  // de las métricas; si la función no existe o falla, las pantallas caen a la cifra de siempre.
+  const [extraMap, setExtraMap] = useState<Record<string, MetricsExtra>>(() => cacheGet<Record<string, MetricsExtra>>("campaigns:extra") || {});
+  // Salud de las campañas ACTIVAS (campaign_health_mine): por qué una "Activa" no está enviando.
+  // Sin caché a propósito: un chip de hace horas mentiría; sin dato, no hay chip.
+  const [healthMap, setHealthMap] = useState<Record<string, CampaignHealthRow>>({});
   // Progress per campaign = leads already emailed / total leads (count-only queries).
   const [progressMap, setProgressMap] = useState<Record<string, { sent: number; total: number }>>(() => cacheGet<Record<string, { sent: number; total: number }>>("campaigns:progress") || {});
   const [showCreate, setShowCreate] = useState(false);
@@ -154,6 +161,12 @@ export default function Campaigns() {
       setMetricsMap(map);
       cacheSet("campaigns:metrics", map);
       void fetchBounceBreakdown(supabase as any, user.id).then(setBounceMap).catch(() => { /* sin desglose: sólo el total */ });
+      void fetchMetricsExtra(supabase as any).then((ex) => {
+        if (!Object.keys(ex).length) return; // sin la función (o fallo): se conserva lo que hubiera
+        setExtraMap(ex);
+        cacheSet("campaigns:extra", ex);
+      }).catch(() => { /* sin desglose: la cifra de siempre */ });
+      void reloadHealth();
     });
     // Progress = leads emailed / total leads, per campaign — ONE RPC for all of them.
     const progressP = loadProgress(camps).then((progress) => {
@@ -162,6 +175,15 @@ export default function Campaigns() {
       cacheSet("campaigns:progress", progress);
     });
     await Promise.all([metricsP, progressP]);
+  };
+
+  /** Salud de las activas: una RPC. Un fallo conserva lo que había (nunca inventa un chip). */
+  const reloadHealth = async () => {
+    if (!user) return;
+    try {
+      const h = await fetchCampaignHealth(supabase as any);
+      setHealthMap(h);
+    } catch { /* sin chips */ }
   };
 
   const loadProgress = async (camps: any[]): Promise<Record<string, { sent: number; total: number }> | null> => {
@@ -190,14 +212,26 @@ export default function Campaigns() {
 
   useEffect(() => { load(); }, [user]);
 
+  // La franja horaria y los topes cambian con el reloj: se recalcula la salud cada 5 min con la
+  // pestaña visible (una sola RPC, sin tocar las métricas).
+  useEffect(() => {
+    if (!user) return;
+    const t = setInterval(() => { if (!document.hidden) void reloadHealth(); }, 300_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   // The reply rate must be over PEOPLE CONTACTED, not total emails (which include
   // follow-ups). `progressMap[id].sent` = campaign_leads already emailed = contacted
   // people — already computed (count-only), so we feed it as `contacted` with no extra
   // query and no SQL change needed. Falls back to the RPC's own contacted if progress
   // hasn't loaded yet.
   const metricsFor = (id: string) => {
-    const mm = metricsMap[id];
-    if (!mm) return mm; // not loaded → component self-loads and computes contacted itself
+    const base = metricsMap[id];
+    if (!base) return base; // not loaded → component self-loads and computes contacted itself
+    const ex = extraMap[id];
+    // "replied" (la de siempre) mezcla autorrespuestas: con el desglose, repliedHuman/repliedAuto.
+    const mm = ex ? { ...base, repliedHuman: ex.repliedHuman, repliedAuto: ex.repliedAuto, sentUnconfirmed: ex.sentUnconfirmed } : base;
     const c = progressMap[id]?.sent;
     return c != null ? { ...mm, contacted: c } : mm;
   };
@@ -464,6 +498,7 @@ export default function Campaigns() {
         campaign={selectedCampaign}
         nameSlot={<EditableCampaignName campaign={selectedCampaign} onSaved={load} compact />}
         metrics={metricsFor(selectedCampaign.id)}
+        health={healthMap[selectedCampaign.id] ?? null}
         rawMetrics={metricsMap[selectedCampaign.id]}
         metricsError={metricsError}
         onRetryMetrics={() => { void reloadMetrics(); }}
@@ -556,6 +591,7 @@ export default function Campaigns() {
             progressMap={progressMap}
             metricsFor={metricsFor}
             bounceBreakdownFor={(id) => bounceMap[id] ?? null}
+            healthFor={(id) => healthMap[id] ?? null}
             onSelect={setSelectedId}
             onToggleStatus={handleStatusToggle}
             onDuplicate={handleDuplicate}
@@ -575,6 +611,7 @@ export default function Campaigns() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-[15px] truncate">{campaign.name}</h3>
                         <Badge variant={status.variant} className="text-[10.5px] font-semibold">{status.label}</Badge>
+                        <CampaignHealthChip reason={campaignHealthReason(campaign.status, healthMap[campaign.id])} compact />
                         {(() => {
                           const mgr = (campaign as any).manager_id ? managers.find((m) => m.id === (campaign as any).manager_id) : null;
                           return mgr ? (

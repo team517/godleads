@@ -8,6 +8,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWidget } from "@/hooks/useWidget";
 import type { DailyRpcRow } from "@/lib/daily-rows";
+import { campaignHealthReason, type CampaignHealthRow } from "@/lib/campaign-health";
+import { CampaignHealthChip } from "@/components/campaigns/CampaignsTable";
 
 /* Ficha de una campaña con el diseño del propietario (30-09-2026): barra de arriba con la chispa,
    volver, nombre, pestañas en el centro (Analítica · Editor · Leads · Ajustes) y, a la derecha,
@@ -50,6 +52,8 @@ interface Props {
   nameSlot: ReactNode;
   /** Métricas para la barra de informe (la lista mezcla `contacted` con el progreso de leads). */
   metrics?: any;
+  /** Salud de la campaña activa (campaign_health_mine): por qué no envía; null/ausente = sin chip. */
+  health?: CampaignHealthRow | null;
   /** Fila CRUDA de campaign_metrics_v2 para la pestaña Analítica (respeta "Reiniciar analíticas"). */
   rawMetrics?: any;
   metricsError?: string | null;
@@ -82,7 +86,7 @@ function SubTabs<T extends string>({ value, onChange, items }: { value: T; onCha
 
 const Loading = () => <div className="py-12 text-center text-sm text-muted-foreground">Cargando…</div>;
 
-export default function CampaignDetail({ campaign, nameSlot, metrics, rawMetrics, metricsError, onRetryMetrics, onBack, onToggleStatus, onMetricsStale }: Props) {
+export default function CampaignDetail({ campaign, nameSlot, metrics, health, rawMetrics, metricsError, onRetryMetrics, onBack, onToggleStatus, onMetricsStale }: Props) {
   const campaignId: string = campaign.id;
   const [tab, setTab] = useState<Tab>("editor");
   // Envíos/respuestas por día: UNA llamada de 14 días al abrir Analítica, que alimenta la gráfica
@@ -156,6 +160,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, rawMetrics
           <span className="hidden items-center gap-1.5 px-1 text-[14.5px] text-[#5f689f] dark:text-muted-foreground sm:inline-flex">
             <span className={cn("h-2 w-2 rounded-full", st.dot)} /> {st.label}
           </span>
+          <CampaignHealthChip reason={campaignHealthReason(campaign.status, health)} />
           <button
             type="button"
             onClick={() => { setTab("editor"); setPreview((p) => !p); }}
@@ -200,7 +205,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, rawMetrics
       {tab === "analytics" && (
         <div className="space-y-4">
           <Suspense fallback={<Loading />}>
-            <CampaignReportBar campaign={campaign} metrics={metrics} />
+            <CampaignReportBar campaign={campaign} metrics={metrics} health={health} />
             <CampaignSendsChart campaignId={campaignId} daily={daily.data} loading={daily.loading} error={daily.error} onRetry={daily.reload} />
           </Suspense>
           <SubTabs<"summary" | "sent"> value={analyticsView} onChange={setAnalyticsView} items={[{ id: "summary", label: "Resumen" }, { id: "sent", label: "Enviados" }]} />

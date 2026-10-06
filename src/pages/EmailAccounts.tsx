@@ -1378,6 +1378,8 @@ export default function EmailAccounts() {
   };
 
   const renderFormFields = () => {
+    // Al EDITAR, la contraseña guardada nunca se lee (auditoría 06-10-2026): el campo va vacío y sólo se escribe si se rellena.
+    const pwPlaceholder = editingId ? "•••••••• (dejar vacío para no cambiar)" : undefined;
     const preset = PROVIDER_PRESETS[form.provider] || PROVIDER_PRESETS.custom;
     const isPreset = form.provider !== "custom";
     return (
@@ -1418,7 +1420,7 @@ export default function EmailAccounts() {
       {isPreset && (
         <div className="space-y-1">
           <Label>Contraseña de aplicación</Label>
-          <Input type="password" value={form.imap_password} onChange={e => setForm({...form, imap_password: e.target.value, smtp_password: e.target.value})} placeholder="Contraseña de aplicación" />
+          <Input type="password" value={form.imap_password} onChange={e => setForm({...form, imap_password: e.target.value, smtp_password: e.target.value})} placeholder={pwPlaceholder ?? "Contraseña de aplicación"} autoComplete="new-password" />
         </div>
       )}
 
@@ -1428,14 +1430,14 @@ export default function EmailAccounts() {
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">IMAP</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Usuario</Label><Input value={form.imap_username} onChange={e => setForm({...form, imap_username: e.target.value})} /></div>
-            <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.imap_password} onChange={e => setForm({...form, imap_password: e.target.value})} /></div>
+            <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.imap_password} onChange={e => setForm({...form, imap_password: e.target.value})} placeholder={pwPlaceholder} autoComplete="new-password" /></div>
             <div className="space-y-1"><Label>Host</Label><Input value={form.imap_host} onChange={e => setForm({...form, imap_host: e.target.value})} placeholder="imap.gmail.com" /></div>
             <div className="space-y-1"><Label>Puerto</Label><Input value={form.imap_port} onChange={e => setForm({...form, imap_port: e.target.value})} /></div>
           </div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">SMTP</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Usuario</Label><Input value={form.smtp_username} onChange={e => setForm({...form, smtp_username: e.target.value})} /></div>
-            <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.smtp_password} onChange={e => setForm({...form, smtp_password: e.target.value})} /></div>
+            <div className="space-y-1"><Label>Contraseña</Label><Input type="password" value={form.smtp_password} onChange={e => setForm({...form, smtp_password: e.target.value})} placeholder={pwPlaceholder} autoComplete="new-password" /></div>
             <div className="space-y-1"><Label>Host</Label><Input value={form.smtp_host} onChange={e => setForm({...form, smtp_host: e.target.value})} placeholder="smtp.gmail.com" /></div>
             <div className="space-y-1"><Label>Puerto</Label><Input value={form.smtp_port} onChange={e => setForm({...form, smtp_port: e.target.value})} /></div>
           </div>

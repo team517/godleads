@@ -454,7 +454,9 @@ export function autoSignal(headerBlock: string): string {
 }
 
 /** Prefijos de asunto que ponen los contestadores automáticos, en los idiomas que nos llegan. */
-const AUTO_SUBJECT = /^\s*(?:re:\s*)?(?:respuesta autom[aá]tica|resposta autom[aàá]tica|automatic reply|auto(?:matic)?[- ]?reply|autoreply|auto[- ]?response|autorespuesta|out of (?:the )?office|fuera de (?:la )?oficina|fora de l'oficina|automatische antwort|abwesenheitsnotiz|abwesenheitsnachricht|r[ée]ponse automatique|absence du bureau|risposta automatica|fuori sede|automatisch antwoord|afwezig|autosvar|automatisk svar|automatick[áa] odpov[eě][dď]|odpowied[zź] automatyczna|automaattinen vastaus)\b/i;
+// 06-10-2026: también "Abwesenheit…", "Ausente:"/"Ausencia:" y "Out-of-office". Sólo al PRINCIPIO del
+// asunto (tras un "Re:" como mucho): un "Re: …" normal de una persona nunca entra aquí.
+const AUTO_SUBJECT = /^\s*(?:re:\s*)?(?:respuesta autom[aá]tica|resposta autom[aàá]tica|automatic reply|auto(?:matic)?[- ]?reply|autoreply|auto[- ]?response|autorespuesta|out[- ]of[- ](?:the[- ])?office|fuera de (?:la )?oficina|fora de l'oficina|automatische antwort|abwesenheit\w*|abwesend|r[ée]ponse automatique|absence du bureau|risposta automatica|fuori sede|automatisch antwoord|afwezig|autosvar|automatisk svar|automatick[áa] odpov[eě][dď]|odpowied[zź] automatyczna|automaattinen vastaus|ausente(?=\s*(?:[:\-–(]|$))|ausencia(?=\s*[:\-–(]))(?=$|[^a-z0-9áéíóúñàèìòùüç])/i;
 
 export function looksAutoSubject(subject: string): boolean {
   return AUTO_SUBJECT.test(subject || "");
@@ -478,7 +480,7 @@ export interface InboundMessage {
   reply_to: string;
   attachments: RawAttachment[];
   kind: InboundKind;
-  /** Señal de cabecera que lo delata como automático ("" si lo escribió una persona). */
+  /** Señal que lo delata como automático: la cabecera, o "subject:auto" si sólo lo dice el asunto ("" si lo escribió una persona). */
   auto_signal: string;
   /** noreply@ / no-reply@ / mailer-daemon@ / postmaster@ / bounce@ */
   automated_sender: boolean;
@@ -540,6 +542,9 @@ export function parseInboundItem(item: FetchItem, ctx: { accountEmail: string; i
   const bounce = bounceInfo(fromEmail, decodedSubject, hv("Content-Type"), rawBody, hv("X-Failed-Recipients"));
   if (bounce?.original.subject) bounce.original.subject = decodeMimeWords(bounce.original.subject);
   const kind: InboundKind = bounce ? "bounce" : (signal || looksAutoSubject(decodedSubject)) ? "auto_reply" : "human";
+  // Fuera de oficina sin cabecera (sólo lo delata el asunto): señal propia para que TODO lo que lee
+  // auto_signal (motor, avisos, estadísticas) lo trate como automático y no pare la secuencia (06-10-2026).
+  const autoSig = signal || (kind === "auto_reply" ? "subject:auto" : "");
 
   return {
     status: "message",
@@ -562,7 +567,7 @@ export function parseInboundItem(item: FetchItem, ctx: { accountEmail: string; i
       // Los logos de la firma NO son archivos adjuntos.
       attachments: extractAttachments(rawBody).filter((a) => !looksInline(a)),
       kind,
-      auto_signal: signal,
+      auto_signal: autoSig,
       automated_sender: isAutomatedSender(fromEmail),
       bounce,
     },

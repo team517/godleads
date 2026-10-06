@@ -9,7 +9,7 @@ import type { IaTarjeta } from "@/lib/ia-mod-view";
 export type TarjetaCambioT = Extract<IaTarjeta, { type: "cambio" | "pendiente" }>;
 export type AccionCambio = "confirm" | "cancel" | "undo";
 
-const ESTADO: Record<string, string> = { applied: "Aplicado", pending: "Pendiente", undone: "Deshecho", cancelled: "Cancelado" };
+const ESTADO: Record<string, string> = { applied: "Aplicado", pending: "Pendiente", undone: "Deshecho", cancelled: "Cancelado", failed: "No aplicado" };
 
 function Correo({ asunto, cuerpo, cabecera }: { asunto?: string; cuerpo?: string; cabecera?: string }) {
   return (
@@ -27,7 +27,7 @@ export function TarjetaCambioMini({ t, estado, onAccion }: { t: TarjetaCambioT; 
   const [trabajando, setTrabajando] = useState(false);
   const [abierto, setAbierto] = useState(true);
   const hacer = async (a: AccionCambio) => { setTrabajando(true); try { await onAccion(t.change_id, a); } finally { setTrabajando(false); } };
-  const marco = estado === "applied" ? "border-emerald-200 bg-emerald-50/60 dark:bg-emerald-500/10" : estado === "pending" ? "border-amber-200 bg-amber-50/60 dark:bg-amber-500/10" : "border-border bg-card";
+  const marco = estado === "applied" ? "border-emerald-200 bg-emerald-50/60 dark:bg-emerald-500/10" : estado === "pending" ? "border-amber-200 bg-amber-50/60 dark:bg-amber-500/10" : estado === "failed" ? "border-red-200 bg-red-50/60 dark:bg-red-500/10" : "border-border bg-card";
   return (
     <div className={`mt-2 space-y-2.5 rounded-xl border p-3 ${marco}`} data-testid="tarjeta-cambio">
       <div className="flex items-center justify-between gap-2">
@@ -38,7 +38,7 @@ export function TarjetaCambioMini({ t, estado, onAccion }: { t: TarjetaCambioT; 
           <span className="truncate">{t.summary}</span>
           <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${abierto ? "" : "-rotate-90"}`} />
         </button>
-        <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${estado === "applied" ? "border-emerald-300 text-emerald-700" : estado === "pending" ? "border-amber-300 text-amber-700" : "text-muted-foreground"}`}>
+        <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${estado === "applied" ? "border-emerald-300 text-emerald-700" : estado === "pending" ? "border-amber-300 text-amber-700" : estado === "failed" ? "border-red-300 text-red-700" : "text-muted-foreground"}`}>
           {ESTADO[estado] || estado}
         </span>
       </div>

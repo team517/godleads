@@ -4,6 +4,11 @@ import { encodeMimeHeaderFolded, foldHeader, hasHtmlMarkup, htmlToPlainText, tex
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { copiarAEnviados } from "../_shared/imap-append.ts";
 import { fixBlockedLinks } from "../_shared/link-guard.ts";
+import { assertPublicMailHost } from "../_shared/host-guard.ts";
+import { makeBudget, readSmtpReply, sanitizeServerText, withTimeout } from "../_shared/smtp-wire.ts";
+
+// Presupuesto total de una sesión SMTP (auditoría 06-10-2026).
+const SEND_BUDGET_MS = 45_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -245,51 +250,45 @@ async function sendSmtpEmail(
   body: string,
   opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; quoteHtml?: string; quoteHeader?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string; raw?: string }> {
+  // Plazos (auditoría 06-10-2026): conexión 25 s, cada lectura 20 s, escritura del cuerpo 30 s y
+  // un presupuesto total de ~45 s por envío. Sin ellos un servidor mudo colgaba la función y el
+  // socket quedaba abierto en cada salida temprana: ahora se cierra SIEMPRE en el finally.
+  const endpoint = normalizeSmtpEndpoint(host, port);
+  // SSRF: el host/puerto los elige el usuario. Nada de direcciones internas ni puertos que no sean de correo.
+  const hostProblem = await assertPublicMailHost(endpoint.host, endpoint.port);
+  if (hostProblem) return { ok: false, error: hostProblem };
+  const budget = makeBudget(SEND_BUDGET_MS);
+  let conn: Deno.Conn | null = null;
+  let stage: "connect" | "session" | "after_data" = "connect";
+  let messageIdForError: string | undefined;
   try {
-    const endpoint = normalizeSmtpEndpoint(host, port);
-    let conn: Deno.Conn;
-
-    if (endpoint.port === 465) {
-      conn = await Deno.connectTls({ hostname: endpoint.host, port: endpoint.port });
-    } else {
-      conn = await Deno.connect({ hostname: endpoint.host, port: endpoint.port });
-    }
+    const connecting: Promise<Deno.Conn> = endpoint.port === 465
+      ? Deno.connectTls({ hostname: endpoint.host, port: endpoint.port })
+      : Deno.connect({ hostname: endpoint.host, port: endpoint.port });
+    // Si el plazo vence y la conexión llega después, se cierra en cuanto llegue (no se queda abierta).
+    let gaveUp = false;
+    connecting.then((c) => { if (gaveUp) { try { c.close(); } catch { /* */ } } }, () => {});
+    try { conn = await withTimeout(connecting, budget(25_000), "connect"); } catch (e) { gaveUp = true; throw e; }
+    stage = "session";
 
     const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
 
-    // Read a complete SMTP response, handling multi-line responses
-    const readResponse = async (): Promise<string> => {
-      let result = '';
-      while (true) {
-        const buf = new Uint8Array(4096);
-        const n = await conn.read(buf);
-        if (!n) break;
-        result += decoder.decode(buf.subarray(0, n));
-        // SMTP multi-line responses use "NNN-" continuation; final line is "NNN "
-        const lines = result.split('\r\n').filter(l => l.length > 0);
-        if (lines.length === 0) continue;
-        const last = lines[lines.length - 1];
-        if (/^\d{3}[ ]/.test(last) || /^\d{3}$/.test(last)) break;
-      }
-      return result;
-    };
+    // Una respuesta SMTP ENTERA (multilínea incluida): sólo se da por completa cuando el buffer acaba
+    // en CRLF y su última línea es "NNN " (ver _shared/smtp-wire.ts). `conn` se relee en cada lectura
+    // porque tras STARTTLS pasa a ser otro objeto.
+    const readResponse = (): Promise<string> => readSmtpReply(() => conn!, { readMs: 20_000, budget });
 
     const send = async (cmd: string) => {
-      await conn.write(encoder.encode(cmd + "\r\n"));
+      await withTimeout(conn!.write(encoder.encode(cmd + "\r\n")), budget(20_000), "write");
       return await readResponse();
     };
 
-    const writeRaw = async (data: string) => {
-      // Write all data
+    // El cuerpo se escribe entero (write() puede ser parcial) con su propio plazo de 30 s.
+    const writeAll = (data: string) => withTimeout((async () => {
       const encoded = encoder.encode(data);
       let written = 0;
-      while (written < encoded.length) {
-        const n = await conn.write(encoded.subarray(written));
-        written += n;
-      }
-      return await readResponse();
-    };
+      while (written < encoded.length) written += await conn!.write(encoded.subarray(written));
+    })(), budget(30_000), "write body");
 
     await readResponse(); // greeting
 
@@ -476,117 +475,65 @@ async function sendSmtpEmail(
       return dotStuff(content) + "\r\n.\r\n";
     };
 
+    // Aviso corto y limpio del servidor (nunca su respuesta cruda).
+    const why = (r: string) => sanitizeServerText(r, 160);
+
     if (endpoint.port !== 465) {
       const resp = await send(`EHLO ${fromDomain}`);
       if (!/STARTTLS/i.test(resp)) {
-        try { await send("QUIT"); } catch {}
-        try { conn.close(); } catch {}
-        return { ok: false, error: `Server does not advertise STARTTLS: ${resp}` };
+        return { ok: false, error: "El servidor no ofrece conexión cifrada (TLS); usa el puerto 465 o 587 con STARTTLS" };
       }
-        await conn.write(encoder.encode("STARTTLS\r\n"));
-        const startTlsResp = await readResponse();
-        if (!startTlsResp.startsWith("220")) {
-          try { conn.close(); } catch {}
-          return { ok: false, error: `STARTTLS failed: ${startTlsResp}` };
-        }
-        conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: endpoint.host });
-
-        // Recreate helpers for TLS connection
-        const readTls = async (): Promise<string> => {
-          let result = '';
-          while (true) {
-            const buf = new Uint8Array(4096);
-            const n = await conn.read(buf);
-            if (!n) break;
-            result += decoder.decode(buf.subarray(0, n));
-            const lines = result.split('\r\n').filter(l => l.length > 0);
-            if (lines.length === 0) continue;
-            const last = lines[lines.length - 1];
-            if (/^\d{3}[ ]/.test(last) || /^\d{3}$/.test(last)) break;
-          }
-          return result;
-        };
-
-        const sendTls = async (cmd: string) => {
-          await conn.write(encoder.encode(cmd + "\r\n"));
-          return await readTls();
-        };
-
-        const writeRawTls = async (data: string) => {
-          const encoded = encoder.encode(data);
-          let written = 0;
-          while (written < encoded.length) {
-            const n = await conn.write(encoded.subarray(written));
-            written += n;
-          }
-          return await readTls();
-        };
-
-        const tlsEhloResp = await sendTls(`EHLO ${fromDomain}`);
-        if (!tlsEhloResp.startsWith("250")) return { ok: false, error: `EHLO after STARTTLS failed: ${tlsEhloResp}` };
-        const creds = btoa(`\0${username}\0${password}`);
-        const authResp = await sendTls(`AUTH PLAIN ${creds}`);
-        if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
-
-        // Check EVERY step so a rejection is reported accurately instead of a
-        // confusing DATA error (or, worse, a false "sent").
-        const mailResp = await sendTls(`MAIL FROM:<${from}>`);
-        if (!mailResp.startsWith("250")) {
-          try { await sendTls("QUIT"); } catch {} try { conn.close(); } catch {}
-          return { ok: false, error: `El servidor rechazó el remitente (MAIL FROM): ${mailResp.trim().slice(0, 200)}` };
-        }
-        const rcptResp = await sendTls(`RCPT TO:<${to}>`);
-        if (!rcptResp.startsWith("250") && !rcptResp.startsWith("251")) {
-          try { await sendTls("QUIT"); } catch {} try { conn.close(); } catch {}
-          return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
-        }
-        // Extra CC recipients — best-effort: a bad CC must NOT abort the send to
-        // the main recipient (who always gets it).
-        for (const c of (opts?.cc || [])) {
-          try { const cr = await sendTls(`RCPT TO:<${c}>`); if (!cr.startsWith("25")) console.warn(`CC rechazado ${c}: ${cr.trim().slice(0, 80)}`); } catch { console.warn(`CC error RCPT ${c}`); }
-        }
-        await sendTls("DATA");
-        const dataResp = await writeRawTls(buildMessage());
-        // The reply to the message body itself must be a 250 (possibly multi-line). A bare
-        // includes("250") also matched a REJECTION whose text or queue id contained "250".
-        const sent = /^250[ -]/m.test(dataResp);
-        try { await sendTls("QUIT"); } catch {}
-        try { conn.close(); } catch {}
-        return sent ? { ok: true, messageId, raw: rawEnviado } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
+      const startTlsResp = await send("STARTTLS");
+      if (!startTlsResp.startsWith("220")) return { ok: false, error: `STARTTLS failed: ${why(startTlsResp)}` };
+      conn = await withTimeout(Deno.startTls(conn as Deno.TcpConn, { hostname: endpoint.host }), budget(25_000), "STARTTLS");
     }
 
-    await send(`EHLO ${from.split("@")[1] || "localhost"}`);
+    const ehloResp = await send(`EHLO ${fromDomain}`);
+    if (!ehloResp.startsWith("250")) return { ok: false, error: `EHLO failed: ${why(ehloResp)}` };
+    // AUTH sólo viaja por un canal cifrado: 465 ya lo es y en el resto se exige STARTTLS arriba.
     const creds = btoa(`\0${username}\0${password}`);
     const authResp = await send(`AUTH PLAIN ${creds}`);
-    if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${authResp}` };
+    if (!authResp.startsWith("235")) return { ok: false, error: `Auth failed: ${why(authResp)}` };
 
+    // Check EVERY step so a rejection is reported accurately instead of a
+    // confusing DATA error (or, worse, a false "sent").
     const mailResp = await send(`MAIL FROM:<${from}>`);
     if (!mailResp.startsWith("250")) {
-      try { await send("QUIT"); } catch {} try { conn.close(); } catch {}
-      return { ok: false, error: `El servidor rechazó el remitente (MAIL FROM): ${mailResp.trim().slice(0, 200)}` };
+      return { ok: false, error: `El servidor rechazó el remitente (MAIL FROM): ${why(mailResp)}` };
     }
     const rcptResp = await send(`RCPT TO:<${to}>`);
     if (!rcptResp.startsWith("250") && !rcptResp.startsWith("251")) {
-      try { await send("QUIT"); } catch {} try { conn.close(); } catch {}
-      return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${rcptResp.trim().slice(0, 200)}` };
+      return { ok: false, error: `El servidor rechazó al destinatario (RCPT TO): ${why(rcptResp)}` };
     }
-    // Extra CC recipients — best-effort (a bad CC never blocks the main recipient).
+    // Extra CC recipients — best-effort: a bad CC must NOT abort the send to
+    // the main recipient (who always gets it).
     for (const c of (opts?.cc || [])) {
-      try { const cr = await send(`RCPT TO:<${c}>`); if (!cr.startsWith("25")) console.warn(`CC rechazado ${c}: ${cr.trim().slice(0, 80)}`); } catch { console.warn(`CC error RCPT ${c}`); }
+      try { const cr = await send(`RCPT TO:<${c}>`); if (!cr.startsWith("25")) console.warn(`CC rechazado ${c}: ${why(cr).slice(0, 80)}`); } catch { console.warn(`CC error RCPT ${c}`); }
     }
-    await send("DATA");
-    const dataResp = await writeRaw(buildMessage());
+    // DATA: el servidor tiene que contestar 354 ANTES de mandarle el mensaje.
+    const dataGo = await send("DATA");
+    if (!dataGo.startsWith("354")) return { ok: false, error: `El servidor no aceptó DATA: ${why(dataGo)}` };
+    const full = buildMessage();
+    messageIdForError = messageId;
+    stage = "after_data";
+    await writeAll(full);
+    const dataResp = await readResponse();
     // The reply to the message body itself must be a 250 (possibly multi-line). A bare
-        // includes("250") also matched a REJECTION whose text or queue id contained "250".
-        const sent = /^250[ -]/m.test(dataResp);
-    try { await send("QUIT"); } catch {}
-    try { conn.close(); } catch {}
-    return sent ? { ok: true, messageId, raw: rawEnviado } : { ok: false, error: `El servidor no confirmó el envío: ${dataResp.trim().slice(0, 200)}`, messageId };
+    // includes("250") also matched a REJECTION whose text or queue id contained "250".
+    const sent = /^250[ -]/m.test(dataResp);
+    try { await send("QUIT"); } catch { /* da igual: el correo ya está entregado o rechazado */ }
+    return sent ? { ok: true, messageId, raw: rawEnviado } : { ok: false, error: `El servidor no confirmó el envío: ${why(dataResp)}`, messageId };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    return { ok: false, error: `SMTP error: ${message}` };
+    // Tras escribir el cuerpo, un fallo/plazo NO prueba que no saliera: se dice claro.
+    if (stage === "after_data") return { ok: false, error: `SMTP error sin confirmar (el correo puede haber salido): ${sanitizeServerText(message, 160)}`, messageId: messageIdForError };
+    return { ok: false, error: `SMTP error: ${sanitizeServerText(message, 160)}` };
+  } finally {
+    try { conn?.close(); } catch { /* ya cerrada */ }
   }
 }
+
+let warnedNoUnsubSecret = false;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -615,13 +562,13 @@ serve(async (req) => {
     );
 
     const {
-      campaign_id,
-      campaign_step_id,
+      campaign_id: reqCampaignId,
+      campaign_step_id: reqCampaignStepId,
       account_id,
       to_email,
       subject,
       body,
-      lead_id,
+      lead_id: reqLeadId,
       custom_fields,
       is_test,
       in_reply_to,
@@ -636,6 +583,30 @@ serve(async (req) => {
       forwarded_from,   // id del mensaje del Unibox que se reenvía (para enseñarlo en su hilo)
     } = await req.json();
     const isForward = kind === "forward";
+
+    // Auditoría 06-10-2026 (#24): campaign_id / lead_id / campaign_step_id vienen del cuerpo de la
+    // petición. Con el service role se leían y se insertaban sin comprobar de quién eran: un usuario
+    // podía colgar un envío de la campaña de otro, contar en su cuota o heredar su hilo. Sólo se
+    // aceptan los que pertenecen al usuario; si no, se IGNORAN y el envío es manual (como una
+    // respuesta del Unibox).
+    let campaign_id: string | null = null;
+    let campaign_step_id: string | null = null;
+    let lead_id: string | null = null;
+    if (reqCampaignId && typeof reqCampaignId === "string") {
+      const { data: ownCampaign } = await adminClient.from("campaigns").select("id").eq("id", reqCampaignId).eq("user_id", userId).maybeSingle();
+      if (ownCampaign) {
+        campaign_id = reqCampaignId;
+        if (reqCampaignStepId && typeof reqCampaignStepId === "string") {
+          const { data: ownStep } = await adminClient.from("campaign_steps").select("id").eq("id", reqCampaignStepId).eq("campaign_id", reqCampaignId).maybeSingle();
+          if (ownStep) campaign_step_id = reqCampaignStepId;
+        }
+      }
+    }
+    if (reqLeadId && typeof reqLeadId === "string") {
+      const { data: ownLead } = await adminClient.from("leads").select("id").eq("id", reqLeadId).eq("user_id", userId).maybeSingle();
+      if (ownLead) lead_id = reqLeadId;
+    }
+    if (!lead_id) campaign_step_id = null; // sin lead propio no hay paso de campaña que continuar
 
     // Clean the CC list: accept an array or a comma/;-separated string, extract a
     // valid address from each ("Name <a@b.com>" too), dedupe, and drop the main
@@ -768,7 +739,9 @@ serve(async (req) => {
       }
     }
 
-    const { data: account, error: accError } = await supabase
+    // Lectura con el service role: las contraseñas SMTP/IMAP ya no son legibles con el JWT del usuario
+    // (migración 20261006142000). La pertenencia se sigue exigiendo con eq("user_id", userId).
+    const { data: account, error: accError } = await adminClient
       .from("email_accounts")
       .select("*")
       .eq("id", resolvedAccountId)
@@ -825,6 +798,10 @@ serve(async (req) => {
     // the message (only when the caller asked for it), while `listUnsubUrl` feeds the
     // List-Unsubscribe header so one-click is never declared with a mailto-only value.
     const unsubSecret = Deno.env.get("UNSUB_SECRET") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!Deno.env.get("UNSUB_SECRET") && !warnedNoUnsubSecret) {
+      warnedNoUnsubSecret = true;
+      console.warn("send-email: UNSUB_SECRET no está definido; los enlaces de baja se firman con la clave de servicio. Define UNSUB_SECRET.");
+    }
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     let listUnsubUrl: string | undefined;
     if (unsubSecret && supabaseUrl) {
@@ -885,7 +862,10 @@ serve(async (req) => {
       // Copia en la carpeta "Enviados" del buzón: así quien abra esa cuenta desde Outlook, el
       // móvil o el correo de IONOS ve lo que se respondió desde el Unibox (24-09-2026). Nunca
       // hace fallar el envío: el correo ya salió, esto es sólo la copia.
-      if (result.ok && result.raw && account.imap_host && account.imap_password) {
+      // SSRF: el host IMAP también lo elige el usuario; si no es público, simplemente no se copia.
+      const imapProblem = result.ok && result.raw && account.imap_host ? await assertPublicMailHost(account.imap_host, account.imap_port || 993) : null;
+      if (imapProblem) console.warn(`No se copia a Enviados (${account.email}): ${imapProblem}`);
+      if (result.ok && result.raw && account.imap_host && account.imap_password && !imapProblem) {
         try {
           const copia = await copiarAEnviados(
             { host: account.imap_host, port: account.imap_port, user: account.imap_username || account.email, pass: account.imap_password },

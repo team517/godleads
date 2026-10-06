@@ -6,6 +6,8 @@
 //
 // SÓLO LEE: usa EXAMINE (nunca SELECT) y BODY.PEEK, así que no marca como leído ni mueve nada.
 
+import { assertPublicMailHost } from "./host-guard.ts";
+
 export interface Mailbox {
   host: string;
   port: number | null;
@@ -41,6 +43,12 @@ export async function imapFetchRawByMessageId(
   const maxBytes = opts?.maxBytes ?? 20 * 1024 * 1024;
   const clean = String(messageId || "").trim().replace(/^<|>$/g, "");
   if (!clean) return { ok: false, reason: "not_found", detail: "sin Message-ID" };
+
+  // SSRF (auditoría 06-10-2026): el host IMAP lo elige el usuario. Sin direcciones internas ni puertos ajenos al correo.
+  const malHost = await assertPublicMailHost(box.host, box.port || 993);
+  if (malHost) return { ok: false, reason: "error", detail: malHost };
+  // Usuario/clave con CR/LF inyectarían órdenes IMAP: no se conecta.
+  if (/[\r\n\0]/.test(String(box.user ?? "")) || /[\r\n\0]/.test(String(box.pass ?? ""))) return { ok: false, reason: "login" };
 
   let conn: Deno.Conn | null = null;
   try {

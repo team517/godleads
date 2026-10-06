@@ -7,6 +7,7 @@ import TodayMessages from "@/components/dashboard/TodayMessages";
 import RetryNotice from "@/components/RetryNotice";
 import { useWidget } from "@/hooks/useWidget";
 import { num } from "@/lib/widget-state";
+import { fetchMetricsExtra, sumMetricsExtra } from "@/lib/campaign-health";
 
 type Summary = { sent?: unknown; contacted?: unknown; replied?: unknown };
 type CampaignRow = { id: string; name: string; status: string; created_at?: string };
@@ -23,6 +24,13 @@ export default function Dashboard() {
   const summary = useWidget<Summary>({
     cacheKey: "dash:summary", enabled: !!uid,
     load: () => (supabase as any).rpc("user_email_stats"),
+    deps: [uid],
+  });
+  // Respuestas de PERSONAS (sin fuera de oficina ni avisos automáticos), suma de las campañas. Si no
+  // está (función sin aplicar o fallo) la tasa se calcula como antes.
+  const split = useWidget<{ human: number; auto: number } | null>({
+    cacheKey: "dash:replies-split", enabled: !!uid,
+    load: async () => ({ data: sumMetricsExtra(await fetchMetricsExtra(supabase as any)), error: null }),
     deps: [uid],
   });
   // "Cuentas ACTIVAS" = buzones conectados, no todas las filas de la tabla.
@@ -50,7 +58,8 @@ export default function Dashboard() {
   const s = summary.data || {};
   const stats = { sent: num(s.sent), contacted: num(s.contacted), replied: num(s.replied) };
   // Tasa REAL = respuestas ÷ LEADS contactados (personas), no ÷ correos enviados.
-  const responseRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
+  const repliesShown = split.data ? split.data.human : stats.replied;
+  const responseRate = stats.contacted > 0 ? ((repliesShown / stats.contacted) * 100).toFixed(1) : "0";
 
   const pending = (w: { data: unknown; loading: boolean }) => w.data === undefined && w.loading;
   const failedNoData = (w: { data: unknown; error: string | null }) => w.data === undefined && !!w.error;

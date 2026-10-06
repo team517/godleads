@@ -50,7 +50,12 @@ function timingSafeEq(a: string, b: string): boolean {
 }
 // Verify the token signature against the current secret(s). Accepts either UNSUB_SECRET
 // or the service-role key (the sender falls back to it). Used to gate `resubscribe`.
+let warnedNoSecret = false;
 async function verifyTokenSig(token: string): Promise<boolean> {
+  // Los enlaces ya enviados pueden estar firmados con cualquiera de las dos claves, así que se aceptan
+  // las dos. Lo que NO debe pasar es que se FIRMEN enlaces nuevos con la clave de servicio: eso se
+  // resuelve definiendo UNSUB_SECRET en las funciones que firman (send-email, process-campaign-queue).
+  if (!Deno.env.get("UNSUB_SECRET") && !warnedNoSecret) { warnedNoSecret = true; console.warn("unsubscribe: UNSUB_SECRET no definido; sólo se verifica con la clave de servicio. Define UNSUB_SECRET."); }
   const parts = (token || "").split(".");
   if (parts.length < 2 || !parts[0] || !parts[1]) return false;
   const [payload, sig] = parts;

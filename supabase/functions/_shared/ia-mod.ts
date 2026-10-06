@@ -12,7 +12,7 @@ export const puedeUsarIaMod = (email: string | null | undefined) => IA_MOD_EMAIL
 /** Herramientas que cambian algo en la cuenta del cliente. */
 export const ESCRITURAS = new Set([
   "crear_mensaje", "editar_mensaje", "eliminar_mensaje", "crear_variante", "editar_variante", "eliminar_variante", "crear_campana",
-  "importar_leads", "organizar_cuentas", "conectar_cuentas_campana", "slow_ramp_cuentas", "ajustar_campana",
+  "importar_leads", "organizar_cuentas", "conectar_cuentas_campana", "slow_ramp_cuentas", "ajustar_campana", "confirmar_cambio",
 ]);
 
 const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []) => ({
@@ -58,11 +58,12 @@ export const IA_MOD_TOOLS = [
     espera_dias: N("días de espera desde el mensaje anterior (0 en el primero)"),
     posicion: N("posición 1-based; vacío = al final"),
   }, ["campaign_id", "cuerpo"]),
-  fn("editar_mensaje", "Cambia el asunto, el cuerpo o la espera de un mensaje (su versión A). Sólo los campos que pases.", {
+  fn("editar_mensaje", "Cambia el asunto, el cuerpo o la espera de un mensaje. Sólo los campos que pases. Se aplica YA y se comprueba releyendo lo guardado: el resultado dice si de verdad quedó. Si el mensaje tiene variantes B/C encendidas (se envían repartidas con la A), di en `versiones` a cuáles va el cambio: 'A', 'B', 'A,B' o 'todas'. Si no lo dices y hay variantes encendidas, la herramienta te lo pedirá.", {
     step_id: S("id del paso"),
     asunto: S("nuevo asunto"),
     cuerpo: S("nuevo cuerpo en texto plano"),
     espera_dias: N("nueva espera en días"),
+    versiones: S("a qué versiones va el asunto/cuerpo: 'A' (el propio mensaje), 'B', 'A,B', o 'todas' (A y todas sus variantes). Por defecto A si no hay variantes."),
   }, ["step_id"]),
   fn("eliminar_mensaje", "Borra un mensaje de la secuencia. SIEMPRE pide confirmación al usuario con un botón; no se borra hasta que lo pulse.", {
     step_id: S("id del paso"),
@@ -82,6 +83,9 @@ export const IA_MOD_TOOLS = [
     step_id: S("id del paso"),
     letra: S("B, C, D…"),
   }, ["step_id", "letra"]),
+  fn("confirmar_cambio", "Aplica un cambio que está PENDIENTE de Confirmar (el mismo efecto que el botón). Sólo funciona si el usuario acaba de pedir aplicarlo en su último mensaje (\"aplícalo\", \"sí, hazlo\", \"confirma el de la variante B\"). Devuelve si se aplicó y se comprobó, o por qué falló. NUNCA digas que algo está aplicado sin haber recibido aquí ok:true.", {
+    change_id: S("id del cambio pendiente (sale en el ESTADO REAL DE LOS CAMBIOS)"),
+  }, ["change_id"]),
   fn("ver_archivo", "Lee un archivo que el usuario ha adjuntado en el chat. Si es un CSV: columnas, cuántas filas, emails válidos y descartados, duplicados, y las filas que pidas. Si es un PDF: devuelve su texto por páginas (pide más con `desde` = siguiente_desde si quedan_paginas).", {
     upload_id: S("id del adjunto (sale en el mensaje del usuario)"),
     desde: N("primera fila o página (0 por defecto)"),
@@ -184,15 +188,15 @@ export interface ContextoCliente {
   extraContexto?: string;
 }
 
-const ESTADO_CAMBIO_TXT: Record<string, string> = { applied: "APLICADO", pending: "PENDIENTE (falta pulsar Confirmar)", undone: "DESHECHO", cancelled: "CANCELADO" };
+const ESTADO_CAMBIO_TXT: Record<string, string> = { applied: "APLICADO", pending: "PENDIENTE (NO aplicado: falta Confirmar o que el usuario diga aplícalo)", undone: "DESHECHO", cancelled: "CANCELADO", failed: "FALLÓ (NO se aplicó)" };
 
 /** Los últimos cambios, del más reciente al más antiguo, con hora y estado real. */
-export function estadoCambiosTexto(cambios: { summary: string; status: string; created_at: string }[]): string {
+export function estadoCambiosTexto(cambios: { summary: string; status: string; created_at: string; id?: string }[]): string {
   if (!cambios.length) return "No hay cambios hechos todavía en esta cuenta.";
   const pend = cambios.filter((c) => c.status === "pending").length;
   const lineas = cambios.map((c) => {
     const h = new Date(c.created_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-    return `- ${h} · ${ESTADO_CAMBIO_TXT[c.status] || c.status} · ${c.summary}`;
+    return `- ${h} · ${ESTADO_CAMBIO_TXT[c.status] || c.status} · ${c.summary}${c.id && c.status === "pending" ? ` · id ${c.id}` : ""}`;
   });
   return `${pend ? `Hay ${pend} cambio(s) PENDIENTE(S) de Confirmar.` : "No hay ningún cambio pendiente: todo lo de abajo marcado APLICADO ya está hecho."}\n${lineas.join("\n")}`;
 }
@@ -281,11 +285,19 @@ CÓMO TRABAJAS:
 1. Nunca inventes datos: para hablar de campañas, mensajes, cuentas, etiquetas, métricas o respuestas, llama a la herramienta EN ESTE TURNO. Los números, etiquetas y cuentas de cada campaña salen SIEMPRE de las herramientas (ver_campanas trae etiquetas_que_usa y cuántas cuentas usa, a mano y por etiqueta); nunca los repitas de memoria de turnos anteriores, porque cambian. Si te preguntan si algo ya está aplicado, mira el estado real (entre corchetes en el historial) o vuelve a consultar.
 2. Antes de cambiar un mensaje, míralo con ver_mensajes. Antes de escribir mensajes nuevos, entiende al cliente: su memoria, sus mensajes actuales, sus respuestas y, si hace falta, su web (dominio de su correo o de sus mensajes). Si falta algo esencial (qué vende, su dato de resultado, qué demo puede enseñar), pregúntalo antes de escribir.
 3. HAZ CASO: si el usuario te pide algo, hazlo con las herramientas en ese mismo turno, sin avisar antes ("te lo cuento antes de tocar nada"), sin enumerar lo que vas a hacer y sin pedir permiso. Si algo es ambiguo, elige lo más lógico y dilo en una línea. Nunca digas que no puedes hacer algo que tus herramientas sí hacen. Si el usuario te pide un cambio claro, HAZLO con la herramienta en ese mismo turno (no lo propongas, no preguntes "¿lo hago?", no ofrezcas opciones A/B) y luego resume en 1-3 líneas qué has hecho. Todo se puede deshacer con un botón. Sólo pregunta si de verdad falta un dato imprescindible, y entonces una sola pregunta.
-4. Borrar un mensaje o una variante, o meter un mensaje en medio de la secuencia, queda PENDIENTE: dile al usuario que pulse "Confirmar" en la tarjeta.
+4. Borrar un mensaje o una variante, o meter un mensaje en medio de la secuencia, y los cambios de ajustes/cuentas en campañas ACTIVAS quedan PENDIENTES: dile que pulse "Confirmar" en la tarjeta o que escriba "aplícalo" (las dos cosas lo aplican). Un pendiente NO está aplicado: nunca lo des por hecho.
 5. Si la campaña está ACTIVA, avisa de que el cambio se aplica a los próximos envíos. Si añades un mensaje al final, los leads que ya terminaron la secuencia no lo recibirán.
 6. Para métricas llama a "metricas": la imagen con la gráfica sale sola; tú comenta en 2-4 líneas lo importante (tasa de respuesta = respuestas / contactados) y da un consejo concreto.
 7. Guarda con guardar_nota los datos del cliente que el equipo te cuente y que habrá que recordar.
 8. No repitas en el texto lo que ya enseña una tarjeta (campañas, mensajes, métricas, cambios): la tarjeta sale sola debajo de tu respuesta. Tú comenta lo importante y di qué harías.
+
+APLICAR DE VERDAD (lo más importante; el dueño lo exigió):
+- Sólo puedes decir "he cambiado / aplicado / listo" de lo que una herramienta de este turno te devolvió con ok:true (o hecho:true) y verificado:true. Si devolvió error, o pendiente:true, o no llamaste a ninguna herramienta de cambio, NO está aplicado: dilo tal cual ("no se ha podido: <motivo>" / "queda pendiente de Confirmar").
+- Si el usuario te dice "aplícalo", "sí", "hazlo", "dale" y hay cambios PENDIENTES (mira el ESTADO REAL), el servidor ya los aplica antes de que contestes; si aun así te toca a ti, llama a confirmar_cambio con su id. Nunca los repitas con otra herramienta ni los des por aplicados sin su ok:true.
+- Cuando cambies un mensaje que tiene variantes B/C ENCENDIDAS (ver_mensajes las enseña), el cambio de asunto/cuerpo va a "versiones": "todas" si el usuario habla del mensaje en general o de una frase que cambia en todas; sólo la letra que nombre si dice "la B" o "la variante A". Una variante APAGADA no se envía: si la tocas, avísalo.
+- Si piden aplicarlo "en todas las campañas" / "en sus campañas", recorre TODAS (ver_campanas y ver_mensajes de cada una) y hazlo en cada una, creando con crear_mensaje los que falten. Al terminar di campaña por campaña qué cambiaste y qué NO tocaste y por qué. Nunca digas "ya está todo aplicado" si dejaste campañas sin tocar.
+- El cuerpo va en texto plano: nada de **negritas** ni # títulos en markdown dentro de un correo.
+- Resume tras aplicar con lo que dice el resultado (qué mensaje, qué campo, a qué versiones), no con lo que pretendías.
 
 FORMATO DE TUS RESPUESTAS (como ChatGPT: corto, claro y al grano):
 - LARGO: normalmente 1-4 frases o hasta 5 viñetas (máximo ~90 palabras). Sólo te extiendes si te piden un análisis o detalle. Nunca expliques tu proceso ("he mirado…, luego…").
@@ -569,4 +581,136 @@ export function historialParaModelo(filas: { role: string; content: string }[], 
   // El modelo espera que la conversación empiece por el usuario.
   while (out.length && out[0].role !== "user") out.shift();
   return out;
+}
+
+/* ── Aplicar de verdad: confirmar por texto, comprobar lo guardado, contar lo que pasó ──────────
+   El dueño pidió (06-10-2026): "cuando le digas que aplique algo, que lo aplique de verdad".
+   Antes, un "aplícalo" escrito llegaba a la IA, que no tenía forma de confirmar un cambio
+   pendiente: o decía "hecho" sin tocar nada, o repetía el cambio. Ahora (1) un "sí / aplícalo /
+   hazlo" escrito aplica los pendientes con el MISMO camino que el botón Confirmar, (2) cada
+   escritura se vuelve a leer y se compara con lo que se quería guardar, (3) el texto de después
+   sale del resultado real, no de lo que la IA crea haber hecho. */
+
+const sinAcentos = (t: string) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const palabras = (t: string) => sinAcentos(t).replace(/[^a-zñ0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+
+// Palabras que SOLAS dicen "sí, aplícalo" (al menos una) y relleno que se tolera alrededor.
+const CONF_FUERTES = new Set(["si", "vale", "ok", "okey", "okay", "dale", "venga", "hazlo", "hazla", "aplica", "aplicalo", "aplicala", "aplicalos", "aplicalas", "aplicar", "aplicadlo", "confirma", "confirmalo", "confirmar", "adelante", "perfecto", "procede", "procedelo", "ejecutalo", "ejecuta", "yes", "sip", "guardalo", "genial", "acuerdo", "claro"]);
+const CONF_RELLENO = new Set(["ya", "ahora", "mismo", "porfa", "porfavor", "favor", "por", "gracias", "de", "bien", "el", "la", "lo", "los", "las", "cambio", "cambios", "todo", "todos", "todas", "me", "parece", "gusta", "eso", "esto", "esta", "ese", "y", "pues", "entonces", "asi", "quiero", "que", "se", "aplique", "puedes", "haz", "hazlos", "hazlas", "pendiente", "pendientes", "tambien", "un", "momento", "mas"]);
+const CANC_FUERTES = new Set(["cancela", "cancelalo", "cancelala", "cancelar", "olvidalo", "olvidala", "descarta", "descartalo", "descartala"]);
+const CANC_RELLENO = new Set(["no", "eso", "esto", "mejor", "lo", "la", "los", "las", "el", "cambio", "cambios", "apliques", "hagas", "aplicar", "hacer", "quiero", "se", "que", "ya", "gracias", "por", "favor", "de", "todo", "todos", "pendiente", "pendientes", "y", "pues"]);
+
+export type IntencionConfirmar = "confirmar" | "cancelar" | null;
+
+/**
+ * ¿Es el mensaje SÓLO una confirmación ("sí", "aplícalo", "ok, hazlo", "dale", "sí, aplica los
+ * cambios") o una cancelación ("cancela", "no lo apliques")? Si trae algo más ("sí, pero cambia el
+ * asunto") no lo es: eso es una instrucción nueva y la atiende la IA.
+ */
+export function intencionDeConfirmar(texto: string): IntencionConfirmar {
+  const t = String(texto || "").trim();
+  if (!t || t.length > 90) return null;
+  const p = palabras(t);
+  if (!p.length || p.length > 9) return null;
+  if (p.includes("no") || p.some((w) => CANC_FUERTES.has(w))) {
+    const todoCancela = p.every((w) => CANC_FUERTES.has(w) || CANC_RELLENO.has(w));
+    const explicita = p.some((w) => CANC_FUERTES.has(w)) || (p.length > 1 && p.some((w) => ["apliques", "hagas", "aplicar", "hacer"].includes(w)));
+    return todoCancela && explicita ? "cancelar" : null;
+  }
+  return p.every((w) => CONF_FUERTES.has(w) || CONF_RELLENO.has(w)) && p.some((w) => CONF_FUERTES.has(w)) ? "confirmar" : null;
+}
+
+/** ¿El mensaje del usuario trae una orden de aplicar (aunque no sea sólo eso)? Autoriza confirmar_cambio. */
+export function ordenDeAplicar(texto: string): boolean {
+  const p = palabras(texto);
+  return !p.includes("no") && p.some((w) => /^(aplic|confirm|hazlo|hazla|hazlos|dale$|adelante|procede|ejecut|guardalo)/.test(w));
+}
+
+const VERBOS_HECHO = "aplicado|cambiado|actualizado|editado|modificado|puesto|quitado|anadido|creado|dejado|borrado|eliminado|corregido|reescrito|sustituido|reemplazado|guardado|ajustado|configurado|activado|desactivado|importado|conectado|reorganizado";
+
+/** ¿El texto da algo por HECHO ("he cambiado el asunto", "listo", "queda aplicado")? Sirve para pillar a la IA
+ *  diciendo que aplicó algo cuando en este turno no se escribió nada. */
+export function dichoAplicado(texto: string): boolean {
+  const t = sinAcentos(texto).replace(/\bno (lo |la |los |las |se )?(he|hemos|ha)\b/g, " ").replace(/\*\*/g, "");
+  if (new RegExp(`\\b(he|hemos) (ya )?(${VERBOS_HECHO})\\b`).test(t)) return true;
+  if (new RegExp(`\\b(queda|quedan|quedo|ya (esta|estan|quedo|quedan)) (ya )?(${VERBOS_HECHO})\\b`).test(t)) return true;
+  if (new RegExp(`\\b(cambio|cambios|mensaje|asunto|campana|variante|ajuste|ajustes)\\b[^.]{0,40}\\b(${VERBOS_HECHO})\\b`).test(t)) return true;
+  return /(^|[.!\n]\s*)(hecho|listo|aplicado|todo listo|ya esta)\b/.test(t);
+}
+
+/** Texto como lo guarda la base de datos: sin \r y sin espacios sobrantes en los extremos. */
+const normTexto = (v: unknown) => String(v ?? "").replace(/\r\n?/g, "\n").trim();
+
+/** Igualdad de lo guardado con lo pedido: textos normalizados, arrays y objetos a fondo. `sinOrden` ignora el orden de un array. */
+export function igualesValor(a: unknown, b: unknown, sinOrden = false): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    const x = sinOrden ? [...a].map(String).sort() : a, y = sinOrden ? [...b].map(String).sort() : b;
+    return x.every((v, i) => igualesValor(v, y[i], false));
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a as object), kb = Object.keys(b as object);
+    return ka.length === kb.length && ka.every((k) => igualesValor((a as any)[k], (b as any)[k]));
+  }
+  if (typeof a === "string" || typeof b === "string") return normTexto(a) === normTexto(b);
+  return (a ?? null) === (b ?? null);
+}
+
+const corto = (v: unknown) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > 80 ? `${s.slice(0, 80)}…` : s; };
+
+/** Campos que NO coinciden entre lo que se quería guardar y lo que se lee ahora ([] = todo bien). */
+export function diferencias(esperado: Record<string, unknown>, real: Record<string, unknown> | null | undefined, sinOrden: string[] = []): string[] {
+  if (!real) return ["la fila ya no existe"];
+  return Object.entries(esperado)
+    .filter(([k, v]) => !igualesValor(v, real[k], sinOrden.includes(k)))
+    .map(([k, v]) => `${k}: se quería ${corto(v)} y hay ${corto(real[k])}`);
+}
+
+export interface ResultadoCambio {
+  summary: string;
+  /** applied | failed | cancelled */
+  status: string;
+  error?: string;
+  /** Lo que se comprobó al releer (una línea). */
+  detalle?: string;
+}
+
+/** El texto que se le dice al usuario tras aplicar o cancelar: sale del resultado REAL, no de la IA. */
+export function mensajeResultado(rs: ResultadoCambio[]): string {
+  if (!rs.length) return "No hay ningún cambio pendiente que aplicar.";
+  const lin = (r: ResultadoCambio) => {
+    if (r.status === "applied") return `Aplicado y comprobado: ${r.summary}${r.detalle ? ` (${r.detalle})` : ""}.`;
+    if (r.status === "cancelled") return `Cancelado: ${r.summary}. No se ha tocado nada.`;
+    return `NO se ha aplicado: ${r.summary}. Motivo: ${r.error || "error desconocido"}.`;
+  };
+  const fallos = rs.filter((r) => r.status === "failed").length;
+  const cola = fallos ? (fallos === rs.length ? "No se ha cambiado nada; dime si lo intento de otra forma." : "Lo demás sí está aplicado.") : "";
+  return rs.length === 1 ? `${lin(rs[0])}${cola ? ` ${cola}` : ""}` : `${rs.map((r) => `- ${lin(r)}`).join("\n")}${cola ? `\n\n${cola}` : ""}`;
+}
+
+/** Versiones (A, B, C…) que pide el usuario: "A", "B", "A,C", "todas". null si no hay indicación válida. */
+export function parseVersiones(v: unknown, existentes: number[]): number[] | null {
+  const t = sinAcentos(String(v ?? "")).trim();
+  if (!t) return null;
+  if (/^(todas?|todos|all|todas las versiones)$/.test(t)) return [...existentes];
+  const letras = [...t.matchAll(/\b([a-z])\b/g)].map((m) => m[1].toUpperCase().charCodeAt(0) - 65).filter((s) => s >= 0);
+  const out = [...new Set(letras)].filter((s) => existentes.includes(s));
+  return out.length ? out.sort((a, b) => a - b) : null;
+}
+
+/** Quita el markdown literal ("**negrita**", "__x__", "# títulos") que no pinta nada en un correo de sólo texto. */
+export function limpiarMarcas(texto: string): string {
+  return String(texto || "")
+    .replace(/\*\*([^*\n]+?)\*\*/g, "$1")
+    .replace(/__([^_\n]+?)__/g, "$1")
+    .replace(/\*\*/g, "")
+    .replace(/^#{1,6}\s+/gm, "");
+}
+
+/** `<a href="u">texto</a>` → "texto (u)": al pasar el cuerpo a texto plano no se pierde el enlace. */
+export function enlacesATexto(html: string): string {
+  return String(html || "").replace(/<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, txt: string) => {
+    const t = txt.replace(/<[^>]+>/g, "").trim();
+    return !t || t === href || href.includes(t) ? href : `${t} (${href})`;
+  });
 }

@@ -7,7 +7,9 @@
 // pocas al día y con horas entre medias, como lo haría un comercial.
 //
 //   · CUPO: como mucho N correos al día a la misma empresa, sumando TODAS las campañas del
-//     cliente (primeros correos y seguimientos).
+//     cliente (primeros correos y seguimientos). 06-10-2026: el cupo sólo FRENA primeros correos;
+//     un seguimiento se envía aunque el cupo esté lleno (sólo respeta el HUECO). Antes 482
+//     seguimientos (orange.com, stellantis…) llevaban más de 7 días de retraso por el cupo.
 //   · HUECO: al menos M minutos entre dos correos a la misma empresa.
 //   · Los correos gratuitos (gmail, hotmail…) NO son una empresa: allí cada dirección es una
 //     persona distinta y no se aplica nada.
@@ -36,15 +38,17 @@ export function esEmpresa(dominio: string | null | undefined): boolean {
 export type EstadoEmpresa = { n: number; ultimoMs: number };
 
 /** ¿Se le puede escribir AHORA a esta empresa?
- *  "si" → adelante · "cupo" → hoy ya recibió N · "espera" → el último fue hace menos de M minutos. */
+ *  "si" → adelante · "cupo" → hoy ya recibió N · "espera" → el último fue hace menos de M minutos.
+ *  primerCorreo = false (seguimiento): no se mira el cupo, sólo el hueco. */
 export function puedeEscribirEmpresa(
   estado: EstadoEmpresa | undefined,
   ahoraMs: number,
   cupo = CUPO_EMPRESA_DIA,
   huecoMin = HUECO_EMPRESA_MIN,
+  primerCorreo = true,
 ): "si" | "cupo" | "espera" {
   if (!estado) return "si";
-  if (estado.n >= cupo) return "cupo";
+  if (primerCorreo && estado.n >= cupo) return "cupo";
   if (estado.ultimoMs && ahoraMs - estado.ultimoMs < huecoMin * 60_000) return "espera";
   return "si";
 }

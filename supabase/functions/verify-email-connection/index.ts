@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import { assertPublicMailHost } from "../_shared/host-guard.ts";
+import { isCompleteSmtpReply, sanitizeServerText } from "../_shared/smtp-wire.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,6 +8,10 @@ const corsHeaders = {
 };
 
 const TIMEOUT_MS = 15000;
+// Auditoría 06-10-2026: al cliente sólo llega un motivo corto y limpio (máx. 120 caracteres, sin
+// binarios), nunca la respuesta cruda de un servidor que eligió el usuario.
+const NO_TLS_MSG = "El servidor no ofrece conexión cifrada (TLS); usa el puerto 465 o 587 con STARTTLS";
+const reason = (raw: string) => sanitizeServerText(raw, 120);
 
 function safeBase64(str: string): string {
   const encoder = new TextEncoder();
@@ -34,12 +40,28 @@ async function readWithTimeout(conn: Deno.Conn, timeoutMs = 5000): Promise<strin
   );
 }
 
+/** Una respuesta SMTP ENTERA: sólo está completa con CRLF final + línea "NNN " (ver smtp-wire.ts). */
+async function readSmtp(conn: Deno.Conn, timeoutMs = 5000): Promise<string> {
+  let acc = "";
+  const deadline = Date.now() + Math.max(timeoutMs, 5000) * 2;
+  while (Date.now() < deadline && acc.length < 64 * 1024) {
+    const chunk = await readWithTimeout(conn, timeoutMs);
+    if (!chunk) break; // el servidor cerró
+    acc += chunk;
+    if (isCompleteSmtpReply(acc)) break;
+  }
+  return acc;
+}
+
 async function sendCmd(conn: Deno.Conn, cmd: string): Promise<string> {
   await conn.write(new TextEncoder().encode(cmd + "\r\n"));
-  return await readWithTimeout(conn, 5000);
+  return await readSmtp(conn, 5000);
 }
 
 async function testSmtp(host: string, port: number, username: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  // SSRF: nada de direcciones internas ni puertos que no sean de correo, ANTES de conectar.
+  const hostProblem = await assertPublicMailHost(host, port);
+  if (hostProblem) return { ok: false, error: hostProblem };
   let conn: Deno.Conn | null = null;
   try {
     if (port === 465) {
@@ -50,82 +72,61 @@ async function testSmtp(host: string, port: number, username: string, password: 
     }
 
     // Read greeting
-    const greeting = await readWithTimeout(conn, 5000);
-    console.log("SMTP greeting:", greeting.trim());
+    const greeting = await readSmtp(conn, 5000);
+    console.log("SMTP greeting:", reason(greeting));
 
-    if (port === 465) {
-      // Already TLS, send EHLO + AUTH
-      const ehlo = await sendCmd(conn, "EHLO mailreach");
-      console.log("SMTP EHLO response:", ehlo.trim());
+    const ehlo1 = await sendCmd(conn, "EHLO mailreach");
+    console.log("SMTP EHLO response:", reason(ehlo1));
 
-      const credentials = safeBase64(`\0${username}\0${password}`);
-      const authResp = await sendCmd(conn, `AUTH PLAIN ${credentials}`);
-      console.log("SMTP AUTH response:", authResp.trim());
-
-      try { await sendCmd(conn, "QUIT"); } catch (_) { /* ignore */ }
-      conn.close();
-
-      if (authResp.startsWith("235")) return { ok: true };
-      return { ok: false, error: `SMTP auth failed: ${authResp.trim()}` };
-    }
-
-    if (port === 587) {
-      // STARTTLS flow
-      const ehlo1 = await sendCmd(conn, "EHLO mailreach");
-      console.log("SMTP EHLO response:", ehlo1.trim());
-
-      if (ehlo1.includes("STARTTLS")) {
-        const starttlsResp = await sendCmd(conn, "STARTTLS");
-        console.log("STARTTLS response:", starttlsResp.trim());
-
-        if (starttlsResp.startsWith("220")) {
-          // Upgrade to TLS
-          const tlsConn = await withTimeout(
-            Deno.startTls(conn as Deno.TcpConn, { hostname: host }),
-            TIMEOUT_MS,
-            "STARTTLS upgrade"
-          );
-          conn = tlsConn;
-
-          await sendCmd(conn, "EHLO mailreach");
-          const credentials = safeBase64(`\0${username}\0${password}`);
-          const authResp = await sendCmd(conn, `AUTH PLAIN ${credentials}`);
-          console.log("SMTP AUTH response:", authResp.trim());
-
-          try { await sendCmd(conn, "QUIT"); } catch (_) { /* ignore */ }
-          conn.close();
-
-          if (authResp.startsWith("235")) return { ok: true };
-          return { ok: false, error: `SMTP auth failed: ${authResp.trim()}` };
-        }
+    if (port !== 465) {
+      // Sin TLS NUNCA se envía AUTH (auditoría 06-10-2026, #11): antes, si el servidor no ofrecía
+      // STARTTLS en el 587 (o en cualquier otro puerto), se mandaba usuario y contraseña en claro.
+      if (!/STARTTLS/i.test(ehlo1)) {
+        try { conn.close(); } catch (_) { /* ignore */ }
+        return { ok: false, error: NO_TLS_MSG };
       }
-
-      // Fallback: try AUTH without TLS
-      const credentials = safeBase64(`\0${username}\0${password}`);
-      const authResp = await sendCmd(conn, `AUTH PLAIN ${credentials}`);
-      try { await sendCmd(conn, "QUIT"); } catch (_) { /* ignore */ }
-      conn.close();
-
-      if (authResp.startsWith("235")) return { ok: true };
-      return { ok: false, error: `SMTP auth failed: ${authResp.trim()}` };
+      const starttlsResp = await sendCmd(conn, "STARTTLS");
+      console.log("STARTTLS response:", reason(starttlsResp));
+      if (!starttlsResp.startsWith("220")) {
+        try { conn.close(); } catch (_) { /* ignore */ }
+        return { ok: false, error: `SMTP STARTTLS failed: ${reason(starttlsResp)}` };
+      }
+      // Upgrade to TLS
+      conn = await withTimeout(
+        Deno.startTls(conn as Deno.TcpConn, { hostname: host }),
+        TIMEOUT_MS,
+        "STARTTLS upgrade"
+      );
+      await sendCmd(conn, "EHLO mailreach");
     }
 
-    // Generic port
-    await sendCmd(conn, "EHLO mailreach");
     const credentials = safeBase64(`\0${username}\0${password}`);
     const authResp = await sendCmd(conn, `AUTH PLAIN ${credentials}`);
+    console.log("SMTP AUTH response:", reason(authResp));
+
     try { await sendCmd(conn, "QUIT"); } catch (_) { /* ignore */ }
     conn.close();
 
     if (authResp.startsWith("235")) return { ok: true };
-    return { ok: false, error: `SMTP auth failed: ${authResp.trim()}` };
+    return { ok: false, error: `SMTP auth failed: ${reason(authResp)}` };
   } catch (e) {
     try { conn?.close(); } catch (_) { /* ignore */ }
-    return { ok: false, error: `SMTP error: ${e.message}` };
+    return { ok: false, error: `SMTP error: ${reason((e as Error)?.message || String(e))}` };
   }
 }
 
+/** Cadena entre comillas de IMAP (RFC 3501 §4.3). Sin CR/LF: un usuario o clave con salto de línea inyectaba órdenes. */
+function imapQuote(s: string): string | null {
+  if (/[\r\n\0]/.test(s)) return null;
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
 async function testImap(host: string, port: number, username: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  const hostProblem = await assertPublicMailHost(host, port);
+  if (hostProblem) return { ok: false, error: hostProblem };
+  const qUser = imapQuote(username ?? "");
+  const qPass = imapQuote(password ?? "");
+  if (!qUser || !qPass) return { ok: false, error: "IMAP auth failed: usuario o contraseña con caracteres no válidos" };
   let conn: Deno.Conn | null = null;
   try {
     if (port === 993) {
@@ -136,12 +137,12 @@ async function testImap(host: string, port: number, username: string, password: 
 
     // Read greeting
     const greeting = await readWithTimeout(conn, 5000);
-    console.log("IMAP greeting:", greeting.trim());
+    console.log("IMAP greeting:", reason(greeting));
 
     // Login
-    const loginCmd = `A001 LOGIN "${username}" "${password}"`;
+    const loginCmd = `A001 LOGIN ${qUser} ${qPass}`;
     await conn.write(new TextEncoder().encode(loginCmd + "\r\n"));
-    
+
     // Read login response (may come in multiple chunks)
     let response = "";
     const deadline = Date.now() + 10000;
@@ -150,7 +151,7 @@ async function testImap(host: string, port: number, username: string, password: 
       response += chunk;
       if (response.includes("A001 OK") || response.includes("A001 NO") || response.includes("A001 BAD")) break;
     }
-    console.log("IMAP LOGIN response:", response.trim().slice(0, 200));
+    console.log("IMAP LOGIN response:", reason(response));
 
     if (response.includes("A001 OK")) {
       try {
@@ -162,10 +163,10 @@ async function testImap(host: string, port: number, username: string, password: 
     }
 
     conn.close();
-    return { ok: false, error: `IMAP auth failed: ${response.trim().slice(0, 200)}` };
+    return { ok: false, error: `IMAP auth failed: ${reason(response)}` };
   } catch (e) {
     try { conn?.close(); } catch (_) { /* ignore */ }
-    return { ok: false, error: `IMAP error: ${e.message}` };
+    return { ok: false, error: `IMAP error: ${reason((e as Error)?.message || String(e))}` };
   }
 }
 
@@ -230,10 +231,10 @@ Deno.serve(async (req) => {
       25000,
       "Overall verification"
     ).catch((e) => {
-      console.error("Overall timeout:", e.message);
+      console.error("Overall timeout:", (e as Error).message);
       return [
-        { ok: false, error: `Timeout: ${e.message}` },
-        { ok: false, error: `Timeout: ${e.message}` },
+        { ok: false, error: `Timeout: ${(e as Error).message}` },
+        { ok: false, error: `Timeout: ${(e as Error).message}` },
       ] as [{ ok: boolean; error?: string }, { ok: boolean; error?: string }];
     });
 
@@ -277,6 +278,6 @@ Deno.serve(async (req) => {
 
   } catch (e) {
     console.error("verify-email-connection error:", e);
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

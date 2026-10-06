@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SparkMark } from "@/components/SparkMark";
 import { useLocation } from "react-router-dom";
 import { isMobileAppPath } from "@/lib/mobile-app";
-import { contextoParaPulseBot, esPeticionDeCambio, siguePulseBot } from "@/lib/chatbot-intent";
+import { contextoParaPulseBot, esOrdenDeAplicar, esPeticionDeCambio, siguePulseBot } from "@/lib/chatbot-intent";
 import { TarjetaCambioMini, type AccionCambio, type TarjetaCambioT } from "@/components/chatbot/TarjetaCambioMini";
 import type { IaTarjeta } from "@/lib/ia-mod-view";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -266,7 +266,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
     // ¿Pide cambiar algo de sus campañas (o sigue una conversación de cambios)? → PulseBot.
     const ultimoAsistente = [...messages].reverse().find((m) => m.role === "assistant");
-    if (!isAutoAnalytics && !userMsg.images && (esPeticionDeCambio(text) || siguePulseBot(text, ultimoAsistente?.via === "pulsebot"))) {
+    if (!isAutoAnalytics && !userMsg.images && (esPeticionDeCambio(text) || esOrdenDeAplicar(text) || siguePulseBot(text, ultimoAsistente?.via === "pulsebot"))) {
       await enviarAPulseBot(text.trim(), messages);
       return;
     }
@@ -291,7 +291,10 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setViaPulseBot(true);
     try {
       // Lo hablado con el consultor justo antes va como contexto de un solo uso (no se guarda).
-      const contexto = previos.some((m) => m.via === "pulsebot") ? "" : contextoParaPulseBot(previos);
+      // Si lo último que dijo el asistente fue del consultor (no de PulseBot), PulseBot necesita ver qué se proponía
+      // para poder aplicarlo cuando el usuario escribe "aplícalo".
+      const ultimoAsistente = [...previos].reverse().find((m) => m.role === "assistant");
+      const contexto = ultimoAsistente?.via === "pulsebot" ? "" : contextoParaPulseBot(previos);
       const r = await llamarPulseBot<{ message: { content: string; cards?: IaTarjeta[] }; changes?: Record<string, string> }>({ action: "chat", message: texto, contexto });
       if (r.changes) setEstadosCambio((prev) => ({ ...prev, ...r.changes }));
       setMessages((prev) => [...prev, { role: "assistant", content: r.message?.content || "", cards: r.message?.cards || [], via: "pulsebot" }]);
@@ -305,9 +308,11 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
   const accionCambio = async (change_id: string, action: AccionCambio) => {
     try {
-      const r = await llamarPulseBot<{ status: string; summary?: string | null }>({ action, change_id });
+      const r = await llamarPulseBot<{ status: string; summary?: string | null; error?: string }>({ action, change_id });
       setEstadosCambio((prev) => ({ ...prev, [change_id]: r.status }));
-      if (r.summary) setMessages((prev) => [...prev, { role: "assistant", content: r.summary!, via: "pulsebot" }]);
+      // "applied" sólo llega tras releer lo guardado; "failed" trae el motivo y no se ha tocado nada.
+      const texto = r.summary || (r.status === "failed" ? `No se ha podido aplicar: ${r.error || "error desconocido"}` : "");
+      if (texto) setMessages((prev) => [...prev, { role: "assistant", content: texto, via: "pulsebot" }]);
     } catch (e) {
       setMessages((prev) => [...prev, { role: "assistant", content: `❌ ${e instanceof Error ? e.message : "No se pudo"}`, via: "pulsebot" }]);
     }

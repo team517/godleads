@@ -13,8 +13,11 @@ function toHtml(text: string): string {
   return text.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="margin:0 0 10px">${p.replace(/\n/g, "<br>")}</p>`).join("") || `<p>${(text || "").replace(/\n/g, "<br>")}</p>`;
 }
 import { encodeMimeHeaderFolded, foldHeader, threadHeaders } from "../_shared/mime-headers.ts";
+import { assertPublicMailHost } from "../_shared/host-guard.ts";
+import { makeBudget, readSmtpReply, sanitizeServerText, withTimeout } from "../_shared/smtp-wire.ts";
 
 async function sendSmtp(host: string, port: number, username: string, password: string, from: string, fromName: string | null, to: string, subject: string, bodyHtml: string, opts?: { inReplyTo?: string; references?: string }): Promise<{ ok: boolean; error?: string; msgId?: string }> {
+  let conn: Deno.Conn | null = null;
   try {
     // Header-injection guard: strip CR/LF from any value that lands in an email header, so a crafted
     // subject/recipient can never inject extra headers (defense-in-depth; these come from owner rows).
@@ -23,9 +26,18 @@ async function sendSmtp(host: string, port: number, username: string, password: 
     from = String(from || "").replace(/[\r\n]+/g, "").trim();
     fromName = fromName ? String(fromName).replace(/[\r\n"]+/g, " ").trim() : fromName;
     port = Number(port) || 587;
-    let conn: Deno.Conn = port === 465 ? await Deno.connectTls({ hostname: host, port }) : await Deno.connect({ hostname: host, port });
-    const read = async () => { const b = new Uint8Array(4096); const n = await conn.read(b); return new TextDecoder().decode(b.subarray(0, n || 0)); };
-    const send = async (cmd: string) => { await conn.write(new TextEncoder().encode(cmd + "\r\n")); return await read(); };
+    // SSRF (auditoría 06-10-2026): el host SMTP lo elige el usuario; nunca se conecta a direcciones internas.
+    const malHost = await assertPublicMailHost(host, port);
+    if (malHost) return { ok: false, error: malHost };
+    // Plazos: conexión 25 s, cada lectura 20 s, escritura 30 s y ~45 s en total; el socket se cierra siempre (finally).
+    const budget = makeBudget(45_000);
+    const connecting: Promise<Deno.Conn> = port === 465 ? Deno.connectTls({ hostname: host, port }) : Deno.connect({ hostname: host, port });
+    let gaveUp = false;
+    connecting.then((c) => { if (gaveUp) { try { c.close(); } catch { /* */ } } }, () => {});
+    try { conn = await withTimeout(connecting, budget(25_000), "connect"); } catch (e) { gaveUp = true; throw e; }
+    const read = () => readSmtpReply(() => conn!, { readMs: 20_000, budget });
+    const enc = new TextEncoder();
+    const send = async (cmd: string) => { await withTimeout(conn!.write(enc.encode(cmd + "\r\n")), budget(20_000), "write"); return await read(); };
     // Same threading rules as every other sender (shared, tested helper): ids bracketed once,
     // no duplicates, the answered id last, long chains trimmed and FOLDED under 998 chars.
     const thread = threadHeaders(opts?.inReplyTo, opts?.references);
@@ -33,14 +45,28 @@ async function sendSmtp(host: string, port: number, username: string, password: 
     const ourId = `<${crypto.randomUUID()}@onepulso.online>`;
     const msg = () => `From: ${fromName ? `"${fromName}" <${from}>` : from}\r\nTo: ${to}\r\nSubject: ${encodeMimeHeaderFolded(subject)}\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: ${ourId}\r\n${threadHdrs}Content-Type: text/html; charset=utf-8\r\nMIME-Version: 1.0\r\n\r\n${bodyHtml}\r\n.\r\n`;
     await read();
-    if (port === 587) { const ehlo = await send("EHLO onepulso"); if (ehlo.includes("STARTTLS")) { await conn.write(new TextEncoder().encode("STARTTLS\r\n")); await read(); conn = await Deno.startTls(conn as Deno.TcpConn, { hostname: host }); } }
+    if (port !== 465) {
+      // Sin STARTTLS no se manda AUTH (usuario y clave irían en claro).
+      const ehlo = await send("EHLO onepulso");
+      if (!/STARTTLS/i.test(ehlo)) return { ok: false, error: "El servidor no ofrece conexión cifrada (TLS); usa el puerto 465 o 587 con STARTTLS" };
+      const st = await send("STARTTLS");
+      if (!st.startsWith("220")) return { ok: false, error: `starttls: ${sanitizeServerText(st, 60)}` };
+      conn = await withTimeout(Deno.startTls(conn as Deno.TcpConn, { hostname: host }), budget(25_000), "STARTTLS");
+    }
     await send("EHLO onepulso");
     const auth = await send(`AUTH PLAIN ${btoa(`\0${username}\0${password}`)}`);
-    if (!auth.startsWith("235")) { try { conn.close(); } catch { /* */ } return { ok: false, error: `auth: ${auth.trim().slice(0, 60)}` }; }
-    await send(`MAIL FROM:<${from}>`); await send(`RCPT TO:<${to}>`); await send("DATA");
-    const data = await send(msg()); await send("QUIT"); conn.close();
-    return data.includes("250") ? { ok: true, msgId: ourId } : { ok: false, error: `send: ${data.trim().slice(0, 60)}` };
-  } catch (e) { return { ok: false, error: `smtp: ${(e as Error).message}` }; }
+    if (!auth.startsWith("235")) return { ok: false, error: `auth: ${sanitizeServerText(auth, 60)}` };
+    const mf = await send(`MAIL FROM:<${from}>`);
+    if (!mf.startsWith("250")) return { ok: false, error: `mail from: ${sanitizeServerText(mf, 60)}` };
+    const rc = await send(`RCPT TO:<${to}>`);
+    if (!/^25[01]/.test(rc)) return { ok: false, error: `rcpt: ${sanitizeServerText(rc, 60)}` };
+    const dt = await send("DATA");
+    if (!dt.startsWith("354")) return { ok: false, error: `data: ${sanitizeServerText(dt, 60)}` };
+    const data = await send(msg());
+    try { await send("QUIT"); } catch { /* */ }
+    return /^250[ -]/m.test(data) ? { ok: true, msgId: ourId } : { ok: false, error: `send: ${sanitizeServerText(data, 60)}` };
+  } catch (e) { return { ok: false, error: `smtp: ${sanitizeServerText((e as Error).message, 120)}` }; }
+  finally { try { conn?.close(); } catch { /* */ } }
 }
 
 serve(async (req) => {

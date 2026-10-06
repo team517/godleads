@@ -33,6 +33,18 @@ export function siguePulseBot(texto: string, anteriorFuePulseBot: boolean): bool
   return t.length <= 160 && CONTINUA.test(t);
 }
 
+/**
+ * "Aplícalo", "hazlo", "sí, aplica el cambio": una orden CORTA de aplicar. Siempre va a PulseBot, venga el turno anterior
+ * de quien venga: el consultor no puede tocar campañas y decía "hecho" sin hacer nada (06-10-2026). Si lo anterior fue
+ * el consultor proponiendo un cambio, PulseBot recibe esa conversación como contexto y lo aplica de verdad.
+ */
+const ORDEN_APLICAR = /\b(apl[ií]c(a|alo|ala|alos|alas|ame)|aplicar(lo|la)?|h[aá]zlo|hazla|dale|confirma(lo)?|conf[ií]rma(lo)?|procede|proc[eé]delo|ejec[uú]talo|gu[aá]rdalo)\b/i;
+export function esOrdenDeAplicar(texto: string): boolean {
+  const t = String(texto || "").trim();
+  if (!t || t.length > 60) return false;
+  return ORDEN_APLICAR.test(t) && !/\bno\b/i.test(t);
+}
+
 /** Los últimos mensajes del consultor, como contexto de un solo uso para PulseBot. */
 export function contextoParaPulseBot(mensajes: { role: string; content: string }[], max = 6): string {
   const ultimos = mensajes.filter((m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim()).slice(-max);

@@ -2,7 +2,11 @@
 //
 // Two roles, one URL:
 //   • START    GET  ?owner=<uuid>   → 302 redirect to Google's consent screen
-//   • CALLBACK GET  ?code=...&state=<owner uuid> → exchange code, store tokens, show a page
+//   • CALLBACK GET  ?code=...&state=<state firmado> → exchange code, store tokens, show a page
+//
+// `state` = v1.<owner+nonce+caducidad>.<HMAC> (auditoría 06-10-2026): antes era el UUID del dueño sin
+// firmar y cualquiera podía guardar SU Google en la conexión de otro. Firma con OAUTH_STATE_SECRET
+// (si no existe, con la clave de servicio, que sólo se usa aquí para firmar el state).
 //
 // Isolated from the sending engine. Tokens are stored server-side only (google_connections)
 // and never returned to the browser. Deploy with --no-verify-jwt (Google/browser hit it
@@ -10,12 +14,14 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { signOauthState, verifyOauthState } from "../_shared/signed-state.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
 const CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
 const REDIRECT_URI = `${SUPABASE_URL}/functions/v1/google-oauth`;
+const STATE_SECRET = Deno.env.get("OAUTH_STATE_SECRET") || SERVICE_ROLE;
 const SCOPES = [
   "https://www.googleapis.com/auth/forms.responses.readonly",
   "https://www.googleapis.com/auth/forms.body.readonly",
@@ -69,12 +75,14 @@ serve(async (req) => {
     auth.searchParams.set("access_type", "offline");
     auth.searchParams.set("prompt", "consent");
     auth.searchParams.set("include_granted_scopes", "true");
-    auth.searchParams.set("state", owner);
+    auth.searchParams.set("state", await signOauthState(owner, STATE_SECRET));
     return Response.redirect(auth.toString(), 302);
   }
 
   // ── CALLBACK ──
-  if (!UUID_RE.test(state)) return page("Sesión no válida", "Vuelve a iniciar la conexión desde la app.", false);
+  // El state tiene que venir firmado por nosotros y vigente; de él sale el dueño (nunca de un UUID suelto).
+  const ownerId = await verifyOauthState(state, STATE_SECRET);
+  if (!ownerId) return page("Sesión no válida", "El enlace de conexión caducó o no es válido. Vuelve a iniciar la conexión desde la app.", false);
   try {
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -97,7 +105,7 @@ serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
     const { error: dbErr } = await admin.from("google_connections").upsert({
-      owner_id: state,
+      owner_id: ownerId,
       google_email: email,
       refresh_token: tok.refresh_token ?? null,
       access_token: tok.access_token ?? null,
