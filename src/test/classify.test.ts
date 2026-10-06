@@ -61,3 +61,18 @@ describe("classifyMessage", () => {
     expect(classifyMessage(null, "No estoy seguro, pero pásame más información.")).toBe("interested");
   });
 });
+
+describe("la palabra «spam» sola no es una baja (06-10-2026)", () => {
+  it("DUOK: el correo se fue a spam y pide calendario → interesado", () => {
+    expect(classifyMessage("RE: una idea para DUOK Informática, S.L.", "Hola Javi,\n\nEl mensaje anterior se había ido a spam.\nPásame calendario y buscamos un hueco.\n\nSaludos,")).toBe("interested");
+  });
+  it("lo encontró en la carpeta de spam y pregunta → no es no_contactar", () => {
+    expect(classifyMessage("Re: propuesta", "Lo encontré en la carpeta de spam. ¿Qué incluye exactamente el servicio?")).not.toBe("no_contactar");
+  });
+  it("acusación de spam → no_contactar", () => {
+    expect(classifyMessage("Re:", "Esto es spam. No me escribáis más.")).toBe("no_contactar");
+    expect(classifyMessage("Re:", "Dejad de enviar spam a esta dirección.")).toBe("no_contactar");
+    expect(classifyMessage("Re:", "Marcado como spam.")).toBe("no_contactar");
+    expect(classifyMessage("Re:", "This is spam, stop.")).toBe("no_contactar");
+  });
+});

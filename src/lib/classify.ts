@@ -352,8 +352,12 @@ const DO_NOT_CONTACT = [
   /\b(mis|nuestros)\s+datos\b[^.?!\n]{0,60}(borr|elimin|suprim|quit|sacad|obtenid|conseguid|viol|protecci|rgpd|gdpr)/i,
   /(borra|elimina|quita|suprime|borrad|eliminad|quitad)\w*\s+(mis|nuestros)\s+datos/i,
   /(viola|infringe|incumple)\w*\s+(el\s+|la\s+)?(rgpd|gdpr|lopd|protecci[óo]n\s+de\s+datos)/i,
-  // spam accusation
-  /\bspam\b/i, /correo (no deseado|basura)/i, /junk mail/i, /unsolicited/i,
+  // spam accusation — only when the AUTHOR calls our mail spam. A bare "spam" also appears in
+  // "el mensaje anterior se había ido a spam, pásame calendario" (DUOK, 2026-10-05: an interested
+  // reply that got No contactar + a blocklist entry) or "lo encontré en la carpeta de spam".
+  /\b(es|era|parece|considero|consideramos|pur[oa]|hacer|haciendo|hac[ée]is|hace|enviar|enviando|env[ií]a|envi[áa]is|mandar|mandando|mand[áa]is|manda|basta\s+de|no\s+m[áa]s|stop|denunci\w*|report\w*|marc\w+)\s+(como\s+|de\s+|el\s+|tu\s+|tus\s+|vuestr[oa]s?\s+|este\s+|estos\s+|puro\s+)?spam\b/i,
+  /\bspam\b\s*(puro|total|descarado)\b/i, /\bspammer/i, /\bspamming\b/i, /\bthis is spam\b/i,
+  /correo (no deseado|basura)/i, /junk mail/i, /unsolicited/i,
 ];
 
 // ── 2b-bis) SIN ENCAJE — un "no" razonado y educado. Es un RECHAZO, no una duda: el prospecto

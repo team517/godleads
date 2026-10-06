@@ -81,6 +81,10 @@ function evaluate(m: any): Check[] {
       msg: `🔒 ${m.zombie_locks} lock(s) atascado(s) >1h — el motor de envío podría estar bloqueado.` },
     { key: "high_bounce", failing: bouncePct > 8,
       msg: `📈 Tasa de rebote ALTA: ${bouncePct.toFixed(1)}% en 2h (${m.bounced_2h}/${m.sent_2h}) — revisa deliverability.` },
+    // El repaso nocturno (cron inbox-rescan-nightly) trae lo que la sincronización normal no trajo.
+    // Más de 20 recuperados en un día = la sincronización está dejando correos atrás (06-10-2026).
+    { key: "inbox_recovered", failing: (Number(m.recovered_24h) || 0) > 20,
+      msg: `📥 El repaso de buzones ha recuperado ${m.recovered_24h} correos en 24 h que la sincronización normal NO había traído — revisa fetch-inbox (inbox_ingest_log, result = 'recuperado').` },
   ];
 }
 
