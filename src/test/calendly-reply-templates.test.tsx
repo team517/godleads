@@ -6,11 +6,14 @@ import { editorToSource } from "@/lib/mobile-inbox";
 import { htmlToPlainText, textToHtmlBody } from "@/lib/mime-headers";
 import { fixBlockedLinks } from "../../supabase/functions/_shared/link-guard";
 
-/* Plantillas de respuesta con el Calendly de 30 min (05-10-2026, petición del dueño): desde el
-   Unibox del ordenador y desde la app del móvil, el enlace tiene que salir ENTERO y como enlace.
-   El cuerpo es el de la plantilla real "INTERESADO QUIERE REUNIÓN" (support@). */
+/* Plantillas de respuesta con el Calendly (support@, "INTERESADO QUIERE REUNIÓN"). 05-10-2026 el
+   dueño pidió el enlace /30min entero; 06-10-2026 se comprobó que con ese enlace el correo no llega
+   (IONOS lo enruta por un servidor en Spamhaus: 6 de 8 respuestas rebotaron) y pidió arreglarlo.
+   Ahora: en el editor se ve lo que se escribió, y al enviar sale la URL de perfil, que entrega,
+   como enlace entero y también en la parte de texto. */
 
 const URL = "https://calendly.com/onepulso/30min";
+const LIMPIA = "https://calendly.com/onepulso";
 const PLANTILLA = `Buenas, perfecto, te paso el enlace de mi calendario para que puedas agendar reunión lo antes posible\n<a href="${URL}">${URL}</a>\nquedo atento\nsaludos\nMaria`;
 const ANCLA = `<a href="${URL}">${URL}</a>`;
 
@@ -34,11 +37,12 @@ describe("Calendly /30min en las plantillas de respuesta", () => {
     const src = ref.current!.getSource();
     expect(src).toContain(ANCLA);
     const sent = comoLoEnviaElServidor(src);
-    expect(sent.cambios).toEqual([]);                       // ya no se recorta
-    expect(sent.html).toContain(`href="${URL}"`);
-    expect(sent.html).toContain(`>${URL}</a>`);
-    expect(sent.plain).toContain(URL);                      // también en la parte de texto
-    expect(sent.plain).not.toMatch(/calendly\.com\/onepulso(?!\/30min)/);
+    expect(sent.cambios).toEqual([{ from: "calendly.com/onepulso/30min", to: "calendly.com/onepulso" }]);
+    expect(sent.html).toContain(`href="${LIMPIA}"`);
+    expect(sent.html).toContain(`>${LIMPIA}</a>`);
+    expect(sent.html).not.toContain("/30min");
+    expect(sent.plain).toContain(LIMPIA);                   // también en la parte de texto
+    expect(sent.plain).not.toContain("/30min");
   });
 
   it("App del móvil: insertar la plantilla en el editor y enviar", () => {
@@ -51,13 +55,15 @@ describe("Calendly /30min en las plantillas de respuesta", () => {
     const body = editorToSource(el);                          // lo que manda Composer al enviar
     expect(body).toContain(ANCLA);
     const sent = comoLoEnviaElServidor(body);
-    expect(sent.html).toContain(`href="${URL}"`);
-    expect(sent.plain).toContain(URL);
+    expect(sent.html).toContain(`href="${LIMPIA}"`);
+    expect(sent.html).not.toContain("/30min");
+    expect(sent.plain).toContain(LIMPIA);
   });
 
-  it("si se escribe la URL a mano sin enlace, también llega entera", () => {
+  it("si se escribe la URL /30min a mano, también se cambia por la que entrega", () => {
     const sent = comoLoEnviaElServidor(`te dejo mi agenda: ${URL} saludos`);
-    expect(sent.html).toContain(URL);
-    expect(sent.plain).toContain(URL);
+    expect(sent.html).toContain(LIMPIA);
+    expect(sent.html).not.toContain("/30min");
+    expect(sent.plain).toContain(LIMPIA);
   });
 });
