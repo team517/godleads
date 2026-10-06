@@ -10,6 +10,7 @@ import { publishUniboxUnread } from "@/lib/uniboxBadge";
 import { isPrimaryRow, PRIMARY_FEED } from "@/lib/mobile-inbox";
 import DOMPurify from "dompurify";
 import MailHtml from "@/components/unibox/MailHtml";
+import { readSavedUniboxTab, saveUniboxTab } from "@/lib/unibox-tab";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SavedSignatures } from "@/components/SavedSignatures";
@@ -544,7 +545,7 @@ export default function Unibox() {
   // another system with the same mailboxes) — it must never be hidden as outreach noise.
   const [ownDomains, setOwnDomains] = useState<Set<string>>(new Set());
   const [leadDomainsReady, setLeadDomainsReady] = useState(false);
-  const [mailboxMode, setMailboxMode] = useState<"clean" | "all">("clean");
+  const [mailboxMode, setMailboxMode] = useState<"clean" | "all">(() => (readSavedUniboxTab() === "all_mailboxes" ? "all" : "clean"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Multi-select for bulk delete of Unibox messages.
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
@@ -685,7 +686,9 @@ export default function Unibox() {
     if (error) { toast.error(`No se pudo borrar: ${error.message}`); return; }
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   };
-  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">("global");
+  // Pestaña inicial (06-10-2026, petición del dueño): Campaigns por defecto —las respuestas de campaña
+  // son lo que se mira— y se recuerda la última que se usó en este navegador.
+  const [viewTab, setViewTab] = useState<"global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent">(() => readSavedUniboxTab());
   const [sentItems, setSentItems] = useState<any[]>([]); // manual replies/forwards you sent
   const [importantItems, setImportantItems] = useState<any[]>([]); // messages you starred (label "Importante")
   // Pestaña Campaigns: sus correos se piden a la BD (los enlazados a una campaña, o a la elegida),
@@ -2634,6 +2637,7 @@ export default function Unibox() {
         <Tabs value={viewTab} onValueChange={(v) => {
           const nextTab = v as "global" | "all_mailboxes" | "important" | "campaigns" | "reminders" | "sent";
           setViewTab(nextTab);
+          saveUniboxTab(nextTab);
           setMailboxMode(nextTab === "all_mailboxes" ? "all" : "clean");
         }}>
           <TabsList className="h-9 w-full justify-start overflow-x-auto no-scrollbar [&>*]:flex-shrink-0 md:w-auto md:overflow-visible">
