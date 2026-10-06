@@ -6,6 +6,7 @@ import { copiarAEnviados } from "../_shared/imap-append.ts";
 import { fixBlockedLinks } from "../_shared/link-guard.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
 import { makeBudget, readSmtpReply, sanitizeServerText, withTimeout } from "../_shared/smtp-wire.ts";
+import { canResend, INLINE_RETRY_DELAYS_MS, MAX_RETRY_PAYLOAD_B64, sendRetryable } from "../_shared/reply-retry.ts";
 
 // Presupuesto total de una sesión SMTP (auditoría 06-10-2026).
 const SEND_BUDGET_MS = 45_000;
@@ -544,22 +545,44 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-    const userId = user.id;
-
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+    const reqJson = await req.json().catch(() => ({}));
+
+    // Reenvío automático (06-10-2026): fetch-inbox, con la clave de servicio, pide reenviar una
+    // respuesta manual que rebotó por la IP de salida. Se reclama la copia guardada (una sola vez:
+    // el update sólo pasa de 'armed' a 'used' una vez) y se envía como la mandó su dueño.
+    const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const bearer = authHeader.replace(/^Bearer\s+/i, "");
+    let userId: string;
+    let input: Record<string, any> = reqJson && typeof reqJson === "object" ? reqJson : {};
+    let resendAttempt = 0;
+    if (svcKey && bearer === svcKey && typeof input.retry_of === "string") {
+      const { data: claimed } = await adminClient.from("reply_retries")
+        .update({ status: "used", used_at: new Date().toISOString() })
+        .eq("sent_email_id", input.retry_of).eq("status", "armed")
+        .select("user_id, payload, attempt").maybeSingle();
+      const row = claimed as { user_id: string; payload: Record<string, any>; attempt: number } | null;
+      if (!row || !canResend(row.attempt)) {
+        return new Response(JSON.stringify({ skipped: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      userId = row.user_id;
+      input = row.payload || {};
+      resendAttempt = row.attempt + 1;
+    } else {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      userId = user.id;
+    }
 
     const {
       campaign_id: reqCampaignId,
@@ -581,7 +604,7 @@ serve(async (req) => {
       cc,               // extra people added to the thread (Unibox "Añadir persona")
       kind,             // "forward" cuando es un reenvío del Unibox
       forwarded_from,   // id del mensaje del Unibox que se reenvía (para enseñarlo en su hilo)
-    } = await req.json();
+    } = input;
     const isForward = kind === "forward";
 
     // Auditoría 06-10-2026 (#24): campaign_id / lead_id / campaign_step_id vienen del cuerpo de la
@@ -812,7 +835,7 @@ serve(async (req) => {
     // (even on threaded follow-ups). Unibox replies simply don't pass the flag.
     const unsubscribeUrl: string | undefined = include_unsubscribe ? listUnsubUrl : undefined;
 
-    const result = await sendSmtpEmail(
+    const attemptSend = () => sendSmtpEmail(
       account.smtp_host,
       account.smtp_port,
       account.smtp_username,
@@ -841,9 +864,19 @@ serve(async (req) => {
         cc: cleanCc.filter((e) => e !== cleanTo),
       }
     );
+    // Un fallo pasajero (451 de IONOS, plazo de conexión) se reintenta aquí mismo, sin que quien
+    // envía vea un error. Nunca tras "sin confirmar" (podría duplicarse) ni pasado un minuto.
+    const sendStart = Date.now();
+    let result = await attemptSend();
+    for (const wait of INLINE_RETRY_DELAYS_MS) {
+      if (result.ok || !sendRetryable(result.error) || Date.now() - sendStart > 60_000) break;
+      console.warn(`send-email: reintento tras fallo pasajero (${account.email} → ${cleanTo}): ${String(result.error).slice(0, 120)}`);
+      await new Promise((r) => setTimeout(r, wait));
+      result = await attemptSend();
+    }
 
     if (!is_test) {
-      await adminClient.from("sent_emails").insert({
+      const { data: sentRow } = await adminClient.from("sent_emails").insert({
         user_id: userId,
         campaign_id: campaign_id || null,
         campaign_step_id: campaign_step_id || null,
@@ -857,7 +890,17 @@ serve(async (req) => {
         error_message: result.error || null,
         smtp_message_id: result.messageId || resolvedMessageId || null,
         forwarded_from: isForward && forwarded_from ? String(forwarded_from) : null,
-      });
+      }).select("id").maybeSingle();
+
+      // Respuesta manual enviada: se guarda lo pedido para poder reenviarla tal cual si rebota por
+      // la IP de salida (fetch-inbox → reenvío automático). Sin adjuntos grandes; 3 días como mucho.
+      const sentId = (sentRow as { id?: string } | null)?.id;
+      if (result.ok && !campaign_id && sentId && canResend(resendAttempt) && totalB64 <= MAX_RETRY_PAYLOAD_B64) {
+        const { retry_of: _drop, ...payload } = input;
+        const { error: armErr } = await adminClient.from("reply_retries").insert({ sent_email_id: sentId, user_id: userId, payload, attempt: resendAttempt });
+        if (armErr) console.warn(`reply_retries: ${armErr.message}`);
+        await adminClient.from("reply_retries").delete().lt("created_at", new Date(Date.now() - 3 * 86400_000).toISOString());
+      }
 
       // Copia en la carpeta "Enviados" del buzón: así quien abra esa cuenta desde Outlook, el
       // móvil o el correo de IONOS ve lo que se respondió desde el Unibox (24-09-2026). Nunca

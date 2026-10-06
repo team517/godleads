@@ -7,6 +7,7 @@ import {
   BOUNCE_CLOCK_SLACK_MS, BOUNCE_LOOKBACK_MS, bounceDismissal, chooseBouncedSend, decideBounce, parentRef, repliedToSend,
   type BounceCandidate, type BounceMatch, type BouncedSend,
 } from "../_shared/bounce-match.ts";
+import { bounceRetryable, resentNote } from "../_shared/reply-retry.ts";
 import { extractAttachments, looksInline } from "../_shared/mail-attachments.ts";
 import {
   INBOUND_FETCH_ITEMS, addressOf, autoSignal, decodeMimeWords, headerValue, imapCompleted, parseInboundItem, pickFolders, refIds, splitFetchItems,
@@ -1076,24 +1077,27 @@ serve(async (req) => {
             const { data: marked } = await adminClient.from("sent_emails")
               .update({ bounced_at: bounceAt, error_message: motivo })
               .eq("id", hit.id).is("bounced_at", null).select("id");
-            // Una respuesta MANUAL (sin campaña) que rebota avisa al móvil: el dueño pulsó enviar,
-            // vio "enviada" y el correo no llegó (03-10-2026). Los envíos de campaña no avisan.
-            // 06-10-2026: sólo un fallo definitivo 5.x.x casado por Message-ID (o único envío
-            // posible y reciente). Un retraso 4.x.x o un casado por asunto no suena (decideBounce).
-            if (marked && marked.length > 0 && decision.push && hit.user_id) {
+            // Una respuesta MANUAL (sin campaña) que rebota (06-10-2026): ya NO se avisa al móvil. Si el
+            // rechazo es por la IP de salida de IONOS (Spamhaus, reputación) o pasajero, se reenvía sola
+            // desde el mismo buzón (send-email guarda lo que se envió; máximo 3 envíos en total). El
+            // resto (dirección que no existe, política del destinatario) queda como "No entregado" en
+            // su hilo del Unibox. decision.push = respuesta manual con rebote 5.x.x casado con certeza.
+            if (marked && marked.length > 0 && decision.push && bounceRetryable(info)) {
               try {
+                await adminClient.from("sent_emails").update({ error_message: resentNote(motivo) }).eq("id", hit.id);
                 const svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-                await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-push`, {
+                const resend = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${svc}` },
-                  body: JSON.stringify({
-                    user_id: hit.user_id,
-                    title: `⚠️ No entregado — ${hit.to_email || ""}`,
-                    body: `Tu respuesta "${String(hit.subject || "").slice(0, 60)}" ha rebotado: ${(info.diag || info.code || "el servidor la rechazó").slice(0, 110)}`,
-                    url: "/unibox",
-                  }),
-                });
-              } catch { /* el aviso es lo de menos: el rebote ya queda registrado */ }
+                  body: JSON.stringify({ retry_of: hit.id }),
+                }).then(async (r) => {
+                  if (!r.ok) console.warn(`Reenvío automático ${hit.id}: HTTP ${r.status} ${(await r.text()).slice(0, 160)}`);
+                  else console.log(`Reenvío automático de la respuesta ${hit.id} a ${hit.to_email}`);
+                }).catch((e) => console.warn(`Reenvío automático ${hit.id}: ${(e as Error).message}`));
+                // El envío tarda hasta ~1 min: que no frene la sincronización, pero que no se corte.
+                const rt = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+                if (rt?.waitUntil) rt.waitUntil(resend); else await resend;
+              } catch { /* el rebote ya queda registrado en su hilo */ }
             }
           }
           ingest.bounces++;

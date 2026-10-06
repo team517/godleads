@@ -96,6 +96,7 @@ import {
   visibleTextLength,
 } from "@/lib/unibox-text";
 import type { MessageCategory, ParsedAttachment } from "@/lib/unibox-text";
+import { isAutoResent } from "@/lib/unibox-text";
 export { cleanBodyHtml, buildReplyQuoteHtml, renderableHtml } from "@/lib/unibox-text";
 export type { ParsedAttachment } from "@/lib/unibox-text";
 
@@ -3251,7 +3252,12 @@ export default function Unibox() {
                                   {isSent && !tm.forwarded_from && !tm.bounced_at && (
                                     <span className={`${CHIP_MINI} bg-accent text-accent-foreground`}>Enviado</span>
                                   )}
-                                  {isSent && tm.bounced_at && (
+                                  {isSent && tm.bounced_at && isAutoResent(tm.error_message) && (
+                                    <span className={`${CHIP_MINI} bg-muted text-muted-foreground`} title="El servidor del destinatario rechazó la IP de salida de este envío; se ha reenviado automáticamente desde el mismo buzón">
+                                      Reenviado solo
+                                    </span>
+                                  )}
+                                  {isSent && tm.bounced_at && !isAutoResent(tm.error_message) && (
                                     <span className={`${CHIP_MINI} bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300`} title={tm.error_message || "El servidor del destinatario devolvió el correo"}>
                                       No entregado
                                     </span>

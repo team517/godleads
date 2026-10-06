@@ -2,6 +2,7 @@ import { fetchBounceBreakdown, fetchCampaignMetrics, type BounceBreakdown } from
 import { useState, useEffect } from "react";
 import { campaignHealthReason, fetchCampaignHealth, fetchMetricsExtra, type CampaignHealthRow, type MetricsExtra } from "@/lib/campaign-health";
 import { cacheGet, cacheSet } from "@/lib/instant-cache";
+import { deleteCampaignOnServer, isCampaignRemoved, markCampaignRemoved, restoreCampaignAt, unmarkCampaignRemoved, withoutRemovedCampaigns } from "@/lib/campaign-delete";
 import { errorText, isMissingRpc, num } from "@/lib/widget-state";
 import RetryNotice from "@/components/RetryNotice";
 import { Button } from "@/components/ui/button";
@@ -130,10 +131,12 @@ export default function Campaigns() {
       .then(({ data: mgrs }: any) => setManagers(mgrs || []));
     (supabase as any).from("clients").select("id, name").eq("owner_user_id", user.id).is("archived_at", null)
       .then(({ data: cli }: any) => setClients(cli || []));
-    setCampaigns(data || []);
-    cacheSet("campaigns:list", data || []);
+    // Una campaña recién eliminada (borrado aún en curso) no vuelve a aparecer con esta recarga.
+    const rows = withoutRemovedCampaigns<any>(data || []);
+    setCampaigns(rows);
+    cacheSet("campaigns:list", rows);
     setLoading(false);
-    await reloadMetrics(data || []);
+    await reloadMetrics(rows);
   };
 
   /** Métricas + progreso de TODAS las campañas: dos RPC en total, no 2 consultas por campaña.
@@ -342,24 +345,38 @@ export default function Campaigns() {
   };
 
   const handleDelete = async (id: string) => {
-    // Confirm (the trash icon is a small target) + check every step's error (a failed final
-    // delete used to leave the campaign stripped of steps/leads yet showing a success toast).
-    const camp = campaigns.find((c) => c.id === id);
+    if (isCampaignRemoved(id)) return;
+    const index = campaigns.findIndex((c) => c.id === id);
+    const camp = index >= 0 ? campaigns[index] : null;
+    // Se pregunta siempre (la papelera es un blanco pequeño); si está activa, se dice que deja de enviar.
     const ok = await confirm({
-      title: "Eliminar campaña",
-      description: `¿Eliminar la campaña "${camp?.name || id}"?\n\nSe borrarán sus pasos, cuentas asignadas y leads de campaña. Esta acción no se puede deshacer.`,
-      confirmText: "Eliminar",
+      title: `¿Eliminar la campaña «${camp?.name || id}»?`,
+      description: "Se borra la campaña con su secuencia y sus leads de la campaña. No se puede deshacer."
+        + (camp?.status === "active" ? "\n\nEstá activa: se dejará de enviar." : ""),
+      cancelText: "Cancelar",
+      confirmText: "Sí, eliminar",
       destructive: true,
     });
-    if (!ok) return;
-    const r1 = await supabase.from("campaign_steps").delete().eq("campaign_id", id);
-    const r2 = await supabase.from("campaign_accounts").delete().eq("campaign_id", id);
-    const r3 = await supabase.from("campaign_leads").delete().eq("campaign_id", id);
-    const r4 = await supabase.from("campaigns").delete().eq("id", id);
-    const err = r1.error || r2.error || r3.error || r4.error;
-    if (err) { toast.error(`No se pudo eliminar la campaña: ${err.message}`); load(); return; }
-    toast.success("Campaña eliminada");
+    if (!ok || isCampaignRemoved(id)) return;
+
+    // Al momento: fuera de la lista (y del caché, para que una recarga no la pinte otra vez).
+    markCampaignRemoved(id);
+    setCampaigns((prev) => prev.filter((c) => c.id !== id));
+    cacheSet("campaigns:list", (cacheGet<any[]>("campaigns:list") || []).filter((c) => c.id !== id));
     if (selectedId === id) setSelectedId(null);
+    toast.success("Campaña eliminada");
+
+    // El borrado real, detrás. Si falla, la campaña vuelve a su sitio y se dice por qué.
+    const reason = await deleteCampaignOnServer(supabase, id);
+    if (!reason) return;
+    unmarkCampaignRemoved(id);
+    if (camp) {
+      setCampaigns((prev) => restoreCampaignAt(prev, camp, index));
+      const cached = cacheGet<any[]>("campaigns:list");
+      if (cached) cacheSet("campaigns:list", restoreCampaignAt(cached, camp, index));
+    }
+    toast.error(`No se pudo eliminar la campaña «${camp?.name || id}»: ${reason}`);
+    // Pudo quedarse a medias (p. ej. sin pasos): se recarga para enseñar lo que hay de verdad.
     load();
   };
 

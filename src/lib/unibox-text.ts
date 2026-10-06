@@ -1000,3 +1000,9 @@ export const LABEL_TO_CATEGORY: Record<string, MessageCategory> = Object.fromEnt
     .filter(([, label]) => label)
     .map(([k, label]) => [label, k]),
 );
+
+/** Respuesta manual que rebotó por la IP de salida y el servidor reenvió sola (06-10-2026):
+ *  fetch-inbox añade esta nota (supabase/functions/_shared/reply-retry.ts → resentNote). */
+export function isAutoResent(errorMessage: string | null | undefined): boolean {
+  return /Reenviado automáticamente/.test(String(errorMessage || ""));
+}
