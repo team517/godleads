@@ -310,7 +310,7 @@ export default function CampaignAnalytics({ campaignId, metrics, metricsError, o
         return;
       }
 
-      const replyRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
+      const replyRate = stats.contacted > 0 ? ((Math.min(stats.replied, stats.contacted) / stats.contacted) * 100).toFixed(1) : "0";
 
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -388,7 +388,7 @@ export default function CampaignAnalytics({ campaignId, metrics, metricsError, o
   ];
 
   // Reply rate over CONTACTED people (not emails sent) — the correct denominator.
-  const replyRate = stats.contacted > 0 ? ((stats.replied / stats.contacted) * 100).toFixed(1) : "0";
+  const replyRate = stats.contacted > 0 ? ((Math.min(stats.replied, stats.contacted) / stats.contacted) * 100).toFixed(1) : "0";
 
   return (
     <div className="space-y-6">

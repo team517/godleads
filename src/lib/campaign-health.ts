@@ -157,18 +157,21 @@ export async function fetchMetricsExtra(client: RpcClient): Promise<Record<strin
 type ReplyFields = { replied?: number; repliedHuman?: number | null; repliedAuto?: number | null };
 
 /**
- * Qué enseñar en "Respondidos" (06-10-2026, decisión del dueño): TODOS los destinatarios que han
- * contestado, también las respuestas automáticas, en una sola cifra y sin «+N automáticas». Con el
- * desglose cargado se suman humanas + automáticas (cuenta por mensajes entrantes de la campaña); sin
- * él, la cifra de siempre (`replied`). `split` queda siempre en false: no se pinta el aparte.
+ * Qué enseñar en "Respondidos" (06-10-2026, decisión del dueño): una sola cifra, también con las
+ * automáticas, sin «+N automáticas». Es `replied` de campaign_metrics_v2: leads de la campaña a los
+ * que se escribió y que contestaron (sent_emails.replied_at), así que nunca supera a los contactados.
+ * El desglose por mensajes entrantes NO se usa para la cifra: cuenta también a gente que escribió a
+ * la campaña sin haber sido contactada (pruebas, compañeros del mismo dominio) y en hello@ una
+ * campaña de prueba con 1 contactado salía con 8 respuestas = 800 %.
  */
 export function repliesView(m: ReplyFields | null | undefined): { shown: number; auto: number; split: boolean } {
-  if (!m) return { shown: 0, auto: 0, split: false };
-  if (typeof m.repliedHuman === "number") {
-    const total = m.repliedHuman + Math.max(0, Number(m.repliedAuto) || 0);
-    return { shown: Math.max(total, Number(m.replied) || 0), auto: 0, split: false };
-  }
-  return { shown: Number(m.replied) || 0, auto: 0, split: false };
+  return { shown: Math.max(0, Number(m?.replied) || 0), auto: 0, split: false };
+}
+
+/** % de respuesta de una campaña, acotado a 0-100 (respondidos nunca por encima de contactados). */
+export function replyRatePct(replied: number, contacted: number): number | null {
+  if (!(contacted > 0)) return null;
+  return (Math.min(Math.max(0, replied), contacted) / contacted) * 100;
 }
 
 /** "+12 automáticas" (vacío si no hay). */

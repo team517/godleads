@@ -19,7 +19,7 @@ export default function CampaignMetricsInline({ metrics }: { campaignId?: string
   const denom = (m?.contacted ?? 0) || (m?.sent ?? 0);
   // "Respondidos" = todos los que han contestado (también automáticas), una sola cifra.
   const rv = repliesView(m);
-  const replyPct = m && denom > 0 ? `${((rv.shown / denom) * 100).toFixed(1)}%` : "0%";
+  const replyPct = m && denom > 0 ? `${((Math.min(rv.shown, denom) / denom) * 100).toFixed(1)}%` : "0%";
 
   const items: { label: string; value: number; sub: string | null; extra?: string | null; hint?: string; icon: typeof Send; color: string }[] = [
     // Same palette as the desktop campaigns table (CampaignsTable.tsx), with dark

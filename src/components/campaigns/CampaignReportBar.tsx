@@ -37,7 +37,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp, heal
   const denom = (m.contacted || 0) || m.sent;
   // "Respondidos" = todos los que han contestado (también automáticas), una sola cifra.
   const rv = repliesView(m);
-  const replyPct = denom > 0 ? `${((rv.shown / denom) * 100).toFixed(2)}%` : "0%";
+  const replyPct = denom > 0 ? `${((Math.min(rv.shown, denom) / denom) * 100).toFixed(2)}%` : "0%";
   const meta = statusMeta[campaign.status] || statusMeta.draft;
   const StatusIcon = meta.icon;
 

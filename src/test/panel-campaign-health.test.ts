@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  autoRepliesLabel, campaignHealthReason, fetchCampaignHealth, fetchMetricsExtra, repliesView, sentTooltip, sumMetricsExtra,
+  autoRepliesLabel, campaignHealthReason, replyRatePct, fetchCampaignHealth, fetchMetricsExtra, repliesView, sentTooltip, sumMetricsExtra,
   type CampaignHealthRow,
 } from "@/lib/campaign-health";
 
@@ -79,15 +79,18 @@ describe("campaignHealthReason — por qué una campaña Activa no envía", () =
   });
 });
 
-describe("repliesView — Respondidos = todos los que contestan, en una cifra (06-10-2026)", () => {
-  it("con desglose: humanas + automáticas, sin «+N» aparte", () => {
+describe("repliesView — Respondidos = leads contactados que contestaron (06-10-2026)", () => {
+  it("es la cifra de campaign_metrics_v2 (también automáticas), sin «+N»", () => {
     expect(repliesView({ replied: 22, repliedHuman: 10, repliedAuto: 12 })).toEqual({ shown: 22, auto: 0, split: false });
-  });
-  it("sin desglose (migración sin aplicar): la cifra de siempre", () => {
     expect(repliesView({ replied: 22 })).toEqual({ shown: 22, auto: 0, split: false });
   });
-  it("nunca por debajo de replied", () => {
-    expect(repliesView({ replied: 9, repliedHuman: 3, repliedAuto: 4 })).toEqual({ shown: 9, auto: 0, split: false });
+  it("el desglose por mensajes no la infla (hello@: PRUEBA con 1 contactado y 8 mensajes)", () => {
+    expect(repliesView({ replied: 1, repliedHuman: 8, repliedAuto: 0 })).toEqual({ shown: 1, auto: 0, split: false });
+  });
+  it("replyRatePct acota a 0-100 %", () => {
+    expect(replyRatePct(8, 1)).toBe(100);
+    expect(replyRatePct(3, 250)).toBeCloseTo(1.2);
+    expect(replyRatePct(0, 0)).toBeNull();
   });
   it("sin métricas", () => expect(repliesView(null)).toEqual({ shown: 0, auto: 0, split: false }));
   it("etiqueta en singular y plural", () => {

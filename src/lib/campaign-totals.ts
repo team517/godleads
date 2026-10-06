@@ -8,14 +8,18 @@
 // «Respondidos» (campañas con algún contactado); los totales de las tarjetas son sumas.
 
 import { fetchCampaignMetrics } from "@/lib/campaign-metrics";
-import { fetchMetricsExtra, repliesView, type MetricsExtra } from "@/lib/campaign-health";
+import { fetchMetricsExtra, replyRatePct, repliesView, type MetricsExtra } from "@/lib/campaign-health";
 
 type RpcError = { message: string; code?: string } | null;
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: RpcError }> };
 
-export type CampaignTotals = { sent: number; contacted: number; replied: number; bounced: number; campaigns: number; avgRate: number };
+export type CampaignTotals = { sent: number; contacted: number; replied: number; bounced: number; campaigns: number; avgRate: number; ratedCampaigns: number };
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+/** Una campaña entra en la media con al menos estos contactados: una prueba con 1-2 envíos (en
+ *  hello@, «PRUEBA» con 1 contactado) daba 100-800 % y disparaba la media a 162 %. */
+export const MIN_CONTACTED_FOR_AVG = 20;
 
 /**
  * Totales por campaña (filas de campaign_metrics_v2 + desglose de respuestas + leads ya escritos de
@@ -27,24 +31,29 @@ export function sumCampaignTotals(
   extra?: Record<string, MetricsExtra> | null,
   leadsSent?: Record<string, number> | null,
 ): CampaignTotals {
-  const t: CampaignTotals = { sent: 0, contacted: 0, replied: 0, bounced: 0, campaigns: 0, avgRate: 0 };
-  let rateSum = 0;
-  let rated = 0;
+  const t: CampaignTotals = { sent: 0, contacted: 0, replied: 0, bounced: 0, campaigns: 0, avgRate: 0, ratedCampaigns: 0 };
+  const rates: { pct: number; contacted: number }[] = [];
   for (const r of rows || []) {
     const id = String(r.campaign_id || "");
     const ex = id && extra ? extra[id] : undefined;
     const sent = n(r.sent);
     const fromProgress = id && leadsSent && leadsSent[id] != null ? n(leadsSent[id]) : null;
     const contacted = fromProgress ?? (n(r.contacted) || sent);
-    const replied = repliesView({ replied: n(r.replied), repliedHuman: ex?.repliedHuman, repliedAuto: ex?.repliedAuto }).shown;
+    const replied = Math.min(repliesView({ replied: n(r.replied), repliedHuman: ex?.repliedHuman, repliedAuto: ex?.repliedAuto }).shown, contacted || Infinity);
     t.sent += sent;
     t.contacted += contacted;
     t.bounced += n(r.bounced);
     t.replied += replied;
     t.campaigns += 1;
-    if (contacted > 0) { rateSum += (replied / contacted) * 100; rated += 1; }
+    const pct = replyRatePct(replied, contacted);
+    if (pct != null) rates.push({ pct, contacted });
   }
-  t.avgRate = rated > 0 ? rateSum / rated : 0;
+  // Media de los % de las campañas con muestra (>= MIN_CONTACTED_FOR_AVG contactados); si ninguna
+  // llega, de todas las que tienen algún contactado.
+  const big = rates.filter((x) => x.contacted >= MIN_CONTACTED_FOR_AVG);
+  const used = big.length ? big : rates;
+  t.ratedCampaigns = used.length;
+  t.avgRate = used.length ? used.reduce((a, x) => a + x.pct, 0) / used.length : 0;
   return t;
 }
 

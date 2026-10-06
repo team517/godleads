@@ -39,9 +39,14 @@ describe("CampaignsTable — el panel dice la verdad", () => {
     expect(screen.getByRole("columnheader", { name: /Respondidos/ })).toBeInTheDocument();
     const row = rowOf("Prospección Q1");
     expect(within(row).queryByText(/automática/)).not.toBeInTheDocument();
-    // 10 humanas + 12 automáticas = 22 ÷ 50 contactados = 44 %.
+    // replied (22, ya incluye las automáticas) ÷ 50 contactados = 44 %.
     expect(within(row).getByText("22")).toBeInTheDocument();
     expect(within(row).getByText("44.0%")).toBeInTheDocument();
+  });
+
+  it("el % nunca pasa de 100 (más respuestas que contactados en una prueba)", () => {
+    renderTable({ c1: { ...split, replied: 80 }, c2: legacy });
+    expect(within(rowOf("Prospección Q1")).getByText("100.0%")).toBeInTheDocument();
   });
 
   it("sin el desglose (RPC sin aplicar) se ve la cifra de siempre y sin «+N»", () => {

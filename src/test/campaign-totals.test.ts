@@ -12,15 +12,27 @@ describe("totales globales de las campañas", () => {
   ];
   it("suma enviados, contactados, respondidos y rebotados", () => {
     const t = sumCampaignTotals(rows);
-    expect({ ...t, avgRate: undefined }).toEqual({ sent: 563, contacted: 563, replied: 13, bounced: 26, campaigns: 3, avgRate: undefined });
+    expect({ ...t, avgRate: undefined }).toEqual({ sent: 563, contacted: 563, replied: 13, bounced: 26, campaigns: 3, avgRate: undefined, ratedCampaigns: 3 });
   });
   it("contactados = leads ya escritos de cada campaña (como la columna de la tabla)", () => {
     const t = sumCampaignTotals(rows, null, { a: 250, b: 220, c: 130 });
     expect(t.contacted).toBe(600);
   });
-  it("respondidos con desglose = humanas + automáticas", () => {
-    const t = sumCampaignTotals(rows, { a: { repliedHuman: 2, repliedAuto: 1, sentUnconfirmed: 0 }, b: { repliedHuman: 0, repliedAuto: 6, sentUnconfirmed: 0 } });
-    expect(t.replied).toBe(3 + 6 + 5);
+  it("respondidos = replied de cada campaña; el desglose por mensajes no la infla", () => {
+    const t = sumCampaignTotals(rows, { a: { repliedHuman: 2, repliedAuto: 1, sentUnconfirmed: 0 }, b: { repliedHuman: 40, repliedAuto: 6, sentUnconfirmed: 0 } });
+    expect(t.replied).toBe(3 + 5 + 5);
+  });
+  it("hello@: una prueba con 1 contactado no dispara la media (antes 162,6 %)", () => {
+    const camp = [
+      { campaign_id: "pt", contacted: 479, replied: 18 }, { campaign_id: "es", contacted: 994, replied: 20 },
+      { campaign_id: "it", contacted: 754, replied: 13 }, { campaign_id: "fr", contacted: 704, replied: 27 },
+      { campaign_id: "prueba", contacted: 2, replied: 1 }, { campaign_id: "vacia", contacted: 0, replied: 0 },
+    ];
+    const lsent = { pt: 483, es: 1030, it: 759, fr: 689, prueba: 1, vacia: 0 };
+    const t = sumCampaignTotals(camp, { prueba: { repliedHuman: 8, repliedAuto: 0, sentUnconfirmed: 0 } }, lsent);
+    expect(t.ratedCampaigns).toBe(4);
+    // (3,73 + 1,94 + 1,71 + 3,92) / 4 = 2,8 %
+    expect(globalReplyRate(t).toFixed(1)).toBe("2.8");
   });
   it("tasa global = media de los % de cada campaña (la captura del dueño: 2,1 %)", () => {
     // 1,2 % · 2,7 % · 1,6 % · 1,1 % · 3,8 % · 2,0 %
@@ -33,6 +45,6 @@ describe("totales globales de las campañas", () => {
     expect(globalReplyRate(null)).toBe(0);
   });
   it("sin filas: ceros", () => {
-    expect(sumCampaignTotals(null)).toEqual({ sent: 0, contacted: 0, replied: 0, bounced: 0, campaigns: 0, avgRate: 0 });
+    expect(sumCampaignTotals(null)).toEqual({ sent: 0, contacted: 0, replied: 0, bounced: 0, campaigns: 0, avgRate: 0, ratedCampaigns: 0 });
   });
 });

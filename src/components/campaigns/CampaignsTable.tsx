@@ -146,7 +146,8 @@ export function CampaignHealthChip({ reason, compact }: { reason: HealthReason |
   );
 }
 
-const pctOf = (n: number, d: number) => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : null);
+// Acotado a 100 %: nunca más respondidos que contactados.
+const pctOf = (n: number, d: number) => (d > 0 ? `${((Math.min(n, d) / d) * 100).toFixed(1)}%` : null);
 
 function HeadCell({
   icon: Icon,

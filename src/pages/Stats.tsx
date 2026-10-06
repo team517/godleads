@@ -76,7 +76,7 @@ export default function Stats() {
     { label: "Leads contactados", value: stats.contacted.toLocaleString("es"), sub: "personas únicas", highlight: false },
     { label: "Correos enviados", value: stats.sent.toLocaleString("es"), sub: "con follow-ups", highlight: false },
     { label: "Respuestas", value: stats.replied.toLocaleString("es"), sub: "recibidas", highlight: false },
-    { label: "Tasa de respuesta", value: `${replyRate.toFixed(1)}%`, sub: "por lead contactado", highlight: true },
+    { label: "Tasa de respuesta", value: `${replyRate.toFixed(1)}%`, sub: t && t.ratedCampaigns ? `media de ${t.ratedCampaigns} ${t.ratedCampaigns === 1 ? "campaña" : "campañas"}` : "por lead contactado", highlight: true },
   ];
   const secondaryStats = [
     { label: "Entregados", value: stats.delivered.toLocaleString("es") },
@@ -202,7 +202,7 @@ export default function Stats() {
                     const p = payload[0].payload as DayPoint;
                     // Reply rate = respuestas ÷ envíos de ESE día (guardado contra división por
                     // cero). Si ese día no hubo envíos no se puede calcular un % → se muestra "—".
-                    const dayRate = p.envios > 0 ? (p.respuestas / p.envios) * 100 : null;
+                    const dayRate = p.envios > 0 ? (Math.min(p.respuestas, p.envios) / p.envios) * 100 : null;
                     return (
                       <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-raised">
                         <p className="mb-1 font-medium capitalize">{p.full}</p>
