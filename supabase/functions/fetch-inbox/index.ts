@@ -1319,6 +1319,7 @@ serve(async (req) => {
         // Se enlazan con nuestro envío de campaña desde ESTE buzón con el mismo asunto (30 días),
         // sólo si ese asunto lo recibió un único lead (resolve_sent_by_subject). No marcan
         // "respondido": no es una respuesta del lead.
+        const isChallengeSender = (e: string) => /@([a-z0-9-]+\.)*(mailinblack\.com|boxbe\.com|spamarrest\.com|sanebox\.com|mxguarddog\.com|altospam\.com|vadesecure\.com)$/i.test(e) || /^(challenge|verify|verification)@/i.test(e);
         const subjKey = (s: string) => String(s || "").replace(/^\s*((re|rv|aw|fw|fwd|tr|res)\s*:\s*)+/i, "").toLowerCase().replace(/\s+/g, " ").trim();
         const subjSent = new Map<string, { lead_id: string; campaign_id: string }>();
         {
@@ -1593,9 +1594,10 @@ serve(async (req) => {
           if (domHit && !warmupTagged && !repliesToOurSubject(msg.subject, domLeadSubjects.get(domHit.lead_id))) {
             noMarkKeys.add(inboundKey(msg.message_id || null, msg.from_email, parsedDate));
           }
-          // Enlazado SÓLO por asunto (Mailinblack y similares): se ve en su campaña, pero no es una
-          // respuesta del lead, así que no lo deja como "respondido" ni para su secuencia.
-          if (subjHit && !warmupTagged) noMarkKeys.add(inboundKey(msg.message_id || null, msg.from_email, parsedDate));
+          // Enlazado por asunto (07-10-2026): CUENTA como respuesta (petición del dueño). Si es un
+          // antispam de "confírmame que eres humano" (Mailinblack y similares) se trata como una
+          // respuesta automática: suma en "Respondidos", pero no para la secuencia del lead.
+          if (subjHit && !warmupTagged && !msg.auto_signal && isChallengeSender(fe)) msg.auto_signal = "antispam:challenge";
           const row = {
             user_id: account.user_id,
             account_id: account.id,
