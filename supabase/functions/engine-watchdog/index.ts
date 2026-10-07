@@ -71,11 +71,51 @@ async function sendMail(acct: any, to: string, subject: string, text: string): P
   } catch (e) { return { ok: false, error: String((e as any)?.message || e) }; }
 }
 
-const countSince = async (admin: any, minutes: number, filter: (q: any) => any): Promise<number> => {
+// null = could not count (failed or timed-out query). It used to become 0 and raised a false
+// "el motor no está enviando" (07-10-2026).
+const countSince = async (admin: any, minutes: number, filter: (q: any) => any): Promise<number | null> => {
   const sinceIso = new Date(Date.now() - minutes * 60_000).toISOString();
-  const { count } = await filter(admin.from("sent_emails").select("id", { count: "exact", head: true }).gte("created_at", sinceIso));
-  return count || 0;
+  const { count, error } = await filter(admin.from("sent_emails").select("id", { count: "exact", head: true }).gte("created_at", sinceIso));
+  if (error || count == null) return null;
+  return count;
 };
+
+const DAY_ABBR = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+/** Weekday + minutes of the day in the campaign's time zone (same as the engine). */
+function localClock(now: Date, tz: string): { day: string; minutes: number } {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz || "UTC", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(now);
+    const wd = (parts.find((p) => p.type === "weekday")?.value || "").slice(0, 3).toLowerCase();
+    const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0");
+    const m = parseInt(parts.find((p) => p.type === "minute")?.value || "0");
+    return { day: wd, minutes: h * 60 + m };
+  } catch {
+    return { day: DAY_ABBR[now.getUTCDay()], minutes: now.getUTCHours() * 60 + now.getUTCMinutes() };
+  }
+}
+
+/**
+ * Active campaigns whose sending window has been OPEN for at least `minutes` (07-10-2026).
+ * Silence only counts if the whole half hour falls inside some campaign's real window: the old
+ * fixed 08–16 UTC range (10:00–18:59 Madrid) alerted at 18:30 with every window closed at 18:00.
+ * null = could not read the campaigns.
+ */
+async function campaignsWithOpenWindow(admin: any, minutes: number): Promise<number | null> {
+  const { data, error } = await admin.from("campaigns")
+    .select("id, send_days, send_start_hour, send_end_hour, timezone").eq("status", "active").limit(5000);
+  if (error || !data) return null;
+  const now = new Date();
+  let open = 0;
+  for (const c of data as any[]) {
+    const { day, minutes: cur } = localClock(now, c.timezone || "UTC");
+    const days: string[] = c.send_days || ["mon", "tue", "wed", "thu", "fri"];
+    if (!days.includes(day)) continue;
+    let start = c.send_start_hour ?? 9, end = c.send_end_hour ?? 18;
+    if (!(start < end)) { start = 9; end = 18; }
+    if (cur - minutes >= start * 60 && cur < end * 60) open++;
+  }
+  return open;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -87,12 +127,13 @@ serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
     // ── Read recent send health (platform-wide) ──
-    const [ok20, fail20, ok30, activeCampaigns] = await Promise.all([
+    const [ok20n, fail20n, ok30, openCampaigns] = await Promise.all([
       countSince(admin, 20, (q) => q.eq("status", "sent")),
       countSince(admin, 20, (q) => q.in("status", ["failed", "bounced"])),
       countSince(admin, 30, (q) => q.eq("status", "sent")),
-      admin.from("campaigns").select("id", { count: "exact", head: true }).eq("status", "active").then((r: any) => r.count || 0),
+      campaignsWithOpenWindow(admin, 30),
     ]);
+    const ok20 = ok20n ?? 0, fail20 = fail20n ?? 0;
 
     // Most common recent error, to make the alert actionable.
     let topError = "";
@@ -131,14 +172,19 @@ serve(async (req) => {
 
     // ── Decide if something is wrong ──
     // (A) Storm: real failure volume with almost no successes getting through.
-    const highFailure = fail20 >= 25 && ok20 <= Math.floor(fail20 * 0.15);
-    // (B) Silence: no successful send in 30 min while a window is open + campaigns active.
-    const utcHour = new Date().getUTCHours(); // ~business hours in Europe: 8–16 UTC ≈ 10–18 Madrid (summer)
-    const inBusinessHours = utcHour >= 8 && utcHour <= 16;
-    const silence = ok30 === 0 && activeCampaigns > 0 && inBusinessHours;
+    const highFailure = ok20n != null && fail20n != null && fail20 >= 25 && ok20 <= Math.floor(fail20 * 0.15);
+    // (B) Silence: no successful send in 30 min while some campaign's REAL window has been open
+    // the whole 30 min. A count that could not be read is NOT a zero. Before alerting it is
+    // counted again after a short pause, so a momentary glitch does not trigger it (07-10-2026).
+    let silence = ok30 === 0 && (openCampaigns ?? 0) > 0;
+    if (silence) {
+      await new Promise((r) => setTimeout(r, 20_000));
+      const again = await countSince(admin, 30, (q) => q.eq("status", "sent"));
+      silence = again === 0;
+    }
 
     const problem = body.force === true || highFailure || silence || brokenAccounts.length > 0;
-    const diagnostics = { ok20, fail20, ok30, activeCampaigns, highFailure, silence, brokenAccounts, topError, utcHour };
+    const diagnostics = { ok20, fail20, ok30, openCampaigns, highFailure, silence, brokenAccounts, topError };
     if (!problem) return json({ ok: true, alerted: false, ...diagnostics });
 
     // ── Anti-spam: at most one alert per hour ──
