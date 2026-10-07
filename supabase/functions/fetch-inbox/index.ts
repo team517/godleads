@@ -1314,6 +1314,26 @@ serve(async (req) => {
           return null;
         };
 
+        // Respuestas desde OTRA dirección y sin cabeceras de hilo (07-10-2026): el antispam
+        // Mailinblack contesta "Re: <nuestro asunto>" desde <empresa>@invitations.mailinblack.com.
+        // Se enlazan con nuestro envío de campaña desde ESTE buzón con el mismo asunto (30 días),
+        // sólo si ese asunto lo recibió un único lead (resolve_sent_by_subject). No marcan
+        // "respondido": no es una respuesta del lead.
+        const subjKey = (s: string) => String(s || "").replace(/^\s*((re|rv|aw|fw|fwd|tr|res)\s*:\s*)+/i, "").toLowerCase().replace(/\s+/g, " ").trim();
+        const subjSent = new Map<string, { lead_id: string; campaign_id: string }>();
+        {
+          const keys = [...new Set(result.messages.filter((m) => /^\s*(re|rv|aw|res)\s*:/i.test(m.subject || "") && !refIds(m.ref_chain).some((r) => refSent.has(r)))
+            .map((m) => subjKey(m.subject)).filter((k) => k.length >= 8))].slice(0, 100);
+          if (keys.length > 0) {
+            try {
+              const { data: sr } = await adminClient.rpc("resolve_sent_by_subject", { p_user: account.user_id, p_account: account.id, p_keys: keys });
+              for (const r of (sr || []) as { skey: string; lead_id: string; campaign_id: string }[]) {
+                if (r?.skey && r.lead_id && r.campaign_id) subjSent.set(r.skey, { lead_id: r.lead_id, campaign_id: r.campaign_id });
+              }
+            } catch { /* sin esto quedan sueltos, como antes */ }
+          }
+        }
+
         // Blocklist check — import blocked senders' mail but mark is_archived so it never
         // shows in the Unibox (and never inflates reply stats). Only look up THIS batch's
         // senders/domains, so it stays fast even with thousands of blocklist entries.
@@ -1540,12 +1560,14 @@ serve(async (req) => {
           // da el lead cuando quien contesta no es nadie a quien hayamos escrito con esa dirección.
           const threadHit = threadOf(msg.ref_chain);
           const domHit = (!exactSent && !exactLead && !threadHit && dom) ? (domainSent.get(dom) || null) : null;
+          const subjHit = (!exactSent && !exactLead && !threadHit && !domHit && /^\s*(re|rv|aw|res)\s*:/i.test(msg.subject || ""))
+            ? (subjSent.get(subjKey(msg.subject)) || null) : null;
           // La etiqueta del warm-up en el asunto ("| 36P2ARY 0396QKE"): es warm-up y NO se ata a nada.
           // Antes se ataba a la campaña por la empresa del remitente (misma marca con otra
           // terminación) y, ya "enlazado", el detector no lo miraba: salía en Primary y avisaba.
           const warmupTagged = hasWarmupSubjectTag(msg.subject);
-          const leadId = warmupTagged ? null : (exactSent?.lead_id || exactLead || threadHit?.lead_id || domHit?.lead_id || null);
-          const campaignId = warmupTagged ? null : (threadHit?.campaign_id || exactSent?.campaign_id || domHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
+          const leadId = warmupTagged ? null : (exactSent?.lead_id || exactLead || threadHit?.lead_id || domHit?.lead_id || subjHit?.lead_id || null);
+          const campaignId = warmupTagged ? null : (threadHit?.campaign_id || exactSent?.campaign_id || domHit?.campaign_id || subjHit?.campaign_id || (exactLead ? leadCampaign.get(exactLead) : null)
             // Una respuesta NUNCA es de una campaña creada DESPUÉS de que llegara (23-09-2026).
             || (() => {
               const hit = dom ? companyCampaign.get(dom) : null;
@@ -1553,7 +1575,7 @@ serve(async (req) => {
               const when = Date.parse(parsedDate);
               return (Number.isFinite(when) && hit.created > when) ? null : hit.id;
             })() || null);
-          const related = !warmupTagged && !!(threadHit || exactSent || exactLead || domHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom)));
+          const related = !warmupTagged && !!(threadHit || exactSent || exactLead || domHit || subjHit || leadDomainHit.has(dom) || (dom && companyCampaign.has(dom)));
           // noreply@ / no-reply@ / postmaster@… que no es un rebote: un acuse automático de la
           // empresa de un lead SÍ es una respuesta (antes se tiraba). Sin relación con nada
           // nuestro (un boletín, un aviso del proveedor) no entra en el Unibox, pero se anota.
@@ -1571,6 +1593,9 @@ serve(async (req) => {
           if (domHit && !warmupTagged && !repliesToOurSubject(msg.subject, domLeadSubjects.get(domHit.lead_id))) {
             noMarkKeys.add(inboundKey(msg.message_id || null, msg.from_email, parsedDate));
           }
+          // Enlazado SÓLO por asunto (Mailinblack y similares): se ve en su campaña, pero no es una
+          // respuesta del lead, así que no lo deja como "respondido" ni para su secuencia.
+          if (subjHit && !warmupTagged) noMarkKeys.add(inboundKey(msg.message_id || null, msg.from_email, parsedDate));
           const row = {
             user_id: account.user_id,
             account_id: account.id,
