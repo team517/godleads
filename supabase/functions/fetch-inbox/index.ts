@@ -1704,8 +1704,11 @@ serve(async (req) => {
                 if (row.lead_id && !(row as any).is_warmup && !noMarkKeys.has(inboundKey(row.message_id, row.from_email, row.received_at))) {
                   const esAuto = !!(row as any).auto_signal; // fuera de oficina: cuenta, pero no para la secuencia
                   if (!esAuto) await adminClient.from("leads").update({ status: "replied" }).eq("id", row.lead_id);
-                  await adminClient.from("sent_emails").update({ replied_at: row.received_at })
+                  // Sólo en la campaña a la que contesta, como el guardado por lotes (07-10-2026).
+                  let rq = adminClient.from("sent_emails").update({ replied_at: row.received_at })
                     .eq("lead_id", row.lead_id).eq("user_id", account.user_id).is("replied_at", null);
+                  if (row.campaign_id) rq = rq.eq("campaign_id", row.campaign_id);
+                  await rq;
                   if (row.campaign_id && !esAuto) {
                     await adminClient.from("campaign_leads")
                       .update({ status: "replied" })
