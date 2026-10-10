@@ -94,7 +94,7 @@ export default function PortalBuilding({ pasos, onDone, minMs = PASO_MIN_MS }: {
   return (
     <div className="page-enter mx-auto flex w-full max-w-[720px] flex-col items-center pb-16 pt-2 text-center" role="status" aria-live="polite">
       <div className="flex items-center gap-2.5">
-        <SparkMark size={34} />
+        <SparkMark size={34} variant="star" />
         <Wordmark className="h-6" colorClassName="text-[#0b1040]" />
       </div>
 

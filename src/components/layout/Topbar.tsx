@@ -217,7 +217,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             </span>
           ) : (
             <>
-              <SparkMark size={30} />
+              <SparkMark size={30} variant="star" />
               <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-white" />
             </>
           )}
