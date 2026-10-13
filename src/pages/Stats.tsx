@@ -8,11 +8,27 @@ import RetryNotice from "@/components/RetryNotice";
 import { useWidget } from "@/hooks/useWidget";
 import { num } from "@/lib/widget-state";
 import { sumPoints, toDayPoints, type DailyRpcRow, type DayPoint } from "@/lib/daily-rows";
-import { fetchCampaignTotals, globalReplyRate, type CampaignTotals } from "@/lib/campaign-totals";
+import { campaignStatRows, fetchCampaignBreakdown, globalReplyRate, sumFieldFor, totalsFor, type CampaignBreakdown } from "@/lib/campaign-totals";
+import CampaignPicker, { type PickerCampaign } from "@/components/stats/CampaignPicker";
+import { useEffect, useMemo, useState } from "react";
 
 type Summary = { sent?: unknown; contacted?: unknown; bounced?: unknown; opened?: unknown; replied?: unknown; failed?: unknown };
 
 const DAYS = 14;
+
+/** Campañas elegidas en Estadísticas: se recuerdan por usuario en este navegador. */
+const pickKey = (uid: string) => "op_stats_campaigns:" + uid;
+function readPick(uid: string | undefined): string[] {
+  if (!uid) return [];
+  try {
+    const v = JSON.parse(localStorage.getItem(pickKey(uid)) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch { return []; }
+}
+function savePick(uid: string | undefined, ids: string[]) {
+  if (!uid) return;
+  try { localStorage.setItem(pickKey(uid), JSON.stringify(ids)); } catch { /* sin almacenamiento: sólo esta visita */ }
+}
 
 /* Estadísticas: dos widgets independientes (resumen y gráfica diaria). Cada uno es UNA RPC que cuenta
    en el servidor (exacto, sin el tope de 1000 filas de PostgREST), se pinta al instante desde la caché
@@ -29,36 +45,66 @@ export default function Stats() {
     load: () => (supabase as any).rpc("user_email_stats"),
     deps: [user?.id],
   });
-  // Totales globales = suma de las cifras de cada campaña (las mismas de la tabla de Campañas).
-  const totalsW = useWidget<CampaignTotals | null>({
-    cacheKey: "stats:campaign-totals",
+  // Cifras de cada campaña (las mismas de la tabla de Campañas): los totales son su suma.
+  const breakdownW = useWidget<CampaignBreakdown | null>({
+    cacheKey: "stats:campaign-breakdown",
     enabled: !!user,
-    load: () => fetchCampaignTotals(supabase as any, user!.id),
+    load: () => fetchCampaignBreakdown(supabase as any, user!.id),
     deps: [user?.id],
   });
-  const dailyW = useWidget<DailyRpcRow[]>({
-    cacheKey: "stats:daily",
+  const campaignsW = useWidget<PickerCampaign[]>({
+    cacheKey: "stats:campaign-list",
     enabled: !!user,
-    load: () => (supabase as any).rpc("user_daily_sends", { p_days: DAYS }),
+    load: () => (supabase as any).from("campaigns").select("id, name, status").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(1000),
     deps: [user?.id],
   });
 
+  // Segmentar por campañas (13-10-2026): sin ninguna elegida = todas (la vista global de siempre).
+  const [picked, setPicked] = useState<string[]>(() => readPick(user?.id));
+  useEffect(() => { setPicked(readPick(user?.id)); }, [user?.id]);
+  const campaigns = useMemo(() => campaignsW.data || [], [campaignsW.data]);
+  // Una campaña borrada desde la última visita deja de contar en la selección.
+  const selected = useMemo(() => {
+    if (!campaignsW.data) return picked;
+    const ok = new Set(campaigns.map((c) => c.id));
+    return picked.filter((id) => ok.has(id));
+  }, [picked, campaigns, campaignsW.data]);
+  const filtered = selected.length > 0;
+  const pickId = [...selected].sort().join(",");
+  const choose = (ids: string[]) => { setPicked(ids); savePick(user?.id, ids); };
+
+  const dailyW = useWidget<DailyRpcRow[]>({
+    cacheKey: filtered ? "stats:daily:" + pickId : "stats:daily",
+    enabled: !!user,
+    load: () => filtered
+      ? (supabase as any).rpc("campaigns_daily_sends", { p_campaign_ids: selected, p_days: DAYS })
+      : (supabase as any).rpc("user_daily_sends", { p_days: DAYS }),
+    deps: [user?.id, pickId],
+  });
+
   const s = summary.data || {};
-  // Enviados, contactados, respondidos y rebotados: suma de las campañas. Mientras no llega (o si
-  // falla), el resumen de siempre. Fallidos sale siempre del resumen.
-  const t = totalsW.data ?? null;
-  const sent = t ? t.sent : num(s.sent);
-  const bounced = t ? t.bounced : num(s.bounced);
+  // Enviados, contactados, respondidos y rebotados: suma de las campañas (las elegidas). Mientras no
+  // llega (o si falla), el resumen de siempre. Abiertos y fallidos: del resumen en la vista global y
+  // de las campañas elegidas al filtrar.
+  const b = breakdownW.data ?? null;
+  const t = totalsFor(b, selected);
+  const sent = t ? t.sent : filtered ? 0 : num(s.sent);
+  const bounced = t ? t.bounced : filtered ? 0 : num(s.bounced);
   const stats = {
     sent,
-    contacted: t ? t.contacted : num(s.contacted),
+    contacted: t ? t.contacted : filtered ? 0 : num(s.contacted),
     bounced,
     delivered: Math.max(0, sent - bounced),
-    opened: num(s.opened),
-    replied: t ? t.replied : num(s.replied),
-    failed: num(s.failed),
+    opened: filtered ? sumFieldFor(b, selected, "opened") : num(s.opened),
+    replied: t ? t.replied : filtered ? 0 : num(s.replied),
+    failed: filtered ? sumFieldFor(b, selected, "sender_bounced") : num(s.failed),
   };
   const daily: DayPoint[] = toDayPoints(dailyW.data);
+  const nameOf = useMemo(() => new Map(campaigns.map((c) => [c.id, c.name])), [campaigns]);
+  const perCampaign = useMemo(
+    () => campaignStatRows(b, selected).filter((r) => nameOf.has(r.id)).sort((x, y) => y.contacted - x.contacted),
+    [b, selected, nameOf],
+  );
 
   const pieData = [
     { name: "Entregados", value: stats.delivered || 1, color: "hsl(var(--brand-cyan))" },
@@ -90,14 +136,18 @@ export default function Stats() {
   const totalFollowups = sumPoints(daily, "followups");
 
   // Sin nada que enseñar todavía (ni caché ni carga): esqueleto, no spinner de página entera.
-  const summaryPending = summary.data === undefined && summary.loading;
+  const summaryPending = filtered
+    ? breakdownW.data === undefined && breakdownW.loading
+    : summary.data === undefined && summary.loading;
   const dailyPending = dailyW.data === undefined && dailyW.loading;
-  const summaryFailed = summary.data === undefined && !!summary.error;
+  const summaryFailed = filtered
+    ? breakdownW.data === undefined && !!breakdownW.error
+    : summary.data === undefined && !!summary.error;
   const dailyFailed = dailyW.data === undefined && !!dailyW.error;
   const skeleton = "animate-pulse text-transparent bg-muted rounded";
 
   // Sin ningún envío todavía (las DOS cargas fueron bien): la pantalla vacía del diseño.
-  const allZero = summary.data !== undefined && !summary.error && dailyW.data !== undefined && !dailyW.error
+  const allZero = !filtered && summary.data !== undefined && !summary.error && dailyW.data !== undefined && !dailyW.error
     && stats.sent === 0 && daily.every((p) => !p.envios && !p.respuestas && !p.nuevos && !p.followups);
   if (allZero) {
     return (
@@ -118,14 +168,26 @@ export default function Stats() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Estadísticas</h1>
-        <p className="text-[15px] text-muted-foreground">Análisis detallado de rendimiento</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Estadísticas</h1>
+          <p className="truncate text-[15px] text-muted-foreground">
+            {filtered
+              ? (selected.length === 1
+                ? <>Sólo la campaña <b className="font-semibold text-foreground">{nameOf.get(selected[0])}</b></>
+                : <>Sólo {selected.length} campañas elegidas</>)
+              : "Análisis detallado de rendimiento · todas las campañas"}
+          </p>
+        </div>
+        {campaigns.length > 0 && <CampaignPicker campaigns={campaigns} selected={selected} onChange={choose} className="w-full sm:w-auto sm:min-w-[220px]" />}
       </div>
 
       {/* Resumen: su propio aviso si falló (con dato viejo = discreto; sin dato = en su sitio) */}
-      {summary.error && (
+      {!filtered && summary.error && (
         <RetryNotice what="el resumen" error={summary.error} onRetry={summary.reload} stale={summary.data !== undefined} />
+      )}
+      {breakdownW.error && (filtered || !summary.error) && (
+        <RetryNotice what="las cifras de las campañas" error={breakdownW.error} onRetry={breakdownW.reload} stale={breakdownW.data !== undefined} />
       )}
       {summaryFailed ? (
         <Card><CardContent className="p-8 text-center text-[15px] text-muted-foreground">Resumen no disponible ahora mismo.</CardContent></Card>
@@ -224,6 +286,41 @@ export default function Stats() {
           )}
         </CardContent>
       </Card>
+
+      {/* Por campaña: las mismas cifras de la tabla de Campañas, de las elegidas (o de todas) */}
+      {perCampaign.length > 1 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="font-display text-[17px] font-semibold tracking-[-0.02em]">Por campaña</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto px-0 pb-2 sm:px-6">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[12px] text-muted-foreground">
+                  <th className="px-4 py-2 font-semibold sm:pl-0">Campaña</th>
+                  <th className="px-3 py-2 text-right font-semibold">Contactados</th>
+                  <th className="px-3 py-2 text-right font-semibold">Enviados</th>
+                  <th className="px-3 py-2 text-right font-semibold">Respondidos</th>
+                  <th className="px-3 py-2 text-right font-semibold">% resp.</th>
+                  <th className="px-4 py-2 text-right font-semibold sm:pr-0">Rebotados</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perCampaign.map((r) => (
+                  <tr key={r.id} className="border-b border-border/60 last:border-0">
+                    <td className="max-w-[260px] px-4 py-2 font-medium sm:pl-0">
+                      <button type="button" className="block max-w-full truncate text-left hover:text-primary hover:underline" title="Ver sólo esta campaña" onClick={() => choose([r.id])}>{nameOf.get(r.id)}</button>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.contacted.toLocaleString("es")}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.sent.toLocaleString("es")}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.replied.toLocaleString("es")}</td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-primary">{r.pct === null ? "—" : r.pct.toFixed(1).replace(".", ",") + "%"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums sm:pr-0">{r.bounced.toLocaleString("es")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Distribución: sale del resumen; si el resumen no está, tampoco ella */}
       {!summaryFailed && (

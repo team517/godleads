@@ -62,8 +62,16 @@ export function globalReplyRate(t: Pick<CampaignTotals, "avgRate"> | null | unde
   return t ? t.avgRate : 0;
 }
 
-/** Para useWidget: { data, error } con los totales de todas las campañas del usuario. */
-export async function fetchCampaignTotals(client: RpcClient, userId: string): Promise<{ data: CampaignTotals | null; error: RpcError }> {
+/** Las cifras de cada campaña tal cual llegan (métricas + desglose de respuestas + leads escritos).
+ *  Estadísticas las guarda así para poder sumar sólo las campañas elegidas (13-10-2026). */
+export type CampaignBreakdown = {
+  rows: Record<string, unknown>[];
+  extra: Record<string, MetricsExtra>;
+  leadsSent: Record<string, number> | null;
+};
+
+/** Para useWidget: { data, error } con las cifras de todas las campañas del usuario. */
+export async function fetchCampaignBreakdown(client: RpcClient, userId: string): Promise<{ data: CampaignBreakdown | null; error: RpcError }> {
   const [m, ex] = await Promise.all([
     fetchCampaignMetrics(client, userId),
     fetchMetricsExtra(client).catch(() => ({} as Record<string, MetricsExtra>)),
@@ -79,5 +87,42 @@ export async function fetchCampaignTotals(client: RpcClient, userId: string): Pr
       for (const r of lc.data as { campaign_id: string; leads_sent: unknown }[]) leadsSent[r.campaign_id] = n(r.leads_sent);
     }
   }
-  return { data: sumCampaignTotals(m.data, ex, leadsSent), error: null };
+  return { data: { rows: m.data as Record<string, unknown>[], extra: ex, leadsSent }, error: null };
+}
+
+/** Sólo las filas de las campañas elegidas; sin selección (null o vacía) = todas. */
+export function rowsFor(b: CampaignBreakdown | null | undefined, ids?: readonly string[] | null): Record<string, unknown>[] {
+  if (!b) return [];
+  if (!ids || ids.length === 0) return b.rows;
+  const want = new Set(ids);
+  return b.rows.filter((r) => want.has(String(r.campaign_id || "")));
+}
+
+/** Totales (las mismas reglas que la tabla de Campañas) de las campañas elegidas. */
+export function totalsFor(b: CampaignBreakdown | null | undefined, ids?: readonly string[] | null): CampaignTotals | null {
+  if (!b) return null;
+  return sumCampaignTotals(rowsFor(b, ids), b.extra, b.leadsSent);
+}
+
+/** Suma de una columna de las métricas (abiertos, fallidos…) en las campañas elegidas. */
+export function sumFieldFor(b: CampaignBreakdown | null | undefined, ids: readonly string[] | null | undefined, field: string): number {
+  return rowsFor(b, ids).reduce((a, r) => a + n(r[field]), 0);
+}
+
+/** Una fila por campaña para la tabla «Por campaña» (contactados como la columna de Campañas). */
+export type CampaignStatRow = { id: string; sent: number; contacted: number; replied: number; bounced: number; pct: number | null };
+export function campaignStatRows(b: CampaignBreakdown | null | undefined, ids?: readonly string[] | null): CampaignStatRow[] {
+  if (!b) return [];
+  return rowsFor(b, ids).map((r) => {
+    const id = String(r.campaign_id || "");
+    const t = sumCampaignTotals([r], b.extra, b.leadsSent);
+    return { id, sent: t.sent, contacted: t.contacted, replied: t.replied, bounced: t.bounced, pct: replyRatePct(t.replied, t.contacted) };
+  });
+}
+
+/** Para useWidget: { data, error } con los totales de todas las campañas del usuario. */
+export async function fetchCampaignTotals(client: RpcClient, userId: string): Promise<{ data: CampaignTotals | null; error: RpcError }> {
+  const b = await fetchCampaignBreakdown(client, userId);
+  if (b.error || !b.data) return { data: null, error: b.error };
+  return { data: totalsFor(b.data), error: null };
 }
