@@ -2477,7 +2477,16 @@ export default function Unibox() {
       const result = await resp.json();
       if (result.error) toast.error(result.error);
       else {
-        toast.success(`Reenviado a ${to}`);
+        // Con qué ha salido: imágenes de la firma/cuerpo y archivos del original (13-10-2026).
+        const fp = result?.forward_parts as { images?: number; files?: number; skipped?: { name: string; reason: string }[] } | undefined;
+        const extras = [
+          fp?.files ? `${fp.files} ${fp.files === 1 ? "adjunto" : "adjuntos"}` : "",
+          fp?.images ? `${fp.images} ${fp.images === 1 ? "imagen" : "imágenes"}` : "",
+        ].filter(Boolean).join(" y ");
+        toast.success(`Reenviado a ${to}${extras ? ` con ${extras}` : ""}`);
+        if (fp?.skipped?.length) {
+          toast.warning(`No se pudo adjuntar: ${fp.skipped.map((s) => `${s.name}${s.reason === "grande" || s.reason === "limite" ? " (demasiado grande)" : ""}`).join(", ")}`, { duration: 10000 });
+        }
         if (Array.isArray(result?.link_fixes) && result.link_fixes.length > 0) {
           toast.info(`Enlace cambiado para que llegue: ${result.link_fixes.map((f: { from: string; to: string }) => `${f.from} → ${f.to}`).join(", ")}`, { duration: 10000 });
         }

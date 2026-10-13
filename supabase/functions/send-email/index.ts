@@ -7,6 +7,7 @@ import { fixBlockedLinks } from "../_shared/link-guard.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
 import { makeBudget, readSmtpReply, sanitizeServerText, withTimeout } from "../_shared/smtp-wire.ts";
 import { canResend, INLINE_RETRY_DELAYS_MS, MAX_RETRY_PAYLOAD_B64, sendRetryable } from "../_shared/reply-retry.ts";
+import { bytesToBase64, cidsInHtml, dropMissingCidImages, planForwardParts, type StoredAttachment } from "../_shared/forward-parts.ts";
 
 // Presupuesto total de una sesión SMTP (auditoría 06-10-2026).
 const SEND_BUDGET_MS = 45_000;
@@ -115,12 +116,16 @@ function sanitizeHtmlForDelivery(html: string): string {
     .replace(/<(script|iframe|object|embed|picture|source)[^>]*>/gi, "")
     .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
     .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    // http: también (13-10-2026): muchas firmas antiguas cargan el logo por http y, al reenviar o
+    // citar ese correo, la imagen desaparecía.
     .replace(/<img\b[^>]*>/gi, (tag) => {
       const m = tag.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
-      return /^(?:https:|cid:|data:image\/)/i.test(src) ? tag : "";
+      return /^(?:https?:|cid:|data:image\/)/i.test(src) ? tag : "";
     })
-    .replace(/\s(?:class|id|data-[\w-]+|width|height|role|dir)=("[^"]*"|'[^']*')/gi, "")
+    // width/height se QUEDAN (13-10-2026): son el tamaño de logos y columnas de tabla. Sin ellos un
+    // logo de firma reenviado salía a su tamaño real (enorme) y las tablas se descolocaban.
+    .replace(/\s(?:class|id|data-[\w-]+|role|dir)=("[^"]*"|'[^']*')/gi, "")
     .replace(/<a\b[^>]*>/gi, (tag) => {
       const href = tag.match(/\bhref\s*=\s*("[^"]*"|'[^']*')/i)?.[1];
       if (!href) return tag;
@@ -249,7 +254,7 @@ async function sendSmtpEmail(
   to: string,
   subject: string,
   body: string,
-  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; quoteHtml?: string; quoteHeader?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[] }
+  opts?: { inReplyTo?: string; references?: string; fromName?: string; messageId?: string; unsubscribeUrl?: string; listUnsubscribeUrl?: string; signatureHtml?: string; quoteHtml?: string; quoteHeader?: string; attachments?: { filename: string; mime: string; base64: string }[]; cc?: string[]; inlineParts?: { cid: string; mime: string; base64: string }[] }
 ): Promise<{ ok: boolean; error?: string; messageId?: string; raw?: string }> {
   // Plazos (auditoría 06-10-2026): conexión 25 s, cada lectura 20 s, escritura del cuerpo 30 s y
   // un presupuesto total de ~45 s por envío. Sin ellos un servidor mudo colgaba la función y el
@@ -384,7 +389,9 @@ async function sendSmtpEmail(
 
       // Pull base64 data: images (logos) out of the HTML → inline CID parts, then wrap
       // the result in a real HTML document (once; never if it already is one).
-      const { html: htmlInlined, inlineImages } = inlineDataUriImages(htmlFinal);
+      const { html: htmlInlined, inlineImages: dataUriImages } = inlineDataUriImages(htmlFinal);
+      // + las imágenes incrustadas del correo reenviado, con su MISMO Content-ID (13-10-2026).
+      const inlineImages = [...dataUriImages, ...(opts?.inlineParts || []).filter((p) => p && p.cid && p.base64)];
       const htmlForSend = wrapHtmlDocument(htmlInlined);
 
       const qpText = quotedPrintableEncode(normalizeMimeText(plainTextFinal));
@@ -807,7 +814,64 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: `El correo lleva un enlace que IONOS no entrega (${bad}). Cámbialo antes de enviar: el correo NO ha salido.` }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     const linkFixes = [...guard.fixes, ...guardedSig.fixes, ...guardedAccountSig.fixes];
-    const finalBody = textToHtml(replaceVariables(guard.text, fields, templateLang).trim());
+    // Un reenvío lleva el correo de OTRA persona tal cual: no se le sustituyen {{variables}} (si las
+    // trae, son suyas) ni se le "arreglan" huecos.
+    let finalBody = textToHtml((isForward ? guard.text : replaceVariables(guard.text, fields, templateLang)).trim());
+
+    // Reenvío CON TODO (13-10-2026): las imágenes incrustadas (firma, capturas) y los adjuntos del
+    // original, como se ven en el Unibox. Sólo del propio usuario; si algo falla, el reenvío sale
+    // igual (sin esa parte) y la respuesta lo dice.
+    let forwardInline: { cid: string; mime: string; base64: string }[] = [];
+    const forwardFiles: { filename: string; mime: string; base64: string }[] = [];
+    let forwardSkipped: { name: string; reason: string }[] = [];
+    if (isForward && forwarded_from) {
+      try {
+        const { data: orig } = await adminClient.from("inbox_messages")
+          .select("id, user_id, attachments").eq("id", String(forwarded_from)).maybeSingle();
+        if (orig && (orig as { user_id: string }).user_id === userId) {
+          let atts = Array.isArray((orig as { attachments?: unknown }).attachments) ? (orig as { attachments: StoredAttachment[] }).attachments : [];
+          // Sin adjuntos guardados todavía (la sincronización sólo baja el principio del correo):
+          // se piden al buzón una vez, igual que hace el Unibox al abrirlo.
+          const needsFetch = atts.length === 0 || cidsInHtml(finalBody).some((c) => !atts.some((a) => String(a.cid || "").toLowerCase() === c.toLowerCase()));
+          const cronSecret = Deno.env.get("REPORTS_CRON_SECRET") || "";
+          if (needsFetch && cronSecret) {
+            const ctl = new AbortController();
+            const timer = setTimeout(() => ctl.abort(), 25_000);
+            try {
+              const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/inbox-attachments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
+                body: JSON.stringify({ message_id: String(forwarded_from), secret: cronSecret }),
+                signal: ctl.signal,
+              });
+              const j = await r.json().catch(() => null);
+              if (Array.isArray(j?.attachments) && j.attachments.length) atts = j.attachments;
+            } catch { /* sin respuesta del buzón: se reenvía con lo que haya */ } finally { clearTimeout(timer); }
+          }
+          const plan = planForwardParts(atts, finalBody, { maxBytes: Math.max(0, 14_000_000 - Math.floor(totalB64 * 0.75)), maxFiles: Math.max(0, 10 - safeAttachments.length) });
+          forwardSkipped = plan.skipped;
+          const load = async (path: string) => {
+            const { data: blob, error } = await adminClient.storage.from("inbox-attachments").download(path);
+            if (error || !blob) return null;
+            return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+          };
+          for (const a of plan.inline) {
+            const b64 = await load(a.path);
+            if (b64) forwardInline.push({ cid: a.cid.replace(/[\r\n<>]/g, ""), mime: String(a.mime || "image/png").replace(/[\r\n]/g, ""), base64: b64 });
+          }
+          for (const a of plan.files) {
+            const b64 = await load(a.path);
+            if (b64) forwardFiles.push({ filename: String(a.name || "adjunto").slice(0, 200), mime: String(a.mime || "application/octet-stream").replace(/[\r\n]/g, "").slice(0, 120), base64: b64 });
+            else forwardSkipped.push({ name: String(a.name || "adjunto"), reason: "sin_guardar" });
+          }
+        }
+      } catch (e) {
+        console.warn(`send-email: reenvío sin partes del original: ${(e as Error)?.message || e}`);
+      }
+      // Una imagen "cid:" que no va en el correo se quita: nunca un icono roto.
+      finalBody = dropMissingCidImages(finalBody, forwardInline.map((p) => p.cid));
+      forwardInline = forwardInline.filter((p) => finalBody.toLowerCase().includes(`cid:${p.cid.toLowerCase()}`));
+    }
     const senderName = [account.first_name, account.last_name].filter(Boolean).join(" ") || undefined;
 
     if (campaign_id && lead_id && campaign_step_id) {
@@ -859,9 +923,10 @@ serve(async (req) => {
         // Quoted original under the reply — manual replies only, never campaign sends.
         quoteHtml: !campaign_id && quote_html ? String(quote_html) : undefined,
         quoteHeader: !campaign_id && quote_header ? String(quote_header) : undefined,
-        attachments: safeAttachments,
+        attachments: [...safeAttachments, ...forwardFiles],
         // Extra thread participants — drop the main recipient if it slipped in.
         cc: cleanCc.filter((e) => e !== cleanTo),
+        inlineParts: forwardInline,
       }
     );
     // Un fallo pasajero (451 de IONOS, plazo de conexión) se reintenta aquí mismo, sin que quien
@@ -932,7 +997,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: result.error }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    return new Response(JSON.stringify({ success: true, message: "Email sent successfully", messageId: result.messageId || resolvedMessageId || null, link_fixes: linkFixes }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, message: "Email sent successfully", messageId: result.messageId || resolvedMessageId || null, link_fixes: linkFixes, ...(isForward ? { forward_parts: { images: forwardInline.length, files: forwardFiles.length, skipped: forwardSkipped } } : {}) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("send-email error:", e);
     const message = e instanceof Error ? e.message : String(e);
