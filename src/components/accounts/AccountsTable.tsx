@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle, XCircle, Loader2, Pencil, RefreshCw, Trash2, Wand2, ShieldCheck, ShieldAlert, ShieldQuestion,
@@ -18,6 +19,8 @@ interface Props {
   allSelected: boolean;
   onToggleSelect: (id: string) => void;
   onToggleAll: () => void;
+  /** Casilla de cabecera propia (con el menú "las del tag / todas"); si no, la de siempre. */
+  headerCheckbox?: ReactNode;
   imapChecks: Record<string, ImapCheckLike>;
   domainAuth: Record<string, DomainAuthLike>;
   dnsConfiguring: Record<string, boolean>;
@@ -120,7 +123,7 @@ export default function AccountsTable(p: Props) {
           <thead>
             <tr className="soft-thead">
               <Th className="w-10 pl-4 pr-0">
-                <Checkbox checked={p.allSelected} onCheckedChange={p.onToggleAll} aria-label="Seleccionar todas las cuentas" />
+                {p.headerCheckbox ?? <Checkbox checked={p.allSelected} onCheckedChange={p.onToggleAll} aria-label="Seleccionar todas las cuentas" />}
               </Th>
               <Th>Cuenta</Th>
               <Th>Proveedor</Th>

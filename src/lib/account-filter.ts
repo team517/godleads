@@ -15,7 +15,9 @@ export type FilterableAccount = {
 /**
  * SEARCH is a hard filter: every whitespace-separated term must appear somewhere in the
  * account's email, name, host or tags (case-insensitive), so "eric ionos" narrows further.
- * The TAG chip only REORDERS (tagged first) — that was the existing behaviour and is kept.
+ * The TAG chip is a hard filter too (14-10-2026, owner's request): clicking "whatsapp (20)" shows
+ * only those 20 mailboxes, so select-all and bulk actions act on the tag. It used to only
+ * reorder (tagged first, the rest below).
  */
 export function filterAccounts<T extends FilterableAccount>(
   accounts: T[],
@@ -33,7 +35,5 @@ export function filterAccounts<T extends FilterableAccount>(
         return q.split(/\s+/).every((term) => hay.includes(term));
       });
   if (!filterTag) return base;
-  const withTag = base.filter((a) => (a.tags || []).includes(filterTag));
-  const withoutTag = base.filter((a) => !(a.tags || []).includes(filterTag));
-  return [...withTag, ...withoutTag];
+  return base.filter((a) => (a.tags || []).includes(filterTag));
 }

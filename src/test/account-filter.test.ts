@@ -43,11 +43,12 @@ describe("Cuentas de Email — buscador", () => {
     expect(ids(filterAccounts(ACCOUNTS, "carla", null))).toEqual(["3"]);
   });
 
-  it("a tag chip only REORDERS (tagged first) and still respects the search", () => {
+  it("a tag chip shows ONLY that tag's accounts, and still respects the search", () => {
     const byTag = filterAccounts(ACCOUNTS, "", "ONEPULSO");
-    expect(byTag.map((a) => a.id)).toEqual(["1", "5", "2", "3", "4"]); // tagged first, rest after
-    // search + tag together: only Erics, ONEPULSO one first
-    expect(filterAccounts(ACCOUNTS, "eric", "ONEPULSO").map((a) => a.id)).toEqual(["1", "2", "4"]);
+    expect(byTag.map((a) => a.id)).toEqual(["1", "5"]);
+    // search + tag together: only the Erics that carry the tag
+    expect(filterAccounts(ACCOUNTS, "eric", "ONEPULSO").map((a) => a.id)).toEqual(["1"]);
+    expect(filterAccounts(ACCOUNTS, "", "no-existe")).toHaveLength(0);
   });
 
   it("no match yields an empty list (so bulk actions act on nothing, never on all)", () => {

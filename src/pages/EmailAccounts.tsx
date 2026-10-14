@@ -11,6 +11,7 @@ import DOMPurify from "dompurify";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import SelectAllControl from "@/components/accounts/SelectAllControl";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { filterAccounts } from "@/lib/account-filter";
@@ -714,6 +715,17 @@ export default function EmailAccounts() {
       return next;
     });
   };
+
+  // Casilla "seleccionar todo": con un tag o una búsqueda activos pregunta si las del tag o todas.
+  const selectAllControl = (
+    <SelectAllControl
+      visibleIds={filteredAccounts.map(a => a.id)}
+      allIds={accounts.map(a => a.id)}
+      selected={selectedIds}
+      onChange={setSelectedIds}
+      scopeLabel={filterTag ? `«${filterTag}»` : search.trim() ? "la búsqueda" : null}
+    />
+  );
 
   const toggleSelectAll = () => {
     if (allSelected) {
@@ -1902,11 +1914,11 @@ export default function EmailAccounts() {
               </button>
             )}
           </div>
-          <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
+          {selectAllControl}
           <span className="text-sm text-muted-foreground">
             {selectedIds.size > 0 ? `${selectedIds.size} seleccionadas` : "Seleccionar cuentas"}
           </span>
-          {search.trim() && (
+          {(search.trim() || filterTag) && (
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
               {filteredAccounts.length} de {accounts.length}
             </span>
@@ -2216,6 +2228,7 @@ export default function EmailAccounts() {
             allSelected={allSelected}
             onToggleSelect={toggleSelect}
             onToggleAll={toggleSelectAll}
+            headerCheckbox={selectAllControl}
             imapChecks={imapChecks}
             domainAuth={domainAuth}
             dnsConfiguring={dnsConfiguring}
