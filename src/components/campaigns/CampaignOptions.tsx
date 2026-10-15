@@ -288,7 +288,7 @@ export default function CampaignOptions({ campaignId }: Props) {
     const load = async () => {
       if (!user) return;
       const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes, cliRes, otherCampRes] = await Promise.all([
-        supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id).eq("status", "connected"),
+        supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
@@ -320,7 +320,12 @@ export default function CampaignOptions({ campaignId }: Props) {
           const { data: sd } = await (supabase as any).rpc("my_account_sending_days");
           realDays = sendDaysMap(sd);
         } catch { /* si falla, se asume 0 días: el escalón inicial */ }
-        setAccounts((accRes.data || []).map((a: any) => ({ ...a, _sendDays: realDays[a.id] ?? 0 })));
+        // TODAS las cuentas, también las que ahora no funcionan (15-10-2026): se pueden añadir a
+        // la campaña igual y empiezan a enviar en cuanto se reconectan. Las que funcionan, primero.
+        const rank = (a: any) => (a.status === "connected" ? 0 : 1);
+        setAccounts((accRes.data || [])
+          .map((a: any) => ({ ...a, _sendDays: realDays[a.id] ?? 0 }))
+          .sort((a: any, b: any) => rank(a) - rank(b) || String(a.email).localeCompare(String(b.email))));
       }
       setSelectedAccounts((caRes.data || []).map((r: any) => r.account_id));
       const steps = stepsRes.data || [];
@@ -522,8 +527,10 @@ export default function CampaignOptions({ campaignId }: Props) {
     if (rampInfo) limit = Math.min(limit, rampInfo.eff);
     return { limit, accRampDay: r.accRampDay };
   };
-  const sentTodayTotal = usedAccounts.reduce((s: number, a: any) => s + (a.sent_today || 0), 0);
-  const capacityToday = usedAccounts.reduce((s: number, a: any) => s + effLimitFor(a).limit, 0);
+  // Capacidad: sólo las que envían de verdad (el motor no usa las que no están conectadas).
+  const liveUsedAccounts = usedAccounts.filter((a: any) => a.status === "connected");
+  const sentTodayTotal = liveUsedAccounts.reduce((s: number, a: any) => s + (a.sent_today || 0), 0);
+  const capacityToday = liveUsedAccounts.reduce((s: number, a: any) => s + effLimitFor(a).limit, 0);
 
   // Sending rhythm — same formula the backend uses to pace this campaign:
   //   quota per account = total effective daily capacity / number of accounts
@@ -598,7 +605,7 @@ export default function CampaignOptions({ campaignId }: Props) {
                   )}
                   <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-2.5">
                     {accounts.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No hay cuentas conectadas.</p>
+                      <p className="text-xs text-muted-foreground">No hay cuentas.</p>
                     ) : accounts.map(acc => {
                       const viaTag = (acc.tags || []).some((t: string) => unsubTags.includes(t));
                       const checked = unsubAccountIds.includes(acc.id) || viaTag;
@@ -747,17 +754,30 @@ export default function CampaignOptions({ campaignId }: Props) {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {allTags.map(tag => {
-                  const count = accounts.filter(a => (a.tags || []).includes(tag)).length;
+                  const inTag = accounts.filter(a => (a.tags || []).includes(tag));
+                  const count = inTag.length;
+                  const live = inTag.filter(a => a.status === "connected").length;
                   const isSelected = selectedTags.includes(tag);
                   return (
                     <button key={tag} onClick={() => toggleTag(tag)}
+                      title={live < count ? `${count} cuentas · ${live} funcionando ahora` : undefined}
                       className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${isSelected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-muted"}`}>
-                      {tag} ({count})
+                      {tag} ({count}){live < count && <span className={isSelected ? "opacity-80" : "text-amber-600 dark:text-amber-400"}> · {live} activas</span>}
                     </button>
                   );
                 })}
               </div>
             )}
+            {selectedTags.map(t => {
+              const inTag = accounts.filter(a => (a.tags || []).includes(t));
+              const down = inTag.filter(a => a.status !== "connected").length;
+              if (inTag.length === 0 || down === 0) return null;
+              return (
+                <p key={t} className="text-[11px] text-amber-600 dark:text-amber-400">
+                  «{t}»: {down === inTag.length ? `ninguna de sus ${inTag.length} cuentas funciona ahora` : `${down} de ${inTag.length} cuentas no funcionan ahora`} (error de conexión o DNS). Quedan en la campaña y empiezan a enviar solas en cuanto se reconecten; revísalas en <span className="font-medium">Cuentas de email</span>.
+                </p>
+              );
+            })}
             {selectedTags.some(t => accounts.filter(a => (a.tags || []).includes(t)).length === 0) && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
                 Ese tag no está asignado a ninguna cuenta todavía. Asígnalo a tus cuentas en <span className="font-medium">Cuentas de email</span> (puedes hacerlo en bloque) para que se incluyan aquí.
@@ -767,7 +787,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         </Row>
 
         <Row icon={<Mail className="h-4 w-4" />} tint="primary" title="Cuentas individuales"
-          desc={accounts.length === 0 ? "No hay cuentas conectadas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña."}
+          desc={accounts.length === 0 ? "No hay cuentas. Ve a Cuentas de Email primero." : "Elige qué buzones envían en esta campaña. Puedes añadir también las que ahora no funcionan: envían en cuanto se reconectan."}
           badge={totalAccountsUsed > 0 ? <Badge variant="secondary" className="h-4 px-1.5 text-[10.5px] font-semibold">{totalAccountsUsed} en uso</Badge> : undefined}
           control={accounts.length > 0 ? (
             <button type="button" onClick={() => setAccountsExpanded(v => !v)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
@@ -785,6 +805,11 @@ export default function CampaignOptions({ campaignId }: Props) {
                     <Checkbox checked={isChecked} disabled={fromTag} onCheckedChange={() => toggleAccount(acc.id)} />
                     <span className={fromTag ? "text-muted-foreground" : ""}>{acc.email}</span>
                     {fromTag && <Badge variant="outline" className="px-1.5 py-0 text-[10.5px] font-semibold">vía tag</Badge>}
+                    {acc.status !== "connected" && (
+                      <span className="shrink-0 rounded-md bg-red-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-red-700 dark:bg-red-500/20 dark:text-red-300" title="Ahora no puede enviar (error de conexión o DNS). Se queda en la campaña y envía en cuanto se reconecte.">
+                        {acc.status === "error" || acc.status === "auth_failed" ? "Con error" : "Sin conectar"}
+                      </span>
+                    )}
                     {(usedElsewhere[acc.id] || []).length > 0 && (
                       <span
                         className="truncate rounded-md bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"

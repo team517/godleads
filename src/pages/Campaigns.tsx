@@ -318,15 +318,14 @@ export default function Campaigns() {
       if (clRes.error) { toast.error(`No se pudieron leer los leads: ${clRes.error.message}`); return; }
       if (stRes.error) { toast.error(`No se pudieron leer los pasos: ${stRes.error.message}`); return; }
 
-      // Mirror the sending engine: direct assignments OR any CONNECTED account
-      // whose tags overlap the campaign's account_tags.
+      // Cuentas directas o por tag, AUNQUE ahora no funcionen (15-10-2026): la campaña se puede
+      // activar igual y empieza a enviar en cuanto alguna se reconecta (se avisa abajo).
       const accountTags: string[] = (freshRes.data?.account_tags as string[] | null) || [];
       let hasAccounts = (caRes.count || 0) > 0;
       if (!hasAccounts && accountTags.length > 0) {
         const { count, error: tagErr } = await supabase
           .from("email_accounts")
           .select("id", { count: "exact", head: true })
-          .eq("status", "connected")
           .overlaps("tags", accountTags);
         if (tagErr) { toast.error(`No se pudieron leer las cuentas del tag: ${tagErr.message}`); return; }
         hasAccounts = (count || 0) > 0;
