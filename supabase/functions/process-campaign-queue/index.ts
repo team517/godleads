@@ -1497,7 +1497,10 @@ serve(async (req) => {
       // OWN daily limit below, so it grows automatically as ramp progresses day
       // by day, or as more accounts get connected/selected — no manual number
       // to keep updating by hand. ═══
-      const HARD_DAILY_CAP = 30;
+      // 15 al día por buzón como máximo en toda la plataforma (17-10-2026, decisión del dueño; antes
+      // 30). Es un TECHO: el límite de la cuenta, su warm-up y el slow ramp de la campaña siguen
+      // mandando cuando son menores.
+      const HARD_DAILY_CAP = 15;
       let rampDaysActive = 0;
       if ((campaign as any).slow_ramp_enabled) {
         const { data: firstSent } = await adminClient

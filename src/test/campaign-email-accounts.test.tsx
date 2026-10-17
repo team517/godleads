@@ -63,7 +63,7 @@ beforeEach(() => {
       in_campaign_by_tag: true,
       leads_assigned: 40,
       sent_total: 120,
-      sent_today: 29,
+      sent_today: 14,
       replied: 8,
       bounced: 1,
       campaigns_total: 2,
@@ -72,7 +72,7 @@ beforeEach(() => {
     stat({ account_id: "a2", in_campaign_direct: true, leads_assigned: 0, sent_total: 0 }),
   ];
   db.accounts = [
-    account({ id: "a1", email: "ana@onepulso.es", first_name: "Ana", last_name: "Gómez", sent_today: 29, tags: ["ventas"] }),
+    account({ id: "a1", email: "ana@onepulso.es", first_name: "Ana", last_name: "Gómez", sent_today: 14, tags: ["ventas"] }),
     account({ id: "a2", email: "beto@onepulso.es", first_name: "Beto", last_name: "Ruiz", status: "auth_failed", last_error: "LOGIN failed" }),
   ];
 });
@@ -94,11 +94,11 @@ describe("CampaignEmailAccounts", () => {
     expect(within(await rowOf("Beto Ruiz")).getByText("Error")).toBeInTheDocument();
   });
 
-  it("muestra el uso del límite diario como «29 / 30» y «97%»", async () => {
+  it("muestra el uso del límite diario como «14 / 15» y «93%» (techo de 15 por buzón)", async () => {
     render(<CampaignEmailAccounts campaignId="c1" />);
     const row = await rowOf("Ana Gómez");
-    expect(within(row).getByText("29 / 30")).toBeInTheDocument();
-    expect(within(row).getByText("97%")).toBeInTheDocument();
+    expect(within(row).getByText("14 / 15")).toBeInTheDocument();
+    expect(within(row).getByText("93%")).toBeInTheDocument();
   });
 
   it("muestra el estado compartido de campañas y los leads asignados", async () => {

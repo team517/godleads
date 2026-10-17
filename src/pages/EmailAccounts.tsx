@@ -180,7 +180,7 @@ export default function EmailAccounts() {
   });
   const [bulkEditFields, setBulkEditFields] = useState<Set<string>>(new Set());
   const [showSlowRamp, setShowSlowRamp] = useState(false);
-  const [slowRampForm, setSlowRampForm] = useState({ start: "", increment: "2", target: "30" });
+  const [slowRampForm, setSlowRampForm] = useState({ start: "", increment: "2", target: "15" });
   // Barra de progreso al activar/desactivar el slow ramp en muchas cuentas (como la de importar leads).
   const [rampProgress, setRampProgress] = useState<(BulkProgress & { label: string }) | null>(null);
   // ── Signature manager (apply an HTML signature to all / by tag / selected accounts) ──
@@ -1279,7 +1279,7 @@ export default function EmailAccounts() {
     // my_account_sending_days), no por calendario. Sin campaña activa → 0 días → se
     // queda en el escalón inicial; fin de semana o día sin envío → no suma.
     const r = effectiveDailyLimit(acc, sendDaysByAccount[acc.id]);
-    const target = acc.warmup_limit || acc.daily_limit || 30;
+    const target = Math.min(acc.warmup_limit || acc.daily_limit || 15, 15);
     return { day: r.accRampDay ?? 1, eff: r.limit, target };
   };
 
@@ -1291,7 +1291,8 @@ export default function EmailAccounts() {
     if (ids.length === 0) { toast.error("No hay cuentas"); return; }
     const increment = Math.max(1, parseInt(slowRampForm.increment) || 2);
     const start = Math.max(0, parseInt(slowRampForm.start) || 0); // 0 = start from increment (legacy)
-    const target = Math.max(start || increment, parseInt(slowRampForm.target) || 30);
+    // Objetivo como mucho 15 (el techo por buzón del motor, 17-10-2026).
+    const target = Math.min(15, Math.max(start || increment, parseInt(slowRampForm.target) || 15));
     const payload: any = {
       warmup_enabled: true,
       warmup_increment: increment,

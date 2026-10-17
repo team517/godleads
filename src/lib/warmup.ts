@@ -10,7 +10,8 @@
 //     escalón inicial, no "sube sola";
 //   - un fin de semana o un día sin envíos → no cuenta → la rampa no avanza.
 
-export const HARD_DAILY_CAP = 30;
+// 15 por buzón y día como máximo (17-10-2026, antes 30): el mismo techo que el motor.
+export const HARD_DAILY_CAP = 15;
 
 export interface WarmupAccount {
   daily_limit?: number | null;
