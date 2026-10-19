@@ -1025,12 +1025,27 @@ export default function EmailAccounts() {
   };
 
   const handleVerifyAll = async () => {
-    const pending = accounts.filter(a => a.status === "pending" || a.status === "error");
+    const pending = accounts.filter(a => a.status === "pending" || a.status === "error" || a.status === "auth_failed");
     if (pending.length === 0) { toast.info("No hay cuentas pendientes de verificar"); return; }
+    await runVerify(pending.map(a => a.id), "Verificación completada");
+  };
+
+  // Botón «Reconectar» (19-10-2026): vuelve a probar el login (SMTP + IMAP) AHORA, sin esperar a la
+  // reconexión automática (20 cada 5 min, con esperas de hasta 6 h tras un bloqueo de IONOS). Con
+  // cuentas seleccionadas prueba ésas; si no, las que no están conectadas de lo que se ve.
+  const reconnectTargets = selectedIds.size > 0
+    ? accounts.filter(a => selectedIds.has(a.id))
+    : filteredAccounts.filter(a => a.status !== "connected");
+  const handleReconnect = async () => {
+    if (reconnectTargets.length === 0) { toast.info("Todas las cuentas que ves ya están conectadas"); return; }
+    await runVerify(reconnectTargets.map(a => a.id), "Reconexión terminada");
+  };
+
+  const runVerify = async (ids: string[], doneLabel: string) => {
+    const pending = ids;
     // Concurrent (was one-by-one with a full reload after EACH — crawled with 100+ accounts).
     // CONC=4 stays gentle on IONOS; a single reload at the end; inbox sync is left to the cron.
     setVerifyingAll({ running: true, done: 0, total: pending.length });
-    const ids = pending.map(a => a.id);
     let done = 0;
     let connected = 0;
     // IONOS throttles a burst of logins, so a check can TIME OUT on a perfectly good mailbox.
@@ -1062,7 +1077,7 @@ export default function EmailAccounts() {
     await loadAccounts();
     const failed = pending.length - connected;
     toast.success(
-      `Verificación completada: ${connected} conectadas${failed > 0 ? `, ${failed} sin conectar` : ""}` +
+      `${doneLabel}: ${connected} conectadas${failed > 0 ? `, ${failed} sin conectar` : ""}` +
       (retry.length > 0 ? ` (${retry.length} reintentadas por timeout)` : ""),
     );
   };
@@ -1930,6 +1945,19 @@ export default function EmailAccounts() {
             className="inline-flex h-9 items-center gap-1.5 rounded-[9px] border border-[#dedaf8] bg-[#faf8ff] px-3.5 text-[12.5px] font-semibold text-[#6249dc] transition-colors hover:border-[#c3b8ff] dark:border-border dark:bg-primary/10 dark:text-primary"
           >
             <TrendingUp className="h-4 w-4" /> Slow ramp {selectedIds.size > 0 ? `(${selectedIds.size})` : `(${filteredAccounts.length})`}
+          </button>
+          <button
+            type="button"
+            onClick={handleReconnect}
+            disabled={verifyingAll.running || reconnectTargets.length === 0}
+            title={selectedIds.size > 0
+              ? "Vuelve a probar ahora la conexión de las cuentas seleccionadas"
+              : "Vuelve a probar ahora la conexión de las cuentas que no están conectadas"}
+            className="inline-flex h-9 items-center gap-1.5 rounded-[9px] border border-[#dedaf8] bg-[#faf8ff] px-3.5 text-[12.5px] font-semibold text-[#6249dc] transition-colors hover:border-[#c3b8ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-border dark:bg-primary/10 dark:text-primary"
+          >
+            {verifyingAll.running
+              ? <><Loader2 className="h-4 w-4 animate-spin" /> Reconectando {verifyingAll.done}/{verifyingAll.total}</>
+              : <><RefreshCw className="h-4 w-4" /> Reconectar ({reconnectTargets.length})</>}
           </button>
           {selectedIds.size > 0 && (
             <>
