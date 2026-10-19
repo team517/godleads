@@ -235,8 +235,13 @@ export default function Campaigns() {
     const ex = extraMap[id];
     // "replied" (la de siempre) mezcla autorrespuestas: con el desglose, repliedHuman/repliedAuto.
     const mm = ex ? { ...base, repliedHuman: ex.repliedHuman, repliedAuto: ex.repliedAuto, sentUnconfirmed: ex.sentUnconfirmed } : base;
+    // Contactados = personas a las que ESTA campaña ha escrito, también las que ya se quitaron de
+    // la campaña (20-10-2026): «Respondidos» cuenta sus respuestas, así que el % tiene que ir sobre
+    // la misma gente. Con sólo los leads que siguen dentro, SEO Innova salía al 34 % (23 de 67) cuando
+    // es 23 de 109. El mayor de los dos por si las métricas aún no han llegado.
     const c = progressMap[id]?.sent;
-    return c != null ? { ...mm, contacted: c } : mm;
+    const fromSends = Number((mm as { contacted?: unknown }).contacted) || 0;
+    return c != null ? { ...mm, contacted: Math.max(c, fromSends) } : mm;
   };
 
   const handleCreate = async () => {

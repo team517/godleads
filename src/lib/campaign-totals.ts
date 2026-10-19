@@ -37,8 +37,12 @@ export function sumCampaignTotals(
     const id = String(r.campaign_id || "");
     const ex = id && extra ? extra[id] : undefined;
     const sent = n(r.sent);
+    // Contactados = el mayor entre los leads escritos que siguen en la campaña y las personas a las
+    // que la campaña ha escrito según sus envíos (incluye las que se quitaron después; sus respuestas
+    // sí cuentan en «Respondidos», 20-10-2026).
     const fromProgress = id && leadsSent && leadsSent[id] != null ? n(leadsSent[id]) : null;
-    const contacted = fromProgress ?? (n(r.contacted) || sent);
+    const fromSends = n(r.contacted);
+    const contacted = fromProgress != null ? Math.max(fromProgress, fromSends) : (fromSends || sent);
     const replied = Math.min(repliesView({ replied: n(r.replied), repliedHuman: ex?.repliedHuman, repliedAuto: ex?.repliedAuto }).shown, contacted || Infinity);
     t.sent += sent;
     t.contacted += contacted;

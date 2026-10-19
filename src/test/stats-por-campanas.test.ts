@@ -64,3 +64,20 @@ describe("Estadísticas segmentadas por campañas", () => {
     expect(pickerLabel(cs, ["a", "b"])).toBe("2 campañas");
   });
 });
+
+describe("Contactados incluye a los leads que ya se quitaron de la campaña (20-10-2026)", () => {
+  it("SEO Innova GRANDE: 23 respuestas sobre 109 personas escritas, no sobre las 67 que siguen", () => {
+    const seo: CampaignBreakdown = {
+      rows: [{ campaign_id: "grande", sent: 162, contacted: 109, replied: 23, bounced: 5 }],
+      extra: {},
+      leadsSent: { grande: 67 },
+    };
+    const t = totalsFor(seo, [])!;
+    expect(t.contacted).toBe(109);
+    expect(t.avgRate).toBeCloseTo((23 / 109) * 100, 6);
+  });
+  it("si siguen dentro más leads escritos que los que dicen los envíos, se usa el mayor", () => {
+    const b2: CampaignBreakdown = { rows: [{ campaign_id: "x", sent: 50, contacted: 40, replied: 2, bounced: 0 }], extra: {}, leadsSent: { x: 45 } };
+    expect(totalsFor(b2, [])!.contacted).toBe(45);
+  });
+});
