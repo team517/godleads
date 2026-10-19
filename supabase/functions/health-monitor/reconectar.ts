@@ -7,6 +7,7 @@ import { probarImap, probarSmtp } from "../_shared/mail-probe.ts";
 import {
   A_LA_VEZ, ESTADOS_DESCONECTADOS, POR_PASADA, aProbar, olvidables, trasIntento, type Seguimiento,
 } from "../_shared/reconnect.ts";
+import { isIonosHost, pauseActive, STORM_FLAG_KEY } from "../_shared/auth-storm.ts";
 
 const PRESUPUESTO_MS = 60_000;
 
@@ -43,11 +44,18 @@ export async function reconectarCuentas(admin: any): Promise<{ probadas: number;
   const { data: cuentas } = await admin.from("email_accounts")
     .select("id, email, status, smtp_host, smtp_port, smtp_username, smtp_password, imap_host, imap_port, imap_username, imap_password")
     .in("id", ids);
+  // Bloqueo de login de IONOS en curso (freno del motor, 19-10-2026): no se prueban sus buzones,
+  // cada intento fallido alarga el bloqueo. Siguen "debidas" y se prueban al acabar la pausa.
+  let ionosPausado = false;
+  try {
+    const { data: flag } = await admin.from("engine_flags").select("until").eq("key", STORM_FLAG_KEY).maybeSingle();
+    ionosPausado = pauseActive((flag as { until?: string | null } | null)?.until ?? null);
+  } catch { /* sin freno */ }
   const previo = new Map(seguimiento.map((s) => [s.account_id, s]));
   const reconectadas: string[] = [];
   let probadas = 0, siguen = 0;
 
-  const cola = [...(cuentas || [])];
+  const cola = [...(cuentas || [])].filter((c: any) => !(ionosPausado && isIonosHost(c.smtp_host)));
   const trabajador = async () => {
     while (cola.length && Date.now() - inicio < PRESUPUESTO_MS) {
       const c = cola.shift()!;

@@ -9,6 +9,7 @@ import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, pu
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
 import { domainAcceptsMail } from "../_shared/recipient-check.ts";
+import { isAuthStorm, isIonosHost, pauseActive, pauseUntilIso, STORM_FLAG_KEY, STORM_WINDOW_MIN } from "../_shared/auth-storm.ts";
 import { allocateMix, interleave, laneAllowance, resolveNewPct, roomForNewLead, type MixPlan } from "../_shared/lead-mix.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -1289,6 +1290,17 @@ serve(async (req) => {
     // reactions below (it also catches 'unknown'/'soft' storms those don't).
     const accountFailStreak: Record<string, number> = {};
     const MAX_ACCOUNT_FAIL_STREAK = 3;
+
+    // FRENO ANTE UN BLOQUEO DE LOGIN DE IONOS (19-10-2026, ver _shared/auth-storm.ts): mientras dure
+    // la pausa no se intenta ningún buzón de IONOS (cada intento fallido alarga su bloqueo) y nadie se
+    // marca como caído. Si la tabla no existe o falla la lectura, se envía como siempre.
+    let ionosPauseUntil: string | null = null;
+    try {
+      const { data: flag } = await adminClient.from("engine_flags").select("until").eq("key", STORM_FLAG_KEY).maybeSingle();
+      ionosPauseUntil = (flag as { until?: string | null } | null)?.until ?? null;
+    } catch { /* sin freno: como antes */ }
+    const ionosPaused = () => pauseActive(ionosPauseUntil);
+    if (ionosPaused()) console.warn(`[freno IONOS] pausa activa hasta ${ionosPauseUntil}: no se usan buzones de IONOS en esta pasada`);
     const MIN_GAP_BETWEEN_SENDS_MS = 1500; // pause when the same sending DOMAIN repeats back-to-back
     let lastSendDomain = ""; // sender domain of the previous send in this tick
 
@@ -1455,6 +1467,8 @@ serve(async (req) => {
       }
       // Con media lista no se envía: el reparto entre buzones saldría torcido. La pasada siguiente reintenta.
       if (accountsFetchFailed) continue;
+      // Pausa por bloqueo de login de IONOS: fuera sus buzones (los demás proveedores siguen).
+      if (ionosPaused()) accounts = accounts.filter((a: any) => !isIonosHost(a.smtp_host));
       accounts = sortBySentToday(accounts);
 
       if (!accounts?.length) continue;
@@ -2682,6 +2696,36 @@ serve(async (req) => {
               await adminClient.from("campaign_leads")
                 .update({ assigned_account_id: null })
                 .eq("id", cl.id).eq("current_step", 0).eq("assigned_account_id", account.id);
+            }
+          } else if (errClass === 'auth' && isIonosHost(account.smtp_host) && (ionosPaused() || await (async () => {
+            // ¿Bloqueo de IONOS? Muchos buzones de varios clientes con 535 en pocos minutos.
+            try {
+              const { data: recent } = await adminClient.rpc("ionos_auth_failures", { p_minutes: STORM_WINDOW_MIN });
+              const fails = [...((recent || []) as { account_id: string; user_id: string }[]), { account_id: account.id, user_id: account.user_id }];
+              if (!isAuthStorm(fails)) return false;
+              ionosPauseUntil = pauseUntilIso();
+              await adminClient.from("engine_flags").upsert({
+                key: STORM_FLAG_KEY, until: ionosPauseUntil, updated_at: new Date().toISOString(),
+                reason: `535 en ${new Set(fails.map((f) => f.account_id)).size} buzones de ${new Set(fails.map((f) => f.user_id)).size} clientes`,
+              }, { onConflict: "key" });
+              // Las que se marcaron justo antes por este mismo bloqueo vuelven a "connected".
+              const victims = [...new Set(fails.map((f) => f.account_id).filter(Boolean))].filter((id) => id !== account.id);
+              if (victims.length) {
+                await adminClient.from("email_accounts").update({ status: "connected" })
+                  .in("id", victims).eq("status", "auth_failed");
+              }
+              console.warn(`[freno IONOS] bloqueo de login detectado (${fails.length} fallos 535 en ${STORM_WINDOW_MIN} min): pausa hasta ${ionosPauseUntil}, ${victims.length} cuentas devueltas`);
+              return true;
+            } catch (e) {
+              console.error("[freno IONOS] no se pudo comprobar:", (e as Error).message);
+              return false;
+            }
+          })())) {
+            // Bloqueo del proveedor, no contraseña mala: la cuenta NO se marca; fuera de esta pasada
+            // ella y el resto de buzones de IONOS de esta campaña. El lead no pierde nada (como 'auth').
+            rateLimitedThisRun.add(account.id);
+            for (let i = accounts.length - 1; i >= 0; i--) {
+              if (isIonosHost(accounts[i].smtp_host)) { rateLimitedThisRun.add(accounts[i].id); accounts.splice(i, 1); }
             }
           } else if (errClass === 'auth') {
             if (!NEVER_DISCONNECT_USERS.has(account.user_id)) {
