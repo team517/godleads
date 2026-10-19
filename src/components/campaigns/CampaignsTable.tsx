@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { bounceBreakdownText, type BounceBreakdown } from "@/lib/campaign-metrics";
+import { bounceBreakdownText, bounceRatePct, type BounceBreakdown } from "@/lib/campaign-metrics";
 import {
   autoRepliesLabel, campaignHealthReason, healthChipClass, repliesView, sentTooltip, REPLIES_TOOLTIP,
   type CampaignHealthRow, type HealthReason,
@@ -385,7 +385,7 @@ export default function CampaignsTable({
               const replied = rv.shown;
               const contacted = (m?.contacted ?? 0) || sent;
               const bounced = m?.bounced ?? 0;
-              const bounceRate = sent > 0 ? (bounced / sent) * 100 : 0;
+              const bounceRate = bounceRatePct(bounced, sent);
               const steps = m?.sequences ?? 0;
               const mgr = campaign.manager_id ? managers.find((x) => x.id === campaign.manager_id) : null;
               const client = campaign.client_id ? clients.find((x) => x.id === campaign.client_id) : null;
@@ -503,7 +503,7 @@ export default function CampaignsTable({
                         buzón inexistente (lista). La cifra es la real; aquí se explica. */}
                     <Metric
                       value={m === null ? null : bounced}
-                      pct={pctOf(bounced, sent)}
+                      pct={pctOf(bounced, sent + bounced)}
                       className="text-red-500 dark:text-red-400"
                       warn={m !== null && bounceRate > 2}
                       title={m === null ? undefined : bounceBreakdownText(bounced, bounceBreakdownFor?.(campaign.id) ?? null)}

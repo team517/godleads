@@ -67,3 +67,14 @@ export async function fetchBounceBreakdown(client: RpcClient, userId: string): P
   return map;
 }
 
+
+/**
+ * % de rebote = rebotes ÷ INTENTOS (enviados + rebotados), como Instantly/Smartlead (19-10-2026).
+ * Desde el 06-10 «Enviados» ya no cuenta los rebotados (un correo que no existe no es un envío), así
+ * que dividir sólo entre enviados inflaba el porcentaje: Coco salía al 38,4 % cuando es el 27,7 %.
+ */
+export function bounceRatePct(bounced: number, sentDelivered: number): number {
+  const b = Math.max(0, Number(bounced) || 0);
+  const attempts = Math.max(0, Number(sentDelivered) || 0) + b;
+  return attempts > 0 ? (b / attempts) * 100 : 0;
+}

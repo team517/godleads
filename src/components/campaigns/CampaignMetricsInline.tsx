@@ -1,4 +1,5 @@
 import { Send, Users, MessageSquareReply, Smile, AlertTriangle } from "lucide-react";
+import { bounceRatePct } from "@/lib/campaign-metrics";
 import { autoRepliesLabel, repliesView, sentTooltip, REPLIES_TOOLTIP } from "@/lib/campaign-health";
 
 type Stats = {
@@ -28,7 +29,7 @@ export default function CampaignMetricsInline({ metrics }: { campaignId?: string
     { label: "Contactados", value: m?.contacted ?? 0, sub: null,               icon: Users,              color: "text-violet-600 dark:text-violet-400" },
     { label: "Respondidos", value: rv.shown,          sub: replyPct,             extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { label: "Positivos",   value: m?.positive ?? 0,  sub: null,                 icon: Smile,              color: "text-emerald-600 dark:text-emerald-400" },
-    { label: "Rebotados",   value: m?.bounced ?? 0,   sub: pct(m?.bounced ?? 0), icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
+    { label: "Rebotados",   value: m?.bounced ?? 0,   sub: `${bounceRatePct(m?.bounced ?? 0, m?.sent ?? 0).toFixed(1)}%`, icon: AlertTriangle,      color: "text-red-500 dark:text-red-400" },
     // "Sender B." (failed-send recipients) removed: it conflated transient SMTP
     // failures (e.g. an IONOS "503" storm that simply retries) with real bounces,
     // showing an alarming inflated number. "Bounced" above = real hard bounces.

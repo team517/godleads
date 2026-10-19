@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { bounceRatePct } from "@/lib/campaign-metrics";
 import {
   Send, Users, MessageSquareReply, AlertTriangle,
   Play, Pause, FileEdit, ExternalLink, DollarSign,
@@ -46,7 +47,7 @@ export default function CampaignReportBar({ campaign, metrics: metricsProp, heal
     { key: "contacted",label: "Contactados",   value: m.contacted,     sub: null,            icon: Users,              color: "text-sky-600 dark:text-sky-400" },
     { key: "replied",  label: "Respondidos",   value: rv.shown,        sub: replyPct,        extra: rv.split ? autoRepliesLabel(rv.auto) : null, hint: REPLIES_TOOLTIP, icon: MessageSquareReply, color: "text-teal-600 dark:text-teal-400" },
     { key: "positive", label: "Positivos",     value: m.positive,     sub: null,            icon: DollarSign,         color: "text-emerald-600 dark:text-emerald-400", link: true },
-    { key: "bounced",  label: "Rebotados",     value: m.bounced,       sub: pct(m.bounced),  hint: "Rebotes confirmados: el servidor del destinatario rechazó el correo.", icon: AlertTriangle, color: "text-red-500 dark:text-red-400" },
+    { key: "bounced",  label: "Rebotados",     value: m.bounced,       sub: `${bounceRatePct(m.bounced, m.sent).toFixed(2)}%`,  hint: "Rebotes confirmados: el servidor del destinatario rechazó el correo.", icon: AlertTriangle, color: "text-red-500 dark:text-red-400" },
     // "Sender Bounced" removed — it counted transient SMTP failures (e.g. an IONOS
     // "503" storm that just retries) as if they were bounces, inflating a scary red
     // number. "Bounced" above is the real hard-bounce count.
