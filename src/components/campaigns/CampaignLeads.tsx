@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { findEmailStatusColumn, rowEmailStatus } from "@/lib/email-status";
-import { PLANTILLA_COLUMNAS, aliasPlantilla, elegirColumnasPlantilla } from "@/lib/variable-resolver";
+import { findEmailStatusColumn } from "@/lib/email-status";
+import { leadFieldsFromRow, templateRows } from "@/lib/lead-import-rows";
+import { PLANTILLA_COLUMNAS, aliasPlantilla } from "@/lib/variable-resolver";
 import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -518,31 +519,11 @@ export default function CampaignLeads({ campaignId }: Props) {
         const result = parseCSVToObjects(text);
         if ("error" in result) { toast.error(result.error); setImportingTemplate(false); return; }
 
-        const allowedKeys = new Set(["email", ...TEMPLATE_COLUMNS]);
-        const normalizeHeader = aliasPlantilla;
-
         // Para cada columna de la plantilla, la columna del CSV que MÁS DATOS tiene entre las que
-        // significan eso ("Company", "Company Name", "Company Name for Emails"…). Antes la última
-        // parecida pisaba a las demás aunque estuviera vacía. Lógica en src/lib/variable-resolver.
-        const origen = elegirColumnasPlantilla(result.headers, result.rows, TEMPLATE_COLUMNS, normalizeHeader);
-        const rows = result.rows.map(row => {
-          const obj: Record<string, string> = {};
-          for (const col of ["email", ...TEMPLATE_COLUMNS]) {
-            const desde = origen[col];
-            // Tildes rotas del CSV ("diseÃ±o y comunicaciÃ³n"): se arreglan AL IMPORTAR, porque
-            // company_name acaba dentro del correo del cliente (24-09-2026: 20 leads así).
-            if (desde && allowedKeys.has(col)) obj[col] = repairMojibakeBytes(String(row[desde] ?? ""));
-          }
-          return obj;
-        }).filter(r => r.email?.trim());
-
-        if (!rows.length) { toast.error("No se encontraron leads con email válido"); setImportingTemplate(false); return; }
-
-        const orderedRows = rows.map(r => {
-          const ordered: Record<string, string> = { email: r.email };
-          TEMPLATE_COLUMNS.forEach(col => { ordered[col] = r[col] || ""; });
-          return ordered;
-        });
+        // significan eso ("Company", "Company Name"…); tildes rotas arregladas AL IMPORTAR (24-09-2026);
+        // y el estado del email de la lista aparte (19-10-2026). Lógica en src/lib/lead-import-rows.
+        const orderedRows = templateRows(result.headers, result.rows, TEMPLATE_COLUMNS, aliasPlantilla, (s) => repairMojibakeBytes(s));
+        if (!orderedRows.length) { toast.error("No se encontraron leads con email válido"); setImportingTemplate(false); return; }
 
         parsedRowsRef.current = orderedRows;
         setCsvDeselected(new Set());
@@ -579,16 +560,12 @@ export default function CampaignLeads({ campaignId }: Props) {
         const useColFilter = !importAllColumns && csvSelectedCols.size > 0;
         // Estado del email de la lista (Apollo "email_status"…) → leads.verification_status, aunque
         // esa columna no se haya marcado para importar: el motor no escribe a los 'invalid'.
-        const statusCol = findEmailStatusColumn(Object.keys(batchRows[0] || {}));
+        const statusCol = findEmailStatusColumn([...new Set(batchRows.flatMap((r) => Object.keys(r)))]);
         const statusByEmail = new Map<string, string>();
         const batch = batchRows.map(r => {
-          const custom_fields: Record<string, string> = {};
-          Object.entries(r).forEach(([key, value]) => {
-            if (key === "email" || !value?.trim()) return;
-            if (useColFilter && !csvSelectedCols.has(key)) return;
-            custom_fields[key] = value.trim();
+          const { custom_fields, verification_status } = leadFieldsFromRow(r, {
+            statusCol, importAllColumns, selectedCols: useColFilter ? csvSelectedCols : null,
           });
-          const verification_status = rowEmailStatus(r, statusCol);
           if (verification_status) statusByEmail.set(r.email.toLowerCase(), verification_status);
           return { user_id: user.id, email: r.email.toLowerCase(), custom_fields, is_campaign_only: true, ...(verification_status ? { verification_status } : {}) };
         });
