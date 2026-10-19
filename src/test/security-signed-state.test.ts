@@ -19,7 +19,10 @@ describe("state OAuth firmado (google-oauth)", () => {
     const [v, payload, sig] = st.split(".");
     const forged = btoa(JSON.stringify({ o: "11111111-1111-1111-1111-111111111111", n: "x", e: 9e15 })).replace(/=+$/, "");
     expect(await verifyOauthState(`${v}.${forged}.${sig}`, SECRET, 1_000_001)).toBeNull();
-    expect(await verifyOauthState(`${v}.${payload}.${sig.slice(0, -1)}0`, SECRET, 1_000_001)).toBeNull();
+    // Cambia el último carácter por OTRO distinto (con "0" fijo, una firma que ya acababa en "0" no
+    // cambiaba y la prueba fallaba al azar).
+    const last = sig.slice(-1);
+    expect(await verifyOauthState(`${v}.${payload}.${sig.slice(0, -1)}${last === "0" ? "1" : "0"}`, SECRET, 1_000_001)).toBeNull();
   });
   it("caduca a los 15 minutos", async () => {
     const st = await signOauthState(OWNER, SECRET, 1_000_000);
