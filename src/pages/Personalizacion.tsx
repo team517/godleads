@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findEmailStatusColumn, rowEmailStatus } from "@/lib/email-status";
 import Papa from "papaparse";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -580,7 +581,8 @@ export default function Personalizacion() {
             if (v) custom_fields[c] = v;
           });
           custom_fields.personalized_message = res[String(r.__idx)].message;
-          return { user_id: user.id, email: (r[col] || "").toLowerCase().trim(), custom_fields, is_campaign_only: true };
+          const verification_status = rowEmailStatus(r as Record<string, string>, findEmailStatusColumn(cols));
+          return { user_id: user.id, email: (r[col] || "").toLowerCase().trim(), custom_fields, is_campaign_only: true, ...(verification_status ? { verification_status } : {}) };
         });
         const { data, error } = await supabase.from("leads").insert(batch).select("id");
         let ids: string[] = [];

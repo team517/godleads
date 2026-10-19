@@ -2480,6 +2480,15 @@ serve(async (req) => {
             totalSkipped++;
             continue;
           }
+          // Lista que llegó con el email marcado como inválido (Apollo "email_status", verificación de la
+          // app…): no se estrena con un rebote seguro (19-10-2026). Sólo el primer correo; a quien ya
+          // se escribió se le deja seguir.
+          if (currentStepIndex === 0 && String((lead as any).verification_status || "").toLowerCase() === "invalid") {
+            await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
+            console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} viene marcado como inválido en su lista → no se envía`);
+            totalSkipped++;
+            continue;
+          }
           if (currentStepIndex === 0) {
             const dominio = leadEmail.split("@")[1] || "";
             if (!(dominio in mailDomainCache)) {

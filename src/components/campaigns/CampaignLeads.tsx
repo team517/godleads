@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { findEmailStatusColumn, rowEmailStatus } from "@/lib/email-status";
 import { PLANTILLA_COLUMNAS, aliasPlantilla, elegirColumnasPlantilla } from "@/lib/variable-resolver";
 import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
@@ -576,6 +577,10 @@ export default function CampaignLeads({ campaignId }: Props) {
         // Only import the columns the user selected (email is always kept). The
         // template path passes importAllColumns=true to keep every column.
         const useColFilter = !importAllColumns && csvSelectedCols.size > 0;
+        // Estado del email de la lista (Apollo "email_status"…) → leads.verification_status, aunque
+        // esa columna no se haya marcado para importar: el motor no escribe a los 'invalid'.
+        const statusCol = findEmailStatusColumn(Object.keys(batchRows[0] || {}));
+        const statusByEmail = new Map<string, string>();
         const batch = batchRows.map(r => {
           const custom_fields: Record<string, string> = {};
           Object.entries(r).forEach(([key, value]) => {
@@ -583,7 +588,9 @@ export default function CampaignLeads({ campaignId }: Props) {
             if (useColFilter && !csvSelectedCols.has(key)) return;
             custom_fields[key] = value.trim();
           });
-          return { user_id: user.id, email: r.email.toLowerCase(), custom_fields, is_campaign_only: true };
+          const verification_status = rowEmailStatus(r, statusCol);
+          if (verification_status) statusByEmail.set(r.email.toLowerCase(), verification_status);
+          return { user_id: user.id, email: r.email.toLowerCase(), custom_fields, is_campaign_only: true, ...(verification_status ? { verification_status } : {}) };
         });
 
         // Los emails que YA están en esta campaña se ACTUALIZAN con las columnas nuevas (así
@@ -606,6 +613,19 @@ export default function CampaignLeads({ campaignId }: Props) {
         for (const u of toUpdate) {
           const { error: updErr } = await supabase.from("leads").update({ custom_fields: u.custom_fields }).eq("id", u.id).eq("user_id", user.id);
           if (!updErr) totalUpdated++;
+        }
+        // Los que ya estaban en la campaña también reciben el estado del email de la lista nueva.
+        if (statusByEmail.size > 0) {
+          const byStatus = new Map<string, string[]>();
+          for (const [em, hit] of existingByEmail) {
+            const st = statusByEmail.get(em);
+            if (st) byStatus.set(st, [...(byStatus.get(st) || []), hit.id]);
+          }
+          for (const [st, ids] of byStatus) {
+            for (let k = 0; k < ids.length; k += 200) {
+              await supabase.from("leads").update({ verification_status: st }).in("id", ids.slice(k, k + 200)).eq("user_id", user.id);
+            }
+          }
         }
 
         // Insert the genuinely new leads

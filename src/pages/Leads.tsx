@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { findEmailStatusColumn, rowEmailStatus } from "@/lib/email-status";
 import { Button } from "@/components/ui/button";
 
 import { useProfile } from "@/contexts/ProfileContext";
@@ -379,6 +380,8 @@ export default function Leads() {
       // Yield to main thread between batches so UI stays responsive
       const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
 
+      // Estado del email que trae la lista (Apollo "email_status"…): a leads.verification_status.
+      const statusCol = findEmailStatusColumn(csvHeaders);
       for (let i = 0; i < selectedRows.length; i += BATCH_SIZE) {
         const batch = selectedRows.slice(i, i + BATCH_SIZE).map(r => {
           const email = r.email.toLowerCase();
@@ -386,7 +389,8 @@ export default function Leads() {
           Object.entries(r).forEach(([key, value]) => {
             if (key !== "email" && value?.trim()) custom_fields[key] = value.trim();
           });
-          return { user_id: user.id, email, custom_fields, list_id: activeList || null };
+          const verification_status = rowEmailStatus(r, statusCol);
+          return { user_id: user.id, email, custom_fields, list_id: activeList || null, ...(verification_status ? { verification_status } : {}) };
         });
 
         // .select("id") so we count what ACTUALLY inserted — blocked emails/domains are
