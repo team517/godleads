@@ -19,7 +19,11 @@
 export type MixMode = "off" | "auto" | "manual";
 
 /** % mínimo de leads nuevos en automático: aunque haya cola de seguimientos, cada día salen primeros correos. */
-export const AUTO_MIN_NEW_PCT = 15;
+// 15 → 25 (20-10-2026): el primer correo trae casi el doble de respuestas por envío que los
+// seguimientos (13,7 por mil frente a 8,5 y 7,1, últimos 35 días). Con una cola de seguimientos el
+// automático bajaba los nuevos al 15 % y las respuestas caían; ahora no baja del 25 % (35 % = equilibrio
+// en 3 pasos). Con 35 fijo los seguimientos se retrasaban hasta 6-10 días; con 25 van al día.
+export const AUTO_MIN_NEW_PCT = 25;
 
 /**
  * % de leads nuevos que mantiene una secuencia EN EQUILIBRIO: cada lead nuevo trae después

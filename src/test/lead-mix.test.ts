@@ -23,8 +23,11 @@ describe("porcentaje de equilibrio", () => {
   });
 
   it("auto con cola de seguimientos: los nuevos ceden en proporción, pero nunca bajan del mínimo", () => {
-    // 1.000 al día, parte de seguimientos = 650. Con 1.300 pendientes (el doble) → la mitad de nuevos.
-    expect(resolveNewPct({ mode: "auto", steps: 3, dailyLimit: 1000, followupsDueToday: 1300 })).toBe(18);
+    // 1.000 al día, parte de seguimientos = 650. Con 1.300 pendientes (el doble) la proporción daría
+    // 18 %, pero desde el 20-10-2026 los nuevos no bajan del 25 % (el primer correo es el que responde).
+    expect(resolveNewPct({ mode: "auto", steps: 3, dailyLimit: 1000, followupsDueToday: 1300 })).toBe(25);
+    // Una cola pequeña sí ajusta en proporción por encima del mínimo.
+    expect(resolveNewPct({ mode: "auto", steps: 3, dailyLimit: 1000, followupsDueToday: 800 })).toBe(28);
     expect(resolveNewPct({ mode: "auto", steps: 3, dailyLimit: 1000, followupsDueToday: 50_000 })).toBe(AUTO_MIN_NEW_PCT);
     // El caso real del lunes 5-oct en support@: 6.188 seguimientos, capacidad 9.142.
     expect(resolveNewPct({ mode: "auto", steps: 3, dailyLimit: 9142, followupsDueToday: 6188 })).toBe(34);
