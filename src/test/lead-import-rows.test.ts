@@ -41,3 +41,46 @@ describe("Importación con plantilla + estado del email", () => {
     expect(res).toEqual({ custom_fields: { first_name: "A" }, verification_status: null });
   });
 });
+
+import { dedupeImportRows, importInChunks } from "@/lib/lead-import-rows";
+
+describe("Subida rápida de leads (20-10-2026)", () => {
+  it("une los emails repetidos del CSV (columnas juntas, gana la última)", () => {
+    const out = dedupeImportRows([
+      { email: "A@x.es", custom_fields: { first_name: "Ana", city: "Madrid" } },
+      { email: "b@x.es", custom_fields: { first_name: "Bea" } },
+      { email: "a@x.es ", custom_fields: { city: "Bilbao", company_name: "X" }, verification_status: "valid" },
+      { email: "sin-arroba", custom_fields: {} },
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({ email: "a@x.es", custom_fields: { first_name: "Ana", city: "Bilbao", company_name: "X" }, verification_status: "valid" });
+  });
+
+  it("sube por tandas a la vez y no se deja nada aunque fallen tandas", async () => {
+    const rows = Array.from({ length: 2500 }, (_, i) => i);
+    const seen = new Set<number>();
+    let calls = 0;
+    const progress: number[] = [];
+    const res = await importInChunks(rows, async (chunk) => {
+      calls++;
+      // La primera vez que llega una tanda grande falla (tiempo agotado); sus mitades entran.
+      if (chunk.length > 600 && calls <= 2) throw new Error("statement timeout");
+      for (const x of chunk) seen.add(x);
+      return { added: chunk.length, updated: 0 };
+    }, { chunkSize: 1000, concurrency: 3, onProgress: (d) => progress.push(d) });
+    expect(res.failed).toEqual([]);
+    expect(res.added).toBe(2500);
+    expect(seen.size).toBe(2500);
+    expect(progress[progress.length - 1]).toBe(2500);
+  });
+
+  it("una fila que falla sola se informa y las demás entran", async () => {
+    const res = await importInChunks([1, 2, 3, 4, 5], async (chunk) => {
+      if (chunk.includes(3)) throw new Error("dato inválido");
+      return { added: chunk.length, updated: 0 };
+    }, { chunkSize: 5, concurrency: 1 });
+    expect(res.failed).toEqual([3]);
+    expect(res.added).toBe(4);
+    expect(res.error).toBe("dato inválido");
+  });
+});

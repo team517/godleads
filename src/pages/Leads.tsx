@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { findEmailStatusColumn, rowEmailStatus } from "@/lib/email-status";
+import { importInChunks } from "@/lib/lead-import-rows";
 import { Button } from "@/components/ui/button";
 
 import { useProfile } from "@/contexts/ProfileContext";
@@ -372,36 +373,30 @@ export default function Leads() {
     setImportProgress({ current: 0, total: selectedRows.length, active: true });
 
     try {
-      // 500 per INSERT (was 2000): each batch now completes in well under a second (the blocklist
-      // trigger is index-backed), so smaller batches cost nothing and the progress bar advances
-      // smoothly instead of sitting at 0 until a huge batch returns.
-      const BATCH_SIZE = 500;
-      let imported = 0;
-      // Yield to main thread between batches so UI stays responsive
-      const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
-
       // Estado del email que trae la lista (Apollo "email_status"…): a leads.verification_status.
       const statusCol = findEmailStatusColumn(csvHeaders);
-      for (let i = 0; i < selectedRows.length; i += BATCH_SIZE) {
-        const batch = selectedRows.slice(i, i + BATCH_SIZE).map(r => {
-          const email = r.email.toLowerCase();
-          const custom_fields: Record<string, string> = {};
-          Object.entries(r).forEach(([key, value]) => {
-            if (key !== "email" && value?.trim()) custom_fields[key] = value.trim();
-          });
-          const verification_status = rowEmailStatus(r, statusCol);
-          return { user_id: user.id, email, custom_fields, list_id: activeList || null, ...(verification_status ? { verification_status } : {}) };
+      const toRow = (r: Record<string, string>) => {
+        const email = r.email.toLowerCase();
+        const custom_fields: Record<string, string> = {};
+        Object.entries(r).forEach(([key, value]) => {
+          if (key !== "email" && value?.trim()) custom_fields[key] = value.trim();
         });
-
-        // .select("id") so we count what ACTUALLY inserted — blocked emails/domains are
-        // silently skipped by the DB trigger, so they never enter and aren't counted.
-        const { data, error } = await supabase.from("leads").insert(batch).select("id");
-        if (error) { toast.error(error.message); break; }
-        imported += data?.length || 0;
-        setImportProgress({ current: imported, total: selectedRows.length, active: true });
-        // Give browser a chance to paint the progress update
-        await yieldToMain();
-      }
+        const verification_status = rowEmailStatus(r, statusCol);
+        return { user_id: user.id, email, custom_fields, list_id: activeList || null, ...(verification_status ? { verification_status } : {}) };
+      };
+      // RÁPIDO (20-10-2026): tandas de 1.000, tres a la vez (antes 500 de una en una). Una tanda que
+      // falla se parte en dos y se reintenta: no se pierde ninguna fila buena. .select("id") cuenta lo
+      // que ENTRÓ de verdad: los bloqueados los salta el trigger y no cuentan.
+      const res = await importInChunks(selectedRows, async (chunk) => {
+        const { data, error } = await supabase.from("leads").insert(chunk.map(toRow)).select("id");
+        if (error) throw new Error(error.message);
+        return { added: data?.length || 0, updated: 0 };
+      }, {
+        chunkSize: 1000, concurrency: 3,
+        onProgress: (done) => setImportProgress({ current: Math.min(done, selectedRows.length), total: selectedRows.length, active: true }),
+      });
+      const imported = res.added;
+      if (res.failed.length > 0) toast.error(`${res.failed.length} fila(s) no se pudieron importar: ${res.error || "error"}`, { duration: 15000 });
 
       const skipped = selectedRows.length - imported;
       const varNames = csvHeaders.filter(h => h !== "email");

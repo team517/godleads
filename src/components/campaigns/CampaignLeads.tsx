@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { findEmailStatusColumn } from "@/lib/email-status";
-import { leadFieldsFromRow, templateRows } from "@/lib/lead-import-rows";
+import { dedupeImportRows, importInChunks, leadFieldsFromRow, templateRows } from "@/lib/lead-import-rows";
 import { PLANTILLA_COLUMNAS, aliasPlantilla } from "@/lib/variable-resolver";
 import { repairMojibakeBytes } from "@/lib/reply-text";
 import { Button } from "@/components/ui/button";
@@ -552,6 +552,55 @@ export default function CampaignLeads({ campaignId }: Props) {
       let totalAdded = 0;
       let totalUpdated = 0;
       let processedRows = 0;
+
+      // RÁPIDO (20-10-2026): todo el CSV preparado de una vez, sin emails repetidos, y subido por
+      // tandas de 1.000 en UNA petición cada una (import_campaign_leads), tres a la vez. Una tanda que
+      // falla se parte en dos y se reintenta: no se queda ningún lead fuera. Si la función aún no
+      // existe en la base de datos, se sube como antes (el bucle de abajo).
+      const useColFilterAll = !importAllColumns && csvSelectedCols.size > 0;
+      const statusColAll = findEmailStatusColumn([...new Set(selectedRows.flatMap((r) => Object.keys(r)))]);
+      const prepared = dedupeImportRows(selectedRows.map((r) => {
+        const { custom_fields, verification_status } = leadFieldsFromRow(r, {
+          statusCol: statusColAll, importAllColumns, selectedCols: useColFilterAll ? csvSelectedCols : null,
+        });
+        return { email: r.email, custom_fields, verification_status };
+      }));
+      let rpcMissing = false;
+      const fast = await importInChunks(prepared, async (chunk) => {
+        if (rpcMissing) throw new Error("rpc_missing");
+        const { data, error } = await (supabase as any).rpc("import_campaign_leads", { p_campaign: campaignId, p_rows: chunk });
+        if (error) {
+          if (error.code === "PGRST202" || /could not find the function/i.test(error.message || "")) { rpcMissing = true; throw new Error("rpc_missing"); }
+          throw new Error(error.message);
+        }
+        return { added: Number(data?.added) || 0, updated: Number(data?.updated) || 0 };
+      }, {
+        chunkSize: 1000, concurrency: 3,
+        onProgress: (done) => setImportProgress({ current: Math.min(done, prepared.length), total: prepared.length, active: true }),
+      });
+      if (!rpcMissing) {
+        const dupes = selectedRows.length - prepared.length;
+        if (fast.failed.length > 0) {
+          toast.error(`${fast.failed.length} lead(s) no se pudieron subir (${fast.error || "error"}). El resto sí: ${fast.added} añadidos${fast.updated ? `, ${fast.updated} actualizados` : ""}.`, { duration: 15000 });
+        } else {
+          toast.success(
+            `${fast.added.toLocaleString("es-ES")} leads añadidos a la campaña` +
+            (fast.updated ? ` · ${fast.updated.toLocaleString("es-ES")} ya estaban y se han actualizado` : "") +
+            (dupes > 0 ? ` · ${dupes.toLocaleString("es-ES")} filas repetidas en el CSV unidas` : ""),
+          );
+        }
+        setShowCsv(false);
+        setCsvRows([]);
+        parsedRowsRef.current = [];
+        setTotalLeadCount(c => c + fast.added);
+        setTablePage(0);
+        await loadPage(0, searchQuery);
+        await loadMeta();
+        setImporting(false);
+        setImportProgress({ current: 0, total: 0, active: false });
+        return;
+      }
+      setImportProgress({ current: 0, total: selectedRows.length, active: true });
 
       for (let i = 0; i < selectedRows.length; i += INSERT_BATCH) {
         const batchRows = selectedRows.slice(i, i + INSERT_BATCH);
