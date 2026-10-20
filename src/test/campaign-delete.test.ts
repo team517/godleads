@@ -80,3 +80,25 @@ describe("lista de campañas quitadas", () => {
     expect(restoreCampaignAt(without, { id: "z" }, 99).map((c) => c.id)).toEqual(["a", "c", "z"]);
   });
 });
+
+describe("borrado con reintento ante un timeout puntual (20-10-2026)", () => {
+  it("si el primer intento se pasa de tiempo, reintenta y borra", async () => {
+    const { deleteCampaignOnServer } = await import("@/lib/campaign-delete");
+    let calls = 0;
+    const sb = {
+      from: (table: string) => ({
+        delete: () => ({
+          eq: () => {
+            if (table === "campaign_steps") calls++;
+            const res = calls === 1 && table === "campaign_steps"
+              ? { error: { message: "canceling statement due to statement timeout" } }
+              : { error: null };
+            return Object.assign(Promise.resolve(res), { select: () => Promise.resolve({ data: [{ id: "c1" }], error: null }) });
+          },
+        }),
+      }),
+    };
+    expect(await deleteCampaignOnServer(sb, "c1")).toBeNull();
+    expect(calls).toBe(2);
+  });
+});

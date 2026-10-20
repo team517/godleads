@@ -31,6 +31,13 @@ type DeleteResult = { data?: unknown; error: { message?: string } | null };
  * motivo del fallo, o null si se borró.
  */
 export async function deleteCampaignOnServer(sb: any, id: string): Promise<string | null> {
+  const first = await deleteOnce(sb, id);
+  // Un "statement timeout" puntual (base de datos cargada) se reintenta una vez sola (20-10-2026).
+  if (first && /statement timeout|canceling statement|timed? ?out/i.test(first)) return deleteOnce(sb, id);
+  return first;
+}
+
+async function deleteOnce(sb: any, id: string): Promise<string | null> {
   try {
     const r1: DeleteResult = await sb.from("campaign_steps").delete().eq("campaign_id", id);
     const r2: DeleteResult = await sb.from("campaign_accounts").delete().eq("campaign_id", id);
