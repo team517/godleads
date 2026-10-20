@@ -80,6 +80,16 @@ const countSince = async (admin: any, minutes: number, filter: (q: any) => any):
   return count;
 };
 
+/** Envíos correctos de los últimos `minutes` minutos por sent_at (con índice). Por created_at, sin
+ *  índice, cada conteo tardaba ~5 s (20-10-2026). */
+const countSentSince = async (admin: any, minutes: number): Promise<number | null> => {
+  const sinceIso = new Date(Date.now() - minutes * 60_000).toISOString();
+  const { count, error } = await admin.from("sent_emails").select("id", { count: "exact", head: true })
+    .gte("sent_at", sinceIso).eq("status", "sent");
+  if (error || count == null) return null;
+  return count;
+};
+
 const DAY_ABBR = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 /** Weekday + minutes of the day in the campaign's time zone (same as the engine). */
 function localClock(now: Date, tz: string): { day: string; minutes: number } {
@@ -128,9 +138,9 @@ serve(async (req) => {
 
     // ── Read recent send health (platform-wide) ──
     const [ok20n, fail20n, ok30, openCampaigns] = await Promise.all([
-      countSince(admin, 20, (q) => q.eq("status", "sent")),
+      countSentSince(admin, 20),
       countSince(admin, 20, (q) => q.in("status", ["failed", "bounced"])),
-      countSince(admin, 30, (q) => q.eq("status", "sent")),
+      countSentSince(admin, 30),
       campaignsWithOpenWindow(admin, 30),
     ]);
     const ok20 = ok20n ?? 0, fail20 = fail20n ?? 0;
@@ -179,7 +189,7 @@ serve(async (req) => {
     let silence = ok30 === 0 && (openCampaigns ?? 0) > 0;
     if (silence) {
       await new Promise((r) => setTimeout(r, 20_000));
-      const again = await countSince(admin, 30, (q) => q.eq("status", "sent"));
+      const again = await countSentSince(admin, 30);
       silence = again === 0;
     }
 

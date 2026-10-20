@@ -2408,9 +2408,10 @@ serve(async (req) => {
             .select("status, error_message")
             .eq("campaign_id", campaign.id)
             .eq("campaign_step_id", step.id)
-            // ilike is SQL LIKE: `_` = any single char, `%` = any run. Unescaped, j_smith@… also
-            // matched j.smith@… and the wrong lead's rows satisfied the dedup / retry cap.
-            .ilike("to_email", leadEmail.replace(/[\\%_]/g, "\\$&"))
+            // Igualdad exacta (20-10-2026): to_email se guarda siempre en minúsculas (0 filas con
+            // mayúsculas en 60 días) y leadEmail también; con idx_se_campaign_step_to_email va
+            // directo a las filas de este email en este paso (antes un ilike recorría la campaña).
+            .eq("to_email", leadEmail)
             .limit(200);
           const okAlready = (priorRows || []).some((r: any) => r.status === "sent" || r.status === "bounced");
           if (okAlready) {
