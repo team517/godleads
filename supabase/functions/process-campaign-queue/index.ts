@@ -1617,7 +1617,33 @@ serve(async (req) => {
           .order("id", { ascending: true })
           .limit(LEAD_FETCH_CAP),
       ]);
-      let campaignLeads = [...(followupRes.data || []), ...(newRes.data || [])];
+      // LISTA AGRUPADA POR EMPRESA (20-10-2026): si los 500 pendientes más antiguos son de muy
+      // pocas empresas (Francia: 500 leads de 10 empresas, Airbus/Orange/Safran), el tope de 3
+      // primeros correos por empresa y día los salta casi todos y el resto de empresas no llega
+      // nunca. En ese caso se coge el pendiente más antiguo DE CADA EMPRESA. Las campañas con la
+      // lista variada siguen exactamente como antes (no se llama a la función).
+      let newRows: any[] = newRes.data || [];
+      if (newRows.length >= 100) {
+        const doms = new Set(newRows.map((r: any) => String(r.leads?.email || "").toLowerCase().split("@")[1] || ""));
+        if (doms.size < newRows.length / 5) {
+          try {
+            const { data: ids, error: idsErr } = await adminClient.rpc("pending_leads_by_company", { p_campaign: campaign.id, p_limit: LEAD_FETCH_CAP });
+            if (!idsErr && Array.isArray(ids) && ids.length > doms.size) {
+              const diverse: any[] = [];
+              for (const part of chunkIds(ids as string[])) {
+                const { data: rows } = await adminClient.from("campaign_leads").select("*, leads(*)").in("id", part);
+                diverse.push(...(rows || []));
+              }
+              if (diverse.length > doms.size) {
+                diverse.sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)));
+                console.log(`Campaign "${campaign.name}": pendientes agrupados (${doms.size} empresas en ${newRows.length}) → ${diverse.length} leads de empresas distintas`);
+                newRows = diverse;
+              }
+            }
+          } catch (e) { console.warn(`pending_leads_by_company (${campaign.name}): ${(e as Error).message}`); }
+        }
+      }
+      let campaignLeads = [...(followupRes.data || []), ...newRows];
 
       if (!campaignLeads?.length && !mixWanted) continue;
 
@@ -1733,7 +1759,7 @@ serve(async (req) => {
             .from("campaign_leads").select("*, leads(*)")
             .eq("campaign_id", campaign.id).eq("status", "in_progress"))
             .order("last_sent_at", { ascending: true, nullsFirst: true }).limit(LEAD_FETCH_CAP);
-          campaignLeads = [...(legacy || []), ...(newRes.data || [])];
+          campaignLeads = [...(legacy || []), ...newRows];
         };
         if (stErr || !st) {
           await comoSiempre(stErr?.message || "sin datos");
@@ -1777,7 +1803,7 @@ serve(async (req) => {
         } else {
           mix = { plan, newAllowed, fuAllowed, fuSentByAcc: Object.fromEntries(mixAccounts.map((a) => [a.id, a.fuSent])) };
           // Intercalados en la proporción de lo que le toca ahora a cada parte.
-          campaignLeads = interleave(dueNow, newAllowed > 0 ? (newRes.data || []) : [], fuAllowed, newAllowed);
+          campaignLeads = interleave(dueNow, newAllowed > 0 ? newRows : [], fuAllowed, newAllowed);
           console.log(`Campaign "${campaign.name}": reparto ${newPct}% nuevos · hoy ${plan.newQuota} nuevos + ${plan.fuQuota} seguimientos · ahora ${newAllowed} + ${fuAllowed}`);
         }
         if (!campaignLeads.length) continue;
