@@ -311,6 +311,17 @@ export function textToHtmlBody(text: string | null | undefined): string {
  * filas de una tabla en su línea con las celdas separadas por " | ", los títulos con una línea
  * en blanco y las separaciones horizontales con una raya.
  */
+const NAMED_ENTITIES: Record<string, string> = {
+  minus: "−", deg: "°", plusmn: "±", times: "×", divide: "÷", micro: "µ",
+  ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’", bdquo: "„", sbquo: "‚",
+  laquo: "«", raquo: "»", ndash: "–", mdash: "—", hellip: "…", bull: "•", middot: "·",
+  euro: "€", pound: "£", yen: "¥", cent: "¢", copy: "©", reg: "®", trade: "™",
+  iexcl: "¡", iquest: "¿", ordf: "ª", ordm: "º", sect: "§", para: "¶", shy: "",
+  aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ", uuml: "ü",
+  Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú", Ntilde: "Ñ", Uuml: "Ü",
+  agrave: "à", egrave: "è", ograve: "ò", ccedil: "ç", Ccedil: "Ç", auml: "ä", ouml: "ö",
+};
+
 export function htmlToPlainText(html: string): string {
   let s = String(html || "")
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -340,6 +351,9 @@ export function htmlToPlainText(html: string): string {
 
   s = s
     .replace(/&nbsp;/gi, " ")
+    // Entidades con nombre (21-10-2026): "&minus;40&deg;C", “&ldquo;-I&rdquo;”, tildes… llegaban
+    // tal cual en la versión de texto plano. Antes de &amp; para no descodificar dos veces.
+    .replace(/&([a-z]+);/gi, (m, name: string) => NAMED_ENTITIES[name] ?? NAMED_ENTITIES[name.toLowerCase()] ?? m)
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
