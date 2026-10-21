@@ -1288,6 +1288,7 @@ serve(async (req) => {
     // so one bad server can't burn the whole tick achieving zero sends. Reset to 0
     // on every success. This is a class-agnostic safety net on top of the per-error
     // reactions below (it also catches 'unknown'/'soft' storms those don't).
+    let leadHasReplyMissing = false; // lead_has_reply aún no aplicada → consulta de siempre
     const accountFailStreak: Record<string, number> = {};
     const MAX_ACCOUNT_FAIL_STREAK = 3;
 
@@ -1348,6 +1349,10 @@ serve(async (req) => {
     const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchFollowups = 0; batchSendDomains.clear(); batchHostCounts = {}; };
     // MEDICIÓN (21-10-2026): en qué se va el tiempo de cada pasada. Sólo cuenta; no cambia nada.
     const tickStats = { batches: 0, smtpMs: 0, recordMs: 0, campaignMs: {} as Record<string, number>, stop: "fin" };
+    // Motivos de descarte por campaña y punto del código (21-10-2026): "Campaña|línea" → veces.
+    const skipStats: Record<string, number> = {};
+    let skipCampaign = "";
+    const noteSkip = (line: number) => { const k = `${skipCampaign}|${line}`; skipStats[k] = (skipStats[k] || 0) + 1; };
     const flushSendBatch = async () => {
       if (sendBatch.length === 0) { resetBatchTallies(); return; }
       const batch = sendBatch;
@@ -1382,6 +1387,7 @@ serve(async (req) => {
         break;
       }
       const tCampaign = Date.now();
+      skipCampaign = String((campaign as any)?.name || "?").slice(0, 40);
       // ISOLATION: any unexpected throw while processing ONE campaign must never
       // abort the tick for every other tenant (it would re-throw every 2 min and
       // zero out the whole platform's sending). Log, skip, keep serving the rest.
@@ -1956,7 +1962,7 @@ serve(async (req) => {
         // media campaña sea de la misma empresa.
         // Lead esperando su reintento (también los que llegan por campaign_due_followups).
         if ((cl as any).next_attempt_at && Date.parse((cl as any).next_attempt_at) > now.getTime()) {
-          totalSkipped++;
+          totalSkipped++; noteSkip(1959);
           continue;
         }
         {
@@ -1965,7 +1971,7 @@ serve(async (req) => {
           // respetan el hueco de 90 min. Con el cupo, 482 seguimientos llevaban >7 días de retraso.
           const primerCorreo = (cl.current_step || 0) === 0;
           if (esEmpresa(dom0) && puedeEscribirEmpresa(ritmoEmpresa.get(`${campaign.user_id}|${dom0}`), now.getTime(), cupoEmpresa, huecoEmpresaMin, primerCorreo) !== "si") {
-            totalSkipped++;
+            totalSkipped++; noteSkip(1968);
             continue;
           }
         }
@@ -2011,7 +2017,7 @@ serve(async (req) => {
           const lastSent = new Date(cl.last_sent_at);
           const delayMs = (step.delay_days || 0) * 24 * 60 * 60 * 1000;
           if (now.getTime() - lastSent.getTime() < delayMs) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2014);
             continue;
           }
         }
@@ -2020,15 +2026,15 @@ serve(async (req) => {
         // que no cabe no se pierde: sigue en cola y sale en una pasada posterior.
         if (mix) {
           if (currentStepIndex === 0) {
-            if (newLeadsSentThisRun + batchNewLeads >= mix.newAllowed) { totalSkipped++; continue; }
-          } else if (fuSentThisCampaign + batchFollowups >= mix.fuAllowed) { totalSkipped++; continue; }
+            if (newLeadsSentThisRun + batchNewLeads >= mix.newAllowed) { totalSkipped++; noteSkip(2023); continue; }
+          } else if (fuSentThisCampaign + batchFollowups >= mix.fuAllowed) { totalSkipped++; noteSkip(2024); continue; }
         }
 
         // Domain daily limit check (+ in-flight sends to this domain queued in the batch)
         if (domainLimitEnabled) {
           const currentDomainCount = (domainSentCounts[leadDomain] || 0) + (batchDomainCounts[leadDomain] || 0);
           if (currentDomainCount >= domainDailyLimit) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2031);
             continue;
           }
         }
@@ -2051,14 +2057,28 @@ serve(async (req) => {
           // Sólo se descartan los correos que llevan cabecera de respuesta automática
           // (auto_signal, leída al sincronizar). Si un contestador da otro contacto o pide la baja,
           // el etiquetado marca al lead como respondido y la secuencia se para igual.
-          const [porLead, porCorreo] = await Promise.all([
-            adminClient.from("inbox_messages").select("id").eq("lead_id", lead.id).is("auto_signal", null).limit(1),
-            adminClient.from("inbox_messages").select("id").eq("user_id", campaign.user_id).ilike("from_email", leadEmail).is("auto_signal", null).limit(1),
-          ]);
+          // Una sola consulta con índice (lead_has_reply, 21-10-2026): antes dos, y la de la dirección
+          // con ILIKE sin índice tardaba 778 ms por lead en support@. Sin la función, como antes.
+          let replied: boolean | null = null;
+          let replyErr = false;
+          if (!leadHasReplyMissing) {
+            const { data: hr, error: hrErr } = await adminClient.rpc("lead_has_reply", { p_user: campaign.user_id, p_lead: lead.id, p_email: leadEmail });
+            if (hrErr && (hrErr.code === "PGRST202" || /could not find the function/i.test(hrErr.message || ""))) leadHasReplyMissing = true;
+            else if (hrErr) replyErr = true;
+            else replied = hr === true;
+          }
+          if (replied === null && !replyErr) {
+            const [porLead, porCorreo] = await Promise.all([
+              adminClient.from("inbox_messages").select("id").eq("lead_id", lead.id).is("auto_signal", null).limit(1),
+              adminClient.from("inbox_messages").select("id").eq("user_id", campaign.user_id).ilike("from_email", leadEmail).is("auto_signal", null).limit(1),
+            ]);
+            if (porLead.error || porCorreo.error) replyErr = true;
+            else replied = !!(porLead.data?.length || porCorreo.data?.length);
+          }
           // Si la consulta falla no se asume "no ha contestado": se salta el lead y se reintenta
           // en la pasada siguiente. Mejor un seguimiento tarde que uno a quien ya te respondió.
-          if (porLead.error || porCorreo.error) { totalSkipped++; continue; }
-          if (porLead.data?.length || porCorreo.data?.length) {
+          if (replyErr) { totalSkipped++; noteSkip(2060); continue; }
+          if (replied) {
             await adminClient.from("campaign_leads").update({ status: "replied" }).eq("id", cl.id);
             continue;
           }
@@ -2186,19 +2206,19 @@ serve(async (req) => {
             // seguimientos en un día). Ahora, en cuanto el buzón original vuelve, el siguiente
             // paso sale otra vez de él.
             account = selectAccount();
-            if (!account) { totalSkipped++; continue; }
+            if (!account) { totalSkipped++; noteSkip(2189); continue; }
             console.warn(`Lead ${lead.id}: buzón ${boundId} no disponible; este envío sale de ${account.email} (el lead sigue asignado al original)`);
           }
           // Skip accounts that already hit a rate/auth error this run
           if (rateLimitedThisRun.has(account.id)) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2194);
             continue;
           }
           // Reparto: este buzón ya ha enviado hoy los seguimientos que le tocan; el resto de su
           // día es para leads nuevos. (Un envío prestado por otro buzón no entra en esta cuenta.)
           if (mix && currentStepIndex > 0 && account.id === boundId
               && (mix.fuSentByAcc[account.id] || 0) >= (mix.plan.fuTarget[account.id] ?? 0)) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2201);
             continue;
           }
           // Respect daily caps even on the bound account
@@ -2210,7 +2230,7 @@ serve(async (req) => {
             const overdue2d = currentStepIndex > 0 && Number.isFinite(dueMs) && now.getTime() - dueMs > 2 * 86_400_000;
             const sibling = overdue2d && account.id === boundId ? selectAccount() : null;
             if (!sibling) {
-              totalSkipped++;
+              totalSkipped++; noteSkip(2213);
               continue;
             }
             console.warn(`Lead ${lead.id}: buzón ${account.email} lleno y seguimiento con >2 días de retraso; este envío sale de ${sibling.email} (el lead sigue asignado al original)`);
@@ -2218,14 +2238,14 @@ serve(async (req) => {
           }
           // Respect 7–9 min cooldown on the bound account
           if (isAccountOnCooldown(account)) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2221);
             continue;
           }
         } else {
           // First touch (lead nuevo) — respeta el tope diario de leads nuevos si existe
           // (+ step-0 sends already queued in the batch but not yet recorded).
           if (maxNewLeads != null && (newLeadsSentThisRun + batchNewLeads) >= maxNewLeads) {
-            totalSkipped++;
+            totalSkipped++; noteSkip(2228);
             continue;
           }
           // pick via rotation and persist on the very first send
@@ -2247,7 +2267,7 @@ serve(async (req) => {
               console.error(`assigned_account_id claim failed for lead ${lead.id}: ${claimErr.message}`);
             }
             if (!claimedLead) {
-              totalSkipped++;
+              totalSkipped++; noteSkip(2250);
               continue;
             }
           }
@@ -2255,13 +2275,13 @@ serve(async (req) => {
         // Rotation pool empty → no NEW lead can send, but keep scanning: bound
         // follow-up leads further down fetch their account directly and may still
         // be sendable (breaking here silently skipped them for the whole tick).
-        if (!account) { totalSkipped++; continue; }
+        if (!account) { totalSkipped++; noteSkip(2258); continue; }
 
         // Per-tick burst protection: don't allow a single account to send too
         // many emails in one cron invocation, even if it has remaining daily
         // capacity. Spreads load across cron ticks naturally.
         if ((accountSendsThisTick[account.id] || 0) >= MAX_PER_ACCOUNT_PER_TICK) {
-          totalSkipped++;
+          totalSkipped++; noteSkip(2264);
           continue;
         }
 
@@ -2300,7 +2320,7 @@ serve(async (req) => {
         if (eligibleIdx.length === 0) {
           console.warn(`Lead ${lead.id} (${campaign.name}, paso ${currentStepIndex + 1}): el paso usa {{personalized_message}}, el lead no tiene uno válido y no hay otra variante → no se envía`);
           await adminClient.from("campaign_leads").update({ status: "failed" }).eq("id", cl.id);
-          totalSkipped++;
+          totalSkipped++; noteSkip(2303);
           continue;
         }
 
@@ -2458,7 +2478,7 @@ serve(async (req) => {
               assigned_account_id: (cl as any).assigned_account_id || account.id,
               status: advStep >= steps.length ? "completed" : "in_progress",
             }).eq("id", cl.id);
-            totalSkipped++;
+            totalSkipped++; noteSkip(2461);
             continue;
           }
           // RETRY CAP: a recipient that keeps returning a TRANSIENT error (e.g. IONOS
@@ -2476,7 +2496,7 @@ serve(async (req) => {
               .update({ status: "failed", last_sent_at: now.toISOString() })
               .eq("id", cl.id);
             console.warn(`RETRY CAP hit: ${leadEmail} failed ${failedAttempts}× on step ${currentStepIndex} → parked as undeliverable`);
-            totalSkipped++;
+            totalSkipped++; noteSkip(2479);
             continue;
           }
           // MISMA DIRECCIÓN DESDE OTRA CAMPAÑA (06-10-2026): una "(copia)" de campaña volvía a
@@ -2493,12 +2513,12 @@ serve(async (req) => {
               // Sin la función (migración sin aplicar) se envía como antes; con otro error se
               // espera a la pasada siguiente en vez de arriesgar un duplicado.
               const sinFuncion = recErr.code === "PGRST202" || /could not find the function|does not exist/i.test(recErr.message || "");
-              if (!sinFuncion) { totalSkipped++; continue; }
+              if (!sinFuncion) { totalSkipped++; noteSkip(2496); continue; }
               if (!recentCheckWarned) { recentCheckWarned = true; console.warn(`user_emailed_recently no disponible: ${recErr.message}`); }
             } else if (yaEscrito === true) {
               await adminClient.from("campaign_leads").update({ status: "completed" }).eq("id", cl.id);
               console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} ya recibió un correo de campaña de este cliente en los últimos 90 días → no se envía el primer correo`);
-              totalSkipped++;
+              totalSkipped++; noteSkip(2501);
               continue;
             }
           }
@@ -2514,7 +2534,7 @@ serve(async (req) => {
           if (!badErr && typeof motivoMalo === "string" && motivoMalo) {
             await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
             console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} ya rebotó antes como dirección inexistente → no se envía (${motivoMalo.slice(0, 80)})`);
-            totalSkipped++;
+            totalSkipped++; noteSkip(2517);
             continue;
           }
           // Lista que llegó con el email marcado como inválido (Apollo "email_status", verificación de la
@@ -2523,7 +2543,7 @@ serve(async (req) => {
           if (currentStepIndex === 0 && String((lead as any).verification_status || "").toLowerCase() === "invalid") {
             await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
             console.warn(`Lead ${lead.id} (${campaign.name}): ${leadEmail} viene marcado como inválido en su lista → no se envía`);
-            totalSkipped++;
+            totalSkipped++; noteSkip(2526);
             continue;
           }
           if (currentStepIndex === 0) {
@@ -2538,7 +2558,7 @@ serve(async (req) => {
               );
               await adminClient.from("campaign_leads").update({ status: "bounced" }).eq("id", cl.id);
               console.warn(`Lead ${lead.id} (${campaign.name}): el dominio de ${leadEmail} no recibe correo (sin MX) → no se envía`);
-              totalSkipped++;
+              totalSkipped++; noteSkip(2541);
               continue;
             }
           }
@@ -2579,7 +2599,7 @@ serve(async (req) => {
           claimQ = cl.last_sent_at ? claimQ.eq("last_sent_at", cl.last_sent_at) : claimQ.is("last_sent_at", null);
           const { data: claimedFu, error: claimFuErr } = await claimQ.select("id").maybeSingle();
           if (claimFuErr) console.error(`follow-up claim failed for lead ${lead.id}: ${claimFuErr.message}`);
-          if (!claimedFu) { totalSkipped++; continue; }
+          if (!claimedFu) { totalSkipped++; noteSkip(2582); continue; }
           claimIso = claimAt;
         }
 
@@ -2883,6 +2903,7 @@ serve(async (req) => {
         duration_ms: Date.now() - tickStartMs, attempts: sendAttemptsThisRun, sent: totalSent,
         batches: tickStats.batches, smtp_ms: tickStats.smtpMs, record_ms: tickStats.recordMs,
         stop: tickStats.stop, campaigns: campaigns.length, top_campaigns: Object.fromEntries(topCamp),
+        skips: Object.fromEntries(Object.entries(skipStats).sort((a, b) => b[1] - a[1]).slice(0, 30)),
       });
       if (Math.random() < 0.02) await adminClient.from("engine_tick_log").delete().lt("created_at", new Date(Date.now() - 2 * 86_400_000).toISOString());
     } catch { /* sin medición */ }
