@@ -1346,15 +1346,20 @@ serve(async (req) => {
     // simultaneous connections. This is the guard that keeps IONOS healthy.
     let batchHostCounts: Record<string, number> = {};
     const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchFollowups = 0; batchSendDomains.clear(); batchHostCounts = {}; };
+    // MEDICIÓN (21-10-2026): en qué se va el tiempo de cada pasada. Sólo cuenta; no cambia nada.
+    const tickStats = { batches: 0, smtpMs: 0, recordMs: 0, campaignMs: {} as Record<string, number>, stop: "fin" };
     const flushSendBatch = async () => {
       if (sendBatch.length === 0) { resetBatchTallies(); return; }
       const batch = sendBatch;
       sendBatch = [];
       resetBatchTallies();
       // Fire the SMTP handoffs concurrently — pure network, touches no shared state.
+      const tSmtp = Date.now();
       const results = await Promise.all(batch.map(t =>
         t.send().catch((e): SmtpResult => ({ ok: false, error: String((e as Error)?.message || e), errorClass: 'unknown' }))
       ));
+      tickStats.batches++; tickStats.smtpMs += Date.now() - tSmtp;
+      const tRec = Date.now();
       // Apply side-effects one at a time → identical semantics to sequential sending.
       // Each record() is isolated so one failed bookkeeping write can't drop the
       // rest of the batch (the SMTP handoff already happened for all of them).
@@ -1365,13 +1370,18 @@ serve(async (req) => {
           console.error(`record() failed for ${batch[i].email}:`, (recErr as Error)?.message || recErr);
         }
       }
+      tickStats.recordMs += Date.now() - tRec;
     };
 
     // Blocklist ya cargada en esta pasada, por usuario (ver más abajo).
     const blocklistByUser = new Map<string, { emails: Set<string>; domains: Set<string> }>();
 
     for (const campaign of campaigns) {
-      if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) break;
+      if (sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION || tickExpired()) {
+        tickStats.stop = sendAttemptsThisRun >= MAX_SENDS_PER_INVOCATION ? "tope_pasada" : "tiempo";
+        break;
+      }
+      const tCampaign = Date.now();
       // ISOLATION: any unexpected throw while processing ONE campaign must never
       // abort the tick for every other tenant (it would re-throw every 2 min and
       // zero out the whole platform's sending). Log, skip, keep serving the rest.
@@ -2860,8 +2870,22 @@ serve(async (req) => {
         // leads loop threw partway. Their record() closures capture this campaign's
         // `accounts`, so a leftover batch must never leak into the next iteration.
         try { await flushSendBatch(); } catch (fe) { console.error("flush on campaign exit failed:", (fe as Error)?.message || fe); }
+        const cn = String((campaign as any)?.name || "?").slice(0, 40);
+        tickStats.campaignMs[cn] = (tickStats.campaignMs[cn] || 0) + (Date.now() - tCampaign);
       }
     }
+
+    // Resumen de la pasada (se guarda 2 días): duración, envíos, tiempo en SMTP y apuntando, y las
+    // campañas que más tiempo se llevaron. Si la tabla no existe, no pasa nada.
+    try {
+      const topCamp = Object.entries(tickStats.campaignMs).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      await adminClient.from("engine_tick_log").insert({
+        duration_ms: Date.now() - tickStartMs, attempts: sendAttemptsThisRun, sent: totalSent,
+        batches: tickStats.batches, smtp_ms: tickStats.smtpMs, record_ms: tickStats.recordMs,
+        stop: tickStats.stop, campaigns: campaigns.length, top_campaigns: Object.fromEntries(topCamp),
+      });
+      if (Math.random() < 0.02) await adminClient.from("engine_tick_log").delete().lt("created_at", new Date(Date.now() - 2 * 86_400_000).toISOString());
+    } catch { /* sin medición */ }
 
     return new Response(JSON.stringify({
       success: true, sent: totalSent, followups_sent: followupsSentTotal,
