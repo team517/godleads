@@ -1353,6 +1353,8 @@ serve(async (req) => {
     const skipStats: Record<string, number> = {};
     let skipCampaign = "";
     const noteSkip = (line: number) => { const k = `${skipCampaign}|${line}`; skipStats[k] = (skipStats[k] || 0) + 1; };
+    // Reparto calculado por campaña (22-10-2026): con qué números decide el motor. Sólo cuenta.
+    const mixStats: Record<string, unknown> = {};
     const flushSendBatch = async () => {
       if (sendBatch.length === 0) { resetBatchTallies(); return; }
       const batch = sendBatch;
@@ -1818,6 +1820,18 @@ serve(async (req) => {
           await comoSiempre(fuFallo);
         } else {
           mix = { plan, newAllowed, fuAllowed, fuSentByAcc: Object.fromEntries(mixAccounts.map((a) => [a.id, a.fuSent])) };
+          try {
+            const tg = Object.values(plan.fuTarget);
+            const enPool = dueNow.filter((r: any) => r.assigned_account_id && pool.has(r.assigned_account_id));
+            const llenos = enPool.filter((r: any) => (byAcc.get(r.assigned_account_id)?.fu_sent || 0) >= (plan.fuTarget[r.assigned_account_id] ?? 0)).length;
+            mixStats[campaign.name] = {
+              limite: campaignDailyLimit, buzones: accounts.length, pct: newPct, fuera: extraFuDue,
+              fuQ: plan.fuQuota, newQ: plan.newQuota, fuAhora: fuAllowed, newAhora: newAllowed,
+              fuHoy: fuSentToday, ventana: dueNow.length, ventanaPool: enPool.length, ventanaLlenos: llenos,
+              tgtMin: tg.length ? Math.min(...tg) : null, tgtMax: tg.length ? Math.max(...tg) : null,
+              tgtSuma: tg.reduce((x, y) => x + y, 0), limBuzon: mixAccounts.slice(0, 3).map((a) => a.limit),
+            };
+          } catch { /* sin medición */ }
           // Intercalados en la proporción de lo que le toca ahora a cada parte.
           campaignLeads = interleave(dueNow, newAllowed > 0 ? newRows : [], fuAllowed, newAllowed);
           console.log(`Campaign "${campaign.name}": reparto ${newPct}% nuevos · hoy ${plan.newQuota} nuevos + ${plan.fuQuota} seguimientos · ahora ${newAllowed} + ${fuAllowed}`);
@@ -2216,8 +2230,14 @@ serve(async (req) => {
           }
           // Reparto: este buzón ya ha enviado hoy los seguimientos que le tocan; el resto de su
           // día es para leads nuevos. (Un envío prestado por otro buzón no entra en esta cuenta.)
+          // Sólo para buzones DEL REPARTO (22-10-2026). Un buzón que se quitó de la campaña no está en
+          // fuTarget: "?? 0" descartaba sus seguimientos, que son los más antiguos y ocupaban los
+          // primeros huecos de cada pasada → "dialogfy - b2b" sin un solo seguimiento desde el 19-10
+          // (373 de esos delante de 1.424 buenos). Ese seguimiento sale de su buzón original con su
+          // tope diario y su pausa de siempre (comprobaciones de abajo).
           if (mix && currentStepIndex > 0 && account.id === boundId
-              && (mix.fuSentByAcc[account.id] || 0) >= (mix.plan.fuTarget[account.id] ?? 0)) {
+              && Object.prototype.hasOwnProperty.call(mix.plan.fuTarget, account.id)
+              && (mix.fuSentByAcc[account.id] || 0) >= mix.plan.fuTarget[account.id]) {
             totalSkipped++; noteSkip(2201);
             continue;
           }
@@ -2904,6 +2924,7 @@ serve(async (req) => {
         batches: tickStats.batches, smtp_ms: tickStats.smtpMs, record_ms: tickStats.recordMs,
         stop: tickStats.stop, campaigns: campaigns.length, top_campaigns: Object.fromEntries(topCamp),
         skips: Object.fromEntries(Object.entries(skipStats).sort((a, b) => b[1] - a[1]).slice(0, 30)),
+        mix: mixStats,
       });
       if (Math.random() < 0.02) await adminClient.from("engine_tick_log").delete().lt("created_at", new Date(Date.now() - 2 * 86_400_000).toISOString());
     } catch { /* sin medición */ }
