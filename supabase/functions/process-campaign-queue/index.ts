@@ -1304,6 +1304,21 @@ serve(async (req) => {
     if (ionosPaused()) console.warn(`[freno IONOS] pausa activa hasta ${ionosPauseUntil}: no se usan buzones de IONOS en esta pasada`);
     const MIN_GAP_BETWEEN_SENDS_MS = 1500; // pause when the same sending DOMAIN repeats back-to-back
     let lastSendDomain = ""; // sender domain of the previous send in this tick
+    // RITMO DE ENVÍO POR RELOJ (22-10-2026). Antes cada envío esperaba 0,25–0,6 s fijos: ~19 de los
+    // 55 s de la pasada eran pausas, y cuando el motor iba lento (revisando leads) esas pausas se
+    // comían el tiempo de enviar → por la tarde la plataforma bajaba a un tercio. Ahora los envíos
+    // se reparten por el minuto con un techo: como mucho RITMO_MINUTO por pasada (49 con la
+    // ráfaga), lo mismo que ya se envía a las 9:00 y por debajo del máximo visto sin un solo 535
+    // de IONOS (53/min). Si el motor va lento no espera; si va rápido, se frena hasta el ritmo.
+    const RITMO_MINUTO = 45;
+    const ritmoPorMs = RITMO_MINUTO / TICK_DEADLINE_MS;
+    let enviosConRitmo = 0;
+    const esperarRitmo = async (n: number) => {
+      const permitidos = SEND_CONCURRENCY + (Date.now() - tickStartMs) * ritmoPorMs;
+      const falta = enviosConRitmo + n - permitidos;
+      if (falta > 0) await new Promise((r) => setTimeout(r, Math.min(6000, Math.ceil(falta / ritmoPorMs))));
+      enviosConRitmo += n;
+    };
 
     // ═══ PARALLEL SEND (Smartlead-style) — controlled by SEND_CONCURRENCY ═══
     // Default 1 ⇒ BYTE-IDENTICAL to the old one-at-a-time path (zero-risk deploy,
@@ -1348,7 +1363,10 @@ serve(async (req) => {
     let batchHostCounts: Record<string, number> = {};
     const resetBatchTallies = () => { batchEmails.clear(); batchDomainCounts = {}; batchNewLeads = 0; batchFollowups = 0; batchSendDomains.clear(); batchHostCounts = {}; };
     // MEDICIÓN (21-10-2026): en qué se va el tiempo de cada pasada. Sólo cuenta; no cambia nada.
-    const tickStats = { batches: 0, smtpMs: 0, recordMs: 0, campaignMs: {} as Record<string, number>, stop: "fin" };
+    const tickStats = { batches: 0, smtpMs: 0, recordMs: 0, campaignMs: {} as Record<string, number>, stop: "fin", fases: {} as Record<string, number> };
+    // Tiempo por tramo de cada campaña (22-10-2026): dónde se va la pasada. Sólo mide.
+    let tFase = 0;
+    const fase = (nombre: string) => { const t = Date.now(); if (tFase) tickStats.fases[nombre] = (tickStats.fases[nombre] || 0) + (t - tFase); tFase = t; };
     // Motivos de descarte por campaña y punto del código (21-10-2026): "Campaña|línea" → veces.
     const skipStats: Record<string, number> = {};
     let skipCampaign = "";
@@ -1360,6 +1378,7 @@ serve(async (req) => {
       const batch = sendBatch;
       sendBatch = [];
       resetBatchTallies();
+      await esperarRitmo(batch.length);
       // Fire the SMTP handoffs concurrently — pure network, touches no shared state.
       const tSmtp = Date.now();
       const results = await Promise.all(batch.map(t =>
@@ -1389,6 +1408,7 @@ serve(async (req) => {
         break;
       }
       const tCampaign = Date.now();
+      tFase = tCampaign; tickStats.fases.visitas = (tickStats.fases.visitas || 0) + 1;
       skipCampaign = String((campaign as any)?.name || "?").slice(0, 40);
       // ISOLATION: any unexpected throw while processing ONE campaign must never
       // abort the tick for every other tenant (it would re-throw every 2 min and
@@ -1491,6 +1511,7 @@ serve(async (req) => {
 
       if (!accounts?.length) continue;
 
+      fase("a_ventana");
       // ═══ SELF-HEALING DAILY RESET ═══
       // The external 00:05 cron zeroes sent_today, but if that cron isn't running the
       // engine would carry YESTERDAY's count → the slow-ramp appears "stuck" (it only
@@ -1718,6 +1739,7 @@ serve(async (req) => {
       const campaignDailyLimit = Math.min(configuredLimit, autoAccountCapTotal);
       if (campaignSentToday >= campaignDailyLimit) continue;
 
+      fase("b_buzones_y_recuento");
       // ═══ Hour-based pacing (self-regulating "token bucket") ═══
       // Spread the day's quota EVENLY across the sending window instead of firing
       // it all in the first few minutes. We compute how many emails "should" have
@@ -1759,6 +1781,7 @@ serve(async (req) => {
       // en el tramo que le queda (toda la franja si empezó a su hora).
       const campaignTickCap = perTickCampaignCap(campaignDailyLimit, pace.spanMinutes);
 
+      fase("c_ritmo_y_leads");
       // ═══ REPARTO DEL DÍA: primeros correos / seguimientos ═══
       // El total del día NO cambia (mismos topes por buzón, misma subida gradual): sólo la mezcla.
       // mix = null → reparto apagado o no disponible: el motor sigue como siempre (seguimientos primero).
@@ -1840,6 +1863,7 @@ serve(async (req) => {
         }
       }
 
+      fase("d_reparto");
       // ═══ Blocklist check (load once per campaign) ═══
       // Paged: an unpaged select is silently capped at PostgREST's 1000 rows, and every hard
       // bounce + unsubscribe adds a row, so a busy tenant crosses 1000 within weeks — after which
@@ -1961,6 +1985,8 @@ serve(async (req) => {
       let followupsScanned = 0;
       let newLeadsScanned = 0;
 
+      fase("e_bloqueos_dominios");
+      tickStats.fases.llegan_al_bucle = (tickStats.fases.llegan_al_bucle || 0) + 1;
       for (const cl of campaignLeads) {
         // sendBatch.length = sends already dispatched this campaign but not yet
         // recorded (their counters bump at flush). Counting them here keeps every
@@ -2726,11 +2752,12 @@ serve(async (req) => {
           // shared wall-clock. Keep the long pause ONLY when the same sending domain
           // repeats back-to-back; otherwise a short jitter is plenty.
           const thisSendDomain = (account.email || "").split("@")[1] || "";
+          // Entre dominios distintos ya no hay pausa fija: el ritmo lo marca esperarRitmo().
           const gapMs = thisSendDomain && thisSendDomain === lastSendDomain
             ? MIN_GAP_BETWEEN_SENDS_MS + Math.floor(Math.random() * 1500)
-            : 250 + Math.floor(Math.random() * 350);
+            : 0;
           lastSendDomain = thisSendDomain;
-          await new Promise(r => setTimeout(r, gapMs));
+          if (gapMs) await new Promise(r => setTimeout(r, gapMs));
         } else {
           // Smart error reaction (Instantly behaviour)
           console.warn(`SMTP fail [${errClass}] account=${account.email} → ${lead.email}: ${result.error}`);
@@ -2912,6 +2939,7 @@ serve(async (req) => {
         try { await flushSendBatch(); } catch (fe) { console.error("flush on campaign exit failed:", (fe as Error)?.message || fe); }
         const cn = String((campaign as any)?.name || "?").slice(0, 40);
         tickStats.campaignMs[cn] = (tickStats.campaignMs[cn] || 0) + (Date.now() - tCampaign);
+        fase("f_bucle_leads_y_envio"); tFase = 0;
       }
     }
 
@@ -2924,7 +2952,7 @@ serve(async (req) => {
         batches: tickStats.batches, smtp_ms: tickStats.smtpMs, record_ms: tickStats.recordMs,
         stop: tickStats.stop, campaigns: campaigns.length, top_campaigns: Object.fromEntries(topCamp),
         skips: Object.fromEntries(Object.entries(skipStats).sort((a, b) => b[1] - a[1]).slice(0, 30)),
-        mix: mixStats,
+        mix: { ...mixStats, _fases: tickStats.fases },
       });
       if (Math.random() < 0.02) await adminClient.from("engine_tick_log").delete().lt("created_at", new Date(Date.now() - 2 * 86_400_000).toISOString());
     } catch { /* sin medición */ }
