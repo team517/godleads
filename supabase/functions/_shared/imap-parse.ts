@@ -9,6 +9,10 @@ import { bounceInfo, extractPermanentBounceRecipients, isAutomatedSender, type B
 import { repairMojibakeBytes } from "./reply-text.ts";
 import { extractAttachments, looksInline, type RawAttachment } from "./mail-attachments.ts";
 
+/** Lo que se guarda de cada correo entrante. */
+export const BODY_TEXT_MAX = 15000;
+export const BODY_HTML_MAX = 250000;
+
 /** Remove null bytes and invalid Unicode escape sequences that PostgreSQL rejects */
 export function sanitizeForPostgres(text: string): string {
   if (!text) return "";
@@ -585,8 +589,10 @@ export function parseInboundItem(item: FetchItem, ctx: { accountEmail: string; i
       from_email: fromEmail,
       from_name: sanitizeForPostgres(decodeMimeWords(fromName)),
       subject: sanitizeForPostgres(decodedSubject || "(sin asunto)"),
-      body_text: sanitizeForPostgres(repairMojibakeBytes(cleanBody(rawBody)).slice(0, 5000)),
-      body_html: sanitizeForPostgres(repairMojibakeBytes(extractHtml(rawBody)).slice(0, 50000)),
+      // Topes más altos (23-10-2026): con 5.000 / 50.000 se cortaba el final de ~3 % de las respuestas
+      // (hilos largos de Outlook: 15-20 KB sólo de estilos). La lista del Unibox no lee el HTML.
+      body_text: sanitizeForPostgres(repairMojibakeBytes(cleanBody(rawBody)).slice(0, BODY_TEXT_MAX)),
+      body_html: sanitizeForPostgres(repairMojibakeBytes(extractHtml(rawBody)).slice(0, BODY_HTML_MAX)),
       message_id: msgId,
       date,
       ref_chain: sanitizeForPostgres(refChain),
