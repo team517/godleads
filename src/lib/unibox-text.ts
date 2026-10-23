@@ -568,22 +568,12 @@ export function cleanBodyHtml(raw: string | null, keepQuote = false): string {
   html = html.replace(/<([a-z]+)[^>]*style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, "");
   html = html.replace(/<[^>]*style\s*=\s*["'][^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"']*["'][^>]*\/?>/gi, "");
 
-  // Remove warmup/tracking codes (GAJIE920CWH, CHBV6J7…) ONLY from visible text
-  // between tags — never touch tag names, attributes or href URLs, and preserve
-  // the surrounding whitespace so inline words don't glue together.
-  html = html.replace(/>([^<]+)</g, (_m, textNode: string) => {
-    const cleaned = textNode
-      .replace(/[|·•∙‧]\s*(?=(?:[A-Za-z0-9]*[A-Za-z])(?:[A-Za-z0-9]*\d))[A-Za-z0-9]{5,20}\b/g, " ")
-      .replace(LONG_HEX_RE, "")
-      .replace(LONG_MIXED_RE, "")
-      .replace(MIXED_CODE_RE, "")
-      .replace(LONG_DIGIT_RE, "")
-      .replace(/[ \t]{2,}/g, " ");
-    return `>${cleaned}<`;
-  });
-
-  // Clean pipe separators from warmup codes
-  html = html.replace(/\s*\|\s*(<|$)/g, "$1");
+  // El texto del correo se enseña TAL CUAL lo escribió el remitente (23-10-2026). Antes aquí se
+  // borraba toda palabra de 5–20 letras+números ("códigos de warm-up") y con ella los códigos de
+  // pieza de los clientes: "pn de THAT CORP.: 4305Q16-U" se veía "THAT CORP.: -U", y P018495,
+  // TS512MSK64W6H o STM32F407 desaparecían del mensaje (Chipsfinder). El warm-up no llega a las
+  // bandejas limpias (se filtra el MENSAJE entero, no sus palabras) y la versión de texto ya
+  // los conservaba (cleanBodyText con keepCodes).
 
   // Remove tracking/unsubscribe links entirely
   html = html.replace(/<a[^>]*href\s*=\s*["'][^"']*(?:unsubscribe|tracking|click\.|redirect|mailtrack|hubspot|sendgrid)[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, "");
