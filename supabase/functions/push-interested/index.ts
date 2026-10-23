@@ -29,7 +29,7 @@
 // label itself, but the Unibox labels a message the moment somebody opens it, so whoever
 // looked first silently stole the alert.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { classifyMessage, authorText, isPoliteFileAway } from "../_shared/classify.ts";
+import { classifyMessage, authorText, isPoliteFileAway, isPurchaseRequest } from "../_shared/classify.ts";
 import { replyTextForClassification } from "../_shared/reply-text.ts";
 import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
@@ -376,6 +376,10 @@ Deno.serve(async (req) => {
             cat = batch[k].ruleVerdict === "interested" ? "interested" : "neutral";
             unsupported++;
           }
+          // Pedir un presupuesto / oferta / precio (o dar el código de la pieza que se busca) es
+          // interés: el modelo lo dejaba en "neutral" y el correo se quedaba sin categoría (GMV →
+          // Chipsfinder, 21/22-10-2026). Sólo cuando las reglas también dicen interesado.
+          if ((cat === "neutral" || cat === "question") && batch[k].ruleVerdict === "interested" && isPurchaseRequest(texts[k])) cat = "interested";
           batch[k].verdict = cat; batch[k].via = "ia";
           batch[k].evidence = r.verdict.evidence; batch[k].reason = r.verdict.reason;
         } else {

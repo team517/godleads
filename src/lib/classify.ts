@@ -682,6 +682,28 @@ export function isPoliteFileAway(raw: string | null | undefined): boolean {
   return COVERED_NOW.test(text) || any(NOT_INTERESTED, text) || any(SOFT_REJECTION, text);
 }
 
+/** PETICIÓN DE COMPRA (23-10-2026): el autor pide un presupuesto / oferta / precio, o da el código de
+ *  la pieza que necesita. Es interés sin discusión, pero el modelo lo leía como "neutral" (un correo
+ *  de compras corriente, sin "me interesa") y se quedaba SIN categoría: GMV pidiendo cotización de
+ *  "4 pcs of P018761 - Monitor 7” VGA" o "150 or 200 pcs of P018495" a Chipsfinder no salía en
+ *  Interesados. Sólo lee las palabras del autor (sin la cita de nuestro correo). */
+const PURCHASE_REQUEST = [
+  // Un VERBO de pedir delante: "offer … pricing" en un anuncio ("Amazon Business offer · exclusive
+  // business pricing") no es nadie pidiendo nada.
+  /\b(send|give|provide|share|request)\b(\s+(me|us))?[^.?!]{0,25}\b(quote|quotation|price|prices|pricing|offer|rfq)\b/,
+  /\b(quote|quotation|rfq|pricing)\s+(for|on)\b/,
+  /\b(we|i)\s+(need|are\s+looking\s+for|require)\b[^.?!]{0,40}\b(\d+\s*(pcs|pieces|units|k?pcs)|p\/n|part\s+number)\b/,
+  /\b(the|this\s+is\s+the)\s+(p\/n|part\s+number|pn|reference)\b[^.?!]{0,20}\b(is|we\s+need)\b/,
+  /\b(presupuesto|cotizaci[oó]n|cotizar|oferta|ofertar(nos)?|precio)\b[^.?!]{0,60}\b(\d+\s*(pcs|uds|unidades|piezas)|pn|p\/n|referencia)\b/,
+  /\b(podr[ií]an?|puede[ns]?|podr[ií]as)\s+(ofertarnos|ofertar|cotizar(nos)?|pasarnos\s+(un\s+)?(presupuesto|precio|oferta)|enviarnos\s+(un\s+)?(presupuesto|precio|oferta|cotizaci[oó]n))\b/,
+  /\b(env[ií]e(n)?(nos)?|m[aá]nde(n)?(nos)?|p[aá]se(n)?(nos)?)\s+(un\s+|una\s+)?(presupuesto|cotizaci[oó]n|oferta|precio)\b/,
+];
+export function isPurchaseRequest(raw: string | null | undefined): boolean {
+  const text = prep(raw || "").toLowerCase();
+  if (!text) return false;
+  return PURCHASE_REQUEST.some((re) => re.test(text));
+}
+
 export function classifyMessage(subject: string | null, body: string | null): MessageCategory {
   const subjectText = prep(subject);
   // A binary body is dropped, not read: the subject alone can still carry a real reply.

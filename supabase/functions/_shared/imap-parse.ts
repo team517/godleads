@@ -35,9 +35,35 @@ export function normalizeCharset(cs?: string | null): string {
   return c;
 }
 
+/** Windows-1252, bytes 0x80–0x9F (los demás valen lo mismo que su código). 0x81, 0x8D, 0x8F, 0x90 y
+ *  0x9D no tienen carácter: se quedan como U+0081… igual que en el estándar WHATWG. */
+const CP1252_HIGH = [
+  0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
+  0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178,
+];
+const CP1252_REVERSE = new Map<number, number>(CP1252_HIGH.map((cp, i) => [cp, 0x80 + i]));
+
+/** Windows-1252 a mano (22-10-2026): no todos los TextDecoder lo hacen igual (el de Node da U+0094
+ *  en vez de ”). Por el estándar, "iso-8859-1" y "us-ascii" también se leen así. */
+export function decodeCp1252(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    out += String.fromCharCode(b >= 0x80 && b <= 0x9F ? CP1252_HIGH[b - 0x80] : b);
+  }
+  return out;
+}
+
+/** El byte que windows-1252 convirtió en este carácter (inverso exacto de decodeCp1252). */
+export function cp1252Byte(code: number): number {
+  if (code <= 0xFF) return code;
+  return CP1252_REVERSE.get(code) ?? (code & 0xFF);
+}
+
 /** Safely decode bytes with a charset, falling back if the charset is unknown. */
 export function safeDecode(bytes: Uint8Array, charset?: string | null): string {
   const cs = normalizeCharset(charset);
+  if (cs === "windows-1252" || cs === "iso-8859-1") return decodeCp1252(bytes);
   try {
     return new TextDecoder(cs, { fatal: false }).decode(bytes);
   } catch {
@@ -60,7 +86,7 @@ export function decodeQPBytes(text: string, charset?: string): string {
       byteChunks.push(parseInt(withSpaces.substring(i + 1, i + 3), 16));
       i += 3;
     } else {
-      byteChunks.push(withSpaces.charCodeAt(i) & 0xff);
+      byteChunks.push(cp1252Byte(withSpaces.charCodeAt(i)));
       i++;
     }
   }
@@ -115,8 +141,11 @@ export function detectTransferEncoding(raw: string): string {
 /** Re-decode a string that was wrongly read as UTF-8 from raw bytes,
  *  by mapping each char back to its original byte and decoding with the right charset. */
 export function reinterpretBytes(text: string, charset: string): string {
+  // El socket IMAP se lee como windows-1252: el byte 0x94 llega como "”" (U+201D). Con "& 0xff" ese
+  // carácter se convertía en 0x1D (un control que luego se borra): "Monitor 7” VGA" se guardaba
+  // como "Monitor 7 VGA" en los correos de Outlook en Windows-1252 (GMV → Chipsfinder, 22-10-2026).
   const bytes = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xff;
+  for (let i = 0; i < text.length; i++) bytes[i] = cp1252Byte(text.charCodeAt(i));
   return safeDecode(bytes, charset);
 }
 
