@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { Plus, Upload, Search, Users, Trash2, FolderPlus, Folder, FolderOpen, ArrowRight, Loader2, ShieldCheck, ShieldBan } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { addManualLead, blockedMessage } from "@/lib/manual-lead";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
@@ -242,14 +243,11 @@ export default function Leads() {
     if (form.company.trim()) custom_fields.company = form.company.trim();
 
     setAdding(true);
-    const { error } = await supabase.from("leads").insert({
-      user_id: user.id,
-      email,
-      custom_fields,
-      list_id: form.list_id || null,
-    });
+    const res = await addManualLead(user.id, email, custom_fields, { list_id: form.list_id || null });
     setAdding(false);
-    if (error) { toast.error(error.message); return; }
+    // Antes decía "Lead añadido" aunque Bloqueados lo hubiera descartado.
+    if (res.kind === "blocked") { toast.error(blockedMessage(email, res.by)); return; }
+    if (res.kind === "error") { toast.error(res.message); return; }
     toast.success("Lead añadido");
     setShowAdd(false);
     setForm({ email: "", first_name: "", last_name: "", company: "", list_id: "" });

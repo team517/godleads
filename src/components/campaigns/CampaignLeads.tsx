@@ -13,6 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { addManualLead, blockedMessage } from "@/lib/manual-lead";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
@@ -398,13 +399,14 @@ export default function CampaignLeads({ campaignId }: Props) {
     if (manualLastName.trim()) customFields["last_name"] = manualLastName.trim();
     if (manualCompany.trim()) customFields["company_name"] = manualCompany.trim();
 
-    const { data, error } = await supabase.from("leads").insert({
-      user_id: user.id, email, custom_fields: customFields, is_campaign_only: true,
-    }).select("id").single();
-    if (error) { toast.error(error.message); return; }
+    // Si ya existe en la cuenta, se usa ese lead (antes se creaba un duplicado); si está en
+    // Bloqueados, se dice (antes: "Cannot coerce the result to a single JSON object").
+    const res = await addManualLead(user.id, email, customFields, { is_campaign_only: true, reuseExisting: true });
+    if (res.kind === "blocked") { toast.error(blockedMessage(email, res.by)); return; }
+    if (res.kind === "error") { toast.error(res.message); return; }
 
     const { error: linkErr } = await supabase.from("campaign_leads").upsert(
-      { campaign_id: campaignId, lead_id: data.id },
+      { campaign_id: campaignId, lead_id: res.id },
       { onConflict: "campaign_id,lead_id", ignoreDuplicates: true }
     );
     if (linkErr) { toast.error(linkErr.message); return; }
