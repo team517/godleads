@@ -34,6 +34,7 @@ const routeMap: Record<string, ImportThunk> = {
   "/copy":           () => import("@/pages/CopyClientes"),
   "/automatizacion": () => import("@/pages/AutomationFlow"),
   "/seguimiento":    () => import("@/pages/Seguimiento"),
+  "/zapmail":        () => import("@/pages/Zapmail"),
   "/godtube":        () => import("@/pages/GodTube"),
   "/partners":       () => import("@/pages/Partners"),
   "/admin":          () => import("@/pages/AdminPanel"),

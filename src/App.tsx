@@ -21,6 +21,7 @@ import { ChatbotLauncher } from "@/components/ChatbotLauncher";
 const Landing = lazyWithRetry(() => import("./pages/Landing"));
 const Auth = lazyWithRetry(() => import("./pages/Auth"));
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
+const Zapmail = lazyWithRetry(() => import("./pages/Zapmail"));
 const EmailAccounts = lazyWithRetry(() => import("./pages/EmailAccounts"));
 const Campaigns = lazyWithRetry(() => import("./pages/Campaigns"));
 const Leads = lazyWithRetry(() => import("./pages/Leads"));
@@ -105,6 +106,7 @@ const App = () => (
                 <Route path="/copy" element={<CopyClientes />} />
                 <Route path="/automatizacion" element={<AutomationFlow />} />
                 <Route path="/seguimiento" element={<Seguimiento />} />
+                <Route path="/zapmail" element={<Zapmail />} />
                 <Route path="/godtube" element={<GodTube />} />
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />
