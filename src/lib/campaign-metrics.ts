@@ -9,7 +9,19 @@ import { isMissingRpc } from "@/lib/widget-state";
 type RpcError = { message: string; code?: string } | null;
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: RpcError }> };
 
-export async function fetchCampaignMetrics(client: RpcClient, userId: string): Promise<{ data: any[] | null; error: RpcError }> {
+/** Para los widgets: la copia que guarda el servidor (cached_rpc, 31-10-2026: la cifra ya calculada,
+ *  el cron la refresca cada 5 min). Si falla o no existe, la llamada de siempre. */
+export async function cachedOr<T>(client: RpcClient, key: string, live: () => PromiseLike<{ data: T; error: RpcError }>): Promise<{ data: T; error: RpcError }> {
+  const c = await client.rpc("cached_rpc", { p_key: key, p_force: false });
+  if (!c.error && c.data !== null && c.data !== undefined) return { data: c.data as T, error: null };
+  return live();
+}
+
+/** `force`: recalcular ya (tras "Reiniciar analíticas" o para un informe), sin esperar al cron. */
+export async function fetchCampaignMetrics(client: RpcClient, userId: string, opts: { force?: boolean } = {}): Promise<{ data: any[] | null; error: RpcError }> {
+  // Cifras precalculadas: support@ tardaba 17,8 s en frío y la pantalla corta a los 8 ("—" y "0 secuencias").
+  const c = await client.rpc("cached_rpc", { p_key: "campaign_metrics_v2", p_force: !!opts.force });
+  if (!c.error && Array.isArray(c.data)) return { data: c.data as any[], error: null };
   const v2 = await client.rpc("campaign_metrics_v2", { p_user_id: userId });
   if (!v2.error && Array.isArray(v2.data)) return { data: v2.data as any[], error: null };
   // Sólo si la función NO EXISTE se cae a la de siempre. Cualquier otro fallo (timeout, token

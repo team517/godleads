@@ -36,7 +36,8 @@ export async function gatherReportData(opts: GatherOptions): Promise<ReportData>
   // 1) Campaign list (id + name), lifetime metrics, and window metrics — in parallel.
   const [campRes, metricsRes, periodRes] = await Promise.all([
     supabase.from("campaigns").select("id, name, status").order("created_at", { ascending: false }),
-    fetchCampaignMetrics(supabase as any, "00000000-0000-0000-0000-000000000000"),
+    // Un informe para el cliente: cifras recién calculadas, no la copia de hace unos minutos.
+    fetchCampaignMetrics(supabase as any, "00000000-0000-0000-0000-000000000000", { force: true }),
     (supabase as any).rpc("campaign_report_period", { p_days: periodDays }),
   ]);
 

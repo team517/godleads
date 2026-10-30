@@ -10,7 +10,10 @@ const DAY = [{ day: "2026-10-13", sends: 10, new_leads: 4, followups: 6, replies
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 
 vi.mock("@/integrations/supabase/client", () => {
-  const rpc = (fn: string, args: Record<string, unknown>) => {
+  const rpc = (name: string, args: Record<string, unknown>) => {
+    // cached_rpc (31-10-2026) devuelve lo mismo que la función que guarda: se resuelve igual que el servidor.
+    const key = name === "cached_rpc" ? String(args.p_key) : "";
+    const fn = key ? (key.startsWith("user_daily_sends:") ? "user_daily_sends" : key) : name;
     rpcCalls.push({ fn, args });
     const data =
       fn === "user_email_stats" ? { sent: 9999, contacted: 9999, bounced: 0, opened: 0, replied: 0, failed: 0 }

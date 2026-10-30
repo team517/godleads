@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CountUp } from "@/components/ui/count-up";
 import { Send, MessageCircle, Users, Mail, UserCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { cachedOr } from "@/lib/campaign-metrics";
 import { useAuth } from "@/contexts/AuthContext";
 import TodayMessages from "@/components/dashboard/TodayMessages";
 import RetryNotice from "@/components/RetryNotice";
@@ -23,7 +24,7 @@ export default function Dashboard() {
   // server-side, sin el tope de 1000 filas). Así el Dashboard y Estadísticas siempre cuadran.
   const summary = useWidget<Summary>({
     cacheKey: "dash:summary", enabled: !!uid,
-    load: () => (supabase as any).rpc("user_email_stats"),
+    load: () => cachedOr(supabase as any, "user_email_stats", () => (supabase as any).rpc("user_email_stats")),
     deps: [uid],
   });
   // Totales globales = suma de las campañas (las mismas cifras de la tabla de Campañas).

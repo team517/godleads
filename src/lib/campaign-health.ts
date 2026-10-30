@@ -144,7 +144,9 @@ export type MetricsExtra = { repliedHuman: number; repliedAuto: number; sentUnco
 /** Lee campaign_metrics_extra(); mapa vacío si falla o no existe (la pantalla cae a `replied`). */
 export async function fetchMetricsExtra(client: RpcClient): Promise<Record<string, MetricsExtra>> {
   const map: Record<string, MetricsExtra> = {};
-  const r = await client.rpc("campaign_metrics_extra", {});
+  // Precalculada en el servidor (4,5 s en directo); si la copia no existe, la de siempre.
+  let r = await client.rpc("cached_rpc", { p_key: "campaign_metrics_extra", p_force: false });
+  if (r.error || !Array.isArray(r.data)) r = await client.rpc("campaign_metrics_extra", {});
   if (r.error || !Array.isArray(r.data)) return map;
   for (const row of r.data as Record<string, unknown>[]) {
     const id = String(row.campaign_id || "");

@@ -141,11 +141,12 @@ export default function Campaigns() {
 
   /** Métricas + progreso de TODAS las campañas: dos RPC en total, no 2 consultas por campaña.
    *  Se llama al cargar y cuando una ficha avisa de que cambió algo (p. ej. "Reiniciar analíticas"). */
-  const reloadMetrics = async (list?: any[]) => {
+  const reloadMetrics = async (list?: any[], force = false) => {
     if (!user) return;
     const camps: any[] = list ?? campaigns;
-    // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer).
-    const metricsP = fetchCampaignMetrics(supabase as any, user.id).then(({ data: rows, error }) => {
+    // Metrics for ALL campaigns in a single RPC (numbers only, no row transfer). Precalculadas en el
+    // servidor; `force` (tras "Reiniciar analíticas") las recalcula ya.
+    const metricsP = fetchCampaignMetrics(supabase as any, user.id, { force }).then(({ data: rows, error }) => {
       if (error || !Array.isArray(rows)) { setMetricsError(errorText(error)); return; }
       setMetricsError(null);
       const map: Record<string, any> = {};
@@ -525,7 +526,7 @@ export default function Campaigns() {
         onRetryMetrics={() => { void reloadMetrics(); }}
         onBack={() => setSelectedId(null)}
         onToggleStatus={() => handleStatusToggle(selectedCampaign)}
-        onMetricsStale={() => { void reloadMetrics(); }}
+        onMetricsStale={() => { void reloadMetrics(undefined, true); }}
       />
     );
   }

@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { cachedOr } from "@/lib/campaign-metrics";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import EmptyShowcase from "@/components/EmptyShowcase";
@@ -42,7 +43,7 @@ export default function Stats() {
   const summary = useWidget<Summary>({
     cacheKey: "stats:summary",
     enabled: !!user,
-    load: () => (supabase as any).rpc("user_email_stats"),
+    load: () => cachedOr(supabase as any, "user_email_stats", () => (supabase as any).rpc("user_email_stats")),
     deps: [user?.id],
   });
   // Cifras de cada campaña (las mismas de la tabla de Campañas): los totales son su suma.
@@ -78,7 +79,7 @@ export default function Stats() {
     enabled: !!user,
     load: () => filtered
       ? (supabase as any).rpc("campaigns_daily_sends", { p_campaign_ids: selected, p_days: DAYS })
-      : (supabase as any).rpc("user_daily_sends", { p_days: DAYS }),
+      : cachedOr(supabase as any, `user_daily_sends:${DAYS}`, () => (supabase as any).rpc("user_daily_sends", { p_days: DAYS })),
     deps: [user?.id, pickId],
   });
 
