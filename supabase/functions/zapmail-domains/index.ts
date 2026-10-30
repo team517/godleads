@@ -117,6 +117,22 @@ async function zapDomains(ws?: string): Promise<Map<string, string>> {
   return map;
 }
 
+type ZapMailbox = { id: string; email: string; firstName?: string; lastName?: string; status?: string; domain?: string; appPassword?: string | null; isWarmedUp?: boolean };
+
+/** Todos los buzones de Zapmail (con su contraseña de aplicación: nunca sale de esta función). */
+async function zapMailboxes(ws?: string, contains?: string): Promise<ZapMailbox[]> {
+  const out: ZapMailbox[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const q = `page=${page}&limit=100${contains ? `&contains=${encodeURIComponent(contains)}` : ""}`;
+    const r = await fetch(`${ZAP}/v2/mailboxes/list?${q}`, { headers: zapH(ws) });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error(`Zapmail ${r.status}: ${j?.message || ""}`);
+    for (const d of j?.data?.domains || []) for (const m of d.mailboxes || []) out.push({ ...m, domain: m.domain || d.domain });
+    if (page >= (j?.data?.totalPages || 1)) break;
+  }
+  return out;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const body = await req.json().catch(() => ({}));
@@ -200,6 +216,74 @@ serve(async (req) => {
           const r = results.find((x) => x.domain === d);
           if (r) Object.assign(r, { zapmail: s, step });
         }
+      }
+      return json({ ok: true, results });
+    }
+
+    // Buzones de Zapmail para la pantalla: SIN contraseñas; con si ya están en la plataforma.
+    if (action === "mailboxes") {
+      if (!user) return json({ error: "Sólo desde la pantalla" }, 403);
+      const ws = await zapWorkspace();
+      const list = await zapMailboxes(ws);
+      const emails = list.map((m) => String(m.email || "").toLowerCase()).filter(Boolean);
+      const inPlat = new Map<string, string>();
+      for (let i = 0; i < emails.length; i += 200) {
+        const { data } = await admin.from("email_accounts").select("email, status").eq("user_id", user.id).in("email", emails.slice(i, i + 200));
+        for (const a of data || []) inPlat.set(String(a.email).toLowerCase(), a.status);
+      }
+      return json({ ok: true, mailboxes: list.map((m) => ({
+        id: m.id, email: String(m.email || "").toLowerCase(), name: [m.firstName, m.lastName].filter(Boolean).join(" "), status: m.status || null,
+        domain: m.domain || null, hasAppPassword: !!m.appPassword, warmed: !!m.isWarmedUp, platformStatus: inPlat.get(String(m.email || "").toLowerCase()) || null,
+      })) });
+    }
+
+    // Conectar buzones de Zapmail (Google Workspace) a la cuenta de quien pulsa: SMTP smtp.gmail.com:465 e
+    // IMAP imap.gmail.com:993 con la contraseña de aplicación que da Zapmail, y la verificación de siempre.
+    if (action === "connect_mailboxes") {
+      if (!user) return json({ error: "Sólo desde la pantalla" }, 403);
+      const ids: string[] = Array.isArray(body?.ids) ? body.ids.map(String).slice(0, 200) : [];
+      if (!ids.length) return json({ ok: false, error: "No hay buzones seleccionados" });
+      const ws = await zapWorkspace();
+      const all = await zapMailboxes(ws);
+      const results: Record<string, unknown>[] = [];
+      for (const id of ids) {
+        const m = all.find((x) => x.id === id);
+        if (!m) { results.push({ id, ok: false, error: "No está en Zapmail" }); continue; }
+        const email = String(m.email || "").toLowerCase();
+        const pass = String(m.appPassword || "").replace(/\s+/g, "");
+        if (!pass) { results.push({ email, ok: false, error: "Zapmail aún no tiene su contraseña de aplicación (prueba en unos minutos)" }); continue; }
+        const creds = {
+          smtp_host: "smtp.gmail.com", smtp_port: 465, smtp_username: email, smtp_password: pass,
+          imap_host: "imap.gmail.com", imap_port: 993, imap_username: email, imap_password: pass,
+          first_name: m.firstName || null, last_name: m.lastName || null, updated_at: now(),
+        };
+        const { data: existing } = await admin.from("email_accounts").select("id, tags").eq("user_id", user.id).eq("email", email).maybeSingle();
+        let accountId = existing?.id as string | undefined;
+        if (accountId) {
+          const tags = Array.from(new Set([...(existing?.tags || []), "zapmail"]));
+          const { error } = await admin.from("email_accounts").update({ ...creds, tags, status: "pending", last_error: null }).eq("id", accountId);
+          if (error) { results.push({ email, ok: false, error: error.message }); continue; }
+        } else {
+          const { data: ins, error } = await admin.from("email_accounts").insert({
+            ...creds, user_id: user.id, email, status: "pending", daily_limit: 15, tags: ["zapmail"],
+          }).select("id").single();
+          if (error || !ins) { results.push({ email, ok: false, error: error?.message || "No se pudo crear" }); continue; }
+          accountId = ins.id;
+        }
+        // La verificación de siempre (la misma que el botón "Verificar"): prueba SMTP e IMAP y marca connected.
+        let verified = false, verr = "";
+        try {
+          const vr = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/verify-email-connection`, {
+            method: "POST", headers: { Authorization: req.headers.get("Authorization") || "", "Content-Type": "application/json", apikey: Deno.env.get("SUPABASE_ANON_KEY") || "" },
+            body: JSON.stringify({ account_id: accountId }),
+          });
+          const vj = await vr.json().catch(() => null);
+          verified = vj?.status === "connected";
+          if (!verified) verr = [vj?.smtp?.ok === false ? `SMTP: ${vj.smtp.error}` : "", vj?.imap?.ok === false ? `IMAP: ${vj.imap.error}` : "", vj?.error || ""]
+            .filter(Boolean).join(" · ").slice(0, 200) || `verificación ${vr.status}`;
+        } catch (e) { verr = String((e as Error)?.message || e).slice(0, 200); }
+        const { data: after } = await admin.from("email_accounts").select("status").eq("id", accountId).maybeSingle();
+        results.push({ email, ok: after?.status === "connected" || verified, status: after?.status || null, error: after?.status === "connected" ? null : verr || null });
       }
       return json({ ok: true, results });
     }

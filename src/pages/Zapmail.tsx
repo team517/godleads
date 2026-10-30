@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Globe, Loader2, RefreshCw, Search, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Globe, Loader2, Plug, RefreshCw, Search, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,6 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -25,6 +27,11 @@ type CheckRow = {
 type TrackedRow = {
   domain: string; step: string; zapmail_status: string | null; error: string | null;
   ns_before: { names?: string[] } | null; updated_at: string; connected_at: string | null; requested_by: string | null;
+};
+
+type ZapMailbox = {
+  id: string; email: string; name: string; status: string | null; domain: string | null;
+  hasAppPassword: boolean; warmed: boolean; platformStatus: string | null;
 };
 
 const STEP: Record<string, { label: string; cls: string }> = {
@@ -53,6 +60,19 @@ export default function Zapmail() {
   const [tracked, setTracked] = useState<TrackedRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [mailboxes, setMailboxes] = useState<ZapMailbox[] | null>(null);
+  const [loadingMb, setLoadingMb] = useState(false);
+  const [mbSearch, setMbSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [connectingMb, setConnectingMb] = useState(false);
+  const loadMailboxes = useCallback(async () => {
+    setLoadingMb(true);
+    try { setMailboxes(((await call("mailboxes")).mailboxes || []) as ZapMailbox[]); }
+    catch (e) { toast.error(`No se pudieron leer los buzones de Zapmail: ${(e as Error).message}`); }
+    finally { setLoadingMb(false); }
+  }, []);
+  useEffect(() => { void loadMailboxes(); }, [loadMailboxes]);
+
   const loadTracked = useCallback(async () => {
     try { setTracked(((await call("list")).rows || []) as TrackedRow[]); } catch { /* se reintenta */ }
   }, []);
@@ -64,6 +84,15 @@ export default function Zapmail() {
     const t = setInterval(() => { if (!document.hidden) void loadTracked(); }, 60_000);
     return () => clearInterval(t);
   }, [pending, loadTracked]);
+
+  const visibleMb = useMemo(() => {
+    const q = mbSearch.trim().toLowerCase();
+    return (mailboxes || []).filter((m) => !q || m.email.includes(q) || m.name.toLowerCase().includes(q) || (m.domain || "").includes(q));
+  }, [mailboxes, mbSearch]);
+  // Se pueden conectar: con contraseña de aplicación y que no estén ya conectados en la plataforma.
+  const canPick = (m: ZapMailbox) => m.hasAppPassword && m.platformStatus !== "connected";
+  const pickable = visibleMb.filter(canPick);
+  const allPicked = pickable.length > 0 && pickable.every((m) => selected.has(m.id));
 
   const connectable = useMemo(() => (rows || []).filter((r) => r.inIonos && r.tracked?.step !== "connected" && r.zapmail === null), [rows]);
   const withMailboxes = connectable.filter((r) => r.mailboxes > 0);
@@ -94,6 +123,23 @@ export default function Zapmail() {
       await loadTracked();
     } catch (e) { toast.error(`No se pudo conectar: ${(e as Error).message}`); }
     finally { setConnecting(false); }
+  };
+
+  const doConnectMailboxes = async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    setConnectingMb(true);
+    try {
+      const r = await call("connect_mailboxes", { ids });
+      const res = (r.results || []) as { email: string; ok: boolean; error?: string | null }[];
+      const ok = res.filter((x) => x.ok);
+      const bad = res.filter((x) => !x.ok);
+      if (ok.length) toast.success(`${ok.length} buzón${ok.length === 1 ? "" : "es"} conectado${ok.length === 1 ? "" : "s"} a la plataforma (etiqueta "zapmail").`);
+      for (const b of bad.slice(0, 5)) toast.error(`${b.email}: ${b.error || "no se pudo conectar"}`);
+      setSelected(new Set());
+      await loadMailboxes();
+    } catch (e) { toast.error(`No se pudo conectar: ${(e as Error).message}`); }
+    finally { setConnectingMb(false); }
   };
 
   const doRefresh = async () => {
@@ -204,6 +250,65 @@ export default function Zapmail() {
               </table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <b className="text-sm">Buzones de Zapmail</b>
+            <Button variant="outline" size="sm" onClick={loadMailboxes} disabled={loadingMb} className="gap-1.5">
+              {loadingMb ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Recargar
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={mbSearch} onChange={(e) => setMbSearch(e.target.value)} placeholder="Buscar por email, nombre o dominio…" className="pl-8" />
+            </div>
+            <Button onClick={doConnectMailboxes} disabled={!selected.size || connectingMb} className="gap-1.5">
+              {connectingMb ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+              Conectar {selected.size || ""} a la plataforma
+            </Button>
+          </div>
+          {mailboxes === null ? (
+            <p className="text-sm text-muted-foreground">{loadingMb ? "Cargando buzones…" : "—"}</p>
+          ) : mailboxes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay buzones en Zapmail todavía.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="w-8 py-2 pr-2">
+                      <Checkbox checked={allPicked} disabled={!pickable.length} aria-label="Seleccionar todos"
+                        onCheckedChange={(v) => setSelected((prev) => { const n = new Set(prev); for (const m of pickable) { if (v) n.add(m.id); else n.delete(m.id); } return n; })} />
+                    </th>
+                    <th className="py-2 pr-3">Buzón</th><th className="py-2 pr-3">Nombre</th><th className="py-2 pr-3">En Zapmail</th><th className="py-2">En la plataforma</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleMb.map((m) => (
+                    <tr key={m.id} className="border-t">
+                      <td className="py-2 pr-2">
+                        <Checkbox checked={selected.has(m.id)} disabled={!canPick(m)} aria-label={`Seleccionar ${m.email}`}
+                          onCheckedChange={(v) => setSelected((prev) => { const n = new Set(prev); if (v) n.add(m.id); else n.delete(m.id); return n; })} />
+                      </td>
+                      <td className="py-2 pr-3 font-medium">{m.email}</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{m.name || "—"}</td>
+                      <td className="py-2 pr-3 text-xs">{m.status || "—"}{!m.hasAppPassword && <span className="ml-1 text-amber-700 dark:text-amber-400">· sin contraseña de aplicación aún</span>}</td>
+                      <td className="py-2">
+                        {m.platformStatus === "connected" ? <Badge className={STEP.connected.cls}>Conectado</Badge>
+                          : m.platformStatus ? <Badge className={STEP.error.cls}>{m.platformStatus}</Badge>
+                          : <span className="text-muted-foreground">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">Se conectan a tu cuenta por SMTP/IMAP de Google con la contraseña de aplicación de Zapmail, con la etiqueta «zapmail» y 15 envíos/día. Las contraseñas no pasan por el navegador.</p>
         </CardContent>
       </Card>
 
