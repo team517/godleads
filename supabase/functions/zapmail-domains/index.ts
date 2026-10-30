@@ -117,6 +117,43 @@ async function zapDomains(ws?: string): Promise<Map<string, string>> {
   return map;
 }
 
+type ZapRequest = { status: string; nextRetryOn: string | null; currentNameServers: string[] };
+
+/** Peticiones de conexión pendientes en Zapmail, por dominio (estado real y qué nameservers ve). */
+async function zapRequests(ws?: string): Promise<Map<string, ZapRequest>> {
+  const map = new Map<string, ZapRequest>();
+  for (let page = 1; page <= 20; page++) {
+    const r = await fetch(`${ZAP}/v2/domains/connection-requests?page=${page}&limit=100`, { headers: zapH(ws) });
+    const j = await r.json().catch(() => null);
+    const list = j?.data?.data || [];
+    for (const x of list) {
+      map.set(String(x.domainName || "").toLowerCase(), {
+        status: String(x.status || ""), nextRetryOn: x.nextRetryOn || null,
+        currentNameServers: (x.metadata?.currentNameServers || []).map((n: string) => String(n).toLowerCase()),
+      });
+    }
+    if (!list.length || page >= (j?.data?.totalPages || 1)) break;
+  }
+  return map;
+}
+
+async function zapRemoveRequest(domain: string, ws?: string): Promise<void> {
+  await fetch(`${ZAP}/v2/domains/connection-requests`, { method: "DELETE", headers: zapH(ws), body: JSON.stringify({ domainNames: [domain] }) }).catch(() => {});
+}
+
+/** Texto para la columna "Detalle" mientras se conecta. */
+function detalle(status: string, q: ZapRequest | undefined, ionosOk: boolean): string {
+  if (!ionosOk) return "IONOS aplicando los nameservers de Zapmail";
+  const veZap = !!q && q.currentNameServers.length > 0 && q.currentNameServers.every((n) => n.includes("cloudns"));
+  const prox = q?.nextRetryOn ? new Date(q.nextRetryOn).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" }) : "";
+  if (status === "CHECKING_NS_IN_WHOIS" || status === "NS_NOT_CHANGED") {
+    return veZap ? `Nameservers ya visibles · Zapmail lo confirma en breve${prox ? ` (${prox})` : ""}`
+      : `Esperando a que internet vea los nameservers nuevos${prox ? ` · próxima comprobación ${prox}` : ""}`;
+  }
+  if (status === "CREATING_ZONE") return "Zapmail creando las DNS (SPF, DKIM, DMARC, MX)";
+  return status;
+}
+
 type ZapMailbox = { id: string; email: string; firstName?: string; lastName?: string; status?: string; domain?: string; appPassword?: string | null; isWarmedUp?: boolean };
 
 /** Todos los buzones de Zapmail (con su contraseña de aplicación: nunca sale de esta función). */
@@ -293,26 +330,55 @@ serve(async (req) => {
       // vuelven a la cola: el cambio sí se envió.
       await admin.from("zapmail_domains").update({ step: "ns_cambiados", error: null, updated_at: now() })
         .eq("step", "error").ilike("error", "%PROCESS_ALREADY_RUNNING%");
-      const { data: pend } = await admin.from("zapmail_domains").select("domain, ionos_id").in("step", ["ns_cambiados", "conectando"]);
-      const domains = (pend || []).map((r: any) => r.domain);
-      if (!domains.length) return json({ ok: true, refreshed: 0 });
-      // ¿Terminó IONOS el cambio? Si no tiene aún los de Zapmail, se apunta en el detalle.
-      const nsPend = new Set<string>();
-      for (const r of (pend || []) as { domain: string; ionos_id: string | null }[]) {
-        if (!r.ionos_id) continue;
-        const ns = await ionosNs(r.ionos_id);
-        if (ns && !ZAP_NS.every((n) => ns.names.includes(n))) nsPend.add(r.domain);
-      }
+      const { data: pend } = await admin.from("zapmail_domains").select("domain, ionos_id, last_retry_at").in("step", ["ns_cambiados", "conectando"]);
+      const rows = (pend || []) as { domain: string; ionos_id: string | null; last_retry_at: string | null }[];
+      if (!rows.length) return json({ ok: true, refreshed: 0 });
       const ws = await zapWorkspace();
-      const [zap, st] = [await zapDomains(ws), await zapConnect(domains, ws)];
-      let connected = 0;
-      for (const d of domains) {
-        const s = zap.has(d) ? "SUCCESS" : (nsPend.has(d) && !ZAP_DONE_OK.has(st[d]) ? `IONOS_CAMBIANDO_NS · ${st[d]}` : st[d]);
-        const step = ZAP_DONE_OK.has(s) ? "connected" : ZAP_DONE_BAD.has(s) ? "error" : "conectando";
-        if (step === "connected") connected++;
-        await admin.from("zapmail_domains").update({ zapmail_status: s, step, error: step === "error" ? `Zapmail: ${s}` : null, updated_at: now(), ...(step === "connected" ? { connected_at: now() } : {}) }).eq("domain", d);
+      const zap = await zapDomains(ws);
+      const reqs = await zapRequests(ws);
+      const nowMs = Date.now();
+      let connected = 0, retriggered = 0, ionosFixed = 0;
+      for (const r of rows) {
+        const d = r.domain;
+        // 1) Ya está en Zapmail: conectado.
+        if (zap.has(d)) {
+          connected++;
+          await admin.from("zapmail_domains").update({ step: "connected", zapmail_status: "SUCCESS", error: null, updated_at: now(), connected_at: now() }).eq("domain", d);
+          continue;
+        }
+        // 2) IONOS debe seguir teniendo los nameservers de Zapmail; si no, se vuelven a poner.
+        let ionosOk = true;
+        if (r.ionos_id) {
+          const ns = await ionosNs(r.ionos_id);
+          if (ns && !ZAP_NS.every((n) => ns.names.includes(n))) {
+            ionosOk = false;
+            const err = await ionosSetZapNs(r.ionos_id);
+            if (!err) ionosFixed++;
+          }
+        }
+        // 3) La petición de Zapmail: si no existe se crea; si lleva >20 min sin volver a mirar, se relanza
+        //    (como mucho cada 30 min). Zapmail mira los nameservers poco después de pedírselo y, si aún no
+        //    se ven, puede quedarse esperando.
+        const q = reqs.get(d);
+        const lastRetry = r.last_retry_at ? Date.parse(r.last_retry_at) : 0;
+        const staleCheck = q && ["CHECKING_NS_IN_WHOIS", "NS_NOT_CHANGED", "FAILED", "PENDING"].includes(q.status)
+          && q.nextRetryOn && Date.parse(q.nextRetryOn) < nowMs - 20 * 60_000;
+        let status = q?.status || "SIN_PETICION";
+        if (ionosOk && (!q || staleCheck) && nowMs - lastRetry > 30 * 60_000) {
+          if (q) await zapRemoveRequest(d, ws);
+          const st = await zapConnect([d], ws);
+          status = st[d] || "PENDING";
+          retriggered++;
+          await admin.from("zapmail_domains").update({ last_retry_at: now() }).eq("domain", d);
+        }
+        if (ZAP_DONE_OK.has(status)) connected++;
+        const step = ZAP_DONE_OK.has(status) ? "connected" : ZAP_DONE_BAD.has(status) ? "error" : "conectando";
+        await admin.from("zapmail_domains").update({
+          zapmail_status: step === "conectando" ? detalle(status, q, ionosOk) : status, step,
+          error: step === "error" ? `Zapmail: ${status}` : null, updated_at: now(), ...(step === "connected" ? { connected_at: now() } : {}),
+        }).eq("domain", d);
       }
-      return json({ ok: true, refreshed: domains.length, connected });
+      return json({ ok: true, refreshed: rows.length, connected, retriggered, ionosFixed });
     }
 
     return json({ error: "Acción desconocida" }, 400);
