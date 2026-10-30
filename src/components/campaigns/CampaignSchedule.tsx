@@ -22,6 +22,7 @@ const DAYS = [
 
 const TIMEZONES = [
   "UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+  "America/Mexico_City", "America/Bogota", "America/Lima", "America/Santiago", "America/Argentina/Buenos_Aires", "America/Sao_Paulo",
   "Europe/London", "Europe/Madrid", "Europe/Paris", "Europe/Berlin",
   "Asia/Dubai", "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney",
 ];
@@ -86,7 +87,8 @@ export default function CampaignSchedule({ campaignId }: Props) {
         <Select value={timezone} onValueChange={v => { setTimezone(v); setSaved(false); }}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
-            {TIMEZONES.map(tz => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}
+            {/* Una zona guardada que no esté en la lista se enseña igual (si no, el selector salía vacío). */}
+            {(TIMEZONES.includes(timezone) ? TIMEZONES : [timezone, ...TIMEZONES]).map(tz => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
