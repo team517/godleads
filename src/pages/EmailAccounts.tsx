@@ -717,10 +717,11 @@ export default function EmailAccounts() {
   };
 
   // Casilla "seleccionar todo": con un tag o una búsqueda activos pregunta si las del tag o todas.
-  const selectAllControl = (
+  const selectAllControl = (pageIds: string[]) => (
     <SelectAllControl
       visibleIds={filteredAccounts.map(a => a.id)}
       allIds={accounts.map(a => a.id)}
+      pageIds={pageIds}
       selected={selectedIds}
       onChange={setSelectedIds}
       scopeLabel={filterTag ? `«${filterTag}»` : search.trim() ? "la búsqueda" : null}
@@ -1930,7 +1931,8 @@ export default function EmailAccounts() {
               </button>
             )}
           </div>
-          {selectAllControl}
+          {/* Barra de arriba (también en el móvil, que no pagina): sin "esta página". */}
+          {selectAllControl([])}
           <span className="text-sm text-muted-foreground">
             {selectedIds.size > 0 ? `${selectedIds.size} seleccionadas` : "Seleccionar cuentas"}
           </span>

@@ -48,3 +48,29 @@ describe("Seleccionar todo en Cuentas", () => {
     expect(onChange.mock.calls[1][0].size).toBe(0);
   });
 });
+
+describe("Seleccionar esta página (31-10-2026)", () => {
+  const MANY = Array.from({ length: 120 }, (_, i) => `a${i}`);
+
+  it("con más de una página ofrece «esta página» aunque no haya filtro, y sólo marca esas", async () => {
+    const onChange = vi.fn();
+    render(<SelectAllControl visibleIds={MANY} allIds={MANY} pageIds={MANY.slice(50, 100)} selected={new Set()} onChange={onChange} scopeLabel={null} />);
+    open(screen.getByRole("button", { name: "Seleccionar cuentas" }));
+    fireEvent.click(await screen.findByText("Seleccionar esta página (50)"));
+    expect([...onChange.mock.calls[0][0]]).toEqual(MANY.slice(50, 100));
+  });
+
+  it("con filtro y varias páginas: esta página, las del filtro y todas", async () => {
+    const onChange = vi.fn();
+    render(<SelectAllControl visibleIds={MANY.slice(0, 70)} allIds={[...MANY, "x", "y"]} pageIds={MANY.slice(0, 50)} selected={new Set()} onChange={onChange} scopeLabel="la búsqueda" />);
+    open(screen.getByRole("button", { name: "Seleccionar cuentas" }));
+    expect(await screen.findByText("Seleccionar esta página (50)")).toBeTruthy();
+    expect(screen.getByText("Seleccionar las 70 de la búsqueda")).toBeTruthy();
+    expect(screen.getByText("Seleccionar todas las cuentas (122)")).toBeTruthy();
+  });
+
+  it("con una sola página no cambia nada: la casilla de siempre", () => {
+    render(<SelectAllControl visibleIds={["a", "b"]} allIds={["a", "b"]} pageIds={["a", "b"]} selected={new Set()} onChange={() => {}} scopeLabel={null} />);
+    expect(screen.getByRole("checkbox", { name: "Seleccionar cuentas" })).toBeTruthy();
+  });
+});

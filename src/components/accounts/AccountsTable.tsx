@@ -21,7 +21,8 @@ interface Props {
   onToggleSelect: (id: string) => void;
   onToggleAll: () => void;
   /** Casilla de cabecera propia (con el menú "las del tag / todas"); si no, la de siempre. */
-  headerCheckbox?: ReactNode;
+  /** La casilla de la cabecera; si es función, recibe las cuentas de la página visible. */
+  headerCheckbox?: ReactNode | ((pageIds: string[]) => ReactNode);
   imapChecks: Record<string, ImapCheckLike>;
   domainAuth: Record<string, DomainAuthLike>;
   dnsConfiguring: Record<string, boolean>;
@@ -124,7 +125,9 @@ export default function AccountsTable(p: Props) {
           <thead>
             <tr className="soft-thead">
               <Th className="w-10 pl-4 pr-0">
-                {p.headerCheckbox ?? <Checkbox checked={p.allSelected} onCheckedChange={p.onToggleAll} aria-label="Seleccionar todas las cuentas" />}
+                {typeof p.headerCheckbox === "function"
+                  ? p.headerCheckbox(pageAccounts.map((a) => a.id))
+                  : p.headerCheckbox ?? <Checkbox checked={p.allSelected} onCheckedChange={p.onToggleAll} aria-label="Seleccionar todas las cuentas" />}
               </Th>
               <Th>Cuenta</Th>
               <Th>Proveedor</Th>

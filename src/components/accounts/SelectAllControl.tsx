@@ -13,11 +13,13 @@ export function selectAllState(visibleIds: string[], selected: Set<string>): boo
   return n === visibleIds.length ? true : n > 0 ? "indeterminate" : false;
 }
 
-export default function SelectAllControl({ visibleIds, allIds, selected, onChange, scopeLabel, ariaLabel = "Seleccionar cuentas" }: {
+export default function SelectAllControl({ visibleIds, allIds, pageIds, selected, onChange, scopeLabel, ariaLabel = "Seleccionar cuentas" }: {
   /** Las cuentas que se ven ahora (filtradas por tag y búsqueda). */
   visibleIds: string[];
   /** Todas las cuentas. */
   allIds: string[];
+  /** Las de la página que se está viendo (la tabla pinta 50 por página). */
+  pageIds?: string[];
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
   /** Qué filtra lo visible: «whatsapp», «la búsqueda»… (null = no hay filtro). */
@@ -26,8 +28,11 @@ export default function SelectAllControl({ visibleIds, allIds, selected, onChang
 }) {
   const state = selectAllState(visibleIds, selected);
   const filtered = !!scopeLabel && visibleIds.length < allIds.length;
+  // "Esta página" (31-10-2026): sólo tiene sentido si lo que se ve ocupa más de una página.
+  const page = (pageIds || []).filter(Boolean);
+  const multiPage = page.length > 0 && page.length < visibleIds.length;
 
-  if (!filtered) {
+  if (!filtered && !multiPage) {
     return (
       <Checkbox
         checked={state}
@@ -45,9 +50,16 @@ export default function SelectAllControl({ visibleIds, allIds, selected, onChang
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[240px]">
-        <DropdownMenuItem onSelect={() => onChange(new Set([...selected, ...visibleIds]))}>
-          Seleccionar las {visibleIds.length} de {scopeLabel}
-        </DropdownMenuItem>
+        {multiPage && (
+          <DropdownMenuItem onSelect={() => onChange(new Set([...selected, ...page]))}>
+            Seleccionar esta página ({page.length})
+          </DropdownMenuItem>
+        )}
+        {filtered && (
+          <DropdownMenuItem onSelect={() => onChange(new Set([...selected, ...visibleIds]))}>
+            Seleccionar las {visibleIds.length} de {scopeLabel}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={() => onChange(new Set(allIds))}>
           Seleccionar todas las cuentas ({allIds.length})
         </DropdownMenuItem>
