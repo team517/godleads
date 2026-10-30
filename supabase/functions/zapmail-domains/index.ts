@@ -60,7 +60,10 @@ async function ionosNs(id: string): Promise<{ type: string; names: string[] } | 
   return j ? { type: j.type || "", names: (j.nameservers || []).map((n: any) => String(n.name || "").toLowerCase()) } : null;
 }
 
-/** Pone los nameservers de Zapmail. Devuelve null si va bien, o el error de IONOS. */
+/** Pide a IONOS los nameservers de Zapmail. IONOS lo hace EN SEGUNDO PLANO (30-10-2026): justo
+ *  después el GET aún devuelve los antiguos y un segundo PUT responde 403 PROCESS_ALREADY_RUNNING.
+ *  Por eso: un solo PUT; aceptado (o "ya en curso") = enviado; el refresco comprueba que terminó.
+ *  Devuelve null si IONOS lo aceptó, o el error. */
 async function ionosSetZapNs(id: string): Promise<string | null> {
   const bodies = [
     { type: "CUSTOM", nameservers: ZAP_NS.map((name) => ({ name })) },
@@ -69,15 +72,11 @@ async function ionosSetZapNs(id: string): Promise<string | null> {
   let last = "";
   for (const b of bodies) {
     const r = await fetch(`${IONOS}/domainitems/${id}/nameservers`, { method: "PUT", headers: ionosH(), body: JSON.stringify(b) });
-    if (r.ok) {
-      // Comprobar que de verdad quedaron puestos.
-      const now = await ionosNs(id);
-      if (now && ZAP_NS.every((n) => now.names.includes(n))) return null;
-      last = `IONOS aceptó el cambio pero devuelve ${now?.names.join(", ") || "?"}`;
-      continue;
-    }
-    last = `IONOS ${r.status}: ${(await r.text()).slice(0, 200)}`;
-    if (r.status !== 400 && r.status !== 422) break;
+    if (r.ok) return null;
+    const t = (await r.text()).slice(0, 200);
+    if (/PROCESS_ALREADY_RUNNING/.test(t)) return null;   // ya hay un cambio en marcha: se espera a que termine
+    last = `IONOS ${r.status}: ${t}`;
+    if (r.status !== 400 && r.status !== 422) break;     // sólo se prueba el otro formato si éste no le vale
   }
   return last || "IONOS no aceptó el cambio";
 }
@@ -206,14 +205,25 @@ serve(async (req) => {
     }
 
     if (action === "refresh") {
-      const { data: pend } = await admin.from("zapmail_domains").select("domain").in("step", ["ns_cambiados", "conectando"]);
+      // Los que IONOS dejó "en curso" (antes se marcaban como error por el 403 PROCESS_ALREADY_RUNNING)
+      // vuelven a la cola: el cambio sí se envió.
+      await admin.from("zapmail_domains").update({ step: "ns_cambiados", error: null, updated_at: now() })
+        .eq("step", "error").ilike("error", "%PROCESS_ALREADY_RUNNING%");
+      const { data: pend } = await admin.from("zapmail_domains").select("domain, ionos_id").in("step", ["ns_cambiados", "conectando"]);
       const domains = (pend || []).map((r: any) => r.domain);
       if (!domains.length) return json({ ok: true, refreshed: 0 });
+      // ¿Terminó IONOS el cambio? Si no tiene aún los de Zapmail, se apunta en el detalle.
+      const nsPend = new Set<string>();
+      for (const r of (pend || []) as { domain: string; ionos_id: string | null }[]) {
+        if (!r.ionos_id) continue;
+        const ns = await ionosNs(r.ionos_id);
+        if (ns && !ZAP_NS.every((n) => ns.names.includes(n))) nsPend.add(r.domain);
+      }
       const ws = await zapWorkspace();
       const [zap, st] = [await zapDomains(ws), await zapConnect(domains, ws)];
       let connected = 0;
       for (const d of domains) {
-        const s = zap.has(d) ? "SUCCESS" : st[d];
+        const s = zap.has(d) ? "SUCCESS" : (nsPend.has(d) && !ZAP_DONE_OK.has(st[d]) ? `IONOS_CAMBIANDO_NS · ${st[d]}` : st[d]);
         const step = ZAP_DONE_OK.has(s) ? "connected" : ZAP_DONE_BAD.has(s) ? "error" : "conectando";
         if (step === "connected") connected++;
         await admin.from("zapmail_domains").update({ zapmail_status: s, step, error: step === "error" ? `Zapmail: ${s}` : null, updated_at: now(), ...(step === "connected" ? { connected_at: now() } : {}) }).eq("domain", d);
