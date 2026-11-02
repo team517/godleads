@@ -1983,6 +1983,9 @@ serve(async (req) => {
       const MAX_FOLLOWUP_SCAN = 300;
       const MAX_NEW_LEAD_SCAN = 200;
       let followupsScanned = 0;
+      // Atajo (02-11-2026): en cuanto un lead NUEVO se queda sin buzón libre en esta campaña, los demás
+      // nuevos de esta pasada tampoco lo tendrán (los cupos sólo bajan): se saltan sin consultar la base.
+      let sinBuzonParaNuevos = false;
       let newLeadsScanned = 0;
 
       fase("e_bloqueos_dominios");
@@ -2084,6 +2087,24 @@ serve(async (req) => {
         // otra hora. El correo personal (gmail, hotmail…) no cuenta como empresa.
         // (La comprobación del ritmo por empresa se hace al principio del bucle; aquí sólo la clave.)
         const claveEmpresa = `${campaign.user_id}|${leadDomain}`;
+
+        // ATAJOS SIN BASE DE DATOS (02-11-2026). La consulta de abajo (¿ha respondido?) se hacía para cada
+        // lead aunque después no hubiera buzón con cupo: campañas con los buzones llenos (SEO INNOVA GRANDE,
+        // Genera 2026, PSICOLOGOS) revisaban 300 leads por pasada para nada y se comían el tiempo de las
+        // demás (la tarde del 02-11 cada pasada sólo llegaba a 15 de 50 campañas). Mismo resultado, antes.
+        {
+          const asignado = (cl as any).assigned_account_id as string | null | undefined;
+          if (currentStepIndex === 0 && !asignado && sinBuzonParaNuevos) { totalSkipped++; noteSkip(2258); continue; }
+          if (currentStepIndex > 0 && asignado) {
+            const propio = accounts.find((a: any) => a.id === asignado);
+            if (propio && propio.sent_today >= getEffectiveLimit(propio)) {
+              // Igual que abajo: sólo un seguimiento con >2 días de retraso puede salir de un buzón hermano.
+              const dueMs0 = cl.last_sent_at ? Date.parse(cl.last_sent_at) + (step.delay_days || 0) * 86_400_000 : NaN;
+              const overdue0 = Number.isFinite(dueMs0) && now.getTime() - dueMs0 > 2 * 86_400_000;
+              if (!overdue0) { totalSkipped++; noteSkip(2213); continue; }
+            }
+          }
+        }
 
         // Check stop_on_reply
         if (stopOnReply) {
@@ -2321,7 +2342,10 @@ serve(async (req) => {
         // Rotation pool empty → no NEW lead can send, but keep scanning: bound
         // follow-up leads further down fetch their account directly and may still
         // be sendable (breaking here silently skipped them for the whole tick).
-        if (!account) { totalSkipped++; noteSkip(2258); continue; }
+        if (!account) {
+          if (currentStepIndex === 0) sinBuzonParaNuevos = true;
+          totalSkipped++; noteSkip(2258); continue;
+        }
 
         // Per-tick burst protection: don't allow a single account to send too
         // many emails in one cron invocation, even if it has remaining daily
