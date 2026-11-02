@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle, XCircle, Loader2, Pencil, RefreshCw, Trash2, Wand2, ShieldCheck, ShieldAlert, ShieldQuestion,
-  Server, X, Plus, TrendingUp,
+  Server, X, Plus, TrendingUp, Clock,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -242,6 +242,15 @@ export default function AccountsTable(p: Props) {
                       const live = ic && !ic.loading ? ic : null;
                       const connected = live ? live.ok === true : account.status === "connected";
                       const failed = live ? (live.ok === false && !live.unverified) : account.status === "error";
+                      // Pausa automática del motor tras fallos seguidos del servidor (02-11-2026): vuelve sola.
+                      const pausaHasta = account.backoff_until && Date.parse(account.backoff_until) > Date.now() ? new Date(account.backoff_until) : null;
+                      if (connected && pausaHasta) {
+                        return (
+                          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-warning" title={account.last_error || "El servidor falló varias veces seguidas; el motor la reintenta sola."}>
+                            <Clock className="h-3.5 w-3.5" /> En pausa hasta {pausaHasta.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        );
+                      }
                       if (connected) {
                         return <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold text-success"><CheckCircle className="h-3.5 w-3.5" /> Conectada</span>;
                       }

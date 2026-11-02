@@ -4,7 +4,7 @@ import { replaceVariables, detectTemplateLanguage } from "../_shared/personalize
 import { sendableVariantIdx } from "../_shared/pm-guard.ts";
 import { plainTextBody } from "../_shared/text-only.ts";
 import { fixBlockedLinks } from "../_shared/link-guard.ts";
-import { chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
+import { backoffMinutes, BACKOFF_MAX_LEVEL, inBackoff, chunkIds, paceWindow, perTickCampaignCap, sortBySentToday, zonedMidnightIso } from "../_shared/engine-scale.ts";
 import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, puedeEscribirEmpresa, type EstadoEmpresa } from "../_shared/company-pace.ts";
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
@@ -1507,6 +1507,8 @@ serve(async (req) => {
       if (accountsFetchFailed) continue;
       // Pausa por bloqueo de login de IONOS: fuera sus buzones (los demás proveedores siguen).
       if (ionosPaused()) accounts = accounts.filter((a: any) => !isIonosHost(a.smtp_host));
+      // Pausa automática por fallos del servidor (02-11-2026): el buzón vuelve solo cuando se cumple.
+      accounts = accounts.filter((a: any) => !inBackoff(a));
       accounts = sortBySentToday(accounts);
 
       if (!accounts?.length) continue;
@@ -2249,7 +2251,7 @@ serve(async (req) => {
               .eq("id", boundId)
               .eq("status", "connected")
               .maybeSingle();
-            account = origAcc;
+            account = origAcc && !inBackoff(origAcc) ? origAcc : null;
           }
           if (!account) {
             // Bound account is DISCONNECTED (auth_failed / paused). Preserving the original
@@ -2749,6 +2751,10 @@ serve(async (req) => {
           account.last_send_at = now.toISOString();
           accountSendsThisTick[account.id] = (accountSendsThisTick[account.id] || 0) + 1;
           accountFailStreak[account.id] = 0; // healthy send → reset the breaker
+          if (account.backoff_level) {
+            account.backoff_level = 0; account.backoff_until = null;
+            await adminClient.from("email_accounts").update({ backoff_level: 0, backoff_until: null }).eq("id", account.id);
+          }
 
           // Update domain sent count
           if (domainLimitEnabled) {
@@ -2804,6 +2810,23 @@ serve(async (req) => {
             const bidx = accounts.findIndex((a: any) => a.id === account.id);
             if (bidx >= 0) accounts.splice(bidx, 1);
             console.warn(`Circuit breaker: ${account.email} backed off for this run after ${accountFailStreak[account.id]} consecutive failures`);
+            // PAUSA AUTOMÁTICA ENTRE PASADAS (02-11-2026, como Smartlead/Instantly): si los fallos son del
+            // servidor (tiempo de espera, 4xx, remitente rechazado…), el buzón se aparta 15 min (luego 30,
+            // 60, 120) y vuelve solo. Antes sólo se apartaba el resto de la pasada y a la siguiente volvía
+            // a fallar 3 veces más. Un rebote del destinatario ('hard') o una contraseña mala ('auth')
+            // no cuentan: tienen su propio trato.
+            if (["rate", "soft", "unknown", "sender"].includes(String(errClass))) {
+              const level = Math.min((Number(account.backoff_level) || 0) + 1, BACKOFF_MAX_LEVEL);
+              const mins = backoffMinutes(level);
+              const until = new Date(now.getTime() + mins * 60_000).toISOString();
+              account.backoff_level = level; account.backoff_until = until;
+              const { error: boErr } = await adminClient.from("email_accounts").update({
+                backoff_until: until, backoff_level: level,
+                last_error: `Pausa automática de ${mins} min tras ${accountFailStreak[account.id]} fallos seguidos del servidor: ${String(result.error || "").slice(0, 160)}`,
+              }).eq("id", account.id);
+              if (boErr) console.error(`backoff ${account.email}: ${boErr.message}`);
+              else console.warn(`[pausa automática] ${account.email} ${mins} min (nivel ${level}) hasta ${until}`);
+            }
           }
 
           // Special bypass: never disconnect Dekano accounts (keep campaigns running)

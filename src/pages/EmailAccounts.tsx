@@ -83,7 +83,7 @@ const ACCOUNT_LIST_COLS = [
   "warmup_enabled", "warmup_day", "warmup_limit", "warmup_increment", "warmup_started_at",
   "warmup_score", "warmup_status_instantly", "warmup_synced_at",
   "last_health_check", "created_at", "updated_at",
-  "last_uid_inbox", "last_uid_sent", "last_error", "last_sync", "notes",
+  "last_uid_inbox", "last_uid_sent", "last_error", "last_sync", "notes", "backoff_until",
   "imap_password", "smtp_password",
 ].join(", ");
 

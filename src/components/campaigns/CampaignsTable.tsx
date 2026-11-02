@@ -415,9 +415,9 @@ export default function CampaignsTable({
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-[15px] font-semibold text-foreground">{campaign.name}</span>
-                          <span className={cn(STATUS_PILL_BASE, pill.className)}>
+                          <span className={cn(STATUS_PILL_BASE, pill.className)} title={status === "paused" && (campaign as any).auto_paused_reason ? (campaign as any).auto_paused_reason : undefined}>
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
-                            {pill.label}
+                            {status === "paused" && (campaign as any).auto_paused_reason ? "Pausada por rebotes" : pill.label}
                           </span>
                           {/* Por qué una "Activa" no envía (sin buzones, fuera de horario, tope…). */}
                           <CampaignHealthChip reason={campaignHealthReason(campaign.status, healthFor?.(campaign.id))} />

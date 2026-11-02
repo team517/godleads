@@ -39,6 +39,19 @@ export function perTickCampaignCap(campaignDailyLimit: number, windowMinutes: nu
  * 600 uuids → 200, 900 → HTTP 400) y una campaña con ~900 buzones se quedaba SIN cuentas y no
  * enviaba nada, sin error. 200 uuids ≈ 7 KB: holgado.
  */
+/** Pausa automática de un buzón tras fallos seguidos del servidor (02-11-2026): 15, 30, 60 y
+ *  120 min como mucho. Vuelve solo al cumplirse; un envío bueno pone el nivel a cero. */
+export const BACKOFF_MAX_LEVEL = 4;
+export function backoffMinutes(level: number): number {
+  const l = Math.min(Math.max(1, Math.floor(Number(level) || 1)), BACKOFF_MAX_LEVEL);
+  return 15 * Math.pow(2, l - 1);
+}
+/** ¿Está el buzón en pausa automática ahora mismo? */
+export function inBackoff(acc: { backoff_until?: string | null }, nowMs = Date.now()): boolean {
+  const t = acc?.backoff_until ? Date.parse(acc.backoff_until) : NaN;
+  return Number.isFinite(t) && t > nowMs;
+}
+
 export const IN_CHUNK = 200;
 export function chunkIds<T>(ids: T[], size: number = IN_CHUNK): T[][] {
   const n = Math.max(1, Math.floor(size) || IN_CHUNK);
