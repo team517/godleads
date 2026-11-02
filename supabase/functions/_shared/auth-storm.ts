@@ -21,6 +21,13 @@ export function isIonosHost(host: string | null | undefined): boolean {
   return /(^|\.)ionos\.[a-z.]+$|(^|\.)1and1\.[a-z.]+$|(^|\.)ionos$/i.test(String(host || "").trim());
 }
 
+/** El login de IONOS falla en masa con "454 Temporary authentication failure" (02-11-2026: 399
+ *  buzones durante una hora). No es la contraseña (no desconecta la cuenta: es 'rate'), pero sí un
+ *  bloqueo de login como el 535: cuenta para el freno. */
+export function isIonosTempAuthError(err: string | null | undefined): boolean {
+  return /454|temporary authentication failure/i.test(String(err || ""));
+}
+
 export type AuthFailure = { account_id: string | null; user_id: string | null };
 
 /** ¿Estos fallos 535 recientes son un bloqueo del proveedor y no contraseñas malas? */

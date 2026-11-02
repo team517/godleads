@@ -9,7 +9,7 @@ import { apuntarEnvioEmpresa, CUPO_EMPRESA_DIA, esEmpresa, HUECO_EMPRESA_MIN, pu
 import { cronOrServiceAuthorised, unauthorized } from "../_shared/cron-auth.ts";
 import { assertPublicMailHost } from "../_shared/host-guard.ts";
 import { domainAcceptsMail } from "../_shared/recipient-check.ts";
-import { isAuthStorm, isIonosHost, pauseActive, pauseUntilIso, STORM_FLAG_KEY, STORM_WINDOW_MIN } from "../_shared/auth-storm.ts";
+import { isAuthStorm, isIonosHost, isIonosTempAuthError, pauseActive, pauseUntilIso, STORM_FLAG_KEY, STORM_WINDOW_MIN } from "../_shared/auth-storm.ts";
 import { allocateMix, interleave, laneAllowance, resolveNewPct, roomForNewLead, type MixPlan } from "../_shared/lead-mix.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 
@@ -2810,8 +2810,9 @@ serve(async (req) => {
                 .update({ assigned_account_id: null })
                 .eq("id", cl.id).eq("current_step", 0).eq("assigned_account_id", account.id);
             }
-          } else if (errClass === 'auth' && isIonosHost(account.smtp_host) && (ionosPaused() || await (async () => {
-            // ¿Bloqueo de IONOS? Muchos buzones de varios clientes con 535 en pocos minutos.
+          } else if ((errClass === 'auth' || isIonosTempAuthError(result.error)) && isIonosHost(account.smtp_host) && (ionosPaused() || await (async () => {
+            // ¿Bloqueo de IONOS? Muchos buzones de varios clientes con 535 (o el 454 "Temporary authentication
+            // failure" del 02-11-2026) en pocos minutos.
             try {
               const { data: recent } = await adminClient.rpc("ionos_auth_failures", { p_minutes: STORM_WINDOW_MIN });
               const fails = [...((recent || []) as { account_id: string; user_id: string }[]), { account_id: account.id, user_id: account.user_id }];
@@ -2819,7 +2820,7 @@ serve(async (req) => {
               ionosPauseUntil = pauseUntilIso();
               await adminClient.from("engine_flags").upsert({
                 key: STORM_FLAG_KEY, until: ionosPauseUntil, updated_at: new Date().toISOString(),
-                reason: `535 en ${new Set(fails.map((f) => f.account_id)).size} buzones de ${new Set(fails.map((f) => f.user_id)).size} clientes`,
+                reason: `login rechazado (535/454) en ${new Set(fails.map((f) => f.account_id)).size} buzones de ${new Set(fails.map((f) => f.user_id)).size} clientes`,
               }, { onConflict: "key" });
               // Las que se marcaron justo antes por este mismo bloqueo vuelven a "connected".
               const victims = [...new Set(fails.map((f) => f.account_id).filter(Boolean))].filter((id) => id !== account.id);
@@ -2827,7 +2828,7 @@ serve(async (req) => {
                 await adminClient.from("email_accounts").update({ status: "connected" })
                   .in("id", victims).eq("status", "auth_failed");
               }
-              console.warn(`[freno IONOS] bloqueo de login detectado (${fails.length} fallos 535 en ${STORM_WINDOW_MIN} min): pausa hasta ${ionosPauseUntil}, ${victims.length} cuentas devueltas`);
+              console.warn(`[freno IONOS] bloqueo de login detectado (${fails.length} fallos 535/454 en ${STORM_WINDOW_MIN} min): pausa hasta ${ionosPauseUntil}, ${victims.length} cuentas devueltas`);
               return true;
             } catch (e) {
               console.error("[freno IONOS] no se pudo comprobar:", (e as Error).message);

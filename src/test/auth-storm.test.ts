@@ -34,3 +34,13 @@ describe("auth-storm", () => {
     expect(pauseActive(null, now)).toBe(false);
   });
 });
+
+describe("454 de IONOS (02-11-2026)", () => {
+  it("el 454 'Temporary authentication failure' cuenta para el freno; un 535 o un rebote no son este caso", async () => {
+    const { isIonosTempAuthError } = await import("../../supabase/functions/_shared/auth-storm");
+    expect(isIonosTempAuthError("Auth failed: 454 Temporary authentication failure")).toBe(true);
+    expect(isIonosTempAuthError("Auth failed: 535 Authentication credentials invalid")).toBe(false);
+    expect(isIonosTempAuthError("Recipient rejected: 550 mailbox unavailable")).toBe(false);
+    expect(isIonosTempAuthError(null)).toBe(false);
+  });
+});
