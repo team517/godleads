@@ -40,6 +40,21 @@ interface Props {
 }
 
 const ANCHOR_RE = /(<a\s+[^>]*href=["'][^"']*["'][^>]*>[\s\S]*?<\/a>)/gi;
+const URL_RE = /(https?:\/\/[^\s<>"')\]]+)/gi;
+
+/** Una URL suelta → `<a href="url">url</a>` (03-11-2026: "que al pegar un enlace sea clicable").
+ *  Las que ya van dentro de un <a> no se tocan; la puntuación final (". ," "…") queda fuera. */
+export function linkifySource(src: string): string {
+  return (src || "")
+    .split(ANCHOR_RE)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(URL_RE, (u) => {
+      const m = /^(.*?)([.,;:!?)]+)$/.exec(u);
+      const url = m ? m[1] : u;
+      const tail = m ? m[2] : "";
+      return url ? `<a href="${url}">${url}</a>${tail}` : u;
+    })))
+    .join("");
+}
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** Texto fuente → HTML para pintar: los <a> se vuelven enlaces reales, el resto se escapa
@@ -157,7 +172,7 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
     },
     getSource: () => {
       const el = elRef.current;
-      return el ? domToSource(el) : "";
+      return el ? linkifySource(domToSource(el)) : "";
     },
     isEmpty: () => {
       const el = elRef.current;
@@ -172,9 +187,42 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
     const tpl = document.createElement("template");
-    tpl.innerHTML = sourceToHtml(text);
+    tpl.innerHTML = sourceToHtml(linkifySource(text));
     saveRange();
     insertNodes(Array.from(tpl.content.childNodes));
+  };
+
+  // Escribir una URL y pulsar espacio o Intro: se convierte en enlace en el sitio (como en
+  // Gmail). Al enviar, getSource() enlaza igualmente cualquier URL que se haya quedado suelta.
+  const autolinkBeforeCaret = () => {
+    const el = elRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || !sel.rangeCount) return;
+    const r = sel.getRangeAt(0);
+    if (!r.collapsed) return;
+    const node = r.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE || !el.contains(node) || (node.parentElement && node.parentElement.closest("a"))) return;
+    const textNode = node as Text;
+    const before = (textNode.nodeValue || "").slice(0, r.startOffset);
+    const m = /(https?:\/\/[^\s<>"')\]]+)$/i.exec(before);
+    if (!m) return;
+    const trail = /[.,;:!?)]+$/.exec(m[1])?.[0] || "";
+    const url = m[1].slice(0, m[1].length - trail.length);
+    if (!url) return;
+    const urlNode = textNode.splitText(r.startOffset - m[1].length);
+    const rest = urlNode.splitText(url.length);
+    const a = document.createElement("a");
+    a.href = url; a.title = url; a.textContent = url;
+    urlNode.parentNode?.replaceChild(a, urlNode);
+    const nr = document.createRange();
+    nr.setStart(rest, Math.min(trail.length, rest.length));
+    nr.collapse(true);
+    sel.removeAllRanges(); sel.addRange(nr);
+    lastRange.current = nr.cloneRange();
+    notifyEmpty();
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === " " || e.key === "Enter") autolinkBeforeCaret();
   };
 
   // Clic en un enlace → se abre en otra pestaña (en un contentEditable el navegador no
@@ -203,6 +251,7 @@ const RichReplyEditor = forwardRef<RichReplyHandle, Props>(function RichReplyEdi
       suppressContentEditableWarning
       data-placeholder={placeholder}
       onInput={notifyEmpty}
+      onKeyDown={onKeyDown}
       onPaste={onPaste}
       onClick={onClick}
       onKeyUp={saveRange}

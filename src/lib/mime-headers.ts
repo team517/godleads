@@ -254,9 +254,24 @@ export function hasHtmlMarkup(text: string | null | undefined): boolean {
  *                           "<2 horas" cannot swallow the rest of the sentence
  * A blank line starts a new paragraph; a single line break becomes <br>.
  */
+const BARE_URL_RE = /(https?:\/\/[^\s<>"')\]]+)/gi;
+/** Una URL suelta en el HTML → enlace clicable (03-11-2026). Lo que ya va dentro de una etiqueta
+ *  (href="…", src="…") o de un <a>…</a> no se toca; la puntuación final queda fuera del enlace. */
+export function linkifyBareUrls(html: string): string {
+  return (html || "")
+    .split(/(<a\b[^>]*>[\s\S]*?<\/a>|<[^>]+>)/gi)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(BARE_URL_RE, (u) => {
+      const m = /^(.*?)([.,;:!?)]+)$/.exec(u);
+      const url = m ? m[1] : u;
+      const tail = m ? m[2] : "";
+      return url ? `<a href="${url}" style="color:#2563eb;text-decoration:underline">${url}</a>${tail}` : u;
+    })))
+    .join("");
+}
+
 export function textToHtmlBody(text: string | null | undefined): string {
   const raw = text || "";
-  if (hasBlockMarkup(raw)) return raw;
+  if (hasBlockMarkup(raw)) return linkifyBareUrls(raw);
   const keepInline = hasInlineMarkup(raw);
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const normalized = raw.replace(/\r\n?/g, "\n");
@@ -291,12 +306,12 @@ export function textToHtmlBody(text: string | null | undefined): string {
 
   // Explicit margin so the spacing is identical in every client instead of
   // depending on each one's default <p> margin.
-  return groups
+  return linkifyBareUrls(groups
     .map((g) => {
       const inner = g.map((line) => (keepInline ? line : esc(line))).join("<br>");
       return `<p style="margin:0 0 14px">${inner.replace(/\n/g, "<br>")}</p>`;
     })
-    .join("");
+    .join(""));
 }
 
 /**

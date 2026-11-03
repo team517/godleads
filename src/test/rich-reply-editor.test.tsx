@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
-import RichReplyEditor, { domToSource, sourceToHtml, type RichReplyHandle } from "@/components/unibox/RichReplyEditor";
+import RichReplyEditor, { domToSource, linkifySource, sourceToHtml, type RichReplyHandle } from "@/components/unibox/RichReplyEditor";
 
 describe("RichReplyEditor — fuente ↔ pintado", () => {
   it("pinta un <a> como enlace real y escapa el resto", () => {
@@ -62,5 +62,41 @@ describe("RichReplyEditor — componente (no controlado)", () => {
     fireEvent.click(screen.getByRole("link", { name: "web" }));
     expect(open).toHaveBeenCalledWith("https://onepulso.online", "_blank", "noopener,noreferrer");
     open.mockRestore();
+  });
+});
+
+
+/* Enlaces automáticos (03-11-2026): una URL pegada o escrita se vuelve clicable sola. */
+describe("RichReplyEditor — enlaces automáticos", () => {
+  it("linkifySource enlaza las URL sueltas y respeta las que ya son enlace y la puntuación", () => {
+    expect(linkifySource("Os dejo mi calendario https://calendly.com/onepulso.\nGracias")).toBe(
+      'Os dejo mi calendario <a href="https://calendly.com/onepulso">https://calendly.com/onepulso</a>.\nGracias');
+    const ya = 'ver <a href="https://x.es">mi agenda</a> y https://y.es/p?a=1&b=2';
+    expect(linkifySource(ya)).toBe('ver <a href="https://x.es">mi agenda</a> y <a href="https://y.es/p?a=1&b=2">https://y.es/p?a=1&b=2</a>');
+    expect(linkifySource("sin enlaces")).toBe("sin enlaces");
+  });
+
+  it("al pegar texto con una URL, queda como enlace y getSource la devuelve con <a>", () => {
+    const ref = createRef<RichReplyHandle>();
+    render(<RichReplyEditor ref={ref} id="e" />);
+    const el = screen.getByRole("textbox");
+    act(() => { el.focus(); });
+    fireEvent.paste(el, { clipboardData: { getData: () => "Reserva aquí: https://cal.com/xavier-falco-hszeeb/15min gracias" } });
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("https://cal.com/xavier-falco-hszeeb/15min");
+    expect(ref.current!.getSource()).toContain('<a href="https://cal.com/xavier-falco-hszeeb/15min">https://cal.com/xavier-falco-hszeeb/15min</a> gracias');
+  });
+
+  it("escribir una URL y pulsar espacio la convierte en enlace en el sitio", () => {
+    const ref = createRef<RichReplyHandle>();
+    render(<RichReplyEditor ref={ref} id="e2" />);
+    const el = screen.getByRole("textbox");
+    el.textContent = "mira https://onepulso.com";
+    const range = document.createRange();
+    range.setStart(el.firstChild!, (el.firstChild as Text).length);
+    range.collapse(true);
+    const sel = window.getSelection()!; sel.removeAllRanges(); sel.addRange(range);
+    fireEvent.keyDown(el, { key: " " });
+    expect(el.querySelector("a")?.getAttribute("href")).toBe("https://onepulso.com");
+    expect(domToSource(el)).toBe('mira <a href="https://onepulso.com">https://onepulso.com</a>');
   });
 });

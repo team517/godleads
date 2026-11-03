@@ -312,3 +312,22 @@ describe("textToHtmlBody — la estructura del correo que ve el lead", () => {
     expect(textToHtmlBody(null)).toBe("");
   });
 });
+
+
+/* URL sueltas en el cuerpo → enlace clicable (03-11-2026). */
+describe("textToHtmlBody — enlaces automáticos", () => {
+  it("texto plano con una URL", () => {
+    const html = textToHtmlBody("Os dejo mi calendario\nhttps://calendly.com/onepulso\nQuedo atenta.");
+    expect(html).toContain('<a href="https://calendly.com/onepulso" style="color:#2563eb;text-decoration:underline">https://calendly.com/onepulso</a>');
+    expect((html.match(/<a /g) || []).length).toBe(1);
+  });
+  it("no toca los enlaces que ya existen ni los href", () => {
+    const html = textToHtmlBody('Reserva <a href="https://cal.com/x/15min">aquí</a> o en https://cal.com/x/15min.');
+    expect((html.match(/<a /g) || []).length).toBe(2);
+    expect(html).toContain('<a href="https://cal.com/x/15min" style="color:#2563eb;text-decoration:underline">https://cal.com/x/15min</a>.');
+  });
+  it("tampoco un HTML ya maquetado con imágenes", () => {
+    const html = textToHtmlBody('<p>Hola <img src="https://img.es/a.png"> ver https://web.es</p>');
+    expect(html).toBe('<p>Hola <img src="https://img.es/a.png"> ver <a href="https://web.es" style="color:#2563eb;text-decoration:underline">https://web.es</a></p>');
+  });
+});
