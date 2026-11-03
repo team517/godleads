@@ -26,7 +26,7 @@ import CampaignsTable, { CampaignHealthChip } from "@/components/campaigns/Campa
 /** Lo que la lista y sus acciones usan de cada campaña (tabla, tarjetas, duplicar, remix, ficha).
  *  Antes era `*`: cada visita bajaba también la firma HTML y toda la configuración de envío de
  *  cada campaña, que la ficha ya lee por su cuenta cuando se abre. */
-const CAMPAIGN_LIST_COLS = "id, user_id, name, status, created_at, updated_at, manager_id, client_id, account_tags, daily_limit, send_start_hour, send_end_hour, timezone, send_days, stop_on_reply, auto_paused_at, auto_paused_reason";
+const CAMPAIGN_LIST_COLS = "id, user_id, name, status, created_at, updated_at, manager_id, client_id, account_tags, daily_limit, send_start_hour, send_end_hour, timezone, send_days, stop_on_reply, auto_paused_at, auto_paused_reason, admin_paused";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   active: { label: "Activa", variant: "default" },
@@ -303,6 +303,8 @@ export default function Campaigns() {
   };
 
   const handleStatusToggle = async (campaign: any) => {
+    // Pausada por el administrador (Portal de Clientes): sólo él la reanuda. La base lo impide igual.
+    if (campaign.admin_paused) { toast.error("Esta campaña está pausada por el administrador. Contacta con tu responsable de cuenta."); return; }
     const newStatus = campaign.status === "active" ? "paused" : "active";
     if (newStatus === "active") {
       // Read account_tags FRESH from the DB. The in-memory campaign object comes

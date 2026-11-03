@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
-import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound, FileText } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Pencil, ArrowLeft, Building2, Upload, Eye, EyeOff, Copy, Check, FlaskConical, FileBarChart, Send, KeyRound, FileText, PauseCircle, PlayCircle } from "lucide-react";
 import ReportTestDialog from "@/components/reports/ReportTestDialog";
 import MyReportsCard from "@/components/reports/MyReportsCard";
 import { extractLogoColor } from "@/lib/logoColor";
@@ -35,6 +36,7 @@ type Client = {
   id: string; email: string; full_name: string | null; company_name: string | null;
   allowed_routes: string[] | null; logo_url: string | null; brand_color: string | null;
   client_password: string | null; created_at: string;
+  paused_by_admin_at?: string | null;
   report_enabled?: boolean; report_from_account_id?: string | null; report_low_contacts_threshold?: number | null;
   report_to_email?: string | null;
   ai_reply_enabled?: boolean; ai_reply_prompt?: string | null; ai_reply_calendar_url?: string | null; ai_reply_mode?: string | null;
@@ -126,7 +128,7 @@ function LogoField({ value, onChange, onColor }: { value: string; onChange: (url
   );
 }
 
-function ClientRow({ c, onEdit, onDelete, onTest, onCopys, canDelete }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void; canDelete: boolean }) {
+function ClientRow({ c, onEdit, onDelete, onTest, onCopys, onPause, canDelete }: { c: Client; onEdit: () => void; onDelete: () => void; onTest: () => void; onCopys: () => void; onPause: () => void; canDelete: boolean }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string, key: string) => {
@@ -178,6 +180,11 @@ function ClientRow({ c, onEdit, onDelete, onTest, onCopys, canDelete }: { c: Cli
               )}
             </span>
             <span className="text-muted-foreground">{(c.allowed_routes || []).length} secciones</span>
+            {c.paused_by_admin_at && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold text-warning" title={`Pausada el ${new Date(c.paused_by_admin_at).toLocaleString("es-ES")}`}>
+                <PauseCircle className="h-3 w-3" /> Pausada por el admin
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -185,6 +192,9 @@ function ClientRow({ c, onEdit, onDelete, onTest, onCopys, canDelete }: { c: Cli
         {c.brand_color && <span className="h-4 w-4 rounded-full border" style={{ background: c.brand_color }} title={c.brand_color} />}
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onTest} title="Generar un informe de prueba con tus campañas"><FlaskConical className="h-3.5 w-3.5 text-primary" /> Probar informe</Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onCopys} title="Descargar o enviar al cliente el PDF con los copys de sus campañas"><FileText className="h-3.5 w-3.5 text-primary" /> Copys</Button>
+        <Button size="sm" variant="ghost" className={cn("h-8 gap-1 text-xs", c.paused_by_admin_at ? "text-success" : "text-warning")} onClick={onPause} title={c.paused_by_admin_at ? "Reanudar la cuenta: sus campañas vuelven al estado que tenían" : "Pausar la cuenta: todas sus campañas quedan pausadas y el cliente no puede entrar"}>
+          {c.paused_by_admin_at ? <><PlayCircle className="h-3.5 w-3.5" /> Reanudar</> : <><PauseCircle className="h-3.5 w-3.5" /> Pausar cuenta</>}
+        </Button>
         <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
         {canDelete && <Button size="sm" variant="ghost" className="h-8 text-destructive hover:text-destructive" onClick={onDelete}><Trash2 className="h-3.5 w-3.5" /></Button>}
       </div>
@@ -365,6 +375,19 @@ export default function ClientPortal() {
     })();
   }, [user]);
 
+  // Pausar / reanudar la cuenta de un cliente (03-11-2026): la base pausa todas sus campañas con la
+  // marca "Pausada por el admin" y el cliente ve sólo la pantalla de cuenta pausada.
+  const togglePause = async (c: Client) => {
+    const pausar = !c.paused_by_admin_at;
+    if (!window.confirm(pausar
+      ? `¿Pausar la cuenta de ${c.company_name || c.email}? Todas sus campañas quedarán pausadas y no podrá entrar hasta que la reanudes.`
+      : `¿Reanudar la cuenta de ${c.company_name || c.email}? Sus campañas volverán al estado que tenían.`)) return;
+    const { data, error } = await (supabase as any).rpc("admin_pause_account", { p_user: c.id, p_pause: pausar, p_reason: null });
+    if (error) { toast.error(`No se pudo ${pausar ? "pausar" : "reanudar"}: ${error.message}`); return; }
+    toast.success(pausar ? `Cuenta pausada · ${data?.campaigns ?? 0} campaña(s) pausadas por el admin` : `Cuenta reanudada · ${data?.campaigns ?? 0} campaña(s) devueltas a su estado`);
+    void loadClients();
+  };
+
   const loadClients = useCallback(async () => {
     setLoading(true);
     const res = await callAdmin({ action: "list_clients" });
@@ -478,7 +501,7 @@ export default function ClientPortal() {
           ) : (
             <div className="divide-y divide-border/60">
               {clients.map((c) => (
-                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => setCopysClient(c)} canDelete={isFullAdmin} />
+                <ClientRow key={c.id} c={c} onEdit={() => setEditing(c)} onDelete={() => removeClient(c)} onTest={() => setTesting(c)} onCopys={() => setCopysClient(c)} onPause={() => togglePause(c)} canDelete={isFullAdmin} />
               ))}
             </div>
           )}

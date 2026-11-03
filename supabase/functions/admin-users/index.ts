@@ -299,7 +299,7 @@ serve(async (req) => {
       const { data: authUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 });
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode, onboarding_slug, onboarding_status");
+        .select("user_id, full_name, company_name, allowed_routes, logo_url, brand_color, client_password, created_at, is_client_manager, report_enabled, report_from_account_id, report_low_contacts_threshold, report_to_email, ai_reply_enabled, ai_reply_prompt, ai_reply_calendar_url, ai_reply_mode, onboarding_slug, onboarding_status, paused_by_admin_at");
       const pMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
       const clients = (authUsers?.users || [])
         .map((u: any) => {
@@ -307,6 +307,7 @@ serve(async (req) => {
           if (!p || !p.allowed_routes || p.allowed_routes.length === 0) return null;
           if (p.is_client_manager) return null; // a client manager is staff, not a client
           return {
+            paused_by_admin_at: p.paused_by_admin_at ?? null,
             id: u.id, email: u.email, created_at: u.created_at,
             full_name: p.full_name, company_name: p.company_name,
             allowed_routes: p.allowed_routes, logo_url: p.logo_url, brand_color: p.brand_color,

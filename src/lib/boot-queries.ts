@@ -59,7 +59,7 @@ export function clearSharedQueries(): void {
 
 /** Columns both boot readers of `profiles` need, as ONE superset so they can share the request. */
 export const PROFILE_BOOT_COLS =
-  "full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager, client_login_of, created_at";
+  "full_name, avatar_url, company_name, contact_email, allowed_routes, birthday, coins, logo_url, brand_color, is_client_manager, client_login_of, created_at, paused_by_admin_at, paused_by_admin_reason";
 
 export const profileQueryKey = (userId: string) => `profiles:${userId}`;
 export const roleQueryKey = (userId: string) => `user_roles:${userId}`;

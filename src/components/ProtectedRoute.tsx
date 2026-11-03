@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
+import { PausedByAdminScreen } from "@/components/PausedByAdminScreen";
 import { isAgencyAccount } from "@/lib/access";
 import { useWelcomeGate } from "@/hooks/useWelcomeGate";
 import { WELCOME_PATH, shouldShowWelcome } from "@/lib/first-run";
@@ -51,6 +52,12 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // can manage their account. (subscribed is double-checked so a just-paid user is never blocked.)
   if (trialExpired && !subscribed && location.pathname !== "/settings") {
     return <TrialExpiredScreen />;
+  }
+
+  // Cuenta pausada por el administrador (03-11-2026): el cliente no entra a nada, ni a /settings.
+  // El equipo (admin, gestores, support@…) nunca se bloquea a sí mismo.
+  if (profile.paused_by_admin_at && !isAgencyAccount(user.email ?? null, !!profile.is_client_manager)) {
+    return <PausedByAdminScreen reason={profile.paused_by_admin_reason} />;
   }
 
 

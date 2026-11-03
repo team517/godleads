@@ -415,9 +415,9 @@ export default function CampaignsTable({
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-[15px] font-semibold text-foreground">{campaign.name}</span>
-                          <span className={cn(STATUS_PILL_BASE, pill.className)} title={status === "paused" && (campaign as any).auto_paused_reason ? (campaign as any).auto_paused_reason : undefined}>
+                          <span className={cn(STATUS_PILL_BASE, pill.className)} title={(campaign as any).admin_paused ? "Pausada por el administrador: sólo él puede reanudarla" : status === "paused" && (campaign as any).auto_paused_reason ? (campaign as any).auto_paused_reason : undefined}>
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
-                            {status === "paused" && (campaign as any).auto_paused_reason ? "Pausada por rebotes" : pill.label}
+                            {(campaign as any).admin_paused ? "Pausada por el admin" : status === "paused" && (campaign as any).auto_paused_reason ? "Pausada por rebotes" : pill.label}
                           </span>
                           {/* Por qué una "Activa" no envía (sin buzones, fuera de horario, tope…). */}
                           <CampaignHealthChip reason={campaignHealthReason(campaign.status, healthFor?.(campaign.id))} />
@@ -517,7 +517,8 @@ export default function CampaignsTable({
                         type="button"
                         className="soft-action"
                         aria-label={campaign.status === "active" ? `Pausar la campaña ${campaign.name}` : `Activar la campaña ${campaign.name}`}
-                        title={campaign.status === "active" ? "Pausar" : "Activar"}
+                        title={campaign.admin_paused ? "Pausada por el administrador" : campaign.status === "active" ? "Pausar" : "Activar"}
+                        disabled={!!campaign.admin_paused}
                         onClick={() => onToggleStatus(campaign)}
                       >
                         {campaign.status === "active" ? <Pause className="h-[17px] w-[17px]" /> : <Play className="h-[17px] w-[17px]" />}

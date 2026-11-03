@@ -21,6 +21,9 @@ interface ProfileData {
   /** Marca de "esta cuenta es sólo el acceso de mirar de un cliente" (id del cliente).
    *  La congela RLS: nadie se la pone ni se la quita a sí mismo. */
   client_login_of: string | null;
+  /** Cuenta pausada por el administrador (Portal de Clientes): no entra a nada. */
+  paused_by_admin_at: string | null;
+  paused_by_admin_reason: string | null;
 }
 
 interface ProfileContextType {
@@ -36,7 +39,7 @@ const ProfileContext = createContext<ProfileContextType | undefined>(undefined);
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [profile, setProfile] = useState<ProfileData>({ full_name: null, avatar_url: null, company_name: null, contact_email: null, allowed_routes: null, birthday: null, coins: 0, infiniteCoins: false, logo_url: null, brand_color: null, is_client_manager: false, client_login_of: null });
+  const [profile, setProfile] = useState<ProfileData>({ full_name: null, avatar_url: null, company_name: null, contact_email: null, allowed_routes: null, birthday: null, coins: 0, infiniteCoins: false, logo_url: null, brand_color: null, is_client_manager: false, client_login_of: null, paused_by_admin_at: null, paused_by_admin_reason: null });
   const [loading, setLoading] = useState(true);
 
   // `shared`: the boot read is shared with SubscriptionContext (same row, one request — see
@@ -72,6 +75,8 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         company_name: data.company_name,
         contact_email: data.contact_email,
         allowed_routes: (data as any).allowed_routes,
+        paused_by_admin_at: (data as any).paused_by_admin_at ?? null,
+        paused_by_admin_reason: (data as any).paused_by_admin_reason ?? null,
         birthday: (data as any).birthday ?? null,
         coins: (data as any).coins ?? 0,
         infiniteCoins: INFINITE_COINS_EMAILS.includes(contactEmail),
