@@ -402,7 +402,12 @@ Deno.serve(async (req) => {
           aiFailures++;
           // A transient failure leaves the row UNMARKED (next tick retries); a malformed answer
           // keeps the rule verdict — asking again at temperature 0 would not change it.
-          if (r.transient) { deferred.add(batch[k].m.id); consecutiveTransient++; }
+          // TOPE DE ESPERA (03-11-2026): un fallo pasajero del modelo aplaza la fila al siguiente minuto,
+          // pero si lleva más de 8 min sin resolverse vale el veredicto de las reglas y se avisa ya.
+          // Medido: una respuesta esperó 22 min a que el modelo contestara (recibida 11:11, aviso 11:36).
+          const ageMs = Date.now() - Date.parse(batch[k].m.created_at || "");
+          if (r.transient && !(Number.isFinite(ageMs) && ageMs > 8 * 60_000)) { deferred.add(batch[k].m.id); consecutiveTransient++; }
+          else if (r.transient) consecutiveTransient++;
           // Un 429 no es un fallo cualquiera: es la API pidiendo que paremos. Se anota para
           // enfriar y no se insiste en esta tanda.
           if (r.rateLimited) { rateLimited = true; retryAfterMs = Math.max(retryAfterMs, r.retryAfterMs || 0); breakerTripped = true; }
