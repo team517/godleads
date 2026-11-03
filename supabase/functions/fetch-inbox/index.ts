@@ -871,13 +871,49 @@ serve(async (req) => {
         if (windows === 1) phase = 0;
         usedOffset = ((minuteIndex + phase) % windows) * requestedBatchSize;
       }
-      const { data } = await adminClient
-        .from("email_accounts")
-        .select("*")
-        .in("status", ["connected", "auth_failed"])
-        .order("id", { ascending: true })
-        .range(usedOffset, usedOffset + requestedBatchSize - 1);
-      accounts = data || [];
+      if (offsetProvided) {
+        const { data } = await adminClient
+          .from("email_accounts")
+          .select("*")
+          .in("status", ["connected", "auth_failed"])
+          .order("id", { ascending: true })
+          .range(usedOffset, usedOffset + requestedBatchSize - 1);
+        accounts = data || [];
+      } else {
+        // ACTIVOS PRIMERO (03-11-2026). Un tercio de la flota (≈900 buzones) lleva días sin enviar y
+        // se revisaba tan a menudo como los que sí envían: la vuelta completa tardaba ~5 min y una
+        // respuesta esperaba de media 2,5 min sólo a entrar. Ahora cada pasada dedica casi toda su
+        // ventana a los buzones que han enviado en los últimos 3 días (o nunca se han sincronizado)
+        // y una ranura pequeña a los parados, que giran aparte. Mismo número de buzones por pasada
+        // y misma concurrencia IMAP: sólo cambia a quién le toca antes.
+        const HOT_DAYS = 3, COLD_PER_TICK = 20;
+        const hotSince = new Date(Date.now() - HOT_DAYS * 86_400_000).toISOString();
+        const base = () => adminClient.from("email_accounts").select("*", { count: "exact" }).in("status", ["connected", "auth_failed"]);
+        const [{ count: hotCount }, { count: coldCount }] = await Promise.all([
+          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).or(`last_send_at.gte.${hotSince},last_sync.is.null`),
+          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).or(`last_send_at.lt.${hotSince},last_send_at.is.null`).not("last_sync", "is", null),
+        ]);
+        const minuteIndex = Math.floor(Date.now() / 60000);
+        const ratio = Number(body.phase_ratio);
+        const phaseOf = (windows: number) => {
+          let ph = Number.isFinite(ratio) && ratio > 0 && ratio < 1 ? Math.floor(windows * ratio) : (Number.isFinite(Number(body.phase)) ? Math.floor(Number(body.phase)) : 0);
+          if (ph !== 0 && windows > 1 && ph % windows === 0) ph = Math.floor(windows / 2);
+          return windows === 1 ? 0 : ph;
+        };
+        const hotBatch = Math.max(1, requestedBatchSize - COLD_PER_TICK);
+        const hotWindows = Math.max(1, Math.ceil((hotCount || 0) / hotBatch));
+        const hotOffset = ((minuteIndex + phaseOf(hotWindows)) % hotWindows) * hotBatch;
+        const coldWindows = Math.max(1, Math.ceil((coldCount || 0) / COLD_PER_TICK));
+        const coldOffset = ((minuteIndex + phaseOf(coldWindows)) % coldWindows) * COLD_PER_TICK;
+        const [{ data: hot }, { data: cold }] = await Promise.all([
+          base().or(`last_send_at.gte.${hotSince},last_sync.is.null`).order("id", { ascending: true }).range(hotOffset, hotOffset + hotBatch - 1),
+          base().or(`last_send_at.lt.${hotSince},last_send_at.is.null`).not("last_sync", "is", null).order("id", { ascending: true }).range(coldOffset, coldOffset + COLD_PER_TICK - 1),
+        ]);
+        // Los parados al final: si la pasada se queda sin tiempo, son ellos los que esperan.
+        accounts = [...(hot || []), ...(cold || [])];
+        usedOffset = hotOffset;
+        console.log(`fetch-inbox ventana: ${hot?.length || 0}/${hotCount} activos (offset ${hotOffset}) + ${cold?.length || 0}/${coldCount} parados (offset ${coldOffset})`);
+      }
     }
 
     let totalNew = 0;
@@ -1850,6 +1886,20 @@ serve(async (req) => {
     // the break NEVER synced. Coverage is now guaranteed by the minute-based
     // rotating window above — every connected account is checked every
     // ~⌈total/batch⌉ minutes without any chain that can break.
+
+    // CLASIFICAR AL INSTANTE (03-11-2026): si esta pasada ha traído correo nuevo, se avisa ya al
+    // clasificador (push-interested) en vez de esperar a su cron. Antes un "Interesado" esperaba
+    // de media 2 min más sólo por eso. Si falla, el cron lo recoge igual.
+    if (totalNew > 0) {
+      const kick = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/push-interested`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ minutes: 30, triggered_by: "fetch-inbox" }),
+      }).then((r) => r.text()).catch(() => "");
+      // deno-lint-ignore no-explicit-any
+      const rt = (globalThis as any).EdgeRuntime;
+      if (rt?.waitUntil) rt.waitUntil(kick); else await Promise.race([kick, new Promise((r) => setTimeout(r, 1500))]);
+    }
 
     // Surface attachment-infra state so deploys can be verified externally.
     const attachmentsReady = await ensureAttachmentInfra(adminClient);

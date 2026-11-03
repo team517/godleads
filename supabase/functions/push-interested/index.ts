@@ -69,6 +69,7 @@ type Pending = { m: Row; text: string; ruleVerdict: string; verdict: string; via
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const startedAt = Date.now();
+  let unlock: null | (() => Promise<void>) = null;
   try {
     const body = await req.json().catch(() => ({}));
     // Cron shared secret, or the service role for manual runs.
@@ -83,6 +84,21 @@ Deno.serve(async (req) => {
     }
 
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, svc);
+    // UNA EJECUCIÓN A LA VEZ (03-11-2026): ahora también lo lanza fetch-inbox en cuanto trae correo,
+    // así que pueden coincidir varias en el mismo minuto. Sin esto, dos ejecuciones leerían las
+    // mismas filas sin marcar y preguntarían dos veces al modelo. La que llega segunda sale sin más;
+    // el cron del minuto siguiente recoge lo que quede. El cerrojo caduca solo a los 55 s.
+    const LOCK = "push_interested_lock";
+    const nowIsoLock = new Date().toISOString();
+    const { data: lockRow } = await admin.from("engine_flags").select("key").eq("key", LOCK).maybeSingle();
+    if (!lockRow) await admin.from("engine_flags").insert({ key: LOCK, until: null, updated_at: nowIsoLock }).select("key");
+    const { data: acquired } = await admin.from("engine_flags")
+      .update({ until: new Date(Date.now() + 55_000).toISOString(), updated_at: nowIsoLock })
+      .eq("key", LOCK).or(`until.is.null,until.lt.${nowIsoLock}`).select("key");
+    if (!acquired?.length) {
+      return new Response(JSON.stringify({ ok: true, skipped: "otra ejecución en curso" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    unlock = () => admin.from("engine_flags").update({ until: null }).eq("key", LOCK).then(() => {}, () => {});
     // El cron normal mira como mucho un día atrás. Un repaso manual del histórico (force +
     // notify:false) puede pedir más, hasta 30 días, para corregir etiquetas ya escritas.
     const repaso = body?.force === true && body?.notify === false;
@@ -516,6 +532,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (unlock) await unlock();
     return new Response(JSON.stringify({
       dry_run: dryRun, revisados: scanned, ya_clasificados: skipped, clasificados: classified,
       por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, fallos_ia: aiFailures,
@@ -524,6 +541,7 @@ Deno.serve(async (req) => {
       notificados: notified, hasta: oldestSeen, muestra: sample,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
+    if (unlock) await unlock();
     return new Response(JSON.stringify({ error: (e as Error).message }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
