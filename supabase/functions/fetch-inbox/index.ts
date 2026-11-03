@@ -785,7 +785,11 @@ serve(async (req) => {
     // a tick of 150 first-sync mailboxes once blew the worker's CPU budget (HTTP 546, ~7k messages).
     // In steady state a mailbox on the UID fast path costs ~0.12s and parses nothing, so 150 ≈ 15-20s.
     // With 4 staggered crons that's 600 mailboxes/min → the whole fleet (~1.2k) every ~2 min.
-    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(150, Number(body.batch_size))) : (targetUserId ? 30 : 150);
+    // 220 por pasada (03-11-2026): con la ventana de activos-primero, 200 activos + 20 parados por
+    // pasada × 4 crons = 800/min → los ~1.900 buzones que envían se revisan cada ~2,5 min (antes ~4-5).
+    // La concurrencia IMAP no cambia (4 por ejecución); sólo hay más olas por pasada, y el guardián
+    // de 70 s aplaza lo que no quepa.
+    const requestedBatchSize = Number.isFinite(Number(body.batch_size)) ? Math.max(1, Math.min(220, Number(body.batch_size))) : (targetUserId ? 30 : 220);
     // Per-mailbox fetch depth. The CRON path uses 50 (was 120): re-reading the last 120 messages
     // every tick meant ~12 IMAP round-trips per mailbox (chunks of 10), which is what made a window
     // of backlogged inboxes crawl. 50 recent messages (~5 round-trips) is far more than the new
