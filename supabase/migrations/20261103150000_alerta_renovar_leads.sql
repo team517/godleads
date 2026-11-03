@@ -22,3 +22,6 @@ language sql stable security definer set search_path to 'public' as $$
   order by sent * 1.0 / total desc;
 $$;
 revoke all on function public.health_leads_running_out(int, int) from public, anon, authenticated;
+
+-- El monitor corre con el rol de servicio.
+grant execute on function public.health_leads_running_out(int, int) to service_role;
