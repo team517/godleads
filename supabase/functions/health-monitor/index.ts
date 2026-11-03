@@ -147,6 +147,22 @@ serve(async (req) => {
       console.error("[blacklist_bounces] no se pudo comprobar:", String((e as any)?.message || e));
     }
 
+    // RENOVAR LEADS (03-11-2026, petición del dueño): una campaña activa de un cliente del Portal
+    // que ya ha contactado al 80 % o más de sus leads. Una clave por campaña → un aviso por campaña;
+    // se da por resuelto cuando se le suben leads (baja del 80 %).
+    try {
+      const { data: bajos, error: lErr } = await admin.rpc("health_leads_running_out", { p_pct: 80, p_min_leads: 50 });
+      if (lErr) throw new Error(lErr.message);
+      for (const f of (bajos || []) as { campaign_id: string; name: string; client_email: string; company: string; leads_sent: number; leads_total: number; pct: number }[]) {
+        checks.push({
+          key: `leads_80:${f.campaign_id}`, failing: true,
+          msg: `🧾 RENOVAR LEADS: la campaña «${f.name}» del cliente ${f.company} (${f.client_email}) ya ha contactado al ${f.pct} % de sus leads (${Number(f.leads_sent).toLocaleString("es-ES")} de ${Number(f.leads_total).toLocaleString("es-ES")}). Súbele leads nuevos antes de que se quede sin nadie a quien escribir.`,
+        });
+      }
+    } catch (e) {
+      console.error("[leads_80] no se pudo comprobar:", String((e as any)?.message || e));
+    }
+
     const failing = checks.filter((c) => c.failing);
     const failingKeys = new Set(failing.map((c) => c.key));
 
