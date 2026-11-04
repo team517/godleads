@@ -28,6 +28,9 @@ import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
  * Accounts are read from the masked view email_accounts_safe (passwords never leave the DB).
  */
 
+/** Espera antes del único reintento automático cuando la consulta de cuentas falla. */
+export const RETRY_DELAY_MS = 1200;
+
 /** Row shape returned by the RPC (bigints arrive as numbers over PostgREST). */
 type AccountStats = {
   account_id: string;
@@ -205,6 +208,10 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
   const [loading, setLoading] = useState(true);
   const [campaign, setCampaign] = useState<any>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // Si la base corta la consulta (punta de carga: "statement timeout") se reintenta sola una vez y,
+  // si vuelve a fallar, se enseña el motivo con un botón Reintentar en vez de una lista vacía
+  // (04-11-2026: "las cuentas de las campañas desaparecieron").
+  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("email");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -212,19 +219,26 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [campRes, statsRes] = await Promise.all([
+      const statsRpc = () => (supabase as any).rpc("campaign_account_stats", { p_campaign_id: campaignId });
+      const [campRes, firstStats] = await Promise.all([
         supabase.from("campaigns").select("id,name,status,account_tags").eq("id", campaignId).single(),
-        (supabase as any).rpc("campaign_account_stats", { p_campaign_id: campaignId }),
+        statsRpc(),
       ]);
+      let statsRes = firstStats;
+      if (statsRes?.error) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        statsRes = await statsRpc();
+      }
 
       if ((campRes as any)?.error) toast.error("No se pudo cargar la campaña: " + (campRes as any).error.message);
       setCampaign((campRes as any)?.data ?? null);
 
       if (statsRes?.error) {
         toast.error("No se pudieron cargar las cuentas: " + statsRes.error.message);
-        setRows([]);
-        return;
+        setError(statsRes.error.message || "Error desconocido");
+        return; // se conservan las filas que ya hubiera (al pulsar Actualizar no se vacía la lista)
       }
+      setError(null);
 
       const stats: AccountStats[] = (statsRes?.data ?? []) as AccountStats[];
       const ids = stats.map((s) => s.account_id).filter(Boolean);
@@ -352,7 +366,16 @@ export default function CampaignEmailAccounts({ campaignId }: { campaignId: stri
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-10 text-center text-sm">
+          <AlertTriangle className="mx-auto mb-2 h-5 w-5 text-destructive" />
+          <p className="font-medium text-foreground">No se pudieron cargar las cuentas de la campaña</p>
+          <p className="mt-1 text-xs text-muted-foreground">{error}</p>
+          <Button variant="outline" size="sm" className="mt-4 gap-1.5" onClick={() => void load()}>
+            <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+          </Button>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="rounded-md border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
           {EMPTY_TEXT}
         </div>

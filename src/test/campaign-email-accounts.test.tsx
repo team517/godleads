@@ -7,6 +7,9 @@ const db = vi.hoisted(() => ({
   campaign: null as any,
   stats: [] as any[],
   accounts: [] as any[],
+  /** Cuántas llamadas seguidas a campaign_account_stats deben fallar (corte por tiempo). */
+  statsFails: 0,
+  statsCalls: 0,
 }));
 
 vi.mock("@/integrations/supabase/client", () => {
@@ -23,7 +26,12 @@ vi.mock("@/integrations/supabase/client", () => {
   return {
     supabase: {
       from: (table: string) => (table === "campaigns" ? query(() => db.campaign) : query(() => db.accounts)),
-      rpc: () => ok(db.stats),
+      rpc: (name: string) => {
+        if (name !== "campaign_account_stats") return ok([]);
+        db.statsCalls++;
+        if (db.statsFails > 0) { db.statsFails--; return Promise.resolve({ data: null, error: { message: "canceling statement due to statement timeout" } }); }
+        return ok(db.stats);
+      },
     },
   };
 });
@@ -56,6 +64,8 @@ const account = (over: Record<string, any>) => ({
 });
 
 beforeEach(() => {
+  db.statsFails = 0;
+  db.statsCalls = 0;
   db.campaign = { id: "c1", name: "Prospección Q1", status: "active", account_tags: ["ventas"] };
   db.stats = [
     stat({
@@ -120,4 +130,28 @@ describe("CampaignEmailAccounts", () => {
       ),
     ).toBeInTheDocument();
   });
+});
+
+/* 04-11-2026: en punta de carga la base cortaba campaign_account_stats a los 8 s y la pestaña
+   salía vacía ("las cuentas de las campañas desaparecieron"). Ahora reintenta sola y, si no, avisa. */
+describe("CampaignEmailAccounts — cuando la consulta falla", () => {
+  it("si falla una vez, reintenta sola y enseña las cuentas", async () => {
+    db.statsFails = 1;
+    render(<CampaignEmailAccounts campaignId="c1" />);
+    expect(await screen.findByText("ana@onepulso.es", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(db.statsCalls).toBe(2);
+    expect(screen.queryByText("No se pudieron cargar las cuentas de la campaña")).toBeNull();
+  }, 8000);
+
+  it("si falla dos veces, enseña el motivo y Reintentar vuelve a cargar", async () => {
+    db.statsFails = 2;
+    render(<CampaignEmailAccounts campaignId="c1" />);
+    expect(await screen.findByText("No se pudieron cargar las cuentas de la campaña", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByText("canceling statement due to statement timeout")).toBeInTheDocument();
+    expect(screen.queryByText("ana@onepulso.es")).toBeNull();
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(screen.getByRole("button", { name: /Reintentar/ }));
+    expect(await screen.findByText("ana@onepulso.es", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(db.statsCalls).toBe(3);
+  }, 10000);
 });
