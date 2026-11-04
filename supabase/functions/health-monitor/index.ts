@@ -80,7 +80,9 @@ function evaluate(m: any): Check[] {
     { key: "zombie_locks", failing: m.zombie_locks > 0,
       msg: `🔒 ${m.zombie_locks} lock(s) atascado(s) >1h — el motor de envío podría estar bloqueado.` },
     { key: "campaign_auto_paused", failing: (Number(m.auto_paused_24h) || 0) > 0,
-      msg: `⏸️ ${m.auto_paused_24h} campaña(s) PAUSADA(S) AUTOMÁTICAMENTE por rebotes altos en las últimas 24 h: ${m.auto_paused_detail}` },
+      // 04-11-2026: la pausa automática ya no es por rebotes de direcciones inexistentes, sino por
+      // tormenta de errores del servidor de correo (login IONOS, timeouts); se reanuda sola al recuperarse.
+      msg: `⏸️ ${m.auto_paused_24h} campaña(s) PAUSADA(S) AUTOMÁTICAMENTE por errores del servidor de correo en las últimas 24 h (se reanudan solas cuando sus buzones vuelven a conectar): ${m.auto_paused_detail}` },
     { key: "high_bounce", failing: bouncePct > 8,
       msg: `📈 Tasa de rebote ALTA: ${bouncePct.toFixed(1)}% en 2h (${m.bounced_2h}/${m.sent_2h}) — revisa deliverability.` },
     // El repaso nocturno (cron inbox-rescan-nightly) trae lo que la sincronización normal no trajo.

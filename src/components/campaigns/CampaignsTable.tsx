@@ -417,7 +417,7 @@ export default function CampaignsTable({
                           <span className="truncate text-[15px] font-semibold text-foreground">{campaign.name}</span>
                           <span className={cn(STATUS_PILL_BASE, pill.className)} title={(campaign as any).admin_paused ? "Pausada por el administrador: sólo él puede reanudarla" : status === "paused" && (campaign as any).auto_paused_reason ? (campaign as any).auto_paused_reason : undefined}>
                             <span className={cn("h-1.5 w-1.5 rounded-full", pill.dot)} />
-                            {(campaign as any).admin_paused ? "Pausada por el admin" : status === "paused" && (campaign as any).auto_paused_reason ? "Pausada por rebotes" : pill.label}
+                            {(campaign as any).admin_paused ? "Pausada por el admin" : status === "paused" && (campaign as any).auto_paused_reason ? "Pausada automáticamente" : pill.label}
                           </span>
                           {/* Por qué una "Activa" no envía (sin buzones, fuera de horario, tope…). */}
                           <CampaignHealthChip reason={campaignHealthReason(campaign.status, healthFor?.(campaign.id))} />
