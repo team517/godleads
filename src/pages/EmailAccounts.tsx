@@ -74,7 +74,7 @@ const sanitizeEmailValue = (value: string | null | undefined) => sanitizeTextVal
 /** Columnas de la vista email_accounts_safe que usa la lista — TODAS menos signature_html: la
  *  firma (varios KB de HTML × cientos de buzones) no se pinta en la lista y se descargaba
  *  entera en cada visita. Se pide aparte sólo al abrir el editor de firmas. */
-const ACCOUNT_LIST_COLS = [
+export const ACCOUNT_LIST_COLS = [
   "id", "user_id", "email", "first_name", "last_name",
   "imap_username", "imap_host", "imap_port",
   "smtp_username", "smtp_host", "smtp_port",
