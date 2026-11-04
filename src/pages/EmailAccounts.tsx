@@ -18,6 +18,7 @@ import { filterAccounts } from "@/lib/account-filter";
 import AddAccountDialog, { type AddAccountMode } from "@/components/accounts/AddAccountDialog";
 import AccountsTable from "@/components/accounts/AccountsTable";
 import AccountsEmptyState from "@/components/accounts/AccountsEmptyState";
+import { loadAccountsPaged } from "@/lib/accounts-list-load";
 import { configSummary } from "@/lib/account-health";
 import ConnectAccountForm from "@/components/accounts/ConnectAccountForm";
 import { buildAccountPayload, type ConnectProvider } from "@/lib/account-connect";
@@ -123,6 +124,9 @@ export default function EmailAccounts() {
   // warm-up. Sin esto la pantalla contaba días de calendario y el límite "subía solo".
   const [sendDaysByAccount, setSendDaysByAccount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(() => !cacheGet<any[]>("accounts:list"));
+  // Fallo de la consulta de la lista (04-11-2026): se dice y se ofrece Reintentar; nunca se enseña
+  // "Conecta una cuenta de envío" por un error (la caché, si la hay, se conserva).
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showBulkIonos, setShowBulkIonos] = useState(false);
   const [ionosRows, setIonosRows] = useState<{ email: string; first_name: string; last_name: string; password: string }[]>([{ email: "", first_name: "", last_name: "", password: "" }]);
   const [ionosImporting, setIonosImporting] = useState(false);
@@ -543,18 +547,18 @@ export default function EmailAccounts() {
     try {
       // Por tandas de 1000: un select sin paginar se corta ahí, así que a partir del buzón 1001
       // las cuentas simplemente no salían en pantalla (ni en los alcances "todas").
-      const all: any[] = [];
-      for (let off = 0; ; off += 1000) {
-        const { data, error } = await supabase.from("email_accounts_safe" as any).select(ACCOUNT_LIST_COLS).eq("user_id", user.id)
-          .order("created_at", { ascending: false }).order("id").range(off, off + 999);
-        // A transient query error / timeout (common on the NANO compute tier) must NOT wipe
-        // the list — keep whatever is on screen (cache) instead of showing zero accounts.
-        if (error) { console.warn("loadAccounts failed, keeping current list:", error.message); return; }
-        const page = (data || []) as any[];
-        all.push(...page);
-        if (page.length < 1000) break;
+      // Si la consulta falla (corte por tiempo, base reiniciándose…) se reintenta una vez sola.
+      const res = await loadAccountsPaged((off) =>
+        supabase.from("email_accounts_safe" as any).select(ACCOUNT_LIST_COLS).eq("user_id", user.id)
+          .order("created_at", { ascending: false }).order("id").range(off, off + 999) as any);
+      if (res.error) {
+        // Se conserva lo que haya en pantalla (caché) y se enseña el motivo con Reintentar.
+        console.warn("loadAccounts failed, keeping current list:", res.error);
+        setLoadError(res.error);
+        return;
       }
-      const normalized = all.map((account: any) => normalizeEmailAccount(account));
+      setLoadError(null);
+      const normalized = res.accounts.map((account: any) => normalizeEmailAccount(account));
       setAccounts(normalized);
       setLoading(false); // la lista ya está: se pinta YA, sin esperar a nada más
       cacheSet("accounts:list", normalized); // instant paint on next visit
@@ -564,6 +568,7 @@ export default function EmailAccounts() {
         .catch(() => { /* si falla, effectiveDailyLimit asume 0 días: el escalón inicial, nunca de más */ });
     } catch (e: any) {
       console.warn("loadAccounts threw, keeping current list:", e?.message || e);
+      setLoadError(e?.message || String(e));
     } finally {
       setLoading(false);
     }
@@ -2243,7 +2248,25 @@ export default function EmailAccounts() {
       </Dialog>
 
 
-      {accounts.length === 0 ? (
+      {loadError && accounts.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+          <span>No se pudo actualizar la lista de cuentas (se muestra la última copia): {loadError}</span>
+          <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => { setLoading(true); void loadAccounts(); }}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</Button>
+        </div>
+      )}
+      {accounts.length === 0 && loading ? (
+        <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-card py-16 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Cargando cuentas…
+        </div>
+      ) : accounts.length === 0 && loadError ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm">
+          <p className="font-medium text-foreground">No se pudieron cargar las cuentas de correo</p>
+          <p className="mt-1 text-xs text-muted-foreground">{loadError}</p>
+          <Button variant="outline" size="sm" className="mt-4 gap-1.5" onClick={() => { setLoading(true); void loadAccounts(); }}>
+            <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+          </Button>
+        </div>
+      ) : accounts.length === 0 ? (
         <AccountsEmptyState
           onAdd={() => { setAddMode("single"); setShowAdd(true); }}
           onBulk={isAgency ? () => { setAddMode("bulk"); setShowAdd(true); } : undefined}
