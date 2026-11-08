@@ -16,10 +16,9 @@ declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, apikey" };
 // A problem alerts ONCE, when confirmed (failing on two consecutive runs), then
-// stays quiet. A single gentle reminder is allowed only if it is STILL failing a
-// full day later, so a genuinely stuck issue isn't forgotten — but never the old
-// once-an-hour nagging of the same ongoing error.
-const SAFETY_REMINDER_MS = 24 * 60 * 60 * 1000;
+// stays quiet until it recovers. 08-11-2026 (decisión del dueño): sin recordatorio
+// diario — "los avisos, una vez, no cada día" (p. ej. RENOVAR LEADS se repetía cada
+// 24 h mientras la campaña seguía por encima del 80 %).
 
 // Minimal SMTP sender (implicit TLS 465 or STARTTLS 587) — same scheme as notify-interested.
 async function sendSmtpEmail(host: string, port: number, username: string, password: string, from: string, to: string, subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
@@ -177,8 +176,7 @@ serve(async (req) => {
     // Which failing checks do we actually email about this run?
     //   • CONFIRM: a check must be failing on TWO consecutive runs before it can
     //     alert — kills transient 5-min blips and flapping (no alert/recovery spam).
-    //   • ONCE per episode; then silent until it recovers.
-    //   • One gentle reminder only if STILL failing a full day later.
+    //   • ONCE per episode; then silent until it recovers (sin recordatorio diario).
     const toNotify: Check[] = [];
     for (const c of failing) {
       const prev = state.get(c.key);
@@ -190,10 +188,8 @@ serve(async (req) => {
         );
         continue;
       }
-      const lastMs = prev.last_notified ? new Date(prev.last_notified).getTime() : 0;
       const notYetAlerted = !prev.last_notified;                            // confirmed but never delivered
-      const dueReminder = !!prev.last_notified && nowMs - lastMs > SAFETY_REMINDER_MS;
-      if (notYetAlerted || dueReminder) toNotify.push(c);
+      if (notYetAlerted) toNotify.push(c);
       await admin.from("health_monitor_state").upsert(
         { check_key: c.key, failing: true, since: prev.since || nowIso, last_notified: prev.last_notified || null },
         { onConflict: "check_key" },
@@ -240,7 +236,7 @@ serve(async (req) => {
           await admin.from("health_monitor_state").delete().in("check_key", recoveredAnnounce.map((r: any) => r.check_key));
         }
         if (r.ok && toNotify.length) {
-          // Mark these as alerted so they stay quiet until recovery / the daily reminder.
+          // Mark these as alerted so they stay quiet until recovery.
           for (const c of toNotify) await admin.from("health_monitor_state").update({ last_notified: nowIso }).eq("check_key", c.key);
         }
       }
