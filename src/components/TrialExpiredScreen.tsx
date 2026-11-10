@@ -1,108 +1,48 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Check, Zap, Loader2, LogOut, ShieldAlert } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { Loader2, LogOut, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { PLAN_CONFIG, PlanTier, clientsFeature, emailsFeature } from "@/contexts/SubscriptionContext";
+import { useSubscription } from "@/contexts/SubscriptionContext";
+import { PlanCards } from "@/components/PlanCards";
 import { toast } from "sonner";
 
-const planCards: { tier: PlanTier; features: string[] }[] = [
-  { tier: "starter", features: ["1,000 leads", "3 cuentas de email", "Campañas ilimitadas", "Follow-ups automáticos"] },
-  { tier: "growth", features: ["10,000 leads", "15 cuentas de email", "A/B Testing", "Unibox centralizado", "Analytics avanzados"] },
-  { tier: "scale", features: ["Leads ilimitados", "Cuentas ilimitadas", "API completa", "White label", "Account manager dedicado"] },
-];
-
+/* Prueba gratuita de 14 días terminada sin pagar: se elige plan (pago por Stripe). "Ya he pagado"
+   vuelve a comprobar en Stripe por si el webhook aún no ha llegado. */
 export function TrialExpiredScreen() {
   const { signOut } = useAuth();
-  const [billingPeriod, setBillingPeriod] = useState<"monthly" | "annual">("monthly");
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const { refreshSubscription } = useSubscription();
+  const [checking, setChecking] = useState(false);
 
-  const handleCheckout = async (priceId: string, planTier: string) => {
-    setCheckoutLoading(planTier);
+  const comprobar = async () => {
+    setChecking(true);
     try {
-      const { data, error } = await supabase.functions.invoke("create-checkout", {
-        body: { price_id: priceId },
-      });
-      if (error) throw error;
-      if (data?.url) window.open(data.url, "_blank");
-    } catch (e: any) {
-      toast.error(e.message || "Error al crear checkout");
-    }
-    setCheckoutLoading(null);
+      await refreshSubscription();
+      toast.info("Comprobado. Si acabas de pagar, puede tardar unos segundos en reflejarse.");
+    } finally { setChecking(false); }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="max-w-4xl w-full space-y-8">
-        {/* Header */}
         <div className="text-center space-y-3">
           <div className="flex justify-center">
             <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
               <ShieldAlert className="h-8 w-8 text-destructive" />
             </div>
           </div>
-          <h1 className="font-display text-3xl font-bold">Tu prueba gratuita ha terminado</h1>
+          <h1 className="font-display text-3xl font-bold">Tu prueba de 14 días ha terminado</h1>
           <p className="text-muted-foreground text-lg max-w-md mx-auto">
             Para seguir usando la plataforma, elige un plan y continúa donde lo dejaste.
           </p>
         </div>
 
-        {/* Billing toggle */}
-        <div className="flex items-center justify-center gap-3">
-          <button onClick={() => setBillingPeriod("monthly")} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${billingPeriod === "monthly" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Mensual</button>
-          <button onClick={() => setBillingPeriod("annual")} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${billingPeriod === "annual" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-            Anual <span className="text-xs opacity-80">(-17%)</span>
-          </button>
-        </div>
+        <PlanCards />
 
-        {/* Plan cards */}
-        <div className="grid gap-6 md:grid-cols-3">
-          {planCards.map(({ tier: planTier, features }) => {
-            const config = PLAN_CONFIG[planTier as keyof typeof PLAN_CONFIG];
-            const price = billingPeriod === "monthly" ? config.monthly.price : config.annual.price;
-            const priceId = billingPeriod === "monthly" ? config.monthly.priceId : config.annual.priceId;
-            const popular = planTier === "growth";
-            // Clientes incluidos — misma fuente que el tope real del plan.
-            const feats = [
-              ...features.slice(0, 2),
-              emailsFeature(planTier as Exclude<PlanTier, "free">),
-              clientsFeature(planTier as Exclude<PlanTier, "free">),
-              ...features.slice(2),
-            ];
-
-            return (
-              <Card key={planTier} className={`relative ${popular ? "border-primary ring-2 ring-primary/20" : ""}`}>
-                {popular && <Badge className="absolute -top-2.5 left-4 bg-primary">Recomendado</Badge>}
-                <CardHeader>
-                  <CardTitle className="font-display">{config.label}</CardTitle>
-                  <CardDescription>
-                    <span className="text-3xl font-bold text-foreground">€{price}</span>
-                    <span className="text-muted-foreground">/{billingPeriod === "monthly" ? "mes" : "año"}</span>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <ul className="space-y-2">
-                    {feats.map(f => (
-                      <li key={f} className="flex items-center gap-2 text-sm">
-                        <Check className="h-4 w-4 text-primary flex-shrink-0" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <Button className="w-full gap-2" onClick={() => handleCheckout(priceId, planTier)} disabled={checkoutLoading === planTier}>
-                    {checkoutLoading === planTier ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                    {checkoutLoading === planTier ? "Redirigiendo…" : "Elegir plan"}
-                  </Button>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-
-        {/* Sign out */}
-        <div className="text-center">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => void comprobar()} disabled={checking}>
+            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Ya he pagado, comprobar
+          </Button>
           <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={() => signOut()}>
             <LogOut className="h-4 w-4" />
             Cerrar sesión

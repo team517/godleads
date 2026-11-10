@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideAccess, AccessInput } from "@/lib/access";
+import { decideAccess, decideFromEntitlement, AccessInput, TRIAL_DAYS } from "@/lib/access";
 
 // Billing gate — this decides who accesses free vs. must pay, so every case is pinned down.
 const base: AccessInput = {
@@ -29,7 +29,6 @@ describe("decideAccess — billing / trial gate", () => {
     expect(decideAccess({ ...base, email: "alex@vioonyx.com" }).kind).toBe("staff");
   });
   it("a spoofed contact_email does NOT grant staff (only the immutable login email counts)", () => {
-    // Security: contact_email is user-editable; it must never unlock free access.
     expect(decideAccess({ ...base, contactEmail: "alex@vioonyx.com" }).kind).not.toBe("staff");
   });
   it("csnovacompany@gmail.com gets free access (staff) by its LOGIN email, unpaid & after cutoff", () => {
@@ -37,32 +36,81 @@ describe("decideAccess — billing / trial gate", () => {
     expect(decideAccess({ ...base, email: "CSNovaCompany@gmail.com" }).kind).toBe("staff"); // case-insensitive
   });
 
-  it("admin-created client (allowed_routes) is free — never gated", () => {
-    expect(decideAccess({ ...base, allowedRoutes: ["/dashboard", "/campaigns"] }).kind).toBe("free");
+  it("admin-created client (allowed_routes) is free — never gated, even with an unpaid row", () => {
+    expect(decideAccess({ ...base, allowedRoutes: ["/dashboard", "/campaigns"], entitlement: { status: "past_due", tier: "growth", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("free");
   });
   it("account created BEFORE the cutoff is grandfathered (free)", () => {
     expect(decideAccess({ ...base, createdAt: "2026-08-01T00:00:00Z" }).kind).toBe("free");
   });
 
-  it("NEW self-signup with an active Stripe sub is subscribed", () => {
+  it("NEW self-signup with an active Stripe sub (compat flag) is subscribed", () => {
     expect(decideAccess({ ...base, stripeSubscribed: true }).kind).toBe("subscribed");
   });
-  it("NEW self-signup, unpaid, WITHIN 5 days is trialing (days left counted)", () => {
+  it(`NEW self-signup, unpaid, WITHIN ${TRIAL_DAYS} days is trialing (days left counted)`, () => {
     const d = decideAccess(base);
     expect(d.kind).toBe("trialing");
-    if (d.kind === "trialing") expect(d.daysLeft).toBe(3); // signup +5d = Sep 6; now Sep 3 → 3 left
+    if (d.kind === "trialing") expect(d.daysLeft).toBe(12); // signup +14d = Sep 15; now Sep 3 → 12 left
   });
-  it("NEW self-signup, unpaid, AFTER 5 days is expired (BLOCKED)", () => {
-    expect(decideAccess({ ...base, nowMs: Date.parse("2026-09-10T00:00:00Z") }).kind).toBe("expired");
+  it(`NEW self-signup, unpaid, AFTER ${TRIAL_DAYS} days is expired (BLOCKED)`, () => {
+    expect(decideAccess({ ...base, nowMs: Date.parse("2026-09-20T00:00:00Z") }).kind).toBe("expired");
   });
-  it("on the exact boundary (=5 days) it is expired, not trialing", () => {
-    expect(decideAccess({ ...base, nowMs: Date.parse("2026-09-06T00:00:00Z") }).kind).toBe("expired");
+  it("on the exact boundary (=14 days) it is expired, not trialing", () => {
+    expect(decideAccess({ ...base, nowMs: Date.parse("2026-09-15T00:00:00Z") }).kind).toBe("expired");
   });
   it("missing creation date → free (fail-safe, never blocked)", () => {
-    expect(decideAccess({ ...base, createdAt: null }).kind).toBe("free"); // null createdAt → grandfathered branch
+    expect(decideAccess({ ...base, createdAt: null }).kind).toBe("free");
   });
 
   it("PRECEDENCE: staff wins even when unpaid + after cutoff", () => {
     expect(decideAccess({ ...base, email: "hello@onepulso.blog", stripeSubscribed: false }).kind).toBe("staff");
+  });
+});
+
+describe("decideAccess — lo que dice el servidor (user_entitlements, 10-11-2026)", () => {
+  const now = Date.parse("2026-11-10T12:00:00Z");
+  const b: AccessInput = { ...base, createdAt: "2026-10-01T00:00:00Z", nowMs: now };
+
+  it("pagó desde la landing: trialing con 14 días de Stripe → subscribed con su plan", () => {
+    const d = decideAccess({ ...b, entitlement: { status: "trialing", tier: "growth", trialEnd: "2026-11-24T00:00:00Z", currentPeriodEnd: "2026-11-24T00:00:00Z" } });
+    expect(d).toMatchObject({ kind: "subscribed", tier: "growth", status: "trialing", trialEnd: "2026-11-24T00:00:00Z" });
+  });
+  it("active con renovación futura → subscribed; cancel_at_period_end se transmite", () => {
+    const d = decideAccess({ ...b, entitlement: { status: "active", tier: "scale", trialEnd: null, currentPeriodEnd: "2026-12-10T00:00:00Z", cancelAtPeriodEnd: true } });
+    expect(d).toMatchObject({ kind: "subscribed", tier: "scale", status: "active", cancelAtPeriodEnd: true });
+  });
+  it("active pero el periodo venció hace más de un día (la renovación no llegó) → canceled", () => {
+    const d = decideAccess({ ...b, entitlement: { status: "active", tier: "starter", trialEnd: null, currentPeriodEnd: "2026-11-01T00:00:00Z" } });
+    expect(d.kind).toBe("canceled");
+  });
+  it("active con el periodo vencido hace unas horas → sigue subscribed (margen de 1 día)", () => {
+    const d = decideAccess({ ...b, entitlement: { status: "active", tier: "starter", trialEnd: null, currentPeriodEnd: "2026-11-10T02:00:00Z" } });
+    expect(d.kind).toBe("subscribed");
+  });
+  it("sin periodo informado (fila vieja) → subscribed si active", () => {
+    expect(decideAccess({ ...b, entitlement: { status: "active", tier: "growth", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("subscribed");
+  });
+  it("past_due / unpaid / incomplete → payment_failed con el error y el plan", () => {
+    for (const status of ["past_due", "unpaid", "incomplete", "incomplete_expired"]) {
+      const d = decideAccess({ ...b, entitlement: { status, tier: "growth", trialEnd: null, currentPeriodEnd: "2026-12-01T00:00:00Z", lastPaymentError: "Tarjeta rechazada" } });
+      expect(d).toMatchObject({ kind: "payment_failed", tier: "growth", status, lastPaymentError: "Tarjeta rechazada" });
+    }
+  });
+  it("canceled / paused → canceled", () => {
+    expect(decideAccess({ ...b, entitlement: { status: "canceled", tier: "free", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("canceled");
+    expect(decideAccess({ ...b, entitlement: { status: "paused", tier: "free", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("canceled");
+  });
+  it("fila inactive (nunca pagó) → la prueba de la plataforma manda", () => {
+    expect(decideAccess({ ...b, entitlement: { status: "inactive", tier: "free", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("expired");
+    expect(decideAccess({ ...b, createdAt: "2026-11-05T00:00:00Z", entitlement: { status: "inactive", tier: "free", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("trialing");
+  });
+  it("el servidor manda sobre el flag de compatibilidad: impago no se tapa con stripeSubscribed", () => {
+    expect(decideAccess({ ...b, stripeSubscribed: true, entitlement: { status: "past_due", tier: "growth", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("payment_failed");
+  });
+  it("el staff nunca ve un bloqueo aunque su fila diga impago", () => {
+    expect(decideAccess({ ...b, email: "support@onepulso.online", entitlement: { status: "unpaid", tier: "growth", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("staff");
+  });
+  it("decideFromEntitlement: sin fila → null", () => {
+    expect(decideFromEntitlement(null, now)).toBeNull();
+    expect(decideFromEntitlement({ status: null, tier: null, trialEnd: null, currentPeriodEnd: null }, now)).toBeNull();
   });
 });

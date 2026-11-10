@@ -41,6 +41,7 @@ const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 const OnboardingPortal = lazyWithRetry(() => import("./pages/OnboardingPortal"));
 const ModificacionesIA = lazyWithRetry(() => import("./pages/ModificacionesIA"));
 const CopyClientes = lazyWithRetry(() => import("./pages/CopyClientes"));
+const Peticiones = lazyWithRetry(() => import("./pages/Peticiones"));
 const AutomationFlow = lazyWithRetry(() => import("./pages/AutomationFlow"));
 const Seguimiento = lazyWithRetry(() => import("./pages/Seguimiento"));
 const GodTube = lazyWithRetry(() => import("./pages/GodTube"));
@@ -111,6 +112,8 @@ const App = () => (
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />
                 <Route path="/admin/clients" element={<ClientPortal />} />
+                {/* Peticiones del chatbot (hablar con el equipo) e historial: sólo equipo. */}
+                <Route path="/peticiones" element={<Peticiones />} />
                 <Route path="/metrics" element={<Metrics />} />
               </Route>
               <Route path="*" element={<NotFound />} />

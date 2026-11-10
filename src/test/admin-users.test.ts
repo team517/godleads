@@ -21,10 +21,10 @@ describe("tipoDeUsuario — el panel lista a TODOS", () => {
 });
 
 describe("estadoPanel", () => {
-  it("registro nuevo dentro de los 5 días → en prueba", () => {
-    expect(estadoPanel(base, NOW)).toEqual({ estado: "prueba", etiqueta: "Prueba: quedan 3 días" });
+  it("registro nuevo dentro de los 14 días → en prueba (desde el 10-11-2026 la prueba es de 14 días)", () => {
+    expect(estadoPanel(base, NOW)).toEqual({ estado: "prueba", etiqueta: "Prueba: quedan 12 días" });
   });
-  it("registro nuevo pasados 5 días sin pagar → prueba acabada", () => {
+  it("registro nuevo pasados 14 días sin pagar → prueba acabada", () => {
     expect(estadoPanel({ ...base, created_at: "2026-09-10T12:00:00Z" }, NOW).estado).toBe("caducada");
   });
   it("con plan activo → pagando, aunque la prueba haya acabado", () => {

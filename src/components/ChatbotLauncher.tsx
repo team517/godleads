@@ -37,7 +37,7 @@ function Bubble({ onOpen }: { onOpen: () => void }) {
         onClick={onOpen}
         onMouseEnter={() => { void loadChatbot().catch(() => {}); }}
         onFocus={() => { void loadChatbot().catch(() => {}); }}
-        aria-label="Preguntar a la IA de OnePulso"
+        aria-label="Abrir el asistente de Funnyleads"
         className="block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
       >
         <SparkMark size={58} className="rounded-[18px]" />

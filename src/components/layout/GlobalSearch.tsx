@@ -26,6 +26,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Entregabilidad", path: "/deliverability", keywords: "entregabilidad deliverability spam dkim", icon: ShieldCheck },
   { label: "Agentes IA", path: "/ai-prompts", keywords: "agentes ia ai prompts inteligencia respuestas asistente", icon: Brain },
   { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
+  { label: "Peticiones del chat", path: "/peticiones", keywords: "peticiones chat hablar equipo contactos demo solicitudes conversaciones historial", icon: Bot },
   { label: "Modificaciones IA", path: "/modificaciones-ia", keywords: "modificaciones ia pulsebot chat cliente mensajes variantes secuencia metricas campana automatizar", icon: Bot },
 ];
 

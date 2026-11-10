@@ -5,6 +5,7 @@ import { useSubscription } from "@/contexts/SubscriptionContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
 import { PausedByAdminScreen } from "@/components/PausedByAdminScreen";
+import { SubscriptionProblemScreen } from "@/components/SubscriptionProblemScreen";
 import { isAgencyAccount } from "@/lib/access";
 import { useWelcomeGate } from "@/hooks/useWelcomeGate";
 import { WELCOME_PATH, shouldShowWelcome } from "@/lib/first-run";
@@ -12,7 +13,7 @@ import { mobileAppAllowed } from "@/lib/mobile-app";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
-  const { loading: subLoading, trialExpired, subscribed } = useSubscription();
+  const { loading: subLoading, trialExpired, subscribed, paymentProblem } = useSubscription();
   const { profile, loading: profileLoading } = useProfile();
   const location = useLocation();
   const welcome = useWelcomeGate();
@@ -52,6 +53,12 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // can manage their account. (subscribed is double-checked so a just-paid user is never blocked.)
   if (trialExpired && !subscribed && location.pathname !== "/settings") {
     return <TrialExpiredScreen />;
+  }
+
+  // Suscripción con problema (10-11-2026): impago → "no hemos podido cobrar"; terminada → elegir
+  // plan. Sólo para registros de pago: el equipo y las cuentas gratis nunca tienen paymentProblem.
+  if (paymentProblem && !subscribed && location.pathname !== "/settings") {
+    return <SubscriptionProblemScreen kind={paymentProblem.kind} tier={paymentProblem.tier} lastPaymentError={paymentProblem.lastPaymentError} periodEnd={paymentProblem.periodEnd} />;
   }
 
   // Cuenta pausada por el administrador (03-11-2026): el cliente no entra a nada, ni a /settings.

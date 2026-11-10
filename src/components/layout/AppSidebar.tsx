@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
@@ -44,6 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
   { id: "clients", title: "Clientes", items: [
     { icon: Building2, label: "Clientes", path: "/clientes" },
     { icon: Briefcase, label: "Portal de Clientes", path: "/admin/clients" },
+    { icon: UsersRound, label: "Peticiones", path: "/peticiones" },
     { icon: Rocket, label: "Onboarding", path: "/onboarding" },
     { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
   ] },
@@ -98,6 +99,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     // Admin / gestión: por rol, no por allowed_routes (un cliente nunca los tiene).
     if (path === "/admin") return isAdmin;
     if (path === "/admin/clients") return isAdmin || isManager;
+    // Peticiones del chat (hablar con el equipo): la agencia (hello@, support@, equipo@, gestores, admins).
+    if (path === "/peticiones") return isAgency;
     if (allowedRoutes && !allowedRoutes.includes(path)) return false;
     if (path === "/clientes") return !isAgency;
     if (path === "/automatizacion") return canAutomation;

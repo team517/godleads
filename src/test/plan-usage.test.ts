@@ -46,7 +46,9 @@ describe("las líneas que se leen en pantalla", () => {
     expect(monthlyEmailsLine(12_345, Infinity)).toBe("12.345 correos este mes");
   });
   it("buzones: conectados contra los del plan", () => {
-    expect(mailboxLine(37, PLAN_CONFIG.growth.maxAccounts)).toBe("37 de 200 buzones conectados");
+    expect(mailboxLine(37, 200)).toBe("37 de 200 buzones conectados");
+    // Planes de Funnyleads (10-11-2026): buzones ilimitados en todos → sin tope en la línea.
+    expect(mailboxLine(37, PLAN_CONFIG.growth.maxAccounts)).toBe("37 buzones conectados");
     expect(mailboxLine(37, Infinity)).toBe("37 buzones conectados");
   });
 });

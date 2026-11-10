@@ -32,15 +32,16 @@ import { PushDeviceCard } from "@/components/settings/PushDeviceCard";
 import { PlanUsageCard } from "@/components/settings/PlanUsageCard";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
-  { tier: "starter", features: ["1,000 leads", "3 cuentas de email", "Campañas ilimitadas", "Follow-ups automáticos", "Soporte por email"] },
-  { tier: "growth", features: ["10,000 leads", "15 cuentas de email", "A/B Testing", "Unibox centralizado", "Analytics avanzados", "Soporte prioritario"] },
-  { tier: "scale", features: ["Leads ilimitados", "Cuentas ilimitadas", "API completa", "White label", "Account manager dedicado", "SLA garantizado"] },
+  // Planes de Funnyleads (10-11-2026): los mismos que la landing y los enlaces de pago de Stripe.
+  { tier: "starter", features: ["5.000 contactos", "Buzones y warm-up ilimitados", "Campañas ilimitadas", "Follow-ups automáticos", "Soporte por email"] },
+  { tier: "growth", features: ["60.000 contactos", "Buzones y warm-up ilimitados", "A/B Testing", "Respuestas con IA", "Unibox centralizado", "Soporte prioritario"] },
+  { tier: "scale", features: ["Contactos ilimitados", "Buzones y warm-up ilimitados", "Respuestas con IA", "Analíticas avanzadas", "Soporte 1:1", "Account manager dedicado"] },
 ];
 
 export default function SettingsPage() {
   const { user } = useAuth();
   const { updateProfile: updateGlobalProfile, refreshProfile } = useProfile();
-  const { tier, subscribed, subscriptionEnd, loading: subLoading, refreshSubscription, isTrialing, trialEnd, trialDaysLeft } = useSubscription();
+  const { tier, subscribed, subscriptionEnd, loading: subLoading, refreshSubscription, isTrialing, trialEnd, trialDaysLeft, status: subStatus, billable, cancelAtPeriodEnd } = useSubscription();
   const [profile, setProfile] = useState({ full_name: "", company_name: "", contact_email: "", avatar_url: "" });
   const [loading, setLoading] = useState(true);
   const [billingPeriod, setBillingPeriod] = useState<"monthly" | "annual">("monthly");
@@ -52,8 +53,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (searchParams.get("checkout") === "success") {
-      toast.success("¡Suscripción activada! Puede tardar unos segundos en reflejarse.");
-      refreshSubscription();
+      toast.success("Pago recibido, comprobando tu suscripción…");
+      // Stripe avisa por webhook en segundos; mientras, se comprueba directamente (dos veces).
+      void refreshSubscription();
+      const t = setTimeout(() => { void refreshSubscription(); }, 6000);
+      return () => clearTimeout(t);
+    }
+    if (searchParams.get("checkout") === "cancel") {
+      toast.info("Pago cancelado. Puedes elegir un plan cuando quieras.");
     }
     // Credit coins if returning from coin purchase
     if (searchParams.get("coins_purchased")) {
@@ -378,14 +385,17 @@ export default function SettingsPage() {
                   <p className="font-semibold">
                     Plan actual: <span className="text-primary capitalize">{tier === "free" ? "Gratuito" : PLAN_CONFIG[tier as keyof typeof PLAN_CONFIG]?.label}</span>
                     {isTrialing && <Badge variant="secondary" className="ml-2 text-xs">Prueba gratuita</Badge>}
+                    {subStatus === "payment_failed" && <Badge variant="destructive" className="ml-2 text-xs">Pago pendiente</Badge>}
+                    {subStatus === "canceled" && <Badge variant="destructive" className="ml-2 text-xs">Terminada</Badge>}
+                    {cancelAtPeriodEnd && subStatus === "active" && <Badge variant="outline" className="ml-2 text-xs">Se cancela al final del periodo</Badge>}
                   </p>
                   {isTrialing && trialDaysLeft !== null && (
-                    <p className="text-xs text-muted-foreground">Prueba gratuita - {trialDaysLeft} días restantes</p>
+                    <p className="text-xs text-muted-foreground">Prueba gratuita · {trialDaysLeft} días restantes{subStatus === "trialing" ? " · después se cobra el plan" : ""}</p>
                   )}
-                  {!isTrialing && subscriptionEnd && <p className="text-xs text-muted-foreground">Válido hasta {new Date(subscriptionEnd).toLocaleDateString("es")}</p>}
+                  {!isTrialing && subscriptionEnd && <p className="text-xs text-muted-foreground">{cancelAtPeriodEnd ? "Termina el" : "Se renueva el"} {new Date(subscriptionEnd).toLocaleDateString("es")}</p>}
                 </div>
               </div>
-              {subscribed && (
+              {subscribed && billable && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={handlePortal} disabled={portalLoading} className="gap-2">
                     {portalLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
@@ -435,8 +445,9 @@ export default function SettingsPage() {
                   <CardHeader>
                     <CardTitle className="font-display text-[19px] font-semibold tracking-[-0.03em]">{config.label}</CardTitle>
                     <CardDescription>
-                      <span className="text-3xl font-bold text-foreground">€{price}</span>
-                      <span className="text-muted-foreground">/{billingPeriod === "monthly" ? "mes" : "año"}</span>
+                      <span className="text-3xl font-bold text-foreground">{billingPeriod === "monthly" ? price : config.annual.perMonth} €</span>
+                      <span className="text-muted-foreground">/mes</span>
+                      {billingPeriod === "annual" && <span className="block text-xs text-muted-foreground">Facturado {price} € al año</span>}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
