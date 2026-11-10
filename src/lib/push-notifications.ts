@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { isImpersonating } from "@/lib/impersonation";
 
 // VAPID public key — must match the VAPID_PUBLIC_KEY secret
 const VAPID_PUBLIC_KEY = "BBdtQ9OiGX_-rvcYuoGsok-A_qPTw-cRoHEJAXIIY5agCK_dDhP0rLlqJXboSY3TK6hfyBQsTfVQksEs0RMs8us";
@@ -157,6 +158,9 @@ function writeEnsureStamp(stamp: PushEnsureStamp | null): void {
 }
 
 export async function subscribeToPush(userId: string): Promise<boolean> {
+  // Dentro de la cuenta de un cliente (cambio de cuenta del equipo) este dispositivo es del equipo:
+  // no se apunta a los avisos del cliente. Las suscripciones que ya tenga el cliente no se tocan.
+  if (isImpersonating()) return false;
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") return false;
@@ -204,6 +208,7 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
  * granted it does nothing at all.
  */
 export async function ensurePushSubscription(userId: string): Promise<boolean> {
+  if (isImpersonating()) return false; // ver subscribeToPush
   try {
     if (!isPushSupported() || Notification.permission !== "granted") return false;
 

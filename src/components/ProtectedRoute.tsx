@@ -10,6 +10,7 @@ import { isAgencyAccount } from "@/lib/access";
 import { useWelcomeGate } from "@/hooks/useWelcomeGate";
 import { WELCOME_PATH, shouldShowWelcome } from "@/lib/first-run";
 import { mobileAppAllowed } from "@/lib/mobile-app";
+import { isImpersonating } from "@/lib/impersonation";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -70,7 +71,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   // Primer acceso: antes que ninguna pantalla, la bienvenida (cuatro preguntas). Sólo la ve
   // quien nunca la ha hecho; las cuentas que ya existían se dieron por hechas al crear la tabla.
-  if (shouldShowWelcome({
+  if (!isImpersonating() && shouldShowWelcome({
         pathname: location.pathname,
         status: welcome,
         clientLogin: !!profile.client_login_of,

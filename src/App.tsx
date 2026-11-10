@@ -17,6 +17,8 @@ import MobileGate from "@/pages/mobile/MobileGate";
 // The PulseBot bubble only: the chat itself (recharts, react-markdown, framer-motion) is
 // downloaded on the first click — see ChatbotLauncher.
 import { ChatbotLauncher } from "@/components/ChatbotLauncher";
+// Cambio de cuenta del equipo: el aviso para volver, fuera de ProtectedRoute (siempre visible).
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 
 const Landing = lazyWithRetry(() => import("./pages/Landing"));
 const Auth = lazyWithRetry(() => import("./pages/Auth"));
@@ -120,6 +122,7 @@ const App = () => (
             </Routes>
           </Suspense>
           <ChatbotLauncher />
+          <ImpersonationBanner />
         </VerificationProvider>
         </ProfileProvider>
         </SubscriptionProvider>

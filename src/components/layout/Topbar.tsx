@@ -1,4 +1,4 @@
-import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy } from "lucide-react";
+import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,6 +18,8 @@ import { prefetchRoute } from "@/lib/route-prefetch";
 import { useTheme } from "@/hooks/use-theme";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import coinIcon from "@/assets/coin-icon.png";
+import { AccountSwitcherDialog } from "@/components/AccountSwitcherDialog";
+import { canUseAccountSwitcher, returnToOwnAccount, stateMatchesUser, useImpersonation } from "@/lib/impersonation";
 import {
   Popover,
   PopoverContent,
@@ -85,6 +87,12 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   const [coinLoading, setCoinLoading] = useState<string | null>(null);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
+  // Cambio de cuenta (sólo hello@ y equipo@): "Clientes" en el menú del perfil.
+  const impersonation = useImpersonation();
+  const insideClient = stateMatchesUser(impersonation, user?.id) ? impersonation : null;
+  const switcherEnabled = canUseAccountSwitcher(insideClient, user?.email);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // Check push status on mount. The permission alone lies: it stays "granted" after unsubscribing
   // and after the row was pruned, so we ask for the real subscription state.
@@ -99,6 +107,10 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
 
   const handlePushToggle = useCallback(async () => {
     if (!user) return;
+    if (insideClient) {
+      toast.info("Los avisos al dispositivo están desactivados mientras estás dentro de la cuenta de un cliente.");
+      return;
+    }
     setPushLoading(true);
     try {
       if (pushEnabled) {
@@ -117,7 +129,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
       await refreshPushState();
     }
     setPushLoading(false);
-  }, [user, pushEnabled, refreshPushState]);
+  }, [user, pushEnabled, refreshPushState, insideClient]);
 
   const handleToggle = useCallback(() => {
     const newVal = !notifyEnabled;
@@ -188,6 +200,9 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   const canSeeAI = !allowed || allowed.includes("/ai-prompts");
 
   const handleSignOut = async () => {
+    // Dentro de la cuenta de un cliente, "Cerrar sesión" primero devuelve al equipo a su cuenta
+    // (nunca deja abierta la sesión del cliente) y no toca su preferencia de mantener la sesión.
+    if (insideClient) { await returnToOwnAccount(); return; }
     clearKeepSession();
     await signOut();
     navigate("/");
@@ -451,7 +466,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         </Popover>
 
         {/* Cuenta: avatar + desplegable, como en cualquier programa. */}
-        <Popover>
+        <Popover open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
           <PopoverTrigger asChild>
             <button type="button" aria-label="Cuenta" className="ml-1 flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
               <span className="brand-ring rounded-full p-[2px]"><Avatar className="h-8 w-8 ring-2 ring-[hsl(var(--topbar))]">
@@ -469,7 +484,23 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               <p className="truncate text-[12.5px] text-muted-foreground">{user?.email}</p>
               <span className="mt-2 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground">Plan {currentPlanLabel}</span>
             </div>
+            {insideClient && (
+              <div className="border-b bg-primary/5 px-3.5 py-2.5">
+                <p className="text-[12px] text-muted-foreground">Estás dentro de</p>
+                <p className="truncate text-[13.5px] font-semibold text-foreground">{insideClient.target.company || insideClient.target.email}</p>
+                <button type="button" onClick={() => { setAccountMenuOpen(false); void returnToOwnAccount(); }}
+                  className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-card px-2.5 py-1.5 text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary/10">
+                  <Undo2 className="h-3.5 w-3.5" /> Quitar y volver a mi cuenta
+                </button>
+              </div>
+            )}
             <div className="p-1.5 text-[14px]">
+              {switcherEnabled && (
+                <button type="button" onClick={() => { setAccountMenuOpen(false); setSwitcherOpen(true); }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                  <Building2 className="h-4 w-4 text-muted-foreground" /> Clientes
+                </button>
+              )}
               <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <Settings className="h-4 w-4 text-muted-foreground" /> Configuración
               </Link>
@@ -477,11 +508,12 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
                 <LifeBuoy className="h-4 w-4 text-muted-foreground" /> Ayuda
               </a>
               <button type="button" onClick={handleSignOut} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
-                <LogOut className="h-4 w-4" /> Cerrar sesión
+                <LogOut className="h-4 w-4" /> {insideClient ? "Salir del cliente" : "Cerrar sesión"}
               </button>
             </div>
           </PopoverContent>
         </Popover>
+        {switcherEnabled && <AccountSwitcherDialog open={switcherOpen} onOpenChange={setSwitcherOpen} current={insideClient} />}
       </div>
     </header>
   );

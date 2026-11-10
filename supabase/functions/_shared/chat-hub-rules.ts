@@ -111,4 +111,82 @@ PLANES (IVA no incluido, todos con 14 días de prueba, cancelas cuando quieras; 
 - Enterprise: a medida, hablar con ventas. Formación 1:1 opcional: 350 € pago único.
 Para empezar: botón "Start free trial" / "Choose" en la página de precios. Para una demo o hablar con una persona: la agenda https://cal.com/xavier-falco-hszeeb/15min o el botón «Hablar con el equipo» de este chat.
 
-REGLAS: no inventes funciones ni cifras que no estén aquí; si no lo sabes, dilo y ofrece hablar con el equipo. No pidas contraseñas ni datos de pago. Si la persona quiere hablar con alguien, una demo, un presupuesto o tiene un caso especial, invítale a usar «Hablar con el equipo» (deja nombre y correo) y te escribirán.`;
+REGLAS: no inventes funciones ni cifras que no estén aquí; si no lo sabes, dilo y ofrece hablar con el equipo. No pidas contraseñas ni datos de pago. Si la persona quiere hablar con alguien, una demo, un presupuesto o tiene un caso especial, invítale a pulsar «Hablar con el equipo» en este chat: escribe ahí y una persona del equipo le contesta en el mismo chat.`;
+
+/* ── Chat en directo con el equipo (10-11-2026) ────────────────────────────────────────────────
+   El cliente o visitante escribe al equipo desde el chat; el equipo contesta desde /peticiones.
+   Aviso a team@ con el PRIMER mensaje de un hilo y después como mucho cada 10 minutos. */
+
+export const TEAM_MESSAGE_MAX = 2000;
+export const NOTIFY_THROTTLE_MS = 10 * 60 * 1000;
+/** Si el cliente ha sondeado el chat hace menos de esto, está mirando: no se le manda correo. */
+export const CLIENT_ONLINE_MS = 45 * 1000;
+
+/** Un mensaje para el equipo (o del equipo): sin caracteres de control, recortado y no vacío. */
+export function validarMensajeEquipo(texto: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  const t = limpio(texto, TEAM_MESSAGE_MAX + 1);
+  if (!t) return { ok: false, error: "Escribe un mensaje." };
+  if (t.length > TEAM_MESSAGE_MAX) return { ok: false, error: `El mensaje no puede pasar de ${TEAM_MESSAGE_MAX} caracteres.` };
+  return { ok: true, value: t };
+}
+
+/** Correo de contacto normalizado, o null si no tiene formato válido. */
+export function correoDeContacto(email: unknown): string | null {
+  const e = limpio(email, 200).toLowerCase();
+  return EMAIL_RE.test(e) ? e : null;
+}
+
+/** ¿Toca avisar a team@? La primera vez siempre; después, como mucho una vez cada 10 minutos. */
+export function debeAvisarEquipo(lastNotifiedAt: string | null | undefined, nowMs: number): boolean {
+  if (!lastNotifiedAt) return true;
+  const last = Date.parse(lastNotifiedAt);
+  if (Number.isNaN(last)) return true;
+  return nowMs - last >= NOTIFY_THROTTLE_MS;
+}
+
+/** ¿El cliente tiene el chat abierto ahora mismo (ha sondeado hace nada)? */
+export function clienteMirando(clientSeenAt: string | null | undefined, nowMs: number): boolean {
+  if (!clientSeenAt) return false;
+  const t = Date.parse(clientSeenAt);
+  return !Number.isNaN(t) && nowMs - t < CLIENT_ONLINE_MS;
+}
+
+/** Nombre de quien responde del equipo: su nombre de perfil, o la parte del correo antes de la @. */
+export function nombreDeAutor(email: string | null | undefined, fullName?: string | null): string {
+  const n = String(fullName || "").trim();
+  if (n) return n.slice(0, 60);
+  const local = String(email || "").split("@")[0].replace(/[._-]+/g, " ").trim();
+  if (!local) return "Equipo de Funnyleads";
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+/** Aviso a team@ por un mensaje nuevo en el chat. */
+export function correoMensajeChat(o: {
+  quien: string; cuenta: string | null; mensaje: string; pagina?: string | null; appUrl: string;
+  previos?: MensajeTranscripcion[]; primero: boolean;
+}): { subject: string; html: string } {
+  const subject = `${o.primero ? "Nuevo chat" : "Nuevo mensaje en el chat"}: ${o.quien}`.slice(0, 140);
+  const contexto = (o.previos || []).slice(-6).map((m) =>
+    `<p style="margin:0 0 6px;color:#45556C"><b style="color:${m.role === "user" ? "#0F9D6E" : "#6E58F1"}">${m.role === "user" ? "Cliente" : "Chat"}:</b> ${escapeHtml(m.content).slice(0, 400)}</p>`).join("");
+  const html = `<div style="font-family:Inter,Arial,sans-serif;color:#0F172B;max-width:640px">
+<h2 style="margin:0 0 6px;font-size:18px">${o.primero ? "Alguien quiere hablar con el equipo" : "Nuevo mensaje en el chat"}</h2>
+<p style="margin:0 0 14px;color:#65768D;font-size:14px">${escapeHtml(o.quien)}${o.cuenta ? ` · ${escapeHtml(o.cuenta)}` : ""}${o.pagina ? ` · desde ${escapeHtml(o.pagina)}` : ""}</p>
+<div style="white-space:pre-wrap;border-left:3px solid #6E58F1;padding:10px 14px;margin:0 0 16px;background:#F5F3FC;font-size:15px">${escapeHtml(o.mensaje)}</div>
+${contexto ? `<p style="margin:0 0 6px;color:#65768D;font-size:13px">Lo anterior en la conversación</p><div style="border:1px solid #E7E2D6;border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px">${contexto}</div>` : ""}
+<p style="margin:0"><a href="${o.appUrl}/peticiones" style="display:inline-block;background:#6E58F1;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Responder en el chat</a></p>
+<p style="margin:12px 0 0;font-size:12px;color:#65768D">Contesta desde Mensajes en la plataforma: la respuesta le aparece en su chat al momento.</p>
+</div>`;
+  return { subject, html };
+}
+
+/** Correo al cliente cuando el equipo le responde y no tiene el chat abierto. */
+export function correoRespuestaAlCliente(o: { autor: string; mensaje: string; enlace: string }): { subject: string; html: string } {
+  const subject = `${o.autor} te ha respondido en el chat de Funnyleads`.slice(0, 140);
+  const html = `<div style="font-family:Inter,Arial,sans-serif;color:#0F172B;max-width:600px">
+<p style="margin:0 0 12px;font-size:15px"><b>${escapeHtml(o.autor)}</b>, del equipo de Funnyleads, te ha respondido:</p>
+<div style="white-space:pre-wrap;border-left:3px solid #6E58F1;padding:10px 14px;margin:0 0 16px;background:#F5F3FC;font-size:15px">${escapeHtml(o.mensaje)}</div>
+<p style="margin:0"><a href="${o.enlace}" style="display:inline-block;background:#6E58F1;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Seguir la conversación</a></p>
+<p style="margin:12px 0 0;font-size:12px;color:#65768D">También puedes responder a este correo.</p>
+</div>`;
+  return { subject, html };
+}

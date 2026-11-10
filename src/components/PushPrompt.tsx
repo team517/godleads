@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isImpersonating } from "@/lib/impersonation";
 import { Bell, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -35,7 +36,8 @@ export function PushPrompt() {
   const show = offer !== "hidden";
 
   useEffect(() => {
-    if (!user) return;
+    // Dentro de la cuenta de un cliente (cambio de cuenta del equipo) no se ofrecen avisos.
+    if (!user || isImpersonating()) return;
     let alive = true;
     const supported = isPushSupported();
     const ios = isIosDevice(navigator.userAgent, navigator.maxTouchPoints || 0);

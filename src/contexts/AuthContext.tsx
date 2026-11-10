@@ -3,6 +3,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { bindCacheUser } from "@/lib/instant-cache";
+import { clearImpersonation, isImpersonating, returnToOwnAccount } from "@/lib/impersonation";
 
 interface AuthContextType {
   session: Session | null;
@@ -95,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const { error } = await withAuthTimeout(supabase.auth.signInWithPassword({ email, password }), 25000);
+        // Un inicio de sesión normal deja atrás cualquier cambio de cuenta que quedara a medias.
+        if (!error) clearImpersonation();
         return { error: error?.message ?? null };
       } catch (error) {
         if (attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
@@ -105,6 +108,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    // Dentro de la cuenta de un cliente (cambio de cuenta del equipo), cualquier "Cerrar sesión"
+    // —también el de las pantallas de pago o de cuenta pausada— devuelve al equipo a su cuenta.
+    if (isImpersonating()) { await returnToOwnAccount(); return; }
     // Local sign out is instantaneous and doesn't depend on the auth server,
     // which can hang/return 504 and leave the user stuck.
     try {

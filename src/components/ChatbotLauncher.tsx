@@ -3,6 +3,8 @@ import { useLocation } from "react-router-dom";
 import { SparkMark } from "@/components/SparkMark";
 import { isMobileAppPath, isPhoneDevice } from "@/lib/mobile-app";
 import { lazyWithRetry } from "@/lib/lazy-retry";
+import { useAuth } from "@/contexts/AuthContext";
+import { teamThread, teamUnread, visitorId } from "@/lib/chat-hub-client";
 
 /* El botón flotante de PulseBot, SIN el chat detrás.
  *
@@ -29,7 +31,10 @@ export function chatbotHiddenAt(pathname: string): boolean {
 /** Milisegundos de reposo antes de calentar el trozo del chat en ordenador. */
 export const CHATBOT_WARM_DELAY_MS = 5_000;
 
-function Bubble({ onOpen }: { onOpen: () => void }) {
+/** Cada cuánto se mira si el equipo ha respondido (sólo si hay un hilo abierto con él). */
+export const LAUNCHER_UNREAD_POLL_MS = 30_000;
+
+function Bubble({ onOpen, unread = 0 }: { onOpen: () => void; unread?: number }) {
   return (
     <div className="fixed bottom-6 right-6 z-50 chip-pop">
       <button
@@ -37,10 +42,15 @@ function Bubble({ onOpen }: { onOpen: () => void }) {
         onClick={onOpen}
         onMouseEnter={() => { void loadChatbot().catch(() => {}); }}
         onFocus={() => { void loadChatbot().catch(() => {}); }}
-        aria-label="Abrir FunnyBot, el asistente de Funnyleads"
-        className="block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
+        aria-label={unread > 0 ? `Abrir el chat: ${unread} respuesta(s) nueva(s) del equipo` : "Abrir FunnyBot, el asistente de Funnyleads"}
+        className="relative block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
       >
         <SparkMark size={58} className="rounded-[18px]" />
+        {unread > 0 && (
+          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-bold text-white ring-2 ring-background">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
       </button>
     </div>
   );
@@ -49,7 +59,22 @@ function Bubble({ onOpen }: { onOpen: () => void }) {
 export function ChatbotLauncher() {
   const location = useLocation();
   const [mounted, setMounted] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const { user } = useAuth();
   const hidden = chatbotHiddenAt(location.pathname);
+
+  // Chat en directo: si en este navegador hay un hilo abierto con el equipo, se mira cada 30 s si
+  // han respondido, para poner el número en el botón aunque el chat no se haya abierto todavía.
+  useEffect(() => {
+    if (mounted || hidden) return;
+    const uid = user?.id ?? null;
+    if (!teamThread(uid)) return;
+    let vivo = true;
+    const tick = () => teamUnread(uid ? null : visitorId()).then((r) => { if (vivo) setUnread(r.unread || 0); }, () => { /* */ });
+    void tick();
+    const t = setInterval(() => void tick(), LAUNCHER_UNREAD_POLL_MS);
+    return () => { vivo = false; clearInterval(t); };
+  }, [mounted, hidden, user?.id]);
 
   // Ordenador, en reposo: el trozo del chat se baja a la caché (no se monta) para que el primer
   // clic abra al instante. En el teléfono no: allí casi nadie abre el chat y los datos cuestan.
@@ -69,5 +94,5 @@ export function ChatbotLauncher() {
     );
   }
   if (hidden) return null;
-  return <Bubble onOpen={() => setMounted(true)} />;
+  return <Bubble unread={unread} onOpen={() => setMounted(true)} />;
 }

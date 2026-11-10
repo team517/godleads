@@ -1,25 +1,24 @@
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3, History, UsersRound, MessageCircle, PencilLine } from "lucide-react";
+import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3, History, UsersRound, MessageCircle, PencilLine, ArrowLeft, Mail } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import type { ChartData } from "@/components/chatbot/ChatbotCharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useProfile } from "@/contexts/ProfileContext";
 import { SparkMark } from "@/components/SparkMark";
 import { useLocation } from "react-router-dom";
 import { isMobileAppPath } from "@/lib/mobile-app";
 import { contextoParaPulseBot, esOrdenDeAplicar, esPeticionDeCambio, siguePulseBot } from "@/lib/chatbot-intent";
 import { TarjetaCambioMini, type AccionCambio, type TarjetaCambioT } from "@/components/chatbot/TarjetaCambioMini";
 import { TeamAvatars } from "@/components/chatbot/TeamAvatars";
-import { TeamRequestForm } from "@/components/chatbot/TeamRequestForm";
 import { ChatHistoryPanel } from "@/components/chatbot/ChatHistoryPanel";
 import { quiereHablarConElEquipo } from "../../supabase/functions/_shared/chat-hub-rules";
 import {
-  callChatHub, createConversation, deleteConversation, listConversations, loadMessages, rememberVisitorConversation,
-  saveMessage, visitorConversation, visitorId as getVisitorId, type ChatConversation, type StoredMessage,
+  callChatHub, createConversation, deleteConversation, listConversations, loadMessages, rememberTeamThread, rememberVisitorConversation,
+  saveMessage, teamContact, teamPoll, teamSend, teamUnread, visitorConversation, visitorId as getVisitorId,
+  type ChatConversation, type StoredMessage, type TeamMessage,
 } from "@/lib/chat-hub-client";
 import type { IaTarjeta } from "@/lib/ia-mod-view";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -36,7 +35,11 @@ const ChatbotMarkdown = lazyWithRetry(() => import("@/components/chatbot/Chatbot
 export type ChatMode = "chat" | "edicion";
 
 type Msg = {
-  role: "user" | "assistant" | "charts";
+  role: "user" | "assistant" | "charts" | "system";
+  /** Id guardado (mensajes del hilo con el equipo: evita duplicarlos al sondear). */
+  id?: string;
+  /** Quién del equipo respondió (chat en directo). */
+  author?: string | null;
   content: string;
   images?: string[];
   charts?: ChartData[];
@@ -45,9 +48,10 @@ type Msg = {
   cards?: IaTarjeta[];
   /** Quién contestó: el consultor (stream), PulseBot (herramientas sobre la cuenta), el asistente
    *  de visitantes o el equipo (confirmación de petición). */
-  via?: "pulsebot" | "visitante" | "equipo";
-  /** Acción que ofrece el mensaje: pasar a Modo edición con ese texto, o abrir "Hablar con el equipo". */
-  action?: { kind: "modo_edicion"; text: string } | { kind: "equipo" } | { kind: "login" };
+  via?: "pulsebot" | "visitante" | "equipo" | "cliente_equipo";
+  /** Acción que ofrece el mensaje: pasar a Modo edición con ese texto, abrir "Hablar con el equipo"
+   *  o pedir (sin formulario) el correo al que avisar a un visitante. */
+  action?: { kind: "modo_edicion"; text: string } | { kind: "equipo" } | { kind: "login" } | { kind: "pedir_email" };
 };
 
 /* PulseBot en modo propio: la misma IA con herramientas de "Modificaciones IA", pero sobre la
@@ -95,13 +99,25 @@ export function textoSinMarcas(t: string): string {
 
 /** Lo que se ha dicho hasta ahora, para la transcripción de una petición y para guardar. */
 function toStored(m: Msg): StoredMessage | null {
-  if (m.role === "charts") return null;
+  // Los mensajes del hilo con el equipo los guarda el servidor (chat-hub), no el navegador.
+  if (m.role === "charts" || m.role === "system" || m.via === "equipo" || m.via === "cliente_equipo") return null;
   return { role: m.role, content: m.content || "", cards: m.cards && m.cards.length ? m.cards : undefined, via: m.via || null };
 }
 function fromStored(m: StoredMessage): Msg | null {
-  if (m.role === "system") return null;
-  return { role: m.role, content: m.content, cards: Array.isArray(m.cards) ? (m.cards as IaTarjeta[]) : undefined, via: (m.via as Msg["via"]) || undefined };
+  if (m.role === "system") return m.via === "equipo" ? { role: "system", id: m.id, content: m.content } : null;
+  return {
+    role: m.role, id: m.id, content: m.content, author: m.author_name ?? null,
+    cards: Array.isArray(m.cards) ? (m.cards as IaTarjeta[]) : undefined, via: (m.via as Msg["via"]) || undefined,
+  };
 }
+/** Un mensaje del hilo con el equipo, tal como lo devuelve chat-hub. */
+function fromTeam(m: TeamMessage): Msg {
+  return fromStored(m as StoredMessage) || { role: "system", id: m.id, content: m.content };
+}
+
+/** Cada cuánto se sondea el hilo con el equipo con el chat abierto, y los no leídos con él cerrado. */
+export const TEAM_POLL_MS = 4000;
+export const TEAM_UNREAD_POLL_MS = 30000;
 
 /** `initialOpen`: el botón flotante vive en ChatbotLauncher y monta este componente ya abierto
  *  al primer clic; desde entonces el chat se queda montado (conversación incluida) y pinta su
@@ -118,8 +134,14 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   const [estadosCambio, setEstadosCambio] = useState<Record<string, string>>({});
   const [viaPulseBot, setViaPulseBot] = useState(false);
   const [mode, setMode] = useState<ChatMode>("chat");
-  // "Hablar con el equipo": formulario abierto y, mientras, las fotos del equipo en vez de la marca.
+  // "Hablar con el equipo": chat en directo con personas del equipo (fotos del equipo en vez de la
+  // marca). teamThreadId = conversación con el hilo abierto; se sondea para traer sus respuestas.
   const [teamOpen, setTeamOpen] = useState(false);
+  const [teamThreadId, setTeamThreadId] = useState<string | null>(null);
+  const [teamUnreadCount, setTeamUnreadCount] = useState(0);
+  const teamSinceRef = useRef<string | null>(null);
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  const askedEmailRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -129,7 +151,6 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
-  const { profile } = useProfile();
   const location = useLocation();
   const isVisitor = !user;
   // The Unibox reader lives bottom-right too — hide this floating bubble there
@@ -154,19 +175,82 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   // Sin sesión no hay Modo edición: si se cierra sesión con él activo, vuelve a Conversación.
   useEffect(() => { if (isVisitor && mode === "edicion") setMode("chat"); }, [isVisitor, mode]);
 
-  // Visitante: al abrir, se recupera su última conversación (guardada por chat-hub).
+  /** Pinta una conversación ya guardada; si tiene el hilo con el equipo abierto, vuelve a él. */
+  const cargarHilo = (convId: string, msgs: Msg[], teamStatus: string | null | undefined) => {
+    seenIdsRef.current = new Set(msgs.map((m) => m.id).filter(Boolean) as string[]);
+    setMessages(msgs);
+    setConversation(convId);
+    if (teamStatus === "open" || teamStatus === "closed") {
+      setTeamThreadId(convId);
+      teamSinceRef.current = new Date().toISOString();
+      if (teamStatus === "open") setTeamOpen(true);
+      rememberTeamThread(convId, user?.id ?? null);
+    }
+  };
+
+  // Al abrir: el visitante recupera su última conversación (por chat-hub); el usuario con sesión,
+  // un hilo abierto con el equipo si lo tiene (por RLS). Así nadie pierde la respuesta del equipo.
   useEffect(() => {
-    if (!open || !isVisitor || messages.length > 0) return;
-    const convId = visitorConversation();
-    if (!convId) return;
-    callChatHub<{ messages: StoredMessage[] }>({ action: "visitor_history", visitor_id: getVisitorId(), conversation_id: convId })
-      .then((r) => {
-        const prev = (r.messages || []).map(fromStored).filter(Boolean) as Msg[];
-        if (prev.length) { setMessages(prev); setConversation(convId); }
-      })
-      .catch(() => { /* sin historial: se empieza de cero */ });
+    if (!open || messages.length > 0) return;
+    let cancelado = false;
+    if (isVisitor) {
+      const convId = visitorConversation();
+      if (!convId) return;
+      teamPoll({ conversationId: convId, visitorId: getVisitorId() })
+        .then((r) => {
+          if (cancelado) return;
+          const prev = (r.messages || []).map(fromTeam);
+          if (prev.length) cargarHilo(convId, prev, r.team_status);
+        })
+        .catch(() => { /* sin historial: se empieza de cero */ });
+    } else {
+      (supabase as any).from("chat_conversations").select("id, team_status").eq("team_status", "open")
+        .order("last_message_at", { ascending: false }).limit(1)
+        .then(async ({ data }: { data: { id: string; team_status: string }[] | null }) => {
+          const c = data?.[0];
+          if (!c || cancelado) return;
+          const prev = (await loadMessages(c.id)).map(fromStored).filter(Boolean) as Msg[];
+          if (!cancelado && prev.length) cargarHilo(c.id, prev, c.team_status);
+        }, () => { /* sin hilo */ });
+    }
+    return () => { cancelado = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isVisitor]);
+
+  // Hilo abierto y chat abierto: cada 4 s se traen las respuestas nuevas del equipo.
+  useEffect(() => {
+    if (!open || !teamThreadId) return;
+    let vivo = true;
+    const tick = async () => {
+      try {
+        const r = await teamPoll({ conversationId: teamThreadId, visitorId: isVisitor ? getVisitorId() : null, since: teamSinceRef.current });
+        if (!vivo) return;
+        const nuevos = (r.messages || []).filter((m) => !seenIdsRef.current.has(m.id));
+        if (nuevos.length) {
+          nuevos.forEach((m) => seenIdsRef.current.add(m.id));
+          setMessages((prev) => [...prev, ...nuevos.map(fromTeam)]);
+        }
+        const ultimo = (r.messages || []).at(-1)?.created_at;
+        if (ultimo) teamSinceRef.current = ultimo;
+        setTeamUnreadCount(0);
+      } catch { /* se reintenta en el siguiente */ }
+    };
+    void tick();
+    const t = window.setInterval(() => void tick(), TEAM_POLL_MS);
+    return () => { vivo = false; window.clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, teamThreadId, isVisitor]);
+
+  // Chat cerrado con un hilo abierto: cada 30 s se mira si el equipo ha respondido (punto en el botón).
+  useEffect(() => {
+    if (open || !teamThreadId) return;
+    let vivo = true;
+    const tick = () => teamUnread(isVisitor ? getVisitorId() : null)
+      .then((r) => { if (vivo) setTeamUnreadCount(r.unread || 0); }, () => { /* */ });
+    void tick();
+    const t = window.setInterval(() => void tick(), TEAM_UNREAD_POLL_MS);
+    return () => { vivo = false; window.clearInterval(t); };
+  }, [open, teamThreadId, isVisitor]);
 
   const setConversation = (id: string | null) => { conversationRef.current = id; setConversationId(id); };
 
@@ -193,6 +277,8 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
 
   const nuevaConversacion = () => {
     setMessages([]); setEstadosCambio({}); setConversation(null); setTeamOpen(false); setHistoryOpen(false);
+    setTeamThreadId(null); teamSinceRef.current = null; seenIdsRef.current = new Set(); askedEmailRef.current = false;
+    rememberTeamThread(null, null);
     if (isVisitor) rememberVisitorConversation(null);
   };
 
@@ -213,8 +299,10 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
     setHistoryLoading(true);
     try {
       const prev = (await loadMessages(id)).map(fromStored).filter(Boolean) as Msg[];
-      setMessages(prev); setConversation(id); setHistoryOpen(false); setTeamOpen(false);
       const c = conversations.find((x) => x.id === id);
+      setTeamOpen(false); setTeamThreadId(null);
+      cargarHilo(id, prev, c?.team_status);
+      setHistoryOpen(false);
       if (c?.mode === "edicion" && user) setMode("edicion");
     } catch (e) {
       console.warn("chat: no se pudo abrir la conversación:", (e as Error).message);
@@ -377,7 +465,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     sendMessage(result.summary, true);
   }, [fetchAnalyticsCharts]);
 
-  const pushAssistant = (m: Omit<Msg, "role">) => setMessages((prev) => [...prev, { role: "assistant", ...m }]);
+  const pushAssistant = (m: Omit<Msg, "role"> & { role?: Msg["role"] }) => setMessages((prev) => [...prev, { role: "assistant", ...m } as Msg]);
 
   const sendMessage = async (text: string, isAutoAnalytics = false) => {
     if ((!text.trim() && pendingImages.length === 0) || isLoading) return;
@@ -390,6 +478,14 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
     // Check if user is asking for analytics/charts
     const isAskingForCharts = !isAutoAnalytics && !isVisitor && /analítica|gráfico|gráfica|chart|analiza mis campaña|rendimiento|métricas|estadística/i.test(text);
+
+    // ── Hablando con el equipo: el mensaje va a las personas (chat-hub), nunca a la IA ──
+    if (teamOpen && !isAutoAnalytics) {
+      setInput("");
+      setPendingImages([]);
+      await enviarAlEquipo(text.trim());
+      return;
+    }
 
     const newMessages = [...messages, userMsg];
     if (!isAutoAnalytics) {
@@ -448,6 +544,49 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setMode("edicion");
     setMessages((prev) => prev.map((m) => (m.action?.kind === "modo_edicion" && m.action.text === text ? { ...m, action: undefined } : m)));
     await enviarAPulseBot(text, messages);
+  };
+
+  /** Chat en directo: el mensaje al equipo se guarda en el servidor, que avisa a team@. */
+  const enviarAlEquipo = async (texto: string) => {
+    if (!texto) return;
+    const local: Msg = { role: "user", content: texto, via: "cliente_equipo" };
+    setMessages((prev) => [...prev, local]);
+    setIsLoading(true);
+    try {
+      const r = await teamSend({
+        conversationId: conversationRef.current, visitorId: isVisitor ? getVisitorId() : null, message: texto,
+        page: typeof window !== "undefined" ? window.location.pathname : undefined,
+      });
+      seenIdsRef.current.add(r.message.id);
+      teamSinceRef.current = r.message.created_at;
+      setMessages((prev) => prev.map((m) => (m === local ? { ...m, id: r.message.id } : m)));
+      setConversation(r.conversation_id);
+      setTeamThreadId(r.conversation_id);
+      rememberTeamThread(r.conversation_id, user?.id ?? null);
+      if (isVisitor) rememberVisitorConversation(r.conversation_id);
+      if (r.needs_email && !askedEmailRef.current) {
+        askedEmailRef.current = true;
+        pushAssistant({ via: "equipo", author: "Equipo de Funnyleads", content: "¡Recibido! ¿A qué correo te avisamos si cierras la ventana?", action: { kind: "pedir_email" } });
+      }
+    } catch (e) {
+      pushAssistant({ role: "system", content: `No se ha podido enviar: ${e instanceof Error ? e.message : "inténtalo de nuevo"}` });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const guardarCorreoContacto = async (email: string) => {
+    const conv = conversationRef.current;
+    if (!conv) return false;
+    try {
+      const r = await teamContact({ conversationId: conv, visitorId: isVisitor ? getVisitorId() : null, email });
+      setMessages((prev) => prev.map((m) => (m.action?.kind === "pedir_email" ? { ...m, action: undefined } : m)));
+      setMessages((prev) => [...prev, { role: "system", content: `Te avisaremos en ${r.contact_email}` }]);
+      return true;
+    } catch (e) {
+      pushAssistant({ role: "system", content: e instanceof Error ? e.message : "No se pudo guardar el correo" });
+      return false;
+    }
   };
 
   const enviarComoVisitante = async (texto: string) => {
@@ -608,13 +747,6 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setIsLoading(false);
   };
 
-  const peticionEnviada = (email: string) => {
-    setTeamOpen(false);
-    const m: Msg = { role: "assistant", via: "equipo", content: `Hecho. Tu petición ya está en manos del equipo: te escribiremos a **${email}** lo antes posible, normalmente el mismo día.` };
-    setMessages((prev) => [...prev.map((x) => (x.action?.kind === "equipo" ? { ...x, action: undefined } : x)), m]);
-    void persist(m);
-  };
-
   const renderChart = (chart: ChartData, isFullscreen: boolean) => (
     <Suspense fallback={<div style={{ height: isFullscreen ? 260 : 180 }} className="flex items-center justify-center text-xs text-muted-foreground"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Cargando gráfico…</div>}>
       <ChatbotChart chart={chart} isFullscreen={isFullscreen} />
@@ -626,7 +758,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     team ? <TeamAvatars size={Math.round(size * 0.85)} /> : <SparkMark size={size} className={size > 40 ? "rounded-xl shadow-sm" : "shrink-0 rounded-[10px]"} />;
 
   const prompts = isVisitor ? visitorPrompts : mode === "edicion" ? editPrompts : quickPrompts;
-  const placeholder = isVisitor ? "Pregunta lo que quieras sobre Funnyleads…" : mode === "edicion" ? "Dime qué cambiar en tu campaña…" : "Pregunta o pide un análisis de tus campañas…";
+  const placeholder = teamOpen ? "Escribe al equipo…" : isVisitor ? "Pregunta lo que quieras sobre Funnyleads…" : mode === "edicion" ? "Dime qué cambiar en tu campaña…" : "Pregunta o pide un análisis de tus campañas…";
 
   const chatContent = (isFullscreen: boolean) => (
     <div className={`flex flex-col ${isFullscreen ? "h-full" : "max-h-[600px]"} bg-card`}>
@@ -636,14 +768,14 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
           <BotAvatar size={36} team={teamOpen} />
           <div className="min-w-0">
             <p className="truncate text-sm font-bold">{teamOpen ? "Equipo de Funnyleads" : "FunnyBot"}</p>
-            <p className="truncate text-xs text-muted-foreground">{teamOpen ? "Te respondemos por correo" : isVisitor ? "Asistente de Funnyleads" : mode === "edicion" ? "Editando tus campañas" : "Tu consultor de cold email"}</p>
+            <p className="truncate text-xs text-muted-foreground">{teamOpen ? "Normalmente respondemos en unas horas" : isVisitor ? "Asistente de Funnyleads" : mode === "edicion" ? "Editando tus campañas" : "Tu consultor de cold email"}</p>
           </div>
         </div>
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => (historyOpen ? setHistoryOpen(false) : void abrirHistorial())} title="Historial de conversaciones" aria-label="Historial de conversaciones">
             <History className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className={cn("h-8 w-8", teamOpen && "bg-primary/10 text-primary")} onClick={() => setTeamOpen((v) => !v)} title="Hablar con el equipo" aria-label="Hablar con el equipo">
+          <Button variant="ghost" size="icon" className={cn("h-8 w-8", teamOpen && "bg-primary/10 text-primary")} onClick={() => setTeamOpen((v) => !v)} title={teamOpen ? "Volver a FunnyBot" : "Hablar con el equipo"} aria-label={teamOpen ? "Volver a FunnyBot" : "Hablar con el equipo"}>
             <UsersRound className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setExpanded(!expanded)} title={expanded ? "Minimizar" : "Ampliar"}>
@@ -656,13 +788,23 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
       </div>
 
       {/* Modo: Conversación | Modo edición. Sólo con sesión: en la landing el visitante no lo ve. */}
-      {!isVisitor && (
+      {teamOpen && (
+        <div className="flex items-center justify-between gap-2 border-b bg-card px-3 py-1.5 shrink-0">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" /> Hablas con personas del equipo
+          </span>
+          <button type="button" onClick={() => setTeamOpen(false)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/10">
+            <ArrowLeft className="h-3.5 w-3.5" /> Volver a FunnyBot
+          </button>
+        </div>
+      )}
+      {!isVisitor && !teamOpen && (
       <div className="flex items-center gap-1 border-b bg-card px-3 py-1.5 shrink-0" role="tablist" aria-label="Modo del asistente">
-        <button type="button" role="tab" aria-selected={mode === "chat"} onClick={() => setMode("chat")}
+        <button type="button" role="tab" aria-selected={mode === "chat"} onClick={() => { setMode("chat"); setTeamOpen(false); }}
           className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "chat" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
           <MessageCircle className="h-3.5 w-3.5" /> Conversación
         </button>
-        <button type="button" role="tab" aria-selected={mode === "edicion"} onClick={() => setMode("edicion")}
+        <button type="button" role="tab" aria-selected={mode === "edicion"} onClick={() => { setMode("edicion"); setTeamOpen(false); }}
           title="FunnyBot cambia tus campañas y te pide confirmación"
           className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "edicion" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
           <PencilLine className="h-3.5 w-3.5" /> Modo edición
@@ -691,7 +833,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         ref={scrollRef}
         className={`flex-1 overflow-y-auto p-4 space-y-4 ${isFullscreen ? "" : "min-h-[300px] max-h-[420px]"}`}
       >
-        {messages.length === 0 && (
+        {messages.length === 0 && !teamOpen && (
           <div className="space-y-4">
             <div className="flex items-start gap-2.5">
               <BotAvatar size={32} team={false} />
@@ -749,12 +891,20 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
             );
           }
 
+          if (msg.role === "system") {
+            return (
+              <div key={msg.id || i} className="flex justify-center">
+                <span className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">{msg.content}</span>
+              </div>
+            );
+          }
+
           const teamBubble = msg.via === "equipo";
           return (
             <div key={i} className={`flex items-start gap-2.5 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
               {msg.role === "user"
                 ? <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary"><User className="h-4 w-4 text-primary-foreground" /></div>
-                : <BotAvatar size={32} team={teamBubble || teamOpen} />}
+                : <BotAvatar size={32} team={teamBubble || (teamOpen && msg.via !== "pulsebot" && msg.via !== "visitante" && !!msg.via)} />}
               <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${isFullscreen ? "max-w-[75%]" : "max-w-[85%]"} ${msg.role === "user" ? "rounded-tr-none bg-primary text-primary-foreground" : "rounded-tl-none bg-muted"}`}>
                 {msg.images && msg.images.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-2">
@@ -766,7 +916,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 {msg.role === "assistant" ? (
                   <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>li]:my-0.5 [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:rounded-lg [&>blockquote]:py-1 [&>pre]:bg-background/80 [&>pre]:rounded-lg [&>pre]:text-xs">
                     {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">FunnyBot · tus campañas</p>}
-                    {teamBubble && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">Equipo de Funnyleads</p>}
+                    {teamBubble && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">{msg.author && msg.author !== "Equipo de Funnyleads" ? `${msg.author} · Equipo de Funnyleads` : "Equipo de Funnyleads"}</p>}
                     {/* Mientras baja react-markdown (sólo la primera vez) el texto se lee en plano. */}
                     <Suspense fallback={<p className="whitespace-pre-wrap">{textoSinMarcas(msg.content)}</p>}>
                       <ChatbotMarkdown>{msg.content}</ChatbotMarkdown>
@@ -784,6 +934,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                         <PencilLine className="h-3.5 w-3.5" /> Activar Modo edición y aplicarlo
                       </Button>
                     )}
+                    {msg.action?.kind === "pedir_email" && <CorreoContacto onGuardar={guardarCorreoContacto} />}
                     {msg.action?.kind === "equipo" && !teamOpen && (
                       <Button size="sm" variant="outline" className="mt-2 gap-1.5 not-prose" onClick={() => setTeamOpen(true)}>
                         <UsersRound className="h-3.5 w-3.5" /> Hablar con el equipo
@@ -800,24 +951,24 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
         {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex items-start gap-2.5">
-            <BotAvatar size={32} team={false} />
+            <BotAvatar size={32} team={teamOpen} />
             <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3">
               <div className="flex items-center gap-1.5">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="text-xs text-muted-foreground">{viaPulseBot ? "Revisando tu campaña…" : "Pensando…"}</span>
+                <span className="text-xs text-muted-foreground">{teamOpen ? "Enviando…" : viaPulseBot ? "Revisando tu campaña…" : "Pensando…"}</span>
               </div>
             </div>
           </div>
         )}
 
-        {teamOpen && (
-          <TeamRequestForm
-            defaults={{ name: profile.full_name || "", email: user?.email || "", company: profile.company_name || "" }}
-            conversationId={conversationId}
-            visitorId={isVisitor ? getVisitorId() : null}
-            onSent={peticionEnviada}
-            onCancel={() => setTeamOpen(false)}
-          />
+        {teamOpen && !teamThreadId && (
+          <div className="flex items-start gap-2.5">
+            <BotAvatar size={32} team />
+            <div className="max-w-[85%] rounded-2xl rounded-tl-none bg-muted px-4 py-3 text-sm leading-relaxed">
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">Equipo de Funnyleads</p>
+              Escríbenos aquí: te responde una persona del equipo en este mismo chat. Si cierras la ventana, te avisamos por correo.
+            </div>
+          </div>
         )}
       </div>
 
@@ -851,7 +1002,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
           className="hidden"
           onChange={handleFileUpload}
         />
-        {!isVisitor && mode === "chat" && (
+        {!isVisitor && mode === "chat" && !teamOpen && (
           <>
             <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-primary" onClick={() => fileRef.current?.click()} title="Adjuntar imagen">
               <Paperclip className="h-4 w-4" />
@@ -893,11 +1044,16 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
           >
             <button
               type="button"
-              onClick={() => setOpen(true)}
-              aria-label="Abrir el asistente"
-              className="block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
+              onClick={() => { setOpen(true); if (teamUnreadCount > 0) setTeamOpen(true); }}
+              aria-label={teamUnreadCount > 0 ? `Abrir el chat: ${teamUnreadCount} respuesta(s) nueva(s) del equipo` : "Abrir el asistente"}
+              className="relative block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
             >
               <SparkMark size={58} className="rounded-[18px]" />
+              {teamUnreadCount > 0 && (
+                <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-bold text-white ring-2 ring-background">
+                  {teamUnreadCount > 9 ? "9+" : teamUnreadCount}
+                </span>
+              )}
             </button>
           </motion.div>
         )}
@@ -925,5 +1081,24 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+/** "¿A qué correo te avisamos?": una sola línea dentro de la burbuja del equipo, no un formulario. */
+function CorreoContacto({ onGuardar }: { onGuardar: (email: string) => Promise<boolean> }) {
+  const [email, setEmail] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const valido = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  return (
+    <form
+      className="not-prose mt-2 flex items-center gap-1.5"
+      onSubmit={async (e) => { e.preventDefault(); if (!valido || guardando) return; setGuardando(true); await onGuardar(email.trim()); setGuardando(false); }}
+    >
+      <label htmlFor="fl-contacto" className="sr-only">Tu correo</label>
+      <Input id="fl-contacto" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@empresa.com" className="h-8 flex-1 bg-background text-sm" />
+      <Button type="submit" size="sm" className="h-8 gap-1" disabled={!valido || guardando}>
+        {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />} Avisadme
+      </Button>
+    </form>
   );
 }

@@ -44,7 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
   { id: "clients", title: "Clientes", items: [
     { icon: Building2, label: "Clientes", path: "/clientes" },
     { icon: Briefcase, label: "Portal de Clientes", path: "/admin/clients" },
-    { icon: UsersRound, label: "Peticiones", path: "/peticiones" },
+    { icon: UsersRound, label: "Mensajes", path: "/peticiones" },
     { icon: Rocket, label: "Onboarding", path: "/onboarding" },
     { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
   ] },

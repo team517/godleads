@@ -12,9 +12,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TeamAvatars } from "@/components/chatbot/TeamAvatars";
+import { TeamInbox } from "@/components/chatbot/TeamInbox";
 import { cn } from "@/lib/utils";
 
-/* Peticiones (10-11-2026): lo que entra por el chatbot. Sólo el equipo (hello@, support@, equipo@,
+/* Mensajes (10-11-2026): el chat en directo con el equipo (pestaña principal, estilo Intercom) y,
+   aparte, las peticiones del formulario antiguo y las conversaciones con FunnyBot.
+   Peticiones (10-11-2026): lo que entra por el chatbot. Sólo el equipo (hello@, support@, equipo@,
    gestores y admins). "Peticiones" = quien ha pedido hablar con el equipo (con transcripción y
    estado); "Conversaciones" = últimas conversaciones de usuarios y visitantes. */
 
@@ -36,7 +39,8 @@ export default function Peticiones() {
   const { user } = useAuth();
   const { profile } = useProfile();
   const { isAdmin, loading: subLoading } = useSubscription();
-  const [tab, setTab] = useState<"peticiones" | "conversaciones">("peticiones");
+  const [tab, setTab] = useState<"mensajes" | "peticiones" | "conversaciones">("mensajes");
+  const [noLeidos, setNoLeidos] = useState(0);
   const [filtro, setFiltro] = useState<"" | "new" | "contacted" | "closed">("");
   const [peticiones, setPeticiones] = useState<Peticion[]>([]);
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([]);
@@ -61,7 +65,7 @@ export default function Peticiones() {
     } finally { setLoading(false); }
   }, [filtro]);
 
-  useEffect(() => { if (esEquipo) void cargar(); }, [esEquipo, cargar]);
+  useEffect(() => { if (esEquipo && tab !== "mensajes") void cargar(); }, [esEquipo, cargar, tab]);
 
   const cambiarEstado = async (p: Peticion, status: Peticion["status"]) => {
     try {
@@ -92,22 +96,27 @@ export default function Peticiones() {
         <div className="flex items-center gap-3">
           <TeamAvatars size={36} />
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Peticiones del chat</h1>
-            <p className="text-sm text-muted-foreground">Quién ha pedido hablar con el equipo y qué se habla con el asistente.</p>
+            <h1 className="text-xl font-semibold tracking-tight">Mensajes</h1>
+            <p className="text-sm text-muted-foreground">Quien escribe al equipo desde el chat. Respondes aquí y le aparece al momento en su chat.</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void cargar()} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Actualizar
-        </Button>
+        {tab !== "mensajes" && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void cargar()} disabled={loading}>
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Actualizar
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-lg border bg-card p-0.5" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "mensajes"} onClick={() => setTab("mensajes")} className={cn("rounded-md px-3 py-1.5 text-sm font-medium", tab === "mensajes" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+            Chat con clientes{noLeidos > 0 && <span className="ml-1.5 rounded-full bg-rose-600 px-1.5 text-[10.5px] font-bold text-white">{noLeidos}</span>}
+          </button>
           <button type="button" role="tab" aria-selected={tab === "peticiones"} onClick={() => setTab("peticiones")} className={cn("rounded-md px-3 py-1.5 text-sm font-medium", tab === "peticiones" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
-            Peticiones{resumen.nuevas > 0 && <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[10.5px] font-bold text-white">{resumen.nuevas}</span>}
+            Peticiones (formulario){resumen.nuevas > 0 && <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[10.5px] font-bold text-white">{resumen.nuevas}</span>}
           </button>
           <button type="button" role="tab" aria-selected={tab === "conversaciones"} onClick={() => setTab("conversaciones")} className={cn("rounded-md px-3 py-1.5 text-sm font-medium", tab === "conversaciones" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
-            Conversaciones
+            Conversaciones con FunnyBot
           </button>
         </div>
         {tab === "peticiones" && (
@@ -118,6 +127,8 @@ export default function Peticiones() {
           </div>
         )}
       </div>
+
+      {tab === "mensajes" && <TeamInbox onUnread={setNoLeidos} />}
 
       {tab === "peticiones" && (
         <div className={cn("grid gap-4", abierta ? "lg:grid-cols-[1fr_420px]" : "")}>
