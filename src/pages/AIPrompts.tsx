@@ -182,7 +182,7 @@ export default function AIPrompts() {
   const [logOpen, setLogOpen] = useState(false);
 
   useEffect(() => { try { localStorage.setItem("agents:view", view); } catch { /* sin almacenamiento */ } }, [view]);
-  useEffect(() => { const prev = document.title; document.title = "Agentes IA · OnePulso"; return () => { document.title = prev; }; }, []);
+  useEffect(() => { const prev = document.title; document.title = "Agentes IA · Funnyleads"; return () => { document.title = prev; }; }, []);
 
   const load = useCallback(async () => {
     if (!user) return;

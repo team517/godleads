@@ -118,7 +118,7 @@ export default function Welcome() {
 
   useEffect(() => {
     const prev = document.title;
-    document.title = "Bienvenido a OnePulso";
+    document.title = "Bienvenido a Funnyleads";
     return () => { document.title = prev; };
   }, []);
 
