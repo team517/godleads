@@ -35,6 +35,7 @@ import { aiClassifyOnce, evidenceSupported } from "../_shared/ai-classify.ts";
 import { planCalls, cooldownAfterLimit, pacingGapMs, type ThrottleState } from "../_shared/ai-throttle.ts";
 import { campaignMatchCounts, isWarmupMessage, looksLikeWarmupSubject } from "../_shared/inbox-filters.ts";
 import { shouldPushReply } from "../_shared/push-rule.ts";
+import { reprogramarFueraDeOficina } from "../_shared/ooo-reschedule.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,6 +59,12 @@ const AI_CONCURRENCY = 4;
 const RUN_TIME_BUDGET_MS = 50_000;
 /** Consecutive transient failures before the model is considered down for this run. */
 const AI_BREAKER_FAILURES = 3;
+/** Fuera de oficina (10-11-2026): preguntas al modelo por la fecha de vuelta, como mucho, por ejecución. */
+const OOO_MAX_AI_PER_RUN = 4;
+/** Fuera de oficina en cola (el repaso de lo ya recibido) que se resuelven por ejecución. */
+const OOO_QUEUE_PER_RUN = 25;
+/** No se empieza ninguno más pasado este tiempo de la ejecución. */
+const OOO_TIME_BUDGET_MS = 45_000;
 
 type Row = {
   id: string; user_id: string; from_email: string | null; from_name: string | null; subject: string | null;
@@ -434,6 +441,17 @@ Deno.serve(async (req) => {
 
     // ── Phase 3: write labels, notify ────────────────────────────────────────────────────────
     let classified = 0, byAi = 0, byRules = 0, aiDisagreed = 0, notified = 0, bajas = 0;
+    // Fuera de oficina → la campaña espera a que vuelva: cuántos de cada resultado y cuántas preguntas al modelo.
+    const fueraDeOficina: Record<string, number> = {};
+    let oooAi = 0;
+    const reprogramar = async (messageId: string, campaignId: string, leadId: string, text: string, receivedAt: string) => {
+      const r = await reprogramarFueraDeOficina(admin, { messageId, campaignId, leadId, text, receivedAt }, {
+        apiKey: deepseekKey,
+        useAi: useAi && oooAi < OOO_MAX_AI_PER_RUN && Date.now() - startedAt < OOO_TIME_BUDGET_MS - 10_000,
+      });
+      if (r.usedAi) oooAi++;
+      fueraDeOficina[r.status] = (fueraDeOficina[r.status] || 0) + 1;
+    };
     const sample: { tipo: string; via: string; from: string | null; subject: string; reglas?: string; cita?: string; motivo?: string; texto?: string }[] = [];
     for (const p of pending) {
       if (deferred.has(p.m.id)) continue;
@@ -476,6 +494,20 @@ Deno.serve(async (req) => {
         let q = admin.from("campaign_leads").update({ status: "replied" }).eq("lead_id", p.m.lead_id).in("status", ["pending", "active", "in_progress"]);
         if (p.m.campaign_id) q = q.eq("campaign_id", p.m.campaign_id);
         await q;
+      }
+
+      // Fuera de oficina CON FECHA de un lead de campaña: no se le escribe hasta el día que vuelve y
+      // ese día recibe el siguiente correo (10-11-2026). Un fallo aquí nunca para la clasificación.
+      if (!dryRun && !force && p.verdict === "out_of_office" && p.m.campaign_id && p.m.lead_id && Date.now() - startedAt < OOO_TIME_BUDGET_MS) {
+        try {
+          const { data: ya } = await admin.from("ooo_returns").select("status").eq("inbox_message_id", p.m.id).maybeSingle();
+          if (!ya || (ya as { status: string }).status === "pendiente") {
+            const rx = p.m as unknown as { received_at?: string | null; created_at?: string | null };
+            await reprogramar(p.m.id, String(p.m.campaign_id), String(p.m.lead_id), authorText(p.text), rx.received_at || rx.created_at || new Date().toISOString());
+          }
+        } catch (e) {
+          console.error("fuera de oficina:", (e as Error).message);
+        }
       }
 
       // Baja pedida POR ESCRITO ("dadme de baja", "no me escribáis más"): hasta ahora sólo se le
@@ -537,13 +569,38 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── Fuera de oficina en cola (repaso de lo ya recibido): unos pocos por ejecución ─────────────
+    if (!dryRun && !force && Date.now() - startedAt < OOO_TIME_BUDGET_MS) {
+      const { data: cola } = await admin.from("ooo_returns").select("inbox_message_id")
+        .eq("status", "pendiente").order("created_at", { ascending: true }).limit(OOO_QUEUE_PER_RUN);
+      for (const c of (cola || []) as { inbox_message_id: string }[]) {
+        if (Date.now() - startedAt > OOO_TIME_BUDGET_MS) break;
+        try {
+          const { data: msg } = await admin.from("inbox_messages")
+            .select("id, body_text, body_html, received_at, created_at, campaign_id, lead_id")
+            .eq("id", c.inbox_message_id).maybeSingle();
+          const mm = msg as { id: string; body_text: string | null; body_html: string | null; received_at: string | null; created_at: string | null; campaign_id: string | null; lead_id: string | null } | null;
+          if (!mm || !mm.campaign_id || !mm.lead_id) {
+            await admin.from("ooo_returns").update({ status: "no_aplica", updated_at: new Date().toISOString() }).eq("inbox_message_id", c.inbox_message_id);
+            continue;
+          }
+          const texto = authorText(replyTextForClassification(mm.body_text, mm.body_html));
+          await reprogramar(mm.id, mm.campaign_id, mm.lead_id, texto, mm.received_at || mm.created_at || new Date().toISOString());
+        } catch (e) {
+          // Un fallo persistente no puede volver cada minuto: se aparta como "no aplica".
+          console.error("fuera de oficina (cola):", (e as Error).message);
+          await admin.from("ooo_returns").update({ status: "no_aplica", updated_at: new Date().toISOString() }).eq("inbox_message_id", c.inbox_message_id);
+        }
+      }
+    }
+
     if (unlock) await unlock();
     return new Response(JSON.stringify({
       dry_run: dryRun, revisados: scanned, ya_clasificados: skipped, clasificados: classified,
       por_ia: byAi, por_reglas: byRules, ia_cambio_el_veredicto: aiDisagreed, llamadas_ia: aiCalls, fallos_ia: aiFailures,
       aplazados: deferred.size, cortacircuitos: breakerTripped, sin_tiempo: outOfTime, interes_sin_cita: unsupported,
       limite_api: rateLimited, enfriando_ms: enfriando, cupo_tanda: plan.allowed, ms: Date.now() - startedAt,
-      notificados: notified, hasta: oldestSeen, muestra: sample,
+      notificados: notified, hasta: oldestSeen, fuera_de_oficina: fueraDeOficina, ooo_ia: oooAi, muestra: sample,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     if (unlock) await unlock();

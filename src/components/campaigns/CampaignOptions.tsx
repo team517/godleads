@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { useConfirm } from "@/hooks/useConfirm";
 import { campaignsUsingAccounts } from "@/lib/account-usage";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
+import { CalendarClock, Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loader2, TrendingUp, BarChart3, Shield, Zap, Users, RefreshCw, FileSignature, Minus, Plus, Check, GitBranch, Gauge, Split, ChevronDown, Ban, Upload, Building2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
 import { LeadMixControl, type LeadMixValue } from "@/components/campaigns/LeadMixControl";
@@ -109,6 +109,8 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [stopOnReply, setStopOnReply] = useState(true);
+  // Fuera de oficina con fecha: esperar a que vuelva (10-11-2026). Activado por defecto.
+  const [oooReschedule, setOooReschedule] = useState(true);
   const [includeUnsubscribe, setIncludeUnsubscribe] = useState(false);
   const [unsubAll, setUnsubAll] = useState(true);
   const [unsubAccountIds, setUnsubAccountIds] = useState<string[]>([]);
@@ -335,6 +337,7 @@ export default function CampaignOptions({ campaignId }: Props) {
         const d = campRes.data as any;
         setDailyLimit(d.daily_limit && d.daily_limit > 0 ? d.daily_limit : 0); // 0 = auto
         setStopOnReply(d.stop_on_reply ?? true);
+        setOooReschedule(d.ooo_reschedule ?? true);
         setIncludeUnsubscribe(d.include_unsubscribe ?? false);
         setUnsubAll(d.unsubscribe_all ?? true);
         setUnsubAccountIds(d.unsubscribe_account_ids || []);
@@ -395,6 +398,7 @@ export default function CampaignOptions({ campaignId }: Props) {
       // Persist as-is: >0 = manual ceiling, 0 = AUTO (backend tracks account capacity).
       daily_limit: dailyLimit > 0 ? dailyLimit : 0,
       stop_on_reply: stopOnReply,
+      ooo_reschedule: oooReschedule,
       include_unsubscribe: includeUnsubscribe,
       unsubscribe_all: unsubAll,
       unsubscribe_account_ids: unsubAccountIds,
@@ -574,6 +578,11 @@ export default function CampaignOptions({ campaignId }: Props) {
           title="Parar al recibir respuesta"
           desc="Si un lead contesta, se cancelan automáticamente sus follow-ups."
           control={<Switch checked={stopOnReply} onCheckedChange={v => { setStopOnReply(v); markDirty(); }} />}
+        />
+        <Row icon={<CalendarClock className="h-4 w-4" />} tint="amber"
+          title="Fuera de oficina: esperar a que vuelva"
+          desc="Si alguien responde que está fuera hasta una fecha, no le enviamos más correos hasta ese día y ese mismo día recibe el siguiente de la secuencia."
+          control={<Switch checked={oooReschedule} onCheckedChange={v => { setOooReschedule(v); markDirty(); }} aria-label="Fuera de oficina: esperar a que vuelva" />}
         />
         <Row icon={<Ban className="h-4 w-4" />} tint="rose"
           title="Incluir enlace de baja"

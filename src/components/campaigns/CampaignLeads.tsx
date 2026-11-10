@@ -22,6 +22,7 @@ import { splitRows } from "@/lib/lead-merge";
 import { chunk } from "@/lib/bulk-apply";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
+import { esperasPorLead, textoVuelta, tooltipVuelta, type EsperaOoo } from "@/lib/ooo-chip";
 
 const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
 
@@ -34,6 +35,17 @@ export default function CampaignLeads({ campaignId }: Props) {
   const { user } = useAuth();
   // Server-side paginated leads — only current page in memory
   const [pageLeads, setPageLeads] = useState<any[]>([]);
+  // Leads de esta página que esperan a que vuelva quien contestó "estoy fuera hasta…" (10-11-2026).
+  const [esperas, setEsperas] = useState<Record<string, EsperaOoo>>({});
+  useEffect(() => {
+    const ids = pageLeads.map((cl: any) => cl.lead_id).filter(Boolean);
+    if (!ids.length) { setEsperas({}); return; }
+    let vivo = true;
+    (supabase as any).from("ooo_returns").select("lead_id, return_date, scheduled_for, snippet")
+      .eq("campaign_id", campaignId).eq("status", "programado").gt("scheduled_for", new Date().toISOString()).in("lead_id", ids)
+      .then(({ data }: { data: EsperaOoo[] | null }) => { if (vivo) setEsperas(esperasPorLead(data || [])); });
+    return () => { vivo = false; };
+  }, [pageLeads, campaignId]);
   const [totalLeadCount, setTotalLeadCount] = useState(0);
   const [realLeadCount, setRealLeadCount] = useState(0);
   const [tablePage, setTablePage] = useState(0);
@@ -1486,7 +1498,19 @@ export default function CampaignLeads({ campaignId }: Props) {
                           <td key={col} className="px-3 py-2 text-muted-foreground truncate max-w-[180px]">{fields[col] || "—"}</td>
                         ))}
                         <td className="px-3 py-2 text-muted-foreground">{cl.current_step + 1} / {steps.length || "?"}</td>
-                        <td className="px-3 py-2"><Badge variant={(statusColors[cl.status] || "secondary") as any}>{statusLabels[cl.status] || cl.status}</Badge></td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={(statusColors[cl.status] || "secondary") as any}>{statusLabels[cl.status] || cl.status}</Badge>
+                            {esperas[cl.lead_id] && (
+                              <span
+                                title={tooltipVuelta(esperas[cl.lead_id])}
+                                className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-800 dark:border-amber-500/40 dark:bg-amber-900/25 dark:text-amber-300"
+                              >
+                                {textoVuelta(esperas[cl.lead_id].return_date)}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center justify-center gap-1">
                             <Button
