@@ -211,6 +211,9 @@ export async function enterClient(targetUserId: string): Promise<void> {
     writeImpersonation(previous); // nada ha cambiado: se deja como estaba
     throw new Error(`No se pudo entrar en la cuenta: ${error.message}`);
   }
+  // Segunda garantía: ya dentro del cliente, se vuelve a guardar "vengo de mi cuenta" por si algo lo
+  // hubiera borrado en el instante del cambio. Sin esto, dentro no saldría "Volver a mi cuenta".
+  writeImpersonation(next);
   window.location.assign("/dashboard");
 }
 
