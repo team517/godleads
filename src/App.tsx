@@ -22,6 +22,7 @@ import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 
 const Landing = lazyWithRetry(() => import("./pages/Landing"));
 const Auth = lazyWithRetry(() => import("./pages/Auth"));
+const Empezar = lazyWithRetry(() => import("./pages/Empezar"));
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
 const Zapmail = lazyWithRetry(() => import("./pages/Zapmail"));
 const EmailAccounts = lazyWithRetry(() => import("./pages/EmailAccounts"));
@@ -78,6 +79,7 @@ const App = () => (
               <Route path="/" element={<Landing />} />
               <Route path="/install" element={<Install />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/empezar" element={<Empezar />} />
               {/* Public client onboarding portal — client logs in with the
                   credentials the owner created and sees only their own progress. */}
               <Route path="/o/:slug" element={<OnboardingPortal />} />

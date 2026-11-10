@@ -82,6 +82,7 @@ export type SubscriptionStatus =
   | "active" | "trialing"          // suscripción de Stripe con acceso (trialing = sus 14 días de prueba)
   | "platform_trial"               // prueba gratuita de la plataforma, sin pago
   | "expired"                      // prueba terminada sin pagar
+  | "needs_card"                   // alta desde el 11-11-2026 sin prueba con tarjeta: "Activa tu prueba gratuita"
   | "payment_failed" | "canceled"; // problema de cobro / suscripción terminada
 
 interface SubscriptionContextType {
@@ -107,6 +108,8 @@ interface SubscriptionContextType {
   paymentProblem: null | { kind: "payment_failed" | "canceled"; tier: PlanTier; lastPaymentError: string | null; periodEnd: string | null };
   /** Esta cuenta paga (registro propio nuevo): es a quien se le enseñan planes y botones de pago. */
   billable: boolean;
+  /** Registro desde el corte sin prueba con tarjeta ni plan: la app enseña "Activa tu prueba gratuita". */
+  needsCard: boolean;
   refreshSubscription: () => Promise<void>;
 }
 
@@ -144,13 +147,14 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [cancelAtPeriodEnd, setCancelAtPeriodEnd] = useState(false);
   const [paymentProblem, setPaymentProblem] = useState<SubscriptionContextType["paymentProblem"]>(null);
   const [billable, setBillable] = useState(false);
+  const [needsCard, setNeedsCard] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const resetSubscriptionState = useCallback(() => {
     setTier("free"); setSubscribed(false); setSubscriptionEnd(null);
     setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
     setRole(null); setStatus("free"); setEntitlement(null); setPeriodEnd(null);
-    setCancelAtPeriodEnd(false); setPaymentProblem(null); setBillable(false);
+    setCancelAtPeriodEnd(false); setPaymentProblem(null); setBillable(false); setNeedsCard(false);
   }, []);
 
   const applyDecision = useCallback((decision: AccessDecision, ent: EntitlementInput | null) => {
@@ -159,7 +163,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     setCancelAtPeriodEnd(false);
     setPeriodEnd(null);
     setBillable(!(decision.kind === "staff" || decision.kind === "free"));
+    setNeedsCard(decision.kind === "needs_card");
     switch (decision.kind) {
+      case "needs_card":
+        setSubscribed(false); setSubscriptionEnd(null); setTier("free");
+        setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
+        setStatus("needs_card");
+        break;
       case "staff":
         setSubscribed(true); setSubscriptionEnd(null); setTier("scale");
         setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
@@ -286,7 +296,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     <SubscriptionContext.Provider value={{
       tier, subscribed, subscriptionEnd, loading, limits, isTrialing, trialEnd, trialExpired, trialDaysLeft,
       role, isAdmin: role === "admin", status, entitlement, periodEnd, cancelAtPeriodEnd, paymentProblem, billable,
-      refreshSubscription,
+      needsCard, refreshSubscription,
     }}>
       {children}
     </SubscriptionContext.Provider>

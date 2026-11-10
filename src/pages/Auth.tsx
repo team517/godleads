@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useSearchParams, Link, useNavigate } from "react-router-dom";
+import { useSearchParams, Link, useNavigate, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,6 +59,13 @@ export default function Auth() {
     }
   };
 
+  // Alta con prueba gratuita (11-11-2026): crear cuenta se hace en /empezar (plan, cuenta y tarjeta).
+  if (searchParams.get("mode") === "signup") {
+    const q = new URLSearchParams();
+    for (const k of ["plan", "periodo"]) { const v = searchParams.get(k); if (v) q.set(k, v); }
+    return <Navigate to={`/empezar${q.toString() ? `?${q}` : ""}`} replace />;
+  }
+
   if (checking) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -108,9 +115,9 @@ export default function Auth() {
 
           <p className="mt-6 text-center text-[15px] text-muted-foreground">
             {isSignup ? "¿Ya tienes cuenta?" : "¿No tienes cuenta?"}{" "}
-            <button onClick={() => setIsSignup(!isSignup)} className="font-medium text-primary hover:underline">
-              {isSignup ? "Inicia sesión" : "Regístrate"}
-            </button>
+            {isSignup
+              ? <button onClick={() => setIsSignup(false)} className="font-medium text-primary hover:underline">Inicia sesión</button>
+              : <Link to="/empezar" className="font-medium text-primary hover:underline">Empieza gratis 14 días</Link>}
           </p>
         </div>
       </div>

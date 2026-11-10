@@ -6,6 +6,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { TrialExpiredScreen } from "@/components/TrialExpiredScreen";
 import { PausedByAdminScreen } from "@/components/PausedByAdminScreen";
 import { SubscriptionProblemScreen } from "@/components/SubscriptionProblemScreen";
+import { ActivateTrialScreen } from "@/components/signup/ActivateTrialScreen";
 import { isAgencyAccount } from "@/lib/access";
 import { useWelcomeGate } from "@/hooks/useWelcomeGate";
 import { WELCOME_PATH, shouldShowWelcome } from "@/lib/first-run";
@@ -14,7 +15,7 @@ import { isImpersonating } from "@/lib/impersonation";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
-  const { loading: subLoading, trialExpired, subscribed, paymentProblem } = useSubscription();
+  const { loading: subLoading, trialExpired, subscribed, paymentProblem, needsCard } = useSubscription();
   const { profile, loading: profileLoading } = useProfile();
   const location = useLocation();
   const welcome = useWelcomeGate();
@@ -47,6 +48,12 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // Nunca se topa con el muro de pago: paga su dueño. Eso lo garantiza
   // decideAccess (allowed_routes no vacío → "free", así que trialExpired es false);
   // está fijado en src/test/client-account-access.test.ts.
+
+  // Alta con tarjeta (11-11-2026): un registro nuevo sin prueba con tarjeta ni plan no entra a nada
+  // (ni a /settings): sólo ve "Activa tu prueba gratuita". El acceso lo da el webhook de Stripe.
+  if (needsCard && !subscribed) {
+    return <ActivateTrialScreen />;
+  }
 
   // Paywall: a NEW self-signup whose 5-day trial ended (and hasn't subscribed) must pay to continue.
   // Staff, admin-created clients, grandfathered accounts and subscribers never reach here — the

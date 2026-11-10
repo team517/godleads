@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideAccess, decideFromEntitlement, AccessInput, TRIAL_DAYS } from "@/lib/access";
+import { decideAccess, decideFromEntitlement, AccessInput, TRIAL_DAYS, CARD_REQUIRED_CUTOFF_MS } from "@/lib/access";
 
 // Billing gate — this decides who accesses free vs. must pay, so every case is pinned down.
 const base: AccessInput = {
@@ -112,5 +112,37 @@ describe("decideAccess — lo que dice el servidor (user_entitlements, 10-11-202
   it("decideFromEntitlement: sin fila → null", () => {
     expect(decideFromEntitlement(null, now)).toBeNull();
     expect(decideFromEntitlement({ status: null, tier: null, trialEnd: null, currentPeriodEnd: null }, now)).toBeNull();
+  });
+});
+
+
+/* Alta con tarjeta (11-11-2026): "no puede crear cuenta sin el free trial o haber pagado". */
+describe("decideAccess — registros desde el corte necesitan prueba con tarjeta", () => {
+  const nuevo: AccessInput = { ...base, createdAt: "2026-11-11T09:00:00Z", nowMs: Date.parse("2026-11-12T00:00:00Z") };
+  it("el corte es el 11-11-2026 a las 00:00 UTC", () => {
+    expect(new Date(CARD_REQUIRED_CUTOFF_MS).toISOString()).toBe("2026-11-11T00:00:00.000Z");
+  });
+  it("registro nuevo sin fila o con fila inactive → needs_card (sin prueba de la plataforma)", () => {
+    expect(decideAccess(nuevo).kind).toBe("needs_card");
+    expect(decideAccess({ ...nuevo, entitlement: { status: "inactive", tier: "free", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("needs_card");
+  });
+  it("con la prueba de Stripe (tarjeta puesta) → subscribed en prueba", () => {
+    const d = decideAccess({ ...nuevo, entitlement: { status: "trialing", tier: "starter", trialEnd: "2026-11-25T09:00:00Z", currentPeriodEnd: "2026-11-25T09:00:00Z" } });
+    expect(d.kind).toBe("subscribed");
+    expect(d.kind === "subscribed" && d.status).toBe("trialing");
+  });
+  it("con un plan pagado → subscribed; con impago → payment_failed (no needs_card)", () => {
+    expect(decideAccess({ ...nuevo, entitlement: { status: "active", tier: "growth", trialEnd: null, currentPeriodEnd: "2026-12-11T00:00:00Z" } }).kind).toBe("subscribed");
+    expect(decideAccess({ ...nuevo, entitlement: { status: "past_due", tier: "growth", trialEnd: null, currentPeriodEnd: null } }).kind).toBe("payment_failed");
+  });
+  it("registros ANTERIORES al corte conservan su prueba sin tarjeta hasta que acabe", () => {
+    const viejo = { ...base, createdAt: "2026-11-10T20:00:00Z", nowMs: Date.parse("2026-11-12T00:00:00Z") };
+    expect(decideAccess(viejo).kind).toBe("trialing");
+    expect(decideAccess({ ...viejo, nowMs: Date.parse("2026-11-25T00:00:00Z") }).kind).toBe("expired");
+  });
+  it("el equipo, los clientes de la agencia y las cuentas antiguas no cambian", () => {
+    expect(decideAccess({ ...nuevo, email: "hello@onepulso.blog" }).kind).toBe("staff");
+    expect(decideAccess({ ...nuevo, allowedRoutes: ["/unibox"] }).kind).toBe("free");
+    expect(decideAccess({ ...nuevo, createdAt: "2026-07-01T00:00:00Z" }).kind).toBe("free");
   });
 });

@@ -14,8 +14,8 @@ describe("planesEnTexto", () => {
 
 describe("destinoChoose", () => {
   it("sin enlace de pago creado todavía → registro con el plan anotado", () => {
-    expect(destinoChoose("Growth $65 /month Choose")).toEqual({ kind: "route", to: "/auth?mode=signup&plan=growth&periodo=month" });
-    expect(destinoChoose("Scale $141 /month billed yearly Choose")).toEqual({ kind: "route", to: "/auth?mode=signup&plan=scale&periodo=year" });
+    expect(destinoChoose("Growth $65 /month Choose")).toEqual({ kind: "route", to: "/empezar?plan=growth&periodo=month" });
+    expect(destinoChoose("Scale $141 /month billed yearly Choose")).toEqual({ kind: "route", to: "/empezar?plan=scale&periodo=year" });
   });
   it("una zona con precios de varios planes no es una tarjeta", () => {
     expect(destinoChoose("Starter $17 Growth $65 Scale $170")).toBeNull();
@@ -32,8 +32,8 @@ describe("textoDeTarjeta (DOM como el de la landing)", () => {
     </section>
     <header><a id="hero" href="#signup">Start free</a></header>`;
   it("cada Choose lee SU tarjeta", () => {
-    expect(destinoChoose(textoDeTarjeta(document.getElementById("c1")))).toEqual({ kind: "route", to: "/auth?mode=signup&plan=starter&periodo=year" });
-    expect(destinoChoose(textoDeTarjeta(document.getElementById("c3")))).toEqual({ kind: "route", to: "/auth?mode=signup&plan=scale&periodo=year" });
+    expect(destinoChoose(textoDeTarjeta(document.getElementById("c1")))).toEqual({ kind: "route", to: "/empezar?plan=starter&periodo=year" });
+    expect(destinoChoose(textoDeTarjeta(document.getElementById("c3")))).toEqual({ kind: "route", to: "/empezar?plan=scale&periodo=year" });
   });
   it("el botón de registro de arriba sigue yendo al registro normal", () => {
     expect(destinoChoose(textoDeTarjeta(document.getElementById("hero")))).toBeNull();

@@ -1,4 +1,7 @@
 // Checkout de Stripe desde la app (pantalla de prueba terminada, Ajustes → Plan, reactivación).
+// 11-11-2026: también el ALTA con prueba gratuita (body.trial = true): 14 días, tarjeta obligatoria y
+// 0 € hoy. Sólo una prueba por cuenta (si ya tuvo una suscripción, se cobra sin prueba) y nunca si ya
+// tiene una suscripción viva. Vuelve a /empezar (body.return_to = "empezar") o a Ajustes.
 // 10-11-2026: sólo los 6 precios de Funnyleads; la suscripción lleva la misma metadata que los
 // enlaces de la landing ({app: warmlead, plan}) y client_reference_id = usuario, para que el webhook
 // la asigne sin depender del correo.
@@ -27,13 +30,22 @@ serve(async (req) => {
     const user = data.user;
     if (!user?.email) throw new Error("User not authenticated");
 
-    const { price_id } = await req.json();
-    const precio = PRECIOS_FUNNYLEADS[String(price_id || "")];
+    const body = await req.json().catch(() => ({}));
+    const price_id = String(body.price_id || "");
+    const precio = PRECIOS_FUNNYLEADS[price_id];
     if (!precio) return json({ error: "Precio no válido" }, 400);
+    const quierePrueba = body.trial === true;
+    const volverAlAlta = body.return_to === "empezar";
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
     // Se reutiliza el cliente de Stripe que ya tengamos guardado o el que lleve su correo.
-    const { data: known } = await db.from("user_entitlements").select("stripe_customer_id").eq("user_id", user.id).maybeSingle();
+    const { data: known } = await db.from("user_entitlements").select("stripe_customer_id, stripe_subscription_id, status").eq("user_id", user.id).maybeSingle();
+    // Ya tiene una suscripción con acceso: no se abre otra (evita cobrar dos veces).
+    if (known?.status === "active" || known?.status === "trialing") {
+      return json({ error: "Ya tienes una suscripción activa. Puedes cambiar de plan desde Ajustes.", already: true }, 409);
+    }
+    // Una sola prueba gratuita por cuenta: quien ya tuvo una suscripción paga desde el primer día.
+    const conPrueba = quierePrueba && !known?.stripe_subscription_id;
     let customerId: string | undefined = known?.stripe_customer_id || undefined;
     if (!customerId) {
       const customers = await stripe.customers.list({ email: user.email, limit: 1 });
@@ -48,12 +60,17 @@ serve(async (req) => {
       line_items: [{ price: price_id, quantity: 1 }],
       mode: "subscription",
       allow_promotion_codes: true,
-      subscription_data: { metadata: { app: "warmlead", plan: precio.tier, billing: precio.interval === "year" ? "yearly" : "monthly", user_id: user.id } },
-      success_url: `${origin}/settings?checkout=success`,
-      cancel_url: `${origin}/settings?checkout=cancel`,
+      // Tarjeta SIEMPRE, también en la prueba de 0 €: es lo que pidió el dueño.
+      payment_method_collection: "always",
+      subscription_data: {
+        metadata: { app: "warmlead", plan: precio.tier, billing: precio.interval === "year" ? "yearly" : "monthly", user_id: user.id },
+        ...(conPrueba ? { trial_period_days: 14, trial_settings: { end_behavior: { missing_payment_method: "cancel" } } } : {}),
+      },
+      success_url: volverAlAlta ? `${origin}/empezar?paso=listo` : `${origin}/settings?checkout=success`,
+      cancel_url: volverAlAlta ? `${origin}/empezar?paso=tarjeta&cancelado=1` : `${origin}/settings?checkout=cancel`,
     });
 
-    return json({ url: session.url });
+    return json({ url: session.url, trial: conPrueba });
   } catch (error) {
     return json({ error: (error as Error).message }, 500);
   }

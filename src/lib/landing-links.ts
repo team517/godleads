@@ -15,7 +15,8 @@ const mail = (asunto: string): LandingTarget => ({ kind: "external", to: `${CONT
    el interruptor) y se abren fuera del marco: ver landingTarget(). */
 const TARGETS: Record<string, LandingTarget> = {
   "#login": { kind: "route", to: "/auth" },
-  "#signup": { kind: "route", to: "/auth?mode=signup" },
+  // Alta con prueba gratuita de 14 días (11-11-2026): plan, cuenta y tarjeta.
+  "#signup": { kind: "route", to: "/empezar" },
   // "Book a demo" / "See it in action" / "Talk to sales": reservar una llamada.
   "#demo": { kind: "external", to: DEMO_URL },
   "#contact": { kind: "external", to: CONTACT },
@@ -29,11 +30,33 @@ const TARGETS: Record<string, LandingTarget> = {
   "#terms": mail("Terms · Funnyleads"),
 };
 
+/** Botones de alta del diseño ("Start free trial", "Start free", "Start now →"): en el diseño son
+ *  "#pricing", igual que el enlace de menú "Pricing", así que se distinguen por su TEXTO. */
+const CTA_ALTA = /^\s*start\s+(free(\s+trial)?|now)\b/i;
+export function esBotonDeAlta(href: string | null | undefined, texto: string | null | undefined): boolean {
+  return (href || "").trim().toLowerCase() === "#pricing" && CTA_ALTA.test(texto || "");
+}
+
+/** Enlaces de pago de Stripe del diseño ("Choose" de cada plan): con la prueba con tarjeta, primero
+ *  se crea la cuenta y luego se pide la tarjeta, así que llevan al alta con ese plan elegido. */
+export const ENLACES_PLAN_DISENO: Record<string, { plan: PlanLanding; periodo: Periodo }> = {
+  "https://buy.stripe.com/aFa28kcYmbhy0e55o42ZO0g": { plan: "starter", periodo: "month" },
+  "https://buy.stripe.com/5kQbIUcYm4Ta0e5bMs2ZO0h": { plan: "starter", periodo: "year" },
+  "https://buy.stripe.com/dRm14ggaydpG7Gx6s82ZO0i": { plan: "growth", periodo: "month" },
+  "https://buy.stripe.com/00w7sE7E299q6Ct17O2ZO0j": { plan: "growth", periodo: "year" },
+  "https://buy.stripe.com/8x200c0bA2L2e4V17O2ZO0k": { plan: "scale", periodo: "month" },
+  "https://buy.stripe.com/5kQcMYe2q85m2mddUA2ZO0l": { plan: "scale", periodo: "year" },
+};
+
 /** Destino real de un enlace de la landing, o null si debe comportarse como en el diseño
- *  (anclas de sección como #pricing o #faq, que desplazan la propia página). */
-export function landingTarget(href: string | null | undefined): LandingTarget | null {
+ *  (anclas de sección como #pricing o #faq, que desplazan la propia página). `texto` = el texto del
+ *  enlace, para distinguir "Start free trial" (alta) del menú "Pricing" (desplazar). */
+export function landingTarget(href: string | null | undefined, texto?: string | null): LandingTarget | null {
   if (!href) return null;
   const h = href.trim();
+  if (esBotonDeAlta(h, texto)) return { kind: "route", to: "/empezar" };
+  const plan = ENLACES_PLAN_DISENO[h.replace(/[?#].*$/, "")];
+  if (plan) return { kind: "route", to: `/empezar?plan=${plan.plan}&periodo=${plan.periodo}` };
   // Enlaces absolutos (pago de Stripe, agenda) y correos: fuera del marco, en la ventana de arriba.
   // Stripe no se deja incrustar, y además la URL del navegador debe cambiar de verdad.
   if (/^(https?:)?\/\//i.test(h) || /^mailto:/i.test(h)) return { kind: "external", to: h };
@@ -114,5 +137,5 @@ export function destinoChoose(textoTarjeta: string): LandingTarget | null {
   const periodo: Periodo = planes.length === 1 ? planes[0].periodo : (/year|annual|anual/i.test(textoTarjeta) ? "year" : "month");
   const enlace = ENLACES_PAGO[`${tier}_${periodo}`];
   if (enlace) return { kind: "external", to: enlace };
-  return { kind: "route", to: `/auth?mode=signup&plan=${tier}&periodo=${periodo}` };
+  return { kind: "route", to: `/empezar?plan=${tier}&periodo=${periodo}` };
 }

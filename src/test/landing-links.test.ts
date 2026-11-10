@@ -6,9 +6,24 @@ import { DEMO_URL, landingIsPainted, landingTarget } from "@/lib/landing-links";
 const sha256 = (buf: Buffer) => createHash("sha256").update(buf).digest("hex");
 
 describe("botones de la landing → aplicación real", () => {
-  it("Log in lleva al acceso (y #signup, si existiera, al registro)", () => {
+  it("Log in lleva al acceso (y #signup, si existiera, al alta con prueba)", () => {
     expect(landingTarget("#login")).toEqual({ kind: "route", to: "/auth" });
-    expect(landingTarget("#signup")).toEqual({ kind: "route", to: "/auth?mode=signup" });
+    expect(landingTarget("#signup")).toEqual({ kind: "route", to: "/empezar" });
+  });
+  it("Start free trial / Start free / Start now llevan al alta; el menú Pricing sigue desplazando la página", () => {
+    for (const t of ["Start free trial", "Start free", "Start now →", "  start free trial  "]) {
+      expect(landingTarget("#pricing", t)).toEqual({ kind: "route", to: "/empezar" });
+    }
+    expect(landingTarget("#pricing", "Pricing")).toBeNull();
+    expect(landingTarget("#pricing")).toBeNull();
+    expect(landingTarget("#pricing", "Compare the plans")).toBeNull();
+  });
+  it("los Choose de precios (enlaces de pago del diseño) llevan al alta con su plan y periodo", () => {
+    expect(landingTarget("https://buy.stripe.com/aFa28kcYmbhy0e55o42ZO0g", "Choose")).toEqual({ kind: "route", to: "/empezar?plan=starter&periodo=month" });
+    expect(landingTarget("https://buy.stripe.com/00w7sE7E299q6Ct17O2ZO0j", "Choose")).toEqual({ kind: "route", to: "/empezar?plan=growth&periodo=year" });
+    expect(landingTarget("https://buy.stripe.com/5kQcMYe2q85m2mddUA2ZO0l")).toEqual({ kind: "route", to: "/empezar?plan=scale&periodo=year" });
+    // La formación de 350 € (pago único) sigue yendo a Stripe.
+    expect(landingTarget("https://buy.stripe.com/14AeV64rQgBSbWN03K2ZO0m", "Book your training")).toEqual({ kind: "external", to: "https://buy.stripe.com/14AeV64rQgBSbWN03K2ZO0m" });
   });
   it("Book a demo / See it in action / Talk to sales abren la agenda; Contact, un correo al equipo", () => {
     expect(landingTarget("#demo")).toEqual({ kind: "external", to: DEMO_URL });
@@ -23,7 +38,7 @@ describe("botones de la landing → aplicación real", () => {
     }
   });
   it("los enlaces absolutos (pago de Stripe, agenda) y los mailto salen del marco tal cual", () => {
-    expect(landingTarget("https://buy.stripe.com/5kQbIUcYm4Ta0e5bMs2ZO0h")).toEqual({ kind: "external", to: "https://buy.stripe.com/5kQbIUcYm4Ta0e5bMs2ZO0h" });
+    expect(landingTarget("https://buy.stripe.com/otro-enlace")).toEqual({ kind: "external", to: "https://buy.stripe.com/otro-enlace" });
     expect(landingTarget("  https://cal.com/x/15min ")).toEqual({ kind: "external", to: "https://cal.com/x/15min" });
     expect(landingTarget("mailto:hola@x.es")).toEqual({ kind: "external", to: "mailto:hola@x.es" });
   });

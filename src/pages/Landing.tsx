@@ -61,7 +61,7 @@ export default function Landing() {
       const a = (e.target as Element | null)?.closest?.("a[href]");
       const href = a?.getAttribute("href");
       // "Choose" de una tarjeta de precio → pago de ese plan (mensual o anual según la tarjeta).
-      const target = (href?.trim().toLowerCase() === "#signup" && destinoChoose(textoDeTarjeta(a))) || landingTarget(href);
+      const target = (href?.trim().toLowerCase() === "#signup" && destinoChoose(textoDeTarjeta(a))) || landingTarget(href, a?.textContent);
       if (!target) return;
       e.preventDefault();
       if (target.kind === "route") navigate(target.to);

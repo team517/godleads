@@ -20,6 +20,11 @@ export const SPECIAL_FULL_ACCESS_EMAILS = ["oliver@llueert.com", "oliver@pannggo
 export const TRIAL_DAYS = 14;
 // Accounts created BEFORE this stay free (grandfathered). Only NEW self-signups from here on trial.
 export const TRIAL_CUTOFF_MS = Date.parse("2026-08-29T00:00:00Z");
+/** Alta con tarjeta (11-11-2026, petición del dueño: "no puede crear cuenta sin el free trial o haber
+ *  pagado"). Los registros propios creados DESDE este momento sólo entran con una suscripción de
+ *  Stripe en prueba (14 días, tarjeta obligatoria, 0 € hoy) o pagada. Los registrados ANTES siguen
+ *  con la prueba de la plataforma sin tarjeta hasta que acabe (se respeta lo que se les prometió). */
+export const CARD_REQUIRED_CUTOFF_MS = Date.parse("2026-11-11T00:00:00Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Margen tras el fin del periodo/prueba antes de dar la suscripción por vencida (Stripe renueva
  *  y el webhook avisa; un retraso de horas no debe bloquear a nadie). */
@@ -45,6 +50,7 @@ export type AccessDecision =
   | { kind: "canceled"; tier: PlanTierServer; status: string; periodEnd: string | null }
   | { kind: "trialing"; trialEnd: string; daysLeft: number }               // new signup, inside the free days
   | { kind: "expired"; trialEnd: string }                                  // new signup, trial over → must pay (BLOCKED)
+  | { kind: "needs_card" }                                                 // signup since the card cutoff, no Stripe trial/plan yet (BLOCKED → "Activa tu prueba gratuita")
   | { kind: "trial_unknown" };                                             // no creation date → fail-safe, never blocked
 
 export interface AccessInput {
@@ -119,8 +125,10 @@ export function decideAccess(i: AccessInput): AccessDecision {
   const porServidor = decideFromEntitlement(i.entitlement, now);
   if (porServidor) return porServidor;
   if (i.stripeSubscribed) return { kind: "subscribed", tier: tierOf(i.entitlement?.tier) === "free" ? "starter" : tierOf(i.entitlement?.tier), status: "active", trialEnd: null, periodEnd: null, cancelAtPeriodEnd: false };
-  // Else the free trial from signup.
   if (Number.isNaN(createdMs)) return { kind: "trial_unknown" };
+  // Registro desde el corte: sin suscripción en Stripe (prueba con tarjeta o pago) no hay acceso.
+  if (createdMs >= CARD_REQUIRED_CUTOFF_MS) return { kind: "needs_card" };
+  // Registros anteriores al corte: la prueba de la plataforma sin tarjeta, como se les dio.
   const endMs = createdMs + TRIAL_DAYS * DAY_MS;
   if (now < endMs) {
     return { kind: "trialing", trialEnd: new Date(endMs).toISOString(), daysLeft: Math.max(0, Math.ceil((endMs - now) / DAY_MS)) };
