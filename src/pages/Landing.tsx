@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { destinoChoose, landingIsPainted, landingTarget, textoDeTarjeta } from "@/lib/landing-links";
-import { Wordmark } from "@/components/Wordmark";
 
 /* =============================================================================
-   Landing pública de OnePulso.
+   Landing pública: Funnyleads desde el 10-11-2026 (antes la de OnePulso, que sigue en /landing/onepulso-landing.html).
 
    Es el archivo que exporta Claude Design (`public/landing/onepulso-landing.html`), servido
    TAL CUAL: no se toca ni un byte, así que lo que se ve es exactamente el diseño del
@@ -21,8 +20,9 @@ import { Wordmark } from "@/components/Wordmark";
    Para cambiar la landing: ver scripts/build-landing.mjs y subir LANDING_VERSION.
    ========================================================================== */
 
-const LANDING_VERSION = "2026-09-17";
-const LANDING_SRC = `/landing/onepulso-landing.html?v=${LANDING_VERSION}`;
+const LANDING_VERSION = "2026-11-10";
+// Landing de Funnyleads (diseño de Claude Design servido tal cual; ver scripts/build-landing.mjs).
+const LANDING_SRC = `/landing/funnyleads/index.html?v=${LANDING_VERSION}`;
 /** Si algo impide detectar que está lista, se enseña igualmente pasado este tiempo. */
 const SHOW_ANYWAY_MS = 12000;
 
@@ -33,7 +33,7 @@ export default function Landing() {
 
   useEffect(() => {
     const prev = document.title;
-    document.title = "OnePulso — Turn cold email into booked revenue";
+    document.title = "Funnyleads — Turn cold email into booked revenue";
     return () => { document.title = prev; };
   }, []);
 
@@ -76,7 +76,7 @@ export default function Landing() {
         aria-hidden={ready}
         className={`absolute inset-0 flex flex-col items-center justify-center gap-5 transition-opacity duration-300 ${ready ? "pointer-events-none opacity-0" : "opacity-100"}`}
       >
-        <Wordmark className="h-8" colorClassName="text-[#6E58F1]" />
+        <span className="text-2xl font-semibold tracking-tight text-[#0F172B]" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>Funnyleads</span>
         <span className="block h-[3px] w-28 overflow-hidden rounded-full bg-[#EAE7F4]">
           <span className="skeleton-shimmer block h-full w-full rounded-full [background-image:linear-gradient(90deg,#EAE7F4_0%,#8B6BFF_45%,#EAE7F4_90%)]" />
         </span>
@@ -84,7 +84,7 @@ export default function Landing() {
       <iframe
         ref={frameRef}
         src={LANDING_SRC}
-        title="OnePulso"
+        title="Funnyleads"
         onLoad={wire}
         className={`absolute inset-0 block h-[100dvh] w-full border-0 bg-[#FBFAFE] transition-opacity duration-500 ${ready ? "opacity-100" : "opacity-0"}`}
       />

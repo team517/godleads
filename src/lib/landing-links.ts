@@ -4,29 +4,54 @@
 export type LandingTarget = { kind: "route"; to: string } | { kind: "external"; to: string };
 
 const CONTACT = "mailto:team@onepulso.online";
+/** Reservar una demo: la agenda del equipo. */
+export const DEMO_URL = "https://cal.com/xavier-falco-hszeeb/15min";
 
+const mail = (asunto: string): LandingTarget => ({ kind: "external", to: `${CONTACT}?subject=${encodeURIComponent(asunto)}` });
+
+/* Diseño de Funnyleads (10-11-2026). Sus botones son anclas de maqueta; esta tabla dice a dónde van
+   de verdad. Las anclas de sección (#pricing, #faq, #scale…) no están: desplazan la propia página.
+   Los "Choose" de precios ya salen del diseño con su enlace de pago de Stripe (mensual o anual según
+   el interruptor) y se abren fuera del marco: ver landingTarget(). */
 const TARGETS: Record<string, LandingTarget> = {
   "#login": { kind: "route", to: "/auth" },
   "#signup": { kind: "route", to: "/auth?mode=signup" },
-  // "Book a demo" / "See it in action" / "Contact": hablar con el equipo.
-  "#demo": { kind: "external", to: `${CONTACT}?subject=${encodeURIComponent("Demo de OnePulso")}` },
+  // "Book a demo" / "See it in action" / "Talk to sales": reservar una llamada.
+  "#demo": { kind: "external", to: DEMO_URL },
   "#contact": { kind: "external", to: CONTACT },
-  "#partners": { kind: "external", to: `${CONTACT}?subject=${encodeURIComponent("Partners")}` },
+  "#partners": mail("Partners · Funnyleads"),
+  "#about": mail("About Funnyleads"),
+  "#careers": mail("Careers · Funnyleads"),
+  "#docs": mail("Docs · Funnyleads"),
+  "#api": mail("API · Funnyleads"),
+  "#status": mail("Status · Funnyleads"),
+  "#privacy": mail("Privacy policy · Funnyleads"),
+  "#terms": mail("Terms · Funnyleads"),
 };
 
 /** Destino real de un enlace de la landing, o null si debe comportarse como en el diseño
  *  (anclas de sección como #pricing o #faq, que desplazan la propia página). */
 export function landingTarget(href: string | null | undefined): LandingTarget | null {
   if (!href) return null;
-  return TARGETS[href.trim().toLowerCase()] ?? null;
+  const h = href.trim();
+  // Enlaces absolutos (pago de Stripe, agenda) y correos: fuera del marco, en la ventana de arriba.
+  // Stripe no se deja incrustar, y además la URL del navegador debe cambiar de verdad.
+  if (/^(https?:)?\/\//i.test(h) || /^mailto:/i.test(h)) return { kind: "external", to: h };
+  return TARGETS[h.toLowerCase()] ?? null;
 }
 
 /** ¿Ha terminado de desempaquetarse y ha pintado su contenido? */
 export function landingIsPainted(doc: Document | null | undefined): boolean {
   if (!doc || !doc.body) return false;
-  if (doc.getElementById("__bundler_thumbnail") || doc.getElementById("__bundler_loading")) return false;
   const h1 = doc.querySelector("h1");
-  return !!h1 && (h1.textContent || "").trim().length > 0;
+  const titular = !!h1 && (h1.textContent || "").trim().length > 0;
+  // Página .dc.html de Claude Design: su runtime monta #dc-root (y conserva una miniatura oculta
+  // con id __bundler_thumbnail, que aquí no cuenta). Hasta que #dc-root existe, lo que hay es la plantilla.
+  if (doc.getElementById("dc-root")) return titular;
+  if (doc.querySelector("x-dc")) return false;
+  // Página empaquetada antigua: mientras está su miniatura/carga, no está lista.
+  if (doc.getElementById("__bundler_thumbnail") || doc.getElementById("__bundler_loading")) return false;
+  return titular;
 }
 
 /* ── "Choose" de los precios → pago en Stripe ────────────────────────────────────────────────

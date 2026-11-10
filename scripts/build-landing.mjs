@@ -30,6 +30,41 @@ export function assembleLanding() {
   return { whole, manifest };
 }
 
+/* ── Landing de Funnyleads (10-11-2026) ─────────────────────────────────────────────────────────
+   Diseño de Claude Design "Estilo landing page personalizado" → página Primary Landing (.dc.html) más su
+   runtime (support.js, image-slot.js) y sus imágenes y vídeo. Vive en landing-src/funnyleads/ con un
+   manifiesto (ruta, tamaño, SHA-256 de cada archivo); los que pasan de 1,4 MB van en trozos .part-NN
+   (el vídeo de 10,9 MB y el mapa). Aquí se recompone en public/landing/funnyleads/ comprobando cada
+   huella: si una no coincide, la construcción falla. */
+const FL_SRC = join(root, "landing-src", "funnyleads");
+const FL_OUT = join(root, "public", "landing", "funnyleads");
+
+export function assembleFunnyleads() {
+  const manifest = JSON.parse(readFileSync(join(FL_SRC, "manifest.json"), "utf-8"));
+  const out = [];
+  for (const f of manifest.files) {
+    if (f.path.includes("..") || f.path.startsWith("/")) throw new Error(`funnyleads: ruta no permitida ${f.path}`);
+    const buf = f.parts
+      ? Buffer.concat(Array.from({ length: f.parts }, (_, i) => readFileSync(join(FL_SRC, `${f.path}.part-${String(i).padStart(2, "0")}`))))
+      : readFileSync(join(FL_SRC, f.path));
+    if (buf.length !== f.size) throw new Error(`funnyleads: ${f.path} tamaño ${buf.length} ≠ ${f.size}`);
+    if (sha256(buf) !== f.sha256) throw new Error(`funnyleads: ${f.path} la huella SHA-256 no coincide con el original`);
+    out.push({ path: f.path, buf });
+  }
+  return { manifest, files: out };
+}
+
+function writeFunnyleads() {
+  const { files } = assembleFunnyleads();
+  rmSync(FL_OUT, { recursive: true, force: true });
+  for (const f of files) {
+    const dest = join(FL_OUT, f.path);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, f.buf);
+  }
+  console.log(`funnyleads: ${files.length} archivos montados (huellas verificadas)`);
+}
+
 const splitArg = process.argv.indexOf("--split");
 if (splitArg >= 0) {
   const source = process.argv[splitArg + 1];
@@ -48,4 +83,5 @@ if (splitArg >= 0) {
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, whole);
   console.log(`landing: montada (${whole.length} bytes, huella verificada)`);
+  writeFunnyleads();
 }

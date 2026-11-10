@@ -1,0 +1,299 @@
+{
+  "name": "funnyleads",
+  "source": "Claude Design · Estilo landing page personalizado · Primary Landing.dc.html (2026-11-08)",
+  "partSize": 1400000,
+  "files": [
+    {
+      "path": "index.html",
+      "size": 234685,
+      "sha256": "e5f2003c9a7c5f347804404fc6d7da7952d8f305729d763faa39c3bcdac6781f"
+    },
+    {
+      "path": "support.js",
+      "size": 69150,
+      "sha256": "8fe7df74405f3c55f49b7249c74ea1397e65d07dea2b1bd3b4a489bec2e28cbe"
+    },
+    {
+      "path": "image-slot.js",
+      "size": 65350,
+      "sha256": "fff26d081c8d9d60870f86c7539a5d179b9cdab15e67f2b205508a068e7c7ff6"
+    },
+    {
+      "path": "assets/logo-gentlead.png",
+      "size": 33644,
+      "sha256": "bd316c3d288f6cb9b3578ba5fe74745404ba801ca254de2537ee400ecbc6adcc"
+    },
+    {
+      "path": "assets/logo-mark.png",
+      "size": 236881,
+      "sha256": "a5f87a71a2e621b237e16f22f0c96e61bdec55f0c9bee9e2a7816586fc6b6532"
+    },
+    {
+      "path": "assets/opt/badges.png",
+      "size": 877082,
+      "sha256": "7d9890b0a235166da35bd8992542b4853db8849df6cc8b0dc130158c0de1bc8c"
+    },
+    {
+      "path": "assets/opt/brand/mono/airtable.png",
+      "size": 10999,
+      "sha256": "16fe8ad5ca7cd5748710bb6b718a775cf928886e258649e9fe97dee5e5caef3e"
+    },
+    {
+      "path": "assets/opt/brand/mono/anduril.png",
+      "size": 12199,
+      "sha256": "19bdca725bc5b366b29f4a38c335d67d10aaeb9af7d4551e8492bf6d91562757"
+    },
+    {
+      "path": "assets/opt/brand/mono/anthropic.png",
+      "size": 15615,
+      "sha256": "08860a99e2c751dc51a86aadd64aeff12c302870997be2d9e21900f3590218b9"
+    },
+    {
+      "path": "assets/opt/brand/mono/appliedintuition.png",
+      "size": 15340,
+      "sha256": "eb436c901b13e15a8de695a08c500c1ee44fbf4b296f9e11962a41bda646ed93"
+    },
+    {
+      "path": "assets/opt/brand/mono/canva.png",
+      "size": 9930,
+      "sha256": "d45f793da2027b00f53f6922b6e924f006c87b7c98a5e75399ceffa97de82752"
+    },
+    {
+      "path": "assets/opt/brand/mono/cerebras.png",
+      "size": 12017,
+      "sha256": "b5f49c9b6cdcc4ee2c5840a43e383e014b3aaba5fbb9e82c42f4a7dff42e4239"
+    },
+    {
+      "path": "assets/opt/brand/mono/cursor.png",
+      "size": 12884,
+      "sha256": "7dd615532b5ed0cebeb20809ce9e20b72ada32ffe27b457551e22bab05285b39"
+    },
+    {
+      "path": "assets/opt/brand/mono/databricks.png",
+      "size": 14384,
+      "sha256": "8bc6abaff7d0d5066fb527134eaf454dbc703e5672626b5974dbe0d5fdcdead1"
+    },
+    {
+      "path": "assets/opt/brand/mono/deel.png",
+      "size": 9577,
+      "sha256": "0bd915c17596d91d1ffc742a5a2c5eeb60bb4b13deefc0ebe5838593cd62fa02"
+    },
+    {
+      "path": "assets/opt/brand/mono/figure.png",
+      "size": 11010,
+      "sha256": "a0fb529a5d6d7bea84481562568897f436cec100ec562e654372f93e27e05a9a"
+    },
+    {
+      "path": "assets/opt/brand/mono/instacart.png",
+      "size": 11073,
+      "sha256": "e67380f995bf6399cbc45e06021c351416fb15a6d6b81ce888e437cf5af3b95c"
+    },
+    {
+      "path": "assets/opt/brand/mono/kraken.png",
+      "size": 11793,
+      "sha256": "c09879bfbb23c504c67383b723935f77928a58dad401d298fc0f100622835bed"
+    },
+    {
+      "path": "assets/opt/brand/mono/neuralink.png",
+      "size": 10336,
+      "sha256": "fba09197567e8949de8eb6c828ca7abe9f39033ba78fc4412c8c373ad7ce488b"
+    },
+    {
+      "path": "assets/opt/brand/mono/notion.png",
+      "size": 11368,
+      "sha256": "9faf03216a83776bc75078c703ec9998cec5bd61fd0e89d1f1cc766d539e508c"
+    },
+    {
+      "path": "assets/opt/brand/mono/openai.png",
+      "size": 14995,
+      "sha256": "97a5fcb0529739a61470232b3a5fe715d8fcfccbedeabd733629688a4f94873b"
+    },
+    {
+      "path": "assets/opt/brand/mono/perplexity.png",
+      "size": 15032,
+      "sha256": "4466496971557d705a12fab7aaa6de2c83f151de1cfec996302b37cad55b826d"
+    },
+    {
+      "path": "assets/opt/brand/mono/ramp.png",
+      "size": 9677,
+      "sha256": "fa9c021ae3c679211fb1430b9ec9c94ea40015c0e959a6e08e1d8d42b3ab533b"
+    },
+    {
+      "path": "assets/opt/brand/mono/replit.png",
+      "size": 10082,
+      "sha256": "72fed7a7fe218eb3cf5c522d5bc94b651c764ffe70aed77680d9ab8cc7fbbe6f"
+    },
+    {
+      "path": "assets/opt/brand/mono/revolut.png",
+      "size": 10826,
+      "sha256": "a7b5f75d347649d94af2ce9e50091db30798497330d22dc90e689cfe9951f0fd"
+    },
+    {
+      "path": "assets/opt/brand/mono/ripple.png",
+      "size": 10810,
+      "sha256": "afcbfab9d70bc47cb1874366fa5b6f3b8a6b88566ce775e53ed02fd63d832507"
+    },
+    {
+      "path": "assets/opt/brand/mono/rippling.png",
+      "size": 12481,
+      "sha256": "a925e9f77e05489542e5ee9e112de27fe06fa29f2595737a30edd54fe14b0774"
+    },
+    {
+      "path": "assets/opt/brand/mono/spacex.png",
+      "size": 12804,
+      "sha256": "53cc93ff779019add40a7b1acf5f39cd81c14dd72c7069c5c2f291bae66f2faa"
+    },
+    {
+      "path": "assets/opt/brand/mono/stripe.png",
+      "size": 9323,
+      "sha256": "50853c07807fda853d29a32b2ebe687efd834cb31911fbff90a64801ea26f4f4"
+    },
+    {
+      "path": "assets/opt/brand/mono/vercel.png",
+      "size": 10213,
+      "sha256": "5b4b083dcb1448ef02bf5308ccc1064e80d1a42b3568670d0c98ba0f82b9caed"
+    },
+    {
+      "path": "assets/opt/brand/mono/zapier.png",
+      "size": 9697,
+      "sha256": "ea76c0134f781f0606686755797cbbaae08c87ce3c7693071508af537100b24f"
+    },
+    {
+      "path": "assets/opt/card-gmail.png",
+      "size": 206993,
+      "sha256": "5087ce9b61d98c68bbd456543c449e4f6d3f6b722a4c5a089f88ee4344295278"
+    },
+    {
+      "path": "assets/opt/card-outlook.png",
+      "size": 222732,
+      "sha256": "a78d7391d3c41a0cc53a65854aceaf297566e7511d041c0c9eecfd1b8a2cf50a"
+    },
+    {
+      "path": "assets/opt/card-smtp.png",
+      "size": 231490,
+      "sha256": "9a331168a9f625d06c5a3543d408449a22dc089bcf1aaefafc20ad55e475edec"
+    },
+    {
+      "path": "assets/opt/f1.png",
+      "size": 70518,
+      "sha256": "21d9d35d5d30f06e99afcdd26f4888d2242c77c3537225465cbb7621a9b68583"
+    },
+    {
+      "path": "assets/opt/f2.png",
+      "size": 71237,
+      "sha256": "122459954accbe7d171b06e03e307d0d17ebb5b7c42bec407bca8b8cf4767e9a"
+    },
+    {
+      "path": "assets/opt/f4.png",
+      "size": 70373,
+      "sha256": "22166bcf474fe79a154420cd46deedee34015c9843c02ed800557bbe456980c9"
+    },
+    {
+      "path": "assets/opt/f5.png",
+      "size": 72414,
+      "sha256": "6bdd952cb9b8ed4911d11b9d3e161b90287f90ac2387403586a0403b38f8dbb9"
+    },
+    {
+      "path": "assets/opt/fl-ae.png",
+      "size": 84382,
+      "sha256": "21b168cfaa82f9cdbda6212c30c5eadf11f521d7d8d0878f6c980517c5d0d39d"
+    },
+    {
+      "path": "assets/opt/fl-br.png",
+      "size": 96385,
+      "sha256": "e8323e8983dac0c0df9c8a4552c159b154cf4b8836d6589004dd65899f8bbfed"
+    },
+    {
+      "path": "assets/opt/fl-de.png",
+      "size": 66448,
+      "sha256": "4174fe2b16f57d76a375f0fd0e12c716f5b9b063eeb77f3744d3e85003a1eba9"
+    },
+    {
+      "path": "assets/opt/fl-uk.png",
+      "size": 74054,
+      "sha256": "f074e77ae2c255f9ae5e3791597a151d0d19ea6a89715c7c73b63336310e8b8b"
+    },
+    {
+      "path": "assets/opt/gcal.png",
+      "size": 8024,
+      "sha256": "cc57be04484187abdf54efd8fd247087b99ad37716e151f573325af715743d65"
+    },
+    {
+      "path": "assets/opt/gmail.png",
+      "size": 7078,
+      "sha256": "24e671d0f15f5068e0a69f043bd1478664c9159290d8867a8b9942e108b2ef20"
+    },
+    {
+      "path": "assets/opt/p1.png",
+      "size": 34155,
+      "sha256": "ec1d7e9316fa66e5eaeeed04ceff07b58ff6f3ad3b2cba21824dfca072b13b63"
+    },
+    {
+      "path": "assets/opt/p2.png",
+      "size": 33245,
+      "sha256": "44c5ba122d3252c5454c409eed0f304307eb2fc6a698ac83833d3e3b094db1eb"
+    },
+    {
+      "path": "assets/opt/p3.png",
+      "size": 32002,
+      "sha256": "2301cd32e264ef2c07dcfe95e608acd0794d68e61f5095558521d3150f632090"
+    },
+    {
+      "path": "assets/opt/p5.png",
+      "size": 77987,
+      "sha256": "7f6dbdfb3608a0f322a946f6cc18feb61be11a836b98db707cb97f2c81c7f289"
+    },
+    {
+      "path": "assets/opt/p6.png",
+      "size": 72388,
+      "sha256": "a9f69a375f7a8b15f3a14c9c7a5f009b578fba4b6686d2019703615bdc437e69"
+    },
+    {
+      "path": "assets/opt/p7.png",
+      "size": 58819,
+      "sha256": "b4b8976e948a08eabed1cc83320b223acd953a1eac87299f74aa8bf798278a42"
+    },
+    {
+      "path": "assets/opt/providers.png",
+      "size": 1024635,
+      "sha256": "9d78f7781c2b9262ee4f6ebff68ee80e1f95475613340f74937c9a5b3582237e"
+    },
+    {
+      "path": "assets/opt/unibox.png",
+      "size": 817599,
+      "sha256": "ac6d702436a85bfe2e8946269a22ee89111a7b3bd1deeda5d9bab61101405ace"
+    },
+    {
+      "path": "assets/opt/worldmap2.png",
+      "size": 1579947,
+      "sha256": "52e406fdd755bd47a57716d27970968b8d0692b8ccee65aa46d53dbff6d75652",
+      "parts": 2
+    },
+    {
+      "path": "assets/video/reel-poster.jpg",
+      "size": 241413,
+      "sha256": "72279d76b4cd4d3469cd776e0160f9f5134996aa42695b3df45e4ee24e63bdd4"
+    },
+    {
+      "path": "assets/video/reel.mp4",
+      "size": 10943134,
+      "sha256": "4a9f19a10bb08c8b5f56f7f28ae119dfaaa5ce30a241df3a8ae1cfc480f6d51a",
+      "parts": 8
+    },
+    {
+      "path": "assets/video/team-1.jpg",
+      "size": 8184,
+      "sha256": "8c7bb3300766e4cc8ced8948ad424ccfdebe0f3d6199eb4d2fc927c0d176aa91"
+    },
+    {
+      "path": "assets/video/team-2.jpg",
+      "size": 9345,
+      "sha256": "a80d6ea59727f288281b83acaa88be055ac7c20072af3cbbb34f8c60a2f0654f"
+    },
+    {
+      "path": "assets/video/team-3.jpg",
+      "size": 8636,
+      "sha256": "753e5ed386f86f7b8b202b53391cb5cb98cb986099edd93780ce47613aad5aad"
+    }
+  ]
+}

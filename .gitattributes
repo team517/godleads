@@ -1,3 +1,5 @@
 # La landing exportada de Claude Design se sirve tal cual: git no debe tocarle los saltos de línea.
 landing-src/*.part-* -text
 public/landing/*.html -text
+# Landing de Funnyleads: archivos del diseño tal cual (texto y binarios), sin tocar saltos de línea.
+landing-src/funnyleads/** -text
