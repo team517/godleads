@@ -71,6 +71,17 @@ export default function Landing() {
 
   return (
     <div className="fixed inset-0 bg-[#FBFAFE]">
+      {/* Lo esencial de la portada en texto, igual que lo que se ve en el marco: para lectores de
+          pantalla y para que Google entienda de qué va la página sin depender del marco. */}
+      <section className="sr-only">
+        <h1>Funnyleads — Turn cold email into booked revenue</h1>
+        <p>Your emails reach the primary inbox instead of spam, and the replies get answered and booked for you. More meetings from the same list, without hiring anyone. 14 days free, cancel anytime.</p>
+        <h2>A sending engine built for cold outreach</h2>
+        <p>Unlimited mailboxes and warmup, slow ramp handled for you, AI replies drafted the moment they land, one Master Inbox for every reply, and every email sent at 9am in each contact's own timezone. Send from Gmail, Outlook or your own servers.</p>
+        <h2>Pricing</h2>
+        <p>Starter 21 € per month, Growth 65 € per month, Scale 170 € per month, or Enterprise with custom pricing. 17% off with yearly billing.</p>
+        <p><a href="/auth">Log in</a> · <a href="/auth?mode=signup">Start free trial</a></p>
+      </section>
       {/* Espera: el fondo de la propia landing y la marca, nada de pantallas de color. */}
       <div
         aria-hidden={ready}
