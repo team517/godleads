@@ -62,6 +62,23 @@ export function stateMatchesUser(state: ImpersonationState | null, currentUserId
   return !!state && !!currentUserId && state.target.userId === currentUserId;
 }
 
+/** Segundos durante los que el estado recién escrito convive con la sesión del EQUIPO: entre
+ *  guardar "vengo de mi cuenta" y que la sesión pase al cliente (verifyOtp + recarga). */
+export const ENTERING_GRACE_SEC = 120;
+
+/** ¿El estado guardado es un resto que hay que borrar? Sólo si la sesión abierta no es la del cliente
+ *  Y no estamos en mitad de entrar. Antes se borraba en ese instante intermedio (la sesión aún era la
+ *  del equipo) y, ya dentro del cliente, no salía "Volver a mi cuenta" (10-11-2026). */
+export function isStaleImpersonation(state: ImpersonationState | null, currentUserId: string | null | undefined, nowMs = Date.now()): boolean {
+  if (!state || !currentUserId) return false;
+  if (state.target.userId === currentUserId) return false;
+  if (state.actor.userId === currentUserId) {
+    const started = Date.parse(state.startedAt);
+    if (!Number.isNaN(started) && nowMs - started < ENTERING_GRACE_SEC * 1000) return false;
+  }
+  return true;
+}
+
 /** La cuenta REAL de quien está delante: la original si está dentro de un cliente. */
 export function realAccountEmail(state: ImpersonationState | null, currentEmail: string | null | undefined): string | null {
   return state?.actor.email ?? (currentEmail ? currentEmail.toLowerCase() : null);

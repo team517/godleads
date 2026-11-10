@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Eye, Loader2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { AUTH_NOTICE_KEY, clearImpersonation, returnToOwnAccount, stateMatchesUser, useImpersonation } from "@/lib/impersonation";
+import { AUTH_NOTICE_KEY, clearImpersonation, isStaleImpersonation, returnToOwnAccount, stateMatchesUser, useImpersonation } from "@/lib/impersonation";
 
 /* Aviso global mientras el equipo está dentro de la cuenta de un cliente (10-11-2026). Se monta en
    App.tsx FUERA de ProtectedRoute: aunque el cliente vea una pantalla de pago o de cuenta pausada,
@@ -21,9 +21,10 @@ export function ImpersonationBanner() {
   }, []);
 
   // Estado de una sesión que ya no es la del cliente (volvió en otra pestaña, cerró sesión…): fuera.
+  // Pero NO mientras se está entrando: en ese instante la sesión aún es la del equipo.
   useEffect(() => {
-    if (loading || !state) return;
-    if (user && !stateMatchesUser(state, user.id)) clearImpersonation();
+    if (loading || !state || !user) return;
+    if (isStaleImpersonation(state, user.id)) clearImpersonation();
   }, [loading, state, user]);
 
   if (!state || !user || !stateMatchesUser(state, user.id)) return null;

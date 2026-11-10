@@ -7,6 +7,7 @@ import {
   canUseAccountSwitcher, needsRefresh, parseImpersonationState, realAccountEmail, stateMatchesUser,
   type ImpersonationState,
 } from "@/lib/impersonation";
+import { isStaleImpersonation, ENTERING_GRACE_SEC } from "@/lib/impersonation";
 
 /* Cambio de cuenta del equipo (10-11-2026): sólo hello@ y equipo@ entran en las cuentas de los
    clientes, nunca en las del equipo, y para el resto de usuarios no existe. */
@@ -108,5 +109,34 @@ describe("estado guardado en el navegador", () => {
     expect(needsRefresh(Math.floor(now / 1000) + 30, now)).toBe(true);
     expect(needsRefresh(Math.floor(now / 1000) + 600, now)).toBe(false);
     expect(needsRefresh(0, now)).toBe(true);
+  });
+});
+
+
+/* 10-11-2026: al entrar, el estado se escribe con la sesión del equipo aún abierta; el aviso lo borraba
+   en ese instante y, ya dentro del cliente, no salía "Volver a mi cuenta". */
+describe("isStaleImpersonation — no borrar el estado mientras se entra", () => {
+  const ahora = Date.parse("2026-11-10T18:00:00Z");
+  const st = (startedAt: string) => ({
+    actor: { userId: "equipo", email: "hello@onepulso.blog", accessToken: "a", refreshToken: "r", expiresAt: 9e9 },
+    target: { userId: "cliente", email: "c@x.es", company: "X" },
+    startedAt, logId: null,
+  });
+  it("dentro del cliente: nunca es un resto", () => {
+    expect(isStaleImpersonation(st("2026-11-01T00:00:00Z"), "cliente", ahora)).toBe(false);
+  });
+  it("sesión del equipo justo al entrar: se conserva", () => {
+    expect(isStaleImpersonation(st("2026-11-10T17:59:58Z"), "equipo", ahora)).toBe(false);
+  });
+  it("sesión del equipo pasado el margen: es un resto (se volvió por otro lado)", () => {
+    const viejo = new Date(ahora - (ENTERING_GRACE_SEC + 5) * 1000).toISOString();
+    expect(isStaleImpersonation(st(viejo), "equipo", ahora)).toBe(true);
+  });
+  it("otra cuenta distinta (cerró sesión y entró otro): es un resto", () => {
+    expect(isStaleImpersonation(st("2026-11-10T17:59:58Z"), "otro", ahora)).toBe(true);
+  });
+  it("sin estado o sin usuario: nada que borrar", () => {
+    expect(isStaleImpersonation(null, "equipo", ahora)).toBe(false);
+    expect(isStaleImpersonation(st("2026-11-10T17:59:58Z"), null, ahora)).toBe(false);
   });
 });
