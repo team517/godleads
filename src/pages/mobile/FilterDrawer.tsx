@@ -81,7 +81,7 @@ export function FilterDrawer(p: Props) {
         {/* Cabecera */}
         <div className="relative flex items-center gap-3 px-5 pb-4 pt-[calc(18px+env(safe-area-inset-top))]">
           <SparkMark size={44} className="rounded-[12px]" />
-          <span className="flex-1 text-[23px] font-bold tracking-[-0.015em] text-[#0E1330]">OnePulso</span>
+          <span className="flex-1 text-[23px] font-bold tracking-[-0.015em] text-[#0E1330]">Funnyleads</span>
           <button type="button" aria-label="Cerrar filtros" onClick={p.onClose}
             className="m-press m-field flex h-10 w-10 items-center justify-center rounded-[11px] text-[#5B6283]">
             <X className="h-[19px] w-[19px]" />

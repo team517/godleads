@@ -246,7 +246,7 @@ export default function Welcome() {
           {step === "intro" && (
             <>
               <SparkBadge />
-              <H1>Hola, soy OnePulso</H1>
+              <H1>Hola, soy Funnyleads</H1>
               <Sub>Tu plataforma de correo en frío: buzones, secuencias, respuestas y resultados, todo en el mismo sitio.</Sub>
               <div className="grid gap-[18px] sm:grid-cols-3">
                 {[
@@ -328,7 +328,7 @@ export default function Welcome() {
                 })}
               </div>
               <p className="mt-6 text-[15px] text-[#6470a8]">{goals.length} de {MAX_GOALS} seleccionadas</p>
-              <Continue label="Entrar en OnePulso" disabled={!canContinue} busy={saving} onClick={next} />
+              <Continue label="Entrar en Funnyleads" disabled={!canContinue} busy={saving} onClick={next} />
             </>
           )}
         </section>

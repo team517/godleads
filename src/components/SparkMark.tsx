@@ -24,7 +24,7 @@ export function SparkMark({ size = 32, variant = "tile", className }: Props) {
   return (
     <img
       src={variant === "star" ? star : tile}
-      alt="OnePulso"
+      alt="Funnyleads"
       width={size}
       height={size}
       draggable={false}

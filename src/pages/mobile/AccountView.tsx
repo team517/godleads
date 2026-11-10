@@ -95,7 +95,7 @@ export function AccountView(p: Props) {
             <div className="mt-0.5 text-[13.5px] leading-snug text-[#6E7491]">
               {push === "on" && "Te avisamos de cada interesado y de cada pregunta."}
               {push === "off" && "Actívalas para que te suene el móvil con cada interesado."}
-              {push === "denied" && "Permítelas en Ajustes del móvil → Notificaciones → OnePulso."}
+              {push === "denied" && "Permítelas en Ajustes del móvil → Notificaciones → Funnyleads."}
               {push === "unsupported" && (ios && !installed ? "En iPhone funcionan con la app instalada en la pantalla de inicio." : "Este navegador no admite avisos.")}
             </div>
           </div>
@@ -117,7 +117,7 @@ export function AccountView(p: Props) {
             <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-[#6E58F1]" />
             <span>
               Para recibir avisos en iPhone: pulsa <Share className="mx-0.5 inline h-4 w-4 -translate-y-px text-[#3B6CF6]" /> Compartir y luego
-              <b> «Añadir a pantalla de inicio»</b>. Abre OnePulso desde ese icono y activa los avisos aquí.
+              <b> «Añadir a pantalla de inicio»</b>. Abre Funnyleads desde ese icono y activa los avisos aquí.
             </span>
           </div>
         )}

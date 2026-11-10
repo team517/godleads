@@ -42,7 +42,7 @@ async function sendMail(acct: any, to: string, subject: string, text: string): P
     const dom = from.split("@")[1] || "localhost";
     const wrap = (s: string) => (s.match(/.{1,76}/g) || []).join("\r\n");
     const msg = [
-      `From: OnePulso <${from}>`, `To: ${to}`, `Subject: ${mimeWord(subject)}`,
+      `From: Funnyleads <${from}>`, `To: ${to}`, `Subject: ${mimeWord(subject)}`,
       `Date: ${new Date().toUTCString().replace("GMT", "+0000")}`,
       `Message-ID: <${Math.random().toString(36).slice(2)}${Date.now().toString(36)}@${dom}>`,
       `MIME-Version: 1.0`, `Content-Type: text/plain; charset=utf-8`, `Content-Transfer-Encoding: base64`, "",
@@ -75,7 +75,7 @@ function digestText(rows: any[]): string {
   ];
   if (interesados.length) { out.push("", "Interesados:"); interesados.forEach((r) => out.push(line(r))); }
   if (preguntas.length) { out.push("", "Con preguntas:"); preguntas.forEach((r) => out.push(line(r))); }
-  out.push("", "Los tienes en el Unibox para contestarles cuando quieras.", "", "Un saludo,", "OnePulso Team");
+  out.push("", "Los tienes en el Unibox para contestarles cuando quieras.", "", "Un saludo,", "El equipo de Funnyleads");
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 

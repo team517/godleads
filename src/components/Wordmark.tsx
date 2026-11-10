@@ -1,33 +1,36 @@
 import { cn } from "@/lib/utils";
-import wordmark from "@/assets/onepulso-wordmark-black.png";
 
 interface WordmarkProps {
   className?: string;
-  /** Tailwind text-color class controls the wordmark color via mask. e.g. "text-primary", "text-white" */
+  /** Clase de color de Tailwind: el nombre se pinta con currentColor. p. ej. "text-primary", "text-white" */
   colorClassName?: string;
 }
 
 /**
- * onepulso wordmark rendered as a CSS mask so its color follows the design system.
- * Use the standard `text-*` utility (via colorClassName) to tint it.
+ * Marca "Funnyleads" (10-11-2026), calcada de la cabecera del diseño de la landing: Schibsted Grotesk
+ * 600 con tracking negativo. Es un SVG con el texto ajustado a un ancho fijo (textLength), así que
+ * escala con la ALTURA que le dé `className` (h-5, h-8…) igual que el logo de imagen anterior, y el
+ * color sale de `colorClassName` (currentColor).
  */
 export function Wordmark({ className, colorClassName = "text-primary" }: WordmarkProps) {
   return (
-    <span
+    <svg
       role="img"
-      aria-label="onepulso"
-      className={cn("inline-block bg-current align-middle", colorClassName, className)}
-      style={{
-        aspectRatio: "1572 / 430",
-        WebkitMaskImage: `url(${wordmark})`,
-        maskImage: `url(${wordmark})`,
-        WebkitMaskRepeat: "no-repeat",
-        maskRepeat: "no-repeat",
-        WebkitMaskPosition: "center",
-        maskPosition: "center",
-        WebkitMaskSize: "contain",
-        maskSize: "contain",
-      }}
-    />
+      aria-label="Funnyleads"
+      viewBox="0 0 560 120"
+      className={cn("inline-block w-auto align-middle", colorClassName, className)}
+      style={{ aspectRatio: "560 / 120" }}
+    >
+      <text
+        x="0"
+        y="90"
+        fill="currentColor"
+        textLength="556"
+        lengthAdjust="spacingAndGlyphs"
+        style={{ fontFamily: "'Schibsted Grotesk', Inter, system-ui, sans-serif", fontWeight: 600, fontSize: 112, letterSpacing: "-0.03em" }}
+      >
+        Funnyleads
+      </text>
+    </svg>
   );
 }

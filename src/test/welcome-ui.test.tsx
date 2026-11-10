@@ -84,10 +84,10 @@ describe("Bienvenida (primer acceso)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Continuar/ }));
 
     expect(screen.getByText("¿Qué quieres lograr?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Entrar en OnePulso/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Entrar en Funnyleads/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /Correo en frío/ }));
     fireEvent.click(screen.getByRole("button", { name: /Conseguir leads/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Entrar en OnePulso/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Entrar en Funnyleads/ }));
 
     expect(await screen.findByText(/Construyendo/)).toBeInTheDocument();
     expect(screen.getByText("Creando tu espacio de leads")).toBeInTheDocument();

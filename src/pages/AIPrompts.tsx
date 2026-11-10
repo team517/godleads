@@ -133,7 +133,7 @@ function AssistantDialog({ open, onOpenChange, editing, availableTags, onSaved }
         <DialogHeader><DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> {editing ? "Editar asistente del Unibox" : "Nuevo asistente del Unibox"}</DialogTitle></DialogHeader>
         <p className="text-[13px] text-muted-foreground">Sugiere respuestas en el Unibox para los mensajes que llegan a los buzones con estas etiquetas.</p>
         <div className="space-y-4">
-          <div><label className="mb-1.5 block text-sm font-medium">Nombre</label><Input placeholder="Ej: Ventas OnePulso" value={name} onChange={(e) => setName(e.target.value)} /></div>
+          <div><label className="mb-1.5 block text-sm font-medium">Nombre</label><Input placeholder="Ej: Ventas Funnyleads" value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div><label className="mb-1.5 block text-sm font-medium">Información de la empresa</label><Textarea placeholder="Describe tu empresa, servicios…" className="min-h-[100px] resize-none" value={companyInfo} onChange={(e) => setCompanyInfo(e.target.value)} /></div>
           <div><label className="mb-1.5 block text-sm font-medium">Instrucciones para la IA</label><Textarea placeholder="Ej: Responde profesional y cercana…" className="min-h-[100px] resize-none" value={promptText} onChange={(e) => setPromptText(e.target.value)} /></div>
           <div>

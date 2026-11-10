@@ -114,7 +114,7 @@ export default function PortalBuilding({ pasos, onDone, minMs = PASO_MIN_MS }: {
         Construyendo <span className="bg-gradient-to-r from-[#7b5cff] to-[#b04dff] bg-clip-text text-transparent">tu portal</span>
       </h1>
       <p className="mt-3 max-w-[560px] text-[clamp(15px,1.5vw,18px)] leading-[1.5] text-[#6470a8]">
-        <span className="block">OnePulso está preparando tu espacio: leads, campañas, cuentas y Unibox.</span>
+        <span className="block">Funnyleads está preparando tu espacio: leads, campañas, cuentas y Unibox.</span>
         <span className="block">Te llevamos dentro en cuanto esté listo.</span>
       </p>
 

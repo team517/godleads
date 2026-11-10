@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
         });
       }
       user_id = uid;
-      title = "🔔 Prueba de avisos — OnePulso";
+      title = "🔔 Prueba de avisos — Funnyleads";
       msgBody = "Si ves esto, los avisos de interesados llegan a este dispositivo.";
       url = "/unibox";
       debug = false;
@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     }
 
     const payload = JSON.stringify({
-      title: title || "OnePulso",
+      title: title || "Funnyleads",
       body: msgBody || "Tienes un nuevo mensaje",
       url: url || "/unibox",
     });

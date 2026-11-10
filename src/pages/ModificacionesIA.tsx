@@ -1132,7 +1132,7 @@ function TarjetaMetricas({ t, onPedir }: { t: Extract<IaTarjeta, { type: "metric
             <p className="mt-0.5 font-display text-[20px] font-bold tracking-[-0.02em]">{t.titulo}</p>
             <p className="text-[13px] text-[#6B6485]">{t.subtitulo}</p>
           </div>
-          <span className="flex items-center gap-1.5 text-[14px] font-bold text-[#1B1535]"><SparkMark size={24} className="rounded-md" /> OnePulso</span>
+          <span className="flex items-center gap-1.5 text-[14px] font-bold text-[#1B1535]"><SparkMark size={24} className="rounded-md" /> Funnyleads</span>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
