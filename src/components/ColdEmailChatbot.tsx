@@ -66,13 +66,14 @@ async function llamarPulseBot<T = any>(body: Record<string, unknown>): Promise<T
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/cold-email-chat`;
 
+/** La sugerencia que abre las analíticas con gráficos (se reconoce por el texto, sin emoji). */
+const ANALYTICS_PROMPT = "Analiza mis campañas con gráficos";
 const quickPrompts = [
-  "📊 Analiza mis campañas con gráficos",
-  "Escríbeme un email de prospección para SaaS B2B",
-  "Dame 5 asuntos de email con alto open rate",
-  "Crea una secuencia de 3 follow-ups",
+  ANALYTICS_PROMPT,
   "¿Cómo mejoro mi tasa de respuesta?",
-  "Estrategias para captar reuniones en frío",
+  "Dame 5 asuntos con alta tasa de apertura",
+  "Escríbeme un email de prospección para SaaS B2B",
+  "Crea una secuencia de 3 seguimientos",
 ];
 const editPrompts = [
   "Cambia el asunto del primer correo de mi campaña",
@@ -85,6 +86,12 @@ const visitorPrompts = [
   "¿Cómo funciona el warm-up ilimitado?",
   "Quiero una demo",
 ];
+
+/** Mientras baja el formateador (sólo la primera vez) el texto se enseña sin los ** ni # del
+ *  Markdown, para que no asomen asteriscos durante un instante. */
+export function textoSinMarcas(t: string): string {
+  return String(t || "").replace(/\*\*(.+?)\*\*/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/^[-*]\s+/gm, "• ");
+}
 
 /** Lo que se ha dicho hasta ahora, para la transcripción de una petición y para guardar. */
 function toStored(m: Msg): StoredMessage | null {
@@ -628,8 +635,8 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         <div className="flex min-w-0 items-center gap-2">
           <BotAvatar size={36} team={teamOpen} />
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{teamOpen ? "Equipo de Funnyleads" : "PulseBot"}</p>
-            <p className="truncate text-xs text-muted-foreground">{teamOpen ? "Personas reales, te responden por correo" : isVisitor ? "Asistente de Funnyleads" : mode === "edicion" ? "Edita tus campañas con confirmación" : "Experto en Cold Email & Outreach"}</p>
+            <p className="truncate text-sm font-bold">{teamOpen ? "Equipo de Funnyleads" : "FunnyBot"}</p>
+            <p className="truncate text-xs text-muted-foreground">{teamOpen ? "Te respondemos por correo" : isVisitor ? "Asistente de Funnyleads" : mode === "edicion" ? "Editando tus campañas" : "Tu consultor de cold email"}</p>
           </div>
         </div>
         <div className="flex items-center gap-0.5">
@@ -648,19 +655,21 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         </div>
       </div>
 
-      {/* Modo: Conversación | Modo edición (sólo con sesión) */}
+      {/* Modo: Conversación | Modo edición. Sólo con sesión: en la landing el visitante no lo ve. */}
+      {!isVisitor && (
       <div className="flex items-center gap-1 border-b bg-card px-3 py-1.5 shrink-0" role="tablist" aria-label="Modo del asistente">
         <button type="button" role="tab" aria-selected={mode === "chat"} onClick={() => setMode("chat")}
           className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "chat" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
           <MessageCircle className="h-3.5 w-3.5" /> Conversación
         </button>
-        <button type="button" role="tab" aria-selected={mode === "edicion"} disabled={isVisitor} onClick={() => setMode("edicion")}
-          title={isVisitor ? "Inicia sesión para editar tus campañas" : "PulseBot cambia tus campañas con confirmación"}
-          className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50", mode === "edicion" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
+        <button type="button" role="tab" aria-selected={mode === "edicion"} onClick={() => setMode("edicion")}
+          title="FunnyBot cambia tus campañas y te pide confirmación"
+          className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "edicion" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
           <PencilLine className="h-3.5 w-3.5" /> Modo edición
         </button>
         {conversationId && <span className="ml-auto text-[10.5px] text-muted-foreground">Guardado</span>}
       </div>
+      )}
 
       {historyOpen ? (
         <div className={isFullscreen ? "flex-1 min-h-0" : "min-h-[300px] max-h-[420px]"}>
@@ -688,11 +697,11 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
               <BotAvatar size={32} team={false} />
               <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3 text-sm leading-relaxed max-w-[90%]">
                 {isVisitor ? (
-                  <>¡Hola! Soy el asistente de <strong>Funnyleads</strong>. Pregúntame qué hace la plataforma, cuánto cuesta o cómo empezar. Y si prefieres hablar con una persona, pulsa <strong>Hablar con el equipo</strong>.</>
+                  <>¡Hola! Soy <strong>FunnyBot</strong>, el asistente de Funnyleads. Pregúntame qué hace la plataforma, cuánto cuesta o cómo empezar. Si prefieres hablar con una persona, pulsa <strong>Hablar con el equipo</strong>.</>
                 ) : mode === "edicion" ? (
                   <>Modo edición activo. Dime qué cambiar en tus campañas (asuntos, mensajes, esperas, variantes, leads) y te enseño el <strong>antes y el después</strong> para que lo confirmes antes de aplicarlo.</>
                 ) : (
-                  <>¡Hola! Soy <strong>PulseBot</strong>, tu consultor de cold email. Tengo acceso a <strong>tus analíticas reales</strong>: puedo generar gráficos, analizar tu rendimiento y darte recomendaciones para conseguir más reuniones.<br /><br />Para cambiar tus campañas activa el <strong>Modo edición</strong>; para hablar con una persona, <strong>Hablar con el equipo</strong>.</>
+                  <>¡Hola! Soy <strong>FunnyBot</strong>. Veo <strong>tus campañas y analíticas reales</strong>: te hago gráficos, analizo tu rendimiento y te digo qué cambiar para conseguir más reuniones.<br /><br />Para aplicar cambios activa el <strong>Modo edición</strong>. Para hablar con una persona, <strong>Hablar con el equipo</strong>.</>
                 )}
               </div>
             </div>
@@ -701,13 +710,16 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 <button
                   key={i}
                   onClick={() => {
-                    if (prompt.includes("📊")) injectAnalytics();
+                    if (prompt === ANALYTICS_PROMPT) injectAnalytics();
                     else if (isVisitor && /demo/i.test(prompt)) setTeamOpen(true);
                     else sendMessage(prompt);
                   }}
                   className="text-left text-xs px-3 py-2.5 rounded-xl border bg-background hover:bg-muted/80 transition-colors text-muted-foreground hover:text-foreground"
                 >
-                  {prompt}
+                  <span className="inline-flex items-center gap-2">
+                    {prompt === ANALYTICS_PROMPT && <BarChart3 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />}
+                    {prompt}
+                  </span>
                 </button>
               ))}
             </div>
@@ -753,10 +765,10 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                 )}
                 {msg.role === "assistant" ? (
                   <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>li]:my-0.5 [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:rounded-lg [&>blockquote]:py-1 [&>pre]:bg-background/80 [&>pre]:rounded-lg [&>pre]:text-xs">
-                    {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">PulseBot · tus campañas</p>}
+                    {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">FunnyBot · tus campañas</p>}
                     {teamBubble && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">Equipo de Funnyleads</p>}
                     {/* Mientras baja react-markdown (sólo la primera vez) el texto se lee en plano. */}
-                    <Suspense fallback={<p className="whitespace-pre-wrap">{msg.content}</p>}>
+                    <Suspense fallback={<p className="whitespace-pre-wrap">{textoSinMarcas(msg.content)}</p>}>
                       <ChatbotMarkdown>{msg.content}</ChatbotMarkdown>
                     </Suspense>
                     {(msg.cards || []).map((card, j) => (

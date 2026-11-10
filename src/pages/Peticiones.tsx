@@ -236,7 +236,7 @@ export default function Peticiones() {
                   <div className="max-h-[60vh] space-y-1.5 overflow-y-auto">
                     {convAbierta?.messages.map((m, i) => (
                       <div key={m.id || i} className={cn("rounded-lg px-3 py-2 text-[13px] whitespace-pre-wrap", m.role === "user" ? "ml-8 bg-primary/10" : m.role === "system" ? "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200" : "mr-8 bg-muted")}>
-                        <span className="mr-1 text-[10px] font-semibold uppercase text-muted-foreground">{m.role === "user" ? "Persona" : m.role === "system" ? "Sistema" : m.via === "pulsebot" ? "PulseBot" : m.via === "equipo" ? "Equipo" : "Chat"}</span>{m.content}
+                        <span className="mr-1 text-[10px] font-semibold uppercase text-muted-foreground">{m.role === "user" ? "Persona" : m.role === "system" ? "Sistema" : m.via === "pulsebot" ? "FunnyBot" : m.via === "equipo" ? "Equipo" : "Chat"}</span>{m.content}
                       </div>
                     ))}
                   </div>
