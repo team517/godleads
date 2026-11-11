@@ -35,7 +35,12 @@ serve(async (req) => {
     const slotPriceId = Deno.env.get("STRIPE_CLIENT_SLOT_PRICE_ID") || "";
 
     // Clientes de Stripe con ese correo (puede haber más de uno si pagó dos veces desde la landing).
-    const { data: known } = await db.from("user_entitlements").select("stripe_customer_id").eq("user_id", user.id).maybeSingle();
+    const { data: known } = await db.from("user_entitlements").select("stripe_customer_id, status, tier, current_period_end").eq("user_id", user.id).maybeSingle();
+    // Plan concedido a mano por el equipo (cuenta de prueba, cortesía): activo y SIN cliente de Stripe.
+    // Stripe no sabe nada de él, así que no se toca (si no, se bajaría a "free" al no encontrar pagos).
+    if (known && !known.stripe_customer_id && (known.status === "active" || known.status === "trialing")) {
+      return json({ subscribed: true, status: known.status, tier: known.tier, current_period_end: known.current_period_end, manual: true });
+    }
     const customers = await stripe.customers.list({ email: user.email, limit: 5 });
     const customerIds = new Set<string>(customers.data.map((c) => c.id));
     if (known?.stripe_customer_id) customerIds.add(known.stripe_customer_id);
