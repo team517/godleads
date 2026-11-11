@@ -96,7 +96,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="stagger grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div data-tour="dash-stats" className="stagger grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((stat, i) => (
           <Card key={i} className="lift" aria-busy={pending(stat.w)}>
             <CardContent className="p-4 sm:p-5">

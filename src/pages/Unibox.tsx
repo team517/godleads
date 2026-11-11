@@ -2705,7 +2705,7 @@ export default function Unibox() {
       </div>
 
       {/* Category filter pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto rounded-md border border-border/60 bg-card px-3 py-2.5 no-scrollbar">
+      <div data-tour="unibox-filters" className="flex items-center gap-1.5 overflow-x-auto rounded-md border border-border/60 bg-card px-3 py-2.5 no-scrollbar">
         <button
           onClick={() => setShowTodayOnly(!showTodayOnly)}
           className={`${CHIP_PILL} ${

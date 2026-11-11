@@ -394,6 +394,7 @@ export default function CampaignsTable({
               return (
                 <tr
                   key={campaign.id}
+                  data-tour="campaign-row"
                   onClick={() => onSelect(campaign.id)}
                   className={cn(
                     "soft-row cursor-pointer border-t border-[rgba(126,139,198,.12)] dark:border-border/60",
