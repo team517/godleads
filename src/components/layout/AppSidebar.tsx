@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound, CalendarHeart } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
@@ -47,6 +47,9 @@ const NAV_GROUPS: NavGroup[] = [
     { icon: UsersRound, label: "Mensajes", path: "/peticiones" },
     { icon: Rocket, label: "Onboarding", path: "/onboarding" },
     { icon: CalendarClock, label: "Seguimiento", path: "/seguimiento" },
+  ] },
+  { id: "support", title: "Soporte", items: [
+    { icon: CalendarHeart, label: "Funny Team", path: "/funny-team" },
   ] },
   { id: "perf", title: "Rendimiento", items: [
     { icon: BarChart3, label: "Estadísticas", path: "/stats" },
@@ -101,6 +104,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     if (path === "/admin/clients") return isAdmin || isManager;
     // Peticiones del chat (hablar con el equipo): la agencia (hello@, support@, equipo@, gestores, admins).
     if (path === "/peticiones") return isAgency;
+    // Funny Team (reservar reunión con el equipo): todos los clientes, también los de secciones acotadas.
+    if (path === "/funny-team") return true;
     if (allowedRoutes && !allowedRoutes.includes(path)) return false;
     if (path === "/clientes") return !isAgency;
     if (path === "/automatizacion") return canAutomation;

@@ -25,6 +25,7 @@ const Auth = lazyWithRetry(() => import("./pages/Auth"));
 const Empezar = lazyWithRetry(() => import("./pages/Empezar"));
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
 const Zapmail = lazyWithRetry(() => import("./pages/Zapmail"));
+const FunnyTeam = lazyWithRetry(() => import("./pages/FunnyTeam"));
 const EmailAccounts = lazyWithRetry(() => import("./pages/EmailAccounts"));
 const Campaigns = lazyWithRetry(() => import("./pages/Campaigns"));
 const Leads = lazyWithRetry(() => import("./pages/Leads"));
@@ -112,6 +113,7 @@ const App = () => (
                 <Route path="/automatizacion" element={<AutomationFlow />} />
                 <Route path="/seguimiento" element={<Seguimiento />} />
                 <Route path="/zapmail" element={<Zapmail />} />
+                <Route path="/funny-team" element={<FunnyTeam />} />
                 <Route path="/godtube" element={<GodTube />} />
                 <Route path="/partners" element={<Partners />} />
                 <Route path="/admin" element={<AdminPanel />} />
