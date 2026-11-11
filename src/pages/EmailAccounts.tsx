@@ -1312,12 +1312,15 @@ export default function EmailAccounts() {
     if (ids.length === 0) { toast.error("No hay cuentas"); return; }
     const increment = Math.max(1, parseInt(slowRampForm.increment) || 2);
     const start = Math.max(0, parseInt(slowRampForm.start) || 0); // 0 = start from increment (legacy)
-    // Objetivo como mucho 15 (el techo por buzón del motor, 17-10-2026).
-    const target = Math.min(15, Math.max(start || increment, parseInt(slowRampForm.target) || 15));
+    // Sin techo de 15 desde el 11-11-2026: el objetivo es el que se escribe (nunca menor que el día 1).
+    const target = Math.max(start || increment, parseInt(slowRampForm.target) || 15);
     const payload: any = {
       warmup_enabled: true,
       warmup_increment: increment,
       warmup_limit: target,
+      // El límite diario de la cuenta pasa a ser el mismo objetivo: si algún día se apaga la rampa,
+      // la cuenta sigue en lo que se eligió y no vuelve a 15.
+      daily_limit: target,
       warmup_day: start,           // repurposed: starting daily limit (día 1)
       warmup_started_at: new Date().toISOString(),
     };
