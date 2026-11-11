@@ -42,7 +42,7 @@ function Bubble({ onOpen, unread = 0 }: { onOpen: () => void; unread?: number })
         onClick={onOpen}
         onMouseEnter={() => { void loadChatbot().catch(() => {}); }}
         onFocus={() => { void loadChatbot().catch(() => {}); }}
-        aria-label={unread > 0 ? `Abrir el chat: ${unread} respuesta(s) nueva(s) del equipo` : "Abrir FunnyBot, el asistente de Funnyleads"}
+        aria-label={unread > 0 ? `Abrir el chat: ${unread} respuesta(s) nueva(s) del equipo` : "Abrir el Asistente IA de Funnyleads"}
         className="relative block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
       >
         <SparkMark size={58} className="rounded-[18px]" />
@@ -89,7 +89,7 @@ export function ChatbotLauncher() {
     // esconde en las rutas de arriba, igual que antes, sin perder la conversación.
     return (
       <Suspense fallback={hidden ? null : <Bubble onOpen={() => {}} />}>
-        <ColdEmailChatbot initialOpen />
+        <ColdEmailChatbot initialOpen initialUnread={unread} />
       </Suspense>
     );
   }

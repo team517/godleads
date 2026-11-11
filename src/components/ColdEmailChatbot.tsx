@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3, History, UsersRound, MessageCircle, PencilLine, ArrowLeft, Mail } from "lucide-react";
+import { User, X, Send, Loader2, Maximize2, Minimize2, Paperclip, BarChart3, UsersRound, PencilLine, Mail, ChevronLeft, ChevronRight, MoreHorizontal, MessageSquare, Sparkle, CircleHelp, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import type { ChartData } from "@/components/chatbot/ChatbotCharts";
@@ -13,7 +13,10 @@ import { isMobileAppPath } from "@/lib/mobile-app";
 import { contextoParaPulseBot, esOrdenDeAplicar, esPeticionDeCambio, siguePulseBot } from "@/lib/chatbot-intent";
 import { TarjetaCambioMini, type AccionCambio, type TarjetaCambioT } from "@/components/chatbot/TarjetaCambioMini";
 import { TeamAvatars } from "@/components/chatbot/TeamAvatars";
-import { ChatHistoryPanel } from "@/components/chatbot/ChatHistoryPanel";
+import { ChatMessagesList } from "@/components/chatbot/ChatMessagesList";
+import { ChatHelpCenter } from "@/components/chatbot/ChatHelpCenter";
+import { AiTile, ChatBottomTabs, HEADER_GRADIENT, HeaderTile, HeaderWave, TeamStack, type ChatScreen } from "@/components/chatbot/chat-ui";
+import { useProfile } from "@/contexts/ProfileContext";
 import { quiereHablarConElEquipo } from "../../supabase/functions/_shared/chat-hub-rules";
 import {
   callChatHub, createConversation, deleteConversation, listConversations, loadMessages, rememberTeamThread, rememberVisitorConversation,
@@ -122,8 +125,12 @@ export const TEAM_UNREAD_POLL_MS = 30000;
 /** `initialOpen`: el botón flotante vive en ChatbotLauncher y monta este componente ya abierto
  *  al primer clic; desde entonces el chat se queda montado (conversación incluida) y pinta su
  *  propio botón al cerrarse, como siempre. */
-export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolean } = {}) {
+export function ColdEmailChatbot({ initialOpen = false, initialUnread = 0 }: { initialOpen?: boolean; initialUnread?: number } = {}) {
   const [open, setOpen] = useState(initialOpen);
+  // Rediseño 11-11-2026: Inicio / Mensajes / Ayuda (barra de abajo) y la conversación. Si el
+  // equipo ha respondido, se abre directamente en el hilo con el equipo.
+  const [screen, setScreen] = useState<ChatScreen>(initialUnread > 0 ? "chat" : "home");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -136,13 +143,12 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   const [mode, setMode] = useState<ChatMode>("chat");
   // "Hablar con el equipo": chat en directo con personas del equipo (fotos del equipo en vez de la
   // marca). teamThreadId = conversación con el hilo abierto; se sondea para traer sus respuestas.
-  const [teamOpen, setTeamOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(initialUnread > 0);
   const [teamThreadId, setTeamThreadId] = useState<string | null>(null);
-  const [teamUnreadCount, setTeamUnreadCount] = useState(0);
+  const [teamUnreadCount, setTeamUnreadCount] = useState(initialUnread);
   const teamSinceRef = useRef<string | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const askedEmailRef = useRef(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -151,6 +157,7 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
+  const { profile } = useProfile();
   const location = useLocation();
   const isVisitor = !user;
   // The Unibox reader lives bottom-right too — hide this floating bubble there
@@ -164,13 +171,16 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, teamOpen]);
+  }, [messages, teamOpen, screen]);
 
   useEffect(() => {
-    if (open && inputRef.current) {
+    if (open && inputRef.current && (screen === "chat" || screen === "home")) {
       setTimeout(() => inputRef.current?.focus(), 300);
     }
-  }, [open]);
+  }, [open, screen]);
+
+  // El menú "⋯" se cierra al cambiar de pantalla.
+  useEffect(() => { setMenuOpen(false); }, [screen, teamOpen, open]);
 
   // Sin sesión no hay Modo edición: si se cierra sesión con él activo, vuelve a Conversación.
   useEffect(() => { if (isVisitor && mode === "edicion") setMode("chat"); }, [isVisitor, mode]);
@@ -217,9 +227,9 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isVisitor]);
 
-  // Hilo abierto y chat abierto: cada 4 s se traen las respuestas nuevas del equipo.
+  // Hilo abierto y conversación a la vista: cada 4 s se traen las respuestas nuevas del equipo.
   useEffect(() => {
-    if (!open || !teamThreadId) return;
+    if (!open || !teamThreadId || screen !== "chat") return;
     let vivo = true;
     const tick = async () => {
       try {
@@ -239,18 +249,19 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
     const t = window.setInterval(() => void tick(), TEAM_POLL_MS);
     return () => { vivo = false; window.clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, teamThreadId, isVisitor]);
+  }, [open, teamThreadId, isVisitor, screen]);
 
-  // Chat cerrado con un hilo abierto: cada 30 s se mira si el equipo ha respondido (punto en el botón).
+  // Chat cerrado (o en Inicio / Mensajes / Ayuda) con un hilo abierto: cada 30 s se mira si el
+  // equipo ha respondido (número en el botón flotante y en la pestaña Mensajes). Sin marcar leído.
   useEffect(() => {
-    if (open || !teamThreadId) return;
+    if ((open && screen === "chat") || !teamThreadId) return;
     let vivo = true;
     const tick = () => teamUnread(isVisitor ? getVisitorId() : null)
       .then((r) => { if (vivo) setTeamUnreadCount(r.unread || 0); }, () => { /* */ });
     void tick();
     const t = window.setInterval(() => void tick(), TEAM_UNREAD_POLL_MS);
     return () => { vivo = false; window.clearInterval(t); };
-  }, [open, teamThreadId, isVisitor]);
+  }, [open, teamThreadId, isVisitor, screen]);
 
   const setConversation = (id: string | null) => { conversationRef.current = id; setConversationId(id); };
 
@@ -276,34 +287,56 @@ export function ColdEmailChatbot({ initialOpen = false }: { initialOpen?: boolea
   }, [ensureConversation]);
 
   const nuevaConversacion = () => {
-    setMessages([]); setEstadosCambio({}); setConversation(null); setTeamOpen(false); setHistoryOpen(false);
+    setMessages([]); setEstadosCambio({}); setConversation(null); setTeamOpen(false);
     setTeamThreadId(null); teamSinceRef.current = null; seenIdsRef.current = new Set(); askedEmailRef.current = false;
     rememberTeamThread(null, null);
     if (isVisitor) rememberVisitorConversation(null);
   };
 
-  const abrirHistorial = async () => {
-    setHistoryOpen(true);
+  /** Pestaña Mensajes: las conversaciones guardadas. El visitante sólo ve la suya actual. */
+  const cargarMensajes = async () => {
     setHistoryLoading(true);
     try {
       if (isVisitor) {
+        const actual = conversationRef.current || visitorConversation();
+        if (!actual) { setConversations([]); return; }
         const r = await callChatHub<{ conversations: ChatConversation[] }>({ action: "visitor_history", visitor_id: getVisitorId() });
-        setConversations(r.conversations || []);
+        setConversations((r.conversations || []).filter((c) => c.id === actual)
+          .map((c) => ({ ...c, team_status: c.team_status ?? (actual === teamThreadId ? (teamOpen ? "open" : "closed") : null) })));
       } else {
         setConversations(await listConversations());
       }
     } catch { setConversations([]); } finally { setHistoryLoading(false); }
   };
 
-  const abrirConversacion = async (id: string) => {
+  const irA = (s: ChatScreen) => {
+    setScreen(s);
+    if (s === "messages") void cargarMensajes();
+  };
+
+  const abrirConversacion = async (c: ChatConversation) => {
+    const id = c.id;
+    // La que ya está en pantalla: sólo se vuelve a ella.
+    if (id === conversationRef.current && messages.length > 0) {
+      if (c.team_status === "open") setTeamOpen(true);
+      setScreen("chat");
+      return;
+    }
     setHistoryLoading(true);
     try {
-      const prev = (await loadMessages(id)).map(fromStored).filter(Boolean) as Msg[];
-      const c = conversations.find((x) => x.id === id);
+      let prev: Msg[];
+      let status = c.team_status;
+      if (isVisitor) {
+        const r = await teamPoll({ conversationId: id, visitorId: getVisitorId() });
+        prev = (r.messages || []).map(fromTeam);
+        status = r.team_status;
+      } else {
+        prev = (await loadMessages(id)).map(fromStored).filter(Boolean) as Msg[];
+      }
       setTeamOpen(false); setTeamThreadId(null);
-      cargarHilo(id, prev, c?.team_status);
-      setHistoryOpen(false);
-      if (c?.mode === "edicion" && user) setMode("edicion");
+      cargarHilo(id, prev, status);
+      setMode(c.mode === "edicion" && user ? "edicion" : "chat");
+      setScreen("chat");
     } catch (e) {
       console.warn("chat: no se pudo abrir la conversación:", (e as Error).message);
     } finally { setHistoryLoading(false); }
@@ -450,7 +483,8 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     }
   }, [user]);
 
-  const injectAnalytics = useCallback(async () => {
+  // Sin useCallback: así usa la conversación de ahora, no la del primer render.
+  const injectAnalytics = async () => {
     const result = await fetchAnalyticsCharts();
     if (!result || result.charts.length === 0) {
       setMessages(prev => [...prev, { role: "assistant", content: "No tienes campañas con datos suficientes para generar gráficos." }]);
@@ -461,13 +495,14 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     const chartMsg: Msg = { role: "charts", content: "", charts: result.charts };
     setMessages(prev => [...prev, chartMsg]);
 
-    // Auto-send the summary to AI for analysis
-    sendMessage(result.summary, true);
-  }, [fetchAnalyticsCharts]);
+    // Auto-send the summary to AI for analysis (al consultor, nunca al Modo edición)
+    void sendMessage(result.summary, true, { ai: true });
+  };
 
   const pushAssistant = (m: Omit<Msg, "role"> & { role?: Msg["role"] }) => setMessages((prev) => [...prev, { role: "assistant", ...m } as Msg]);
 
-  const sendMessage = async (text: string, isAutoAnalytics = false) => {
+  /** `ai`: el mensaje va al Asistente IA aunque haya un hilo con el equipo abierto (desde Inicio). */
+  const sendMessage = async (text: string, isAutoAnalytics = false, opts: { ai?: boolean } = {}) => {
     if ((!text.trim() && pendingImages.length === 0) || isLoading) return;
 
     const userMsg: Msg = {
@@ -480,7 +515,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     const isAskingForCharts = !isAutoAnalytics && !isVisitor && /analítica|gráfico|gráfica|chart|analiza mis campaña|rendimiento|métricas|estadística/i.test(text);
 
     // ── Hablando con el equipo: el mensaje va a las personas (chat-hub), nunca a la IA ──
-    if (teamOpen && !isAutoAnalytics) {
+    if (teamOpen && !isAutoAnalytics && !opts.ai) {
       setInput("");
       setPendingImages([]);
       await enviarAlEquipo(text.trim());
@@ -505,7 +540,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     const pideEquipo = !isAutoAnalytics && quiereHablarConElEquipo(text);
 
     // ── Modo edición: todo va a PulseBot (herramientas sobre la cuenta) ──
-    if (mode === "edicion") {
+    if (mode === "edicion" && !opts.ai) {
       await enviarAPulseBot(text.trim(), messages);
       if (pideEquipo) pushAssistant({ content: "Si prefieres hablarlo con una persona del equipo, cuéntanoslo aquí y te escribimos.", action: { kind: "equipo" } });
       return;
@@ -747,176 +782,226 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
     setIsLoading(false);
   };
 
+  /** Avatar del asistente en las burbujas: el cuadrado lila con la estrella, o las personas del equipo. */
+  const BotAvatar = ({ team }: { team: boolean }) =>
+    team ? <TeamAvatars size={22} className="mt-1" /> : <AiTile size={36} />;
+
+  const prompts = isVisitor ? visitorPrompts : mode === "edicion" ? editPrompts : quickPrompts;
+  const nombre = isVisitor ? "" : String(profile?.full_name || "").trim().split(/\s+/)[0] || "";
+  const puedeAdjuntar = !isVisitor && mode === "chat" && !teamOpen;
+
+  /** "Habla con nuestro equipo": el chat en directo de siempre, en la pantalla de conversación. */
+  const abrirEquipo = () => { setTeamOpen(true); setScreen("chat"); };
+  /** Desde Inicio: conversación con el Asistente IA con ese mensaje (consultor o, sin sesión, el
+   *  asistente de visitantes). Nunca al equipo ni al Modo edición. */
+  const preguntarIA = (texto: string) => {
+    if (!texto.trim() || isLoading) return;
+    setTeamOpen(false); setMode("chat"); setScreen("chat");
+    void sendMessage(texto, false, { ai: true });
+  };
+  const analizarCampanas = () => { setTeamOpen(false); setMode("chat"); setScreen("chat"); setMenuOpen(false); void injectAnalytics(); };
+
+  const tarjetaInicio = (icon: React.ReactNode, title: string, sub: string, onClick: () => void) => (
+    <button type="button" onClick={onClick}
+      className="flex min-h-[65px] w-full items-center gap-4 rounded-[18px] bg-white py-3 pl-4 pr-3.5 text-left shadow-[0_6px_18px_-10px_rgba(60,40,170,.22)] ring-1 ring-[#EEEBF8] transition hover:-translate-y-px hover:ring-[#D9D1FB] dark:bg-card dark:ring-border">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#F0EDFE] text-[#6E58F1] dark:bg-primary/15" aria-hidden="true">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14px] font-semibold leading-tight tracking-[-0.005em] text-[#0E1330] dark:text-foreground">{title}</span>
+        <span className="mt-[3px] block text-[12.5px] leading-snug tracking-[-0.005em] text-slate-500 dark:text-muted-foreground">{sub}</span>
+      </span>
+      <ChevronRight className="h-[18px] w-[18px] shrink-0 text-[#6E58F1]" strokeWidth={2.2} aria-hidden="true" />
+    </button>
+  );
+
+  const botonCerrar = (claro: boolean) => (
+    <button type="button" onClick={() => { setOpen(false); setExpanded(false); }} aria-label="Cerrar"
+      className={cn("rounded-full p-1.5 transition-colors", claro ? "text-white/95 hover:bg-white/15" : "text-slate-500 hover:bg-slate-100 dark:text-muted-foreground dark:hover:bg-muted")}>
+      <X className="h-6 w-6" strokeWidth={2} />
+    </button>
+  );
+
   const renderChart = (chart: ChartData, isFullscreen: boolean) => (
     <Suspense fallback={<div style={{ height: isFullscreen ? 260 : 180 }} className="flex items-center justify-center text-xs text-muted-foreground"><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Cargando gráfico…</div>}>
       <ChatbotChart chart={chart} isFullscreen={isFullscreen} />
     </Suspense>
   );
 
-  /** Avatar del asistente: la marca, o las personas del equipo cuando se habla con él. */
-  const BotAvatar = ({ size, team }: { size: number; team: boolean }) =>
-    team ? <TeamAvatars size={Math.round(size * 0.85)} /> : <SparkMark size={size} className={size > 40 ? "rounded-xl shadow-sm" : "shrink-0 rounded-[10px]"} />;
-
-  const prompts = isVisitor ? visitorPrompts : mode === "edicion" ? editPrompts : quickPrompts;
-  const placeholder = teamOpen ? "Escribe al equipo…" : isVisitor ? "Pregunta lo que quieras sobre Funnyleads…" : mode === "edicion" ? "Dime qué cambiar en tu campaña…" : "Pregunta o pide un análisis de tus campañas…";
-
-  const chatContent = (isFullscreen: boolean) => (
-    <div className={`flex flex-col ${isFullscreen ? "h-full" : "max-h-[600px]"} bg-card`}>
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b bg-primary/5 shrink-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <BotAvatar size={36} team={teamOpen} />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{teamOpen ? "Equipo de Funnyleads" : "FunnyBot"}</p>
-            <p className="truncate text-xs text-muted-foreground">{teamOpen ? "Normalmente respondemos en unas horas" : isVisitor ? "Asistente de Funnyleads" : mode === "edicion" ? "Editando tus campañas" : "Tu consultor de cold email"}</p>
-          </div>
+  /* ── Inicio ─────────────────────────────────────────────────────────────────────────────── */
+  const pantallaInicio = (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="relative shrink-0 overflow-hidden px-6 pb-[66px] pt-6 text-white"
+        style={{ background: HEADER_GRADIENT, WebkitMaskImage: "linear-gradient(to bottom, #000 70%, transparent 100%)", maskImage: "linear-gradient(to bottom, #000 70%, transparent 100%)" }}>
+        <HeaderWave />
+        <div className="relative flex items-center gap-3">
+          <HeaderTile size={38} />
+          <span className="min-w-0 flex-1 truncate font-display text-[18px] font-semibold tracking-[-0.01em]">Asistente IA</span>
+          <TeamStack size={36} />
+          {botonCerrar(true)}
         </div>
-        <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => (historyOpen ? setHistoryOpen(false) : void abrirHistorial())} title="Historial de conversaciones" aria-label="Historial de conversaciones">
-            <History className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className={cn("h-8 w-8", teamOpen && "bg-primary/10 text-primary")} onClick={() => setTeamOpen((v) => !v)} title={teamOpen ? "Volver a FunnyBot" : "Hablar con el equipo"} aria-label={teamOpen ? "Volver a FunnyBot" : "Hablar con el equipo"}>
-            <UsersRound className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setExpanded(!expanded)} title={expanded ? "Minimizar" : "Ampliar"}>
-            {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setOpen(false); setExpanded(false); }} aria-label="Cerrar">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        <h2 className="relative mt-[34px] font-display text-[28px] font-semibold leading-[1.04] tracking-[-0.02em]">
+          Hola 👋{" "}<br />¿Cómo podemos{" "}<br />ayudarte?
+        </h2>
       </div>
-
-      {/* Modo: Conversación | Modo edición. Sólo con sesión: en la landing el visitante no lo ve. */}
-      {teamOpen && (
-        <div className="flex items-center justify-between gap-2 border-b bg-card px-3 py-1.5 shrink-0">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" /> Hablas con personas del equipo
-          </span>
-          <button type="button" onClick={() => setTeamOpen(false)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/10">
-            <ArrowLeft className="h-3.5 w-3.5" /> Volver a FunnyBot
+      <div className="relative -mt-[42px] space-y-[5px] px-3">
+        {tarjetaInicio(<MessageSquare className="h-5 w-5" strokeWidth={1.9} />, "Habla con nuestro equipo", "Te respondemos en menos de 10 minutos", abrirEquipo)}
+        {tarjetaInicio(<Sparkle className="h-5 w-5" fill="currentColor" strokeWidth={1.4} />, "Descubre la plataforma", "Conoce todo lo que puedes hacer",
+          () => preguntarIA(isVisitor ? "¿Qué es Funnyleads y qué puedo hacer con la plataforma?" : "¿Qué puedo hacer con Funnyleads? Explícame la plataforma paso a paso"))}
+        {tarjetaInicio(<CircleHelp className="h-5 w-5" strokeWidth={1.9} />, "Centro de ayuda", "Encuentra respuestas rápidas", () => irA("help"))}
+      </div>
+      <form onSubmit={(e) => { e.preventDefault(); preguntarIA(input); }} className="mt-auto shrink-0 px-3 pb-[13px] pt-[21px]">
+        <div className="flex h-12 items-center gap-2 rounded-2xl border border-[#E4E0F5] bg-white pl-4 pr-[6px] focus-within:border-[#B9ABFA] dark:border-border dark:bg-card">
+          <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} placeholder="Escribe un mensaje..." aria-label="Escribe un mensaje"
+            className="min-w-0 flex-1 bg-transparent text-[14.5px] text-[#0E1330] outline-none placeholder:text-slate-400 dark:text-foreground" />
+          <button type="submit" aria-label="Enviar" disabled={!input.trim() || isLoading}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-[#6E58F1] text-white shadow-[0_6px_14px_-6px_rgba(110,88,241,.9)] transition hover:bg-[#5F49E6]">
+            <Send className="h-[18px] w-[18px]" strokeWidth={2} />
           </button>
         </div>
-      )}
-      {!isVisitor && !teamOpen && (
-      <div className="flex items-center gap-1 border-b bg-card px-3 py-1.5 shrink-0" role="tablist" aria-label="Modo del asistente">
-        <button type="button" role="tab" aria-selected={mode === "chat"} onClick={() => { setMode("chat"); setTeamOpen(false); }}
-          className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "chat" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
-          <MessageCircle className="h-3.5 w-3.5" /> Conversación
-        </button>
-        <button type="button" role="tab" aria-selected={mode === "edicion"} onClick={() => { setMode("edicion"); setTeamOpen(false); }}
-          title="FunnyBot cambia tus campañas y te pide confirmación"
-          className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors", mode === "edicion" ? "bg-primary/10 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:text-foreground")}>
-          <PencilLine className="h-3.5 w-3.5" /> Modo edición
-        </button>
-        {conversationId && <span className="ml-auto text-[10.5px] text-muted-foreground">Guardado</span>}
-      </div>
-      )}
+      </form>
+    </div>
+  );
 
-      {historyOpen ? (
-        <div className={isFullscreen ? "flex-1 min-h-0" : "min-h-[300px] max-h-[420px]"}>
-          <ChatHistoryPanel
-            conversations={conversations}
-            currentId={conversationId}
-            loading={historyLoading}
-            onOpen={(id) => void abrirConversacion(id)}
-            onNew={nuevaConversacion}
-            onDelete={isVisitor ? undefined : (id) => void borrarConversacion(id)}
-            onClose={() => setHistoryOpen(false)}
-          />
-          {isVisitor && <p className="px-4 pb-3 text-[11.5px] text-muted-foreground">Como visitante sólo se guarda tu conversación actual en este navegador. Con una cuenta tendrás todo el historial.</p>}
+  /* ── Conversación ───────────────────────────────────────────────────────────────────────── */
+  const itemMenu = (icon: React.ReactNode, label: string, onClick: () => void) => (
+    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onClick(); }}
+      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium text-[#1A1D33] hover:bg-[#F3F0FE] dark:text-foreground dark:hover:bg-muted">
+      <span className="text-[#6E58F1]" aria-hidden="true">{icon}</span>{label}
+    </button>
+  );
+
+  const pantallaChat = (isFullscreen: boolean) => (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {menuOpen && <div className="absolute inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden="true" />}
+      {/* Cabecera violeta */}
+      <div className="relative shrink-0 overflow-hidden text-white" style={{ background: HEADER_GRADIENT }}>
+        <HeaderWave />
+        <div className="relative flex items-center gap-3 px-3 pb-[26px] pt-4">
+          <button type="button" onClick={() => setScreen("home")} aria-label="Volver al inicio" className="rounded-full p-1.5 text-white/95 hover:bg-white/15">
+            <ChevronLeft className="h-[22px] w-[22px]" strokeWidth={2.2} />
+          </button>
+          {teamOpen ? <TeamStack size={30} /> : <HeaderTile size={38} />}
+          <div className="min-w-0 flex-1 pr-9">
+            <p className="truncate font-display text-[17px] font-semibold leading-tight">{teamOpen ? "Equipo de Funnyleads" : "Asistente IA"}</p>
+            <p className="mt-0.5 text-[12.5px] leading-snug text-white/80">{teamOpen ? "Normalmente respondemos en menos de 10 minutos" : "El equipo también puede ayudarte"}</p>
+          </div>
         </div>
-      ) : (
-      <>
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        className={`flex-1 overflow-y-auto p-4 space-y-4 ${isFullscreen ? "" : "min-h-[300px] max-h-[420px]"}`}
-      >
-        {messages.length === 0 && !teamOpen && (
-          <div className="space-y-4">
-            <div className="flex items-start gap-2.5">
-              <BotAvatar size={32} team={false} />
-              <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3 text-sm leading-relaxed max-w-[90%]">
-                {isVisitor ? (
-                  <>¡Hola! Soy <strong>FunnyBot</strong>, el asistente de Funnyleads. Pregúntame qué hace la plataforma, cuánto cuesta o cómo empezar. Si prefieres hablar con una persona, pulsa <strong>Hablar con el equipo</strong>.</>
-                ) : mode === "edicion" ? (
-                  <>Modo edición activo. Dime qué cambiar en tus campañas (asuntos, mensajes, esperas, variantes, leads) y te enseño el <strong>antes y el después</strong> para que lo confirmes antes de aplicarlo.</>
-                ) : (
-                  <>¡Hola! Soy <strong>FunnyBot</strong>. Veo <strong>tus campañas y analíticas reales</strong>: te hago gráficos, analizo tu rendimiento y te digo qué cambiar para conseguir más reuniones.<br /><br />Para aplicar cambios activa el <strong>Modo edición</strong>. Para hablar con una persona, <strong>Hablar con el equipo</strong>.</>
-                )}
-              </div>
-            </div>
-            <div className={`grid gap-2 pl-10 ${isFullscreen ? "grid-cols-2 max-w-2xl" : "grid-cols-1"}`}>
-              {prompts.map((prompt, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    if (prompt === ANALYTICS_PROMPT) injectAnalytics();
-                    else if (isVisitor && /demo/i.test(prompt)) setTeamOpen(true);
-                    else sendMessage(prompt);
-                  }}
-                  className="text-left text-xs px-3 py-2.5 rounded-xl border bg-background hover:bg-muted/80 transition-colors text-muted-foreground hover:text-foreground"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    {prompt === ANALYTICS_PROMPT && <BarChart3 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />}
-                    {prompt}
-                  </span>
-                </button>
-              ))}
-            </div>
+      </div>
+      <div className="absolute right-3 top-[23px] z-20">
+        <button type="button" onClick={() => setMenuOpen((v) => !v)} aria-label="Más opciones" aria-haspopup="menu" aria-expanded={menuOpen}
+          className="rounded-full p-1.5 text-white/95 hover:bg-white/15">
+          <MoreHorizontal className="h-6 w-6" strokeWidth={2.2} />
+        </button>
+        {menuOpen && (
+          <div role="menu" aria-label="Opciones del chat"
+            className="absolute right-0 top-11 w-[252px] rounded-2xl bg-white p-1.5 shadow-[0_18px_40px_-12px_rgba(30,20,90,.35)] ring-1 ring-[#ECE8FA] dark:bg-popover dark:ring-border">
+            {!isVisitor && !teamOpen && itemMenu(<PencilLine className="h-4 w-4" />, mode === "edicion" ? "Salir del Modo edición" : "Modo edición", () => setMode(mode === "edicion" ? "chat" : "edicion"))}
+            {!isVisitor && itemMenu(analyticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />, "Analizar mis campañas con gráficos", analizarCampanas)}
+            {teamOpen
+              ? itemMenu(<Sparkle className="h-4 w-4" />, "Volver al Asistente IA", () => setTeamOpen(false))
+              : itemMenu(<UsersRound className="h-4 w-4" />, "Hablar con el equipo", () => setTeamOpen(true))}
+            {itemMenu(expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />, expanded ? "Reducir" : "Ampliar", () => setExpanded(!expanded))}
+            {itemMenu(<Plus className="h-4 w-4" />, "Nueva conversación", () => { nuevaConversacion(); setMode("chat"); })}
+            {itemMenu(<X className="h-4 w-4" />, "Cerrar el chat", () => { setOpen(false); setExpanded(false); })}
+          </div>
+        )}
+      </div>
+
+      {/* Cuerpo blanco que monta sobre la cabecera */}
+      <div className="relative -mt-3.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[22px] bg-white dark:bg-card">
+        {mode === "edicion" && !teamOpen && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[#EEEAFB] bg-[#F7F5FF] px-4 py-2 text-[12.5px] text-[#4B3BD0] dark:border-border dark:bg-primary/10 dark:text-primary">
+            <span className="inline-flex min-w-0 items-center gap-1.5"><PencilLine className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> <span className="truncate">Modo edición · cambios en tus campañas con confirmación</span></span>
+            <button type="button" onClick={() => setMode("chat")} className="shrink-0 rounded-full px-2 py-0.5 font-semibold hover:bg-[#ECE7FE] dark:hover:bg-primary/15">Salir</button>
           </div>
         )}
 
-        {messages.map((msg, i) => {
-          // Charts message
-          if (msg.role === "charts" && msg.charts) {
-            return (
-              <div key={i} className="flex items-start gap-2.5">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                  <BarChart3 className="h-4 w-4 text-primary" />
+        <div ref={scrollRef} className={cn("min-h-0 flex-1 space-y-[18px] overflow-y-auto px-4 pb-4 pt-5", isFullscreen && "px-8")}>
+          {messages.length === 0 && !teamOpen && (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <BotAvatar team={false} />
+                <div className="max-w-[84%] rounded-[22px] bg-[#F5F4F9] px-[18px] py-3.5 text-[15px] leading-[1.5] text-[#1A1D33] dark:bg-muted dark:text-foreground">
+                  {mode === "edicion" ? (
+                    <p>Modo edición activo. Dime qué cambiar en tus campañas (asuntos, mensajes, esperas, variantes, leads) y te enseño el <strong>antes y el después</strong> para que lo confirmes antes de aplicarlo.</p>
+                  ) : (
+                    <>
+                      <p>Hola{nombre ? `, ${nombre}` : ""}, estás chateando con nuestro Asistente IA. Cuéntame qué necesitas hacer o en qué te gustaría que te ayudemos, y te guiaré paso a paso.</p>
+                      <p className="mt-3">Cuanta más información compartas, mejor podré ayudarte.</p>
+                    </>
+                  )}
                 </div>
-                <div className={`rounded-2xl rounded-tl-none bg-muted p-3 ${isFullscreen ? "max-w-[85%] min-w-[500px]" : "max-w-[92%]"}`}>
-                  <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">Analíticas de campañas</p>
-                  <div className={`space-y-4 ${isFullscreen ? "grid grid-cols-1 gap-4 space-y-0" : ""}`}>
-                    {msg.charts.map((chart, j) => (
-                      <div key={j} className="bg-background/60 rounded-xl p-3 border">
-                        <p className="text-xs font-semibold mb-2">{chart.title}</p>
-                        {renderChart(chart, isFullscreen)}
+              </div>
+              <div className={cn("flex flex-wrap gap-2 pl-12", isFullscreen && "max-w-3xl")}>
+                {prompts.map((prompt) => (
+                  <button key={prompt} type="button"
+                    onClick={() => {
+                      if (prompt === ANALYTICS_PROMPT) void injectAnalytics();
+                      else if (isVisitor && /demo/i.test(prompt)) setTeamOpen(true);
+                      else void sendMessage(prompt);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#E4E0F5] bg-white px-3.5 py-2 text-left text-[13px] font-medium text-[#4B3BD0] transition-colors hover:border-[#CFC6FA] hover:bg-[#F7F5FF] dark:border-border dark:bg-card dark:text-primary dark:hover:bg-muted">
+                    {prompt === ANALYTICS_PROMPT && <BarChart3 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, i) => {
+            if (msg.role === "charts" && msg.charts) {
+              return (
+                <div key={i} className="flex items-start gap-3">
+                  <AiTile size={36} />
+                  <div className={cn("rounded-[22px] bg-[#F5F4F9] p-3 dark:bg-muted", isFullscreen ? "min-w-[500px] max-w-[85%]" : "max-w-[86%]")}>
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Analíticas de campañas</p>
+                    <div className="space-y-4">
+                      {msg.charts.map((chart, j) => (
+                        <div key={j} className="rounded-2xl border border-[#ECE8FA] bg-white p-3 dark:border-border dark:bg-background/60">
+                          <p className="mb-2 text-xs font-semibold">{chart.title}</p>
+                          {renderChart(chart, isFullscreen)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            if (msg.role === "system") {
+              return (
+                <div key={msg.id || i} className="flex justify-center">
+                  <span className="rounded-full bg-[#F5F4F9] px-3 py-1 text-[12px] text-slate-500 dark:bg-muted dark:text-muted-foreground">{msg.content}</span>
+                </div>
+              );
+            }
+
+            if (msg.role === "user") {
+              return (
+                <div key={i} className="flex items-center justify-end gap-3">
+                  <div className={cn("rounded-[22px] bg-gradient-to-r from-[#8B66F8] to-[#6A4BEE] px-[18px] py-3.5 text-[15px] leading-[1.5] text-white shadow-[0_10px_22px_-12px_rgba(110,88,241,.8)]", isFullscreen ? "max-w-[70%]" : "max-w-[78%]")}>
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {msg.images.map((img, j) => <img key={j} src={img} alt="Adjunto" className="max-h-40 max-w-[200px] rounded-xl border border-white/30 object-cover" />)}
                       </div>
-                    ))}
+                    )}
+                    {msg.content ? <span className="whitespace-pre-wrap break-words">{msg.content}</span> : null}
                   </div>
+                  <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-[#F0EDFE] text-[#6E58F1] dark:bg-primary/15" aria-hidden="true">
+                    <User className="h-[18px] w-[18px]" strokeWidth={1.9} />
+                  </span>
                 </div>
-              </div>
-            );
-          }
+              );
+            }
 
-          if (msg.role === "system") {
+            const teamBubble = msg.via === "equipo";
             return (
-              <div key={msg.id || i} className="flex justify-center">
-                <span className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">{msg.content}</span>
-              </div>
-            );
-          }
-
-          const teamBubble = msg.via === "equipo";
-          return (
-            <div key={i} className={`flex items-start gap-2.5 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-              {msg.role === "user"
-                ? <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary"><User className="h-4 w-4 text-primary-foreground" /></div>
-                : <BotAvatar size={32} team={teamBubble || (teamOpen && msg.via !== "pulsebot" && msg.via !== "visitante" && !!msg.via)} />}
-              <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${isFullscreen ? "max-w-[75%]" : "max-w-[85%]"} ${msg.role === "user" ? "rounded-tr-none bg-primary text-primary-foreground" : "rounded-tl-none bg-muted"}`}>
-                {msg.images && msg.images.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {msg.images.map((img, j) => (
-                      <img key={j} src={img} alt="Adjunto" className="rounded-lg max-h-40 max-w-[200px] object-cover border" />
-                    ))}
-                  </div>
-                )}
-                {msg.role === "assistant" ? (
-                  <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1.5 [&>ul]:my-1.5 [&>ol]:my-1.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>li]:my-0.5 [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:rounded-lg [&>blockquote]:py-1 [&>pre]:bg-background/80 [&>pre]:rounded-lg [&>pre]:text-xs">
-                    {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">FunnyBot · tus campañas</p>}
-                    {teamBubble && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">{msg.author && msg.author !== "Equipo de Funnyleads" ? `${msg.author} · Equipo de Funnyleads` : "Equipo de Funnyleads"}</p>}
+              <div key={i} className="flex items-start gap-3">
+                <BotAvatar team={teamBubble} />
+                <div className={cn("min-w-0 rounded-[22px] bg-[#F5F4F9] px-[18px] py-3.5 text-[15px] leading-[1.5] text-[#1A1D33] dark:bg-muted dark:text-foreground", isFullscreen ? "max-w-[75%]" : "max-w-[84%]")}>
+                  <div className="prose max-w-none text-[15px] leading-[1.5] text-inherit dark:prose-invert prose-p:my-2 first:prose-p:mt-0 prose-strong:text-inherit prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-headings:text-inherit [&>h1]:text-base [&>h2]:text-[15px] [&>h3]:text-[15px] [&>blockquote]:rounded-lg [&>blockquote]:border-primary/30 [&>blockquote]:bg-primary/5 [&>blockquote]:py-1 [&>pre]:rounded-lg [&>pre]:bg-background/80 [&>pre]:text-xs [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                    {msg.via === "pulsebot" && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-[#6E58F1]">Asistente IA · tus campañas</p>}
+                    {teamBubble && <p className="!mb-1 !mt-0 text-[10.5px] font-semibold uppercase tracking-wider text-[#6E58F1]">{msg.author && msg.author !== "Equipo de Funnyleads" ? `${msg.author} · Equipo de Funnyleads` : "Equipo de Funnyleads"}</p>}
                     {/* Mientras baja react-markdown (sólo la primera vez) el texto se lee en plano. */}
                     <Suspense fallback={<p className="whitespace-pre-wrap">{textoSinMarcas(msg.content)}</p>}>
                       <ChatbotMarkdown>{msg.content}</ChatbotMarkdown>
@@ -930,102 +1015,100 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
                           : null
                     ))}
                     {msg.action?.kind === "modo_edicion" && (
-                      <Button size="sm" className="mt-2 gap-1.5 not-prose" onClick={() => void activarEdicionY((msg.action as { text: string }).text)} disabled={isLoading}>
+                      <Button size="sm" className="not-prose mt-2 gap-1.5 rounded-xl bg-[#6E58F1] hover:bg-[#5F49E6]" onClick={() => void activarEdicionY((msg.action as { text: string }).text)} disabled={isLoading}>
                         <PencilLine className="h-3.5 w-3.5" /> Activar Modo edición y aplicarlo
                       </Button>
                     )}
                     {msg.action?.kind === "pedir_email" && <CorreoContacto onGuardar={guardarCorreoContacto} />}
                     {msg.action?.kind === "equipo" && !teamOpen && (
-                      <Button size="sm" variant="outline" className="mt-2 gap-1.5 not-prose" onClick={() => setTeamOpen(true)}>
+                      <Button size="sm" variant="outline" className="not-prose mt-2 gap-1.5 rounded-xl" onClick={() => setTeamOpen(true)}>
                         <UsersRound className="h-3.5 w-3.5" /> Hablar con el equipo
                       </Button>
                     )}
                   </div>
-                ) : (
-                  msg.content || null
-                )}
+                </div>
+              </div>
+            );
+          })}
+
+          {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
+            <div className="flex items-start gap-3">
+              <BotAvatar team={teamOpen} />
+              <div className="rounded-[22px] bg-[#F5F4F9] px-4 py-3 dark:bg-muted">
+                <span className="flex items-center gap-1.5 text-[13px] text-slate-500 dark:text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#6E58F1]" />
+                  {teamOpen ? "Enviando…" : viaPulseBot ? "Revisando tu campaña…" : "Pensando…"}
+                </span>
               </div>
             </div>
-          );
-        })}
+          )}
 
-        {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
-          <div className="flex items-start gap-2.5">
-            <BotAvatar size={32} team={teamOpen} />
-            <div className="rounded-2xl rounded-tl-none bg-muted px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="text-xs text-muted-foreground">{teamOpen ? "Enviando…" : viaPulseBot ? "Revisando tu campaña…" : "Pensando…"}</span>
+          {teamOpen && !teamThreadId && (
+            <div className="flex items-start gap-3">
+              <BotAvatar team />
+              <div className="max-w-[84%] rounded-[22px] bg-[#F5F4F9] px-[18px] py-3.5 text-[15px] leading-[1.5] text-[#1A1D33] dark:bg-muted dark:text-foreground">
+                <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#6E58F1]">Equipo de Funnyleads</p>
+                Escríbenos aquí: te responde una persona del equipo en este mismo chat. Si cierras la ventana, te avisamos por correo.
               </div>
             </div>
-          </div>
-        )}
-
-        {teamOpen && !teamThreadId && (
-          <div className="flex items-start gap-2.5">
-            <BotAvatar size={32} team />
-            <div className="max-w-[85%] rounded-2xl rounded-tl-none bg-muted px-4 py-3 text-sm leading-relaxed">
-              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-primary/80">Equipo de Funnyleads</p>
-              Escríbenos aquí: te responde una persona del equipo en este mismo chat. Si cierras la ventana, te avisamos por correo.
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Pending images preview */}
-      {pendingImages.length > 0 && (
-        <div className="px-3 py-2 border-t flex flex-wrap gap-2 bg-muted/30">
-          {pendingImages.map((img, i) => (
-            <div key={i} className="relative group">
-              <img src={img} alt="" className="h-16 w-16 rounded-lg object-cover border" />
-              <button
-                onClick={() => removePendingImage(i)}
-                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full h-5 w-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          )}
         </div>
-      )}
 
-      {/* Input */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); sendMessage(input); }}
-        className="flex items-center gap-2 border-t px-3 py-3 shrink-0"
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handleFileUpload}
-        />
-        {!isVisitor && mode === "chat" && !teamOpen && (
-          <>
-            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-primary" onClick={() => fileRef.current?.click()} title="Adjuntar imagen">
-              <Paperclip className="h-4 w-4" />
-            </Button>
-            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-primary" onClick={injectAnalytics} disabled={analyticsLoading || isLoading} title="Adjuntar analíticas con gráficos">
-              {analyticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
-            </Button>
-          </>
+        {pendingImages.length > 0 && (
+          <div className="flex shrink-0 flex-wrap gap-2 px-4 pt-2">
+            {pendingImages.map((img, i) => (
+              <div key={i} className="group relative">
+                <img src={img} alt="" className="h-16 w-16 rounded-xl border object-cover" />
+                <button type="button" onClick={() => removePendingImage(i)} aria-label="Quitar imagen"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         )}
-        <Input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={placeholder}
-          className="flex-1 border-0 bg-muted/50 focus-visible:ring-0 text-sm"
-          disabled={isLoading}
+
+        <form onSubmit={(e) => { e.preventDefault(); void sendMessage(input); }} className="shrink-0 px-4 pb-4 pt-2.5">
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
+          <div className="flex h-[52px] items-center gap-1 rounded-[18px] border border-[#E4E0F5] bg-white pl-4 pr-[6px] focus-within:border-[#B9ABFA] dark:border-border dark:bg-card">
+            <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} placeholder="Escribe un mensaje..." aria-label="Escribe un mensaje" disabled={isLoading}
+              className="min-w-0 flex-1 bg-transparent text-[15px] text-[#0E1330] outline-none placeholder:text-slate-400 disabled:opacity-60 dark:text-foreground" />
+            {puedeAdjuntar && (
+              <button type="button" onClick={() => fileRef.current?.click()} aria-label="Adjuntar imagen" title="Adjuntar imagen"
+                className="rounded-xl p-2 text-slate-400 transition-colors hover:text-[#6E58F1]">
+                <Paperclip className="h-[19px] w-[19px]" strokeWidth={1.9} />
+              </button>
+            )}
+            <button type="submit" aria-label="Enviar" disabled={(!input.trim() && pendingImages.length === 0) || isLoading}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#6E58F1] text-white shadow-[0_6px_14px_-6px_rgba(110,88,241,.9)] transition hover:bg-[#5F49E6]">
+              <Send className="h-[18px] w-[18px]" strokeWidth={2} />
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  /* ── Panel: la pantalla activa y, fuera de la conversación, la barra de abajo ───────────── */
+  const chatContent = (isFullscreen: boolean) => (
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#F6F4FD] font-sans dark:bg-background">
+      {screen === "home" && pantallaInicio}
+      {screen === "messages" && (
+        <ChatMessagesList
+          conversations={conversations}
+          currentId={conversationId}
+          unreadId={teamUnreadCount > 0 ? teamThreadId : null}
+          loading={historyLoading}
+          isVisitor={isVisitor}
+          onOpen={(c) => void abrirConversacion(c)}
+          onNew={() => { nuevaConversacion(); setMode("chat"); setScreen("chat"); }}
+          onDelete={isVisitor ? undefined : (id) => void borrarConversacion(id)}
         />
-        <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={(!input.trim() && pendingImages.length === 0) || isLoading} aria-label="Enviar">
-          <Send className="h-3.5 w-3.5" />
-        </Button>
-      </form>
-      </>
       )}
+      {screen === "help" && <ChatHelpCenter onTalkToTeam={abrirEquipo} />}
+      {screen === "chat" && pantallaChat(isFullscreen)}
+      {(screen === "messages" || screen === "help") && <div className="absolute right-4 top-4">{botonCerrar(false)}</div>}
+      {screen !== "chat" && <ChatBottomTabs active={screen} unread={teamUnreadCount} onChange={irA} />}
     </div>
   );
 
@@ -1033,7 +1116,7 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
 
   return (
     <>
-      {/* Floating button */}
+      {/* Botón flotante: la baldosa con la estrella */}
       <AnimatePresence>
         {!open && (
           <motion.div
@@ -1044,8 +1127,8 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
           >
             <button
               type="button"
-              onClick={() => { setOpen(true); if (teamUnreadCount > 0) setTeamOpen(true); }}
-              aria-label={teamUnreadCount > 0 ? `Abrir el chat: ${teamUnreadCount} respuesta(s) nueva(s) del equipo` : "Abrir el asistente"}
+              onClick={() => { setOpen(true); if (teamUnreadCount > 0) { setTeamOpen(true); setScreen("chat"); } }}
+              aria-label={teamUnreadCount > 0 ? `Abrir el chat: ${teamUnreadCount} respuesta(s) nueva(s) del equipo` : "Abrir el Asistente IA"}
               className="relative block rounded-[18px] shadow-[0_12px_28px_rgba(98,64,255,.28)] transition-transform hover:-translate-y-[2px]"
             >
               <SparkMark size={58} className="rounded-[18px]" />
@@ -1059,22 +1142,24 @@ Analiza estos datos y dame recomendaciones concretas para mejorar mis resultados
         )}
       </AnimatePresence>
 
-      {/* Expanded fullscreen dialog */}
+      {/* Ampliado */}
       <Dialog open={open && expanded} onOpenChange={(o) => { if (!o) setExpanded(false); }}>
-        <DialogContent className="max-w-4xl h-[85vh] p-0 gap-0 overflow-hidden [&>button]:hidden">
+        <DialogContent className="h-[85vh] max-w-4xl gap-0 overflow-hidden rounded-[28px] p-0 sm:rounded-[28px] [&>button]:hidden">
           {chatContent(true)}
         </DialogContent>
       </Dialog>
 
-      {/* Small chat panel */}
+      {/* Ventana del chat: 380 px y esquinas de 28 px; en el móvil, pantalla completa */}
       <AnimatePresence>
         {open && !expanded && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            initial={{ opacity: 0, y: 20, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            exit={{ opacity: 0, y: 20, scale: 0.97 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-6 right-6 z-50 w-[420px] max-w-[calc(100vw-24px)] max-h-[600px] flex flex-col rounded-2xl border bg-card shadow-2xl overflow-hidden"
+            role="dialog"
+            aria-label="Asistente IA"
+            className={cn("fixed bottom-6 right-6 z-50 flex w-[400px]", screen === "chat" ? "h-[min(680px,calc(100dvh-48px))]" : "h-[min(566px,calc(100dvh-48px))]", " max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[28px] shadow-[0_30px_70px_-22px_rgba(76,56,200,.5),0_10px_30px_-14px_rgba(76,56,200,.3)] ring-1 ring-[#6E58F1]/10 max-sm:inset-0 max-sm:h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:rounded-none")}
           >
             {chatContent(false)}
           </motion.div>

@@ -37,6 +37,15 @@ export default function Landing() {
     return () => { document.title = prev; };
   }, []);
 
+  // La landing es un diseño en claro: con el modo oscuro del navegador, el chat flotante del
+  // visitante salía oscuro sobre la página blanca (11-11-2026). Mientras está abierta, en claro.
+  useEffect(() => {
+    const root = document.documentElement;
+    const eraOscuro = root.classList.contains("dark");
+    root.classList.remove("dark");
+    return () => { if (eraOscuro) root.classList.add("dark"); };
+  }, []);
+
   // Vigila el documento del marco hasta que la página real está pintada.
   useEffect(() => {
     if (ready) return;
