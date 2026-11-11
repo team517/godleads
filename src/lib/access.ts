@@ -76,6 +76,16 @@ export function isAgencyAccount(email: string | null, isClientManager: boolean):
   return !!isClientManager || ADMIN_EMAILS.includes(e);
 }
 
+/** Funny Team (reservar reunión con el equipo) y el mini tutorial (11-11-2026): para los clientes
+ *  NUEVOS con suscripción en marcha (plan activo o sus 14 días de prueba con tarjeta). Los clientes
+ *  del portal de la agencia (cuentas "free") NO lo ven; el equipo sí, para poder revisarlo. */
+export function isActiveSubscriberStatus(status: string | null | undefined): boolean {
+  return status === "active" || status === "trialing";
+}
+export function canUseFunnyTeam(status: string | null | undefined, isAgency: boolean): boolean {
+  return isAgency || isActiveSubscriberStatus(status);
+}
+
 const TIERS: PlanTierServer[] = ["free", "starter", "growth", "scale"];
 const tierOf = (t: string | null | undefined): PlanTierServer => (TIERS.includes((t || "").toLowerCase() as PlanTierServer) ? (t as string).toLowerCase() as PlanTierServer : "free");
 const ms = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : NaN);

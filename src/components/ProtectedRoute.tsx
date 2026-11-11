@@ -104,8 +104,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     // mandaba a /m y esto la devolvía a /unibox: otro bucle, el de la app instalada).
     const isAllowed = profile.allowed_routes.some(r => currentPath.startsWith(r))
       || currentPath === "/settings" || currentPath === WELCOME_PATH
-      // Funny Team (reservar reunión con el equipo): para TODOS los clientes, 11-11-2026.
-      || currentPath === "/funny-team"
       || mobileAppAllowed(currentPath, profile.allowed_routes);
     if (!isAllowed) {
       return <Navigate to={profile.allowed_routes[0]} replace />;

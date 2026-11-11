@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Navigate } from "react-router-dom";
+import { useFunnyTeamAccess } from "@/hooks/useFunnyTeamAccess";
 import { CalendarCheck, ExternalLink, LineChart, MailCheck, PenLine, Server } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
@@ -8,7 +10,7 @@ import { TeamAvatars } from "@/components/chatbot/TeamAvatars";
    Funnyleads sin salir de la plataforma. La agenda es la de Cal.com del equipo, incrustada, con el
    nombre y el correo del cliente ya rellenados. */
 
-export const FUNNY_TEAM_BOOKING_URL = "https://cal.com/xavier-falco-hszeeb/15min";
+export const FUNNY_TEAM_BOOKING_URL = "https://cal.com/xavier-falco-hszeeb/funny-team";
 
 /** URL de la agenda incrustada, con nombre y correo prefijados y el tema de la plataforma. Pura. */
 export function bookingEmbedUrl(opts: { name?: string | null; email?: string | null; dark?: boolean }): string {
@@ -21,7 +23,7 @@ export function bookingEmbedUrl(opts: { name?: string | null; email?: string | n
   return u.toString();
 }
 
-export const CAL_LINK = "xavier-falco-hszeeb/15min";
+export const CAL_LINK = "xavier-falco-hszeeb/funny-team";
 const CAL_EMBED_SCRIPT = "https://app.cal.com/embed/embed.js";
 const CAL_NS = "funnyteam";
 
@@ -108,6 +110,10 @@ export default function FunnyTeam() {
   const name = (profile as { full_name?: string | null } | null)?.full_name || "";
   const email = (profile as { contact_email?: string | null } | null)?.contact_email || user?.email || "";
   const onReady = useMemo(() => () => setLoaded(true), []);
+  const access = useFunnyTeamAccess();
+
+  // Sólo clientes nuevos con suscripción (y el equipo): los del portal de la agencia vuelven al inicio.
+  if (!access.loading && !access.allowed) return <Navigate to="/" replace />;
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
@@ -122,7 +128,8 @@ export default function FunnyTeam() {
             </h1>
             <p className="mt-2 text-[15px] leading-relaxed text-white/85">
               Personas reales que te ayudan con tus campañas. Elige el día y la hora que te vengan bien:
-              la reunión es de 15 minutos por videollamada y te llega la invitación al correo.
+              la reunión es de 15 minutos por Google Meet, puedes dejarnos una nota con lo que quieres ver
+              y te llega la invitación al correo.
             </p>
           </div>
           <div className="flex items-center gap-3 rounded-2xl bg-white/12 px-4 py-3 backdrop-blur">

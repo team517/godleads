@@ -10,7 +10,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readCachedUniboxUnread, subscribeUniboxUnread } from "@/lib/uniboxBadge";
-import { isAgencyAccount } from "@/lib/access";
+import { canUseFunnyTeam, isAgencyAccount } from "@/lib/access";
 import { canUseZapmail } from "@/lib/zapmail";
 import { puedeVerIaMod } from "@/lib/ia-mod-view";
 import { clearKeepSession } from "@/components/KeepSessionBanner";
@@ -83,7 +83,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
   // Personalización item from ANY screen, so you always know a batch is still running.
   const [personalizing, setPersonalizing] = useState(0);
   // The role was already read at boot by SubscriptionContext: no second user_roles query here.
-  const { isAdmin } = useSubscription();
+  const { isAdmin, status: subStatus } = useSubscription();
   const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>(readClosedGroups);
   const isManager = !!profileData.is_client_manager;
   const allowedRoutes = profileData.allowed_routes;
@@ -104,8 +104,9 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     if (path === "/admin/clients") return isAdmin || isManager;
     // Peticiones del chat (hablar con el equipo): la agencia (hello@, support@, equipo@, gestores, admins).
     if (path === "/peticiones") return isAgency;
-    // Funny Team (reservar reunión con el equipo): todos los clientes, también los de secciones acotadas.
-    if (path === "/funny-team") return true;
+    // Funny Team (reservar reunión con el equipo): clientes nuevos con suscripción activa o en prueba,
+    // y el equipo. Los clientes del portal de la agencia no.
+    if (path === "/funny-team") return canUseFunnyTeam(subStatus, isAgency);
     if (allowedRoutes && !allowedRoutes.includes(path)) return false;
     if (path === "/clientes") return !isAgency;
     if (path === "/automatizacion") return canAutomation;

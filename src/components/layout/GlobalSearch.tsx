@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { puedeVerIaMod } from "@/lib/ia-mod-view";
+import { useFunnyTeamAccess } from "@/hooks/useFunnyTeamAccess";
 
 type ResultKind = "page" | "campaign" | "lead" | "account";
 interface SearchResult {
@@ -40,6 +41,7 @@ const KIND_META: Record<ResultKind, { icon: any; label: string }> = {
 
 export function GlobalSearch() {
   const { user } = useAuth();
+  const { allowed: funnyTeamAllowed } = useFunnyTeamAccess();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -70,6 +72,7 @@ export function GlobalSearch() {
     const navMatches: SearchResult[] = NAV
       .filter((n) => !OWNER_ONLY.has(n.path) || isOwner) // owner-only agency tools
       .filter((n) => n.path !== "/modificaciones-ia" || puedeVerIaMod(user?.email))
+      .filter((n) => n.path !== "/funny-team" || funnyTeamAllowed)
       .filter((n) => n.label.toLowerCase().includes(lower) || n.keywords.includes(lower))
       .slice(0, 4)
       .map((n) => ({ kind: "page", id: n.path, title: n.label, subtitle: "Sección", to: n.path }));
@@ -97,7 +100,7 @@ export function GlobalSearch() {
     setResults([...navMatches, ...dataMatches]);
     setActiveIdx(0);
     setLoading(false);
-  }, [user]);
+  }, [user, funnyTeamAllowed]);
 
   // Debounce the query.
   useEffect(() => {
