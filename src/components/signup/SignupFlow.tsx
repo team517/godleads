@@ -223,11 +223,16 @@ function PasoPlan({ choice, setChoice, fin, mode, onNext }: { choice: SignupChoi
   );
 }
 
-/** A dónde lleva el enlace del correo de confirmación: de vuelta al alta, al paso de la tarjeta. */
-function confirmRedirect(choice: SignupChoice): string {
-  return `${window.location.origin}/empezar?paso=tarjeta&plan=${choice.plan}&periodo=${choice.period}&verificado=1`;
-}
 const VERIFIED_FLAG = "fl_signup_verified";
+
+/** Mensaje de error del pago apto para el cliente: sin detalles técnicos ni claves. */
+export function mensajePago(raw: string): string {
+  const m = String(raw || "");
+  if (!m || /api key|api_key|stripe|secret|authentication|non-2xx|edge function|failed to fetch|network/i.test(m) || /\b(sk|rk|pk)_/.test(m)) {
+    return "El pago no está disponible en este momento. Inténtalo de nuevo en unos minutos o escríbenos a team@onepulso.online.";
+  }
+  return m;
+}
 const POLL_MS = 3000;
 const POLL_MAX_MS = 45 * 60 * 1000;
 const RESEND_COOLDOWN_S = 60;
@@ -236,10 +241,10 @@ const RESEND_COOLDOWN_S = 60;
    que devolvió el alta, nunca por el correo). En cuanto está confirmado: "¡Cuenta verificada!",
    abre la sesión con la contraseña que acaba de escribir y pasa sola a la tarjeta. Si el correo se
    abre en otra pestaña de este navegador, la sesión llega por ahí y también se avanza. */
-export function ConfirmaCorreo({ email, userId, password, choice }: { email: string; userId: string | null; password: string; choice: SignupChoice }) {
+export function ConfirmaCorreo({ email, userId, password, choice, mailFailed = false }: { email: string; userId: string | null; password: string; choice: SignupChoice; mailFailed?: boolean }) {
   const [estado, setEstado] = useState<"esperando" | "verificado" | "entrar">("esperando");
-  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_S);
-  const [aviso, setAviso] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(mailFailed ? 0 : RESEND_COOLDOWN_S);
+  const [aviso, setAviso] = useState<string | null>(mailFailed ? "No hemos podido enviarte el correo. Pulsa «reenvía el correo»." : null);
   const hecho = useRef(false);
 
   useEffect(() => {
@@ -278,8 +283,13 @@ export function ConfirmaCorreo({ email, userId, password, choice }: { email: str
 
   const reenviar = async () => {
     setAviso(null);
-    const { error } = await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: confirmRedirect(choice) } });
-    setAviso(error ? "No se pudo reenviar. Prueba en un minuto." : "Te lo hemos vuelto a enviar.");
+    if (!userId) return;
+    const { data, error } = await supabase.functions.invoke("signup-flow", { body: { action: "resend", user_id: userId } });
+    let code = (data as any)?.error as string | undefined;
+    if (error) { try { code = (await (error as any).context?.json?.())?.error || "error"; } catch { code = "error"; } }
+    setAviso(!code ? "Te lo hemos vuelto a enviar."
+      : code === "rate_limited" ? "Has pedido muchos correos seguidos. Espera un rato y vuelve a probar."
+      : "No se pudo reenviar. Prueba en un minuto.");
     setCooldown(RESEND_COOLDOWN_S);
   };
 
@@ -312,7 +322,7 @@ export function ConfirmaCorreo({ email, userId, password, choice }: { email: str
         <ShieldCheck className="relative h-6 w-6" />
       </span>
       <h1 className="mt-4 font-display text-[24px] font-semibold tracking-[-0.03em] text-[#0F172B]">Confirma tu correo</h1>
-      <p className="mt-2 text-[15px] text-[#45556C]">Te hemos enviado un enlace a <strong className="text-[#0F172B]">{email}</strong>. Ábrelo y esta pantalla pasará sola al último paso.</p>
+      <p className="mt-2 text-[15px] text-[#45556C]">Te hemos enviado un correo a <strong className="text-[#0F172B]">{email}</strong>. Pulsa <strong className="text-[#0F172B]">Verificar mi cuenta</strong> y esta pantalla pasará sola al último paso.</p>
       <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#F6F4FC] px-3 py-1.5 text-[13px] text-[#45556C]" aria-live="polite">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-[#6E58F1]" /> Esperando la confirmación…
       </p>
@@ -335,7 +345,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ text: string; alreadyRegistered: boolean } | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<{ email: string; userId: string | null } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{ email: string; userId: string | null; mailFailed?: boolean } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
 
@@ -353,30 +363,27 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
     try {
       saveChoice(choice);
       const email = f.email.trim().toLowerCase();
-      const { data, error } = await supabase.auth.signUp({
-        email, password: f.password,
-        options: {
-          data: { full_name: f.name.trim(), company_name: f.company.trim() },
-          emailRedirectTo: confirmRedirect(choice),
-        },
+      // 11-11-2026: la cuenta la crea el servidor sin confirmar y el correo con el botón "Verificar mi
+      // cuenta" lo manda team@ (antes, Supabase con un enlace a supabase.co que Gmail marcaba).
+      const { data, error } = await supabase.functions.invoke("signup-flow", {
+        body: { action: "start", name: f.name.trim(), company: f.company.trim(), email, password: f.password, plan: choice.plan, period: choice.period },
       });
-      if (error) { setErr(signupErrorMessage(error.message)); return; }
-      // Supabase devuelve un usuario sin identidades cuando el correo ya existe (no lo dice como error).
-      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-        setErr(signupErrorMessage("already registered")); return;
+      let body = data as { user_id?: string; error?: string } | null;
+      if (error) { try { body = await (error as any).context?.json?.(); } catch { /* sin cuerpo */ } }
+      const code = body?.error;
+      if (code === "mail_unavailable" && body?.user_id) {
+        // La cuenta está creada pero el correo no salió: la pantalla de espera deja reenviarlo.
+        setPendingConfirm({ email, userId: body.user_id, mailFailed: true }); return;
       }
-      if (!data.session) { setPendingConfirm({ email, userId: data.user?.id ?? null }); return; }
-      if (f.company.trim() && data.user) {
-        await (supabase as any).from("profiles").update({ company_name: f.company.trim() }).eq("user_id", data.user.id);
-      }
-      onDone();
+      if (error || code || !body?.user_id) { setErr(signupErrorMessage(code || error?.message)); return; }
+      setPendingConfirm({ email, userId: body.user_id });
     } finally {
       setBusy(false);
     }
   };
 
   if (pendingConfirm) {
-    return <ConfirmaCorreo email={pendingConfirm.email} userId={pendingConfirm.userId} password={f.password} choice={choice} />;
+    return <ConfirmaCorreo email={pendingConfirm.email} userId={pendingConfirm.userId} password={f.password} choice={choice} mailFailed={pendingConfirm.mailFailed} />;
   }
 
   return (
@@ -483,7 +490,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice;
       if (!url) throw new Error("No se pudo abrir el pago");
       window.location.href = url;
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "No se pudo abrir el pago");
+      setErr(mensajePago(e instanceof Error ? e.message : ""));
       setBusy(false);
     }
   };

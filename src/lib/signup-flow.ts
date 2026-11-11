@@ -97,10 +97,12 @@ export function accountErrors(f: AccountForm): Partial<Record<keyof AccountForm,
 /** Mensaje claro para los errores de Supabase al registrarse. */
 export function signupErrorMessage(raw: string | null | undefined): { text: string; alreadyRegistered: boolean } {
   const m = String(raw || "");
-  if (/already registered|already exists|user_already_exists/i.test(m)) {
+  if (/already registered|already_registered|already exists|user_already_exists/i.test(m)) {
     return { text: "Ya hay una cuenta con este correo. Inicia sesión y activa tu prueba desde ahí.", alreadyRegistered: true };
   }
   if (/password/i.test(m)) return { text: "La contraseña no es válida: usa al menos 8 caracteres con letras y números.", alreadyRegistered: false };
   if (/rate|too many/i.test(m)) return { text: "Demasiados intentos seguidos. Espera un minuto y vuelve a probar.", alreadyRegistered: false };
+  if (/mail_unavailable/i.test(m)) return { text: "No hemos podido enviarte el correo de verificación. Inténtalo de nuevo en unos minutos.", alreadyRegistered: false };
+  if (/non-2xx|edge function|failed to fetch|network/i.test(m)) return { text: "No se pudo crear la cuenta. Revisa tu conexión e inténtalo de nuevo.", alreadyRegistered: false };
   return { text: m || "No se pudo crear la cuenta. Inténtalo de nuevo.", alreadyRegistered: false };
 }

@@ -10,7 +10,7 @@ const sb = vi.hoisted(() => ({
   rpc: vi.fn(),
   signIn: vi.fn(async () => ({ data: {}, error: null as null | { message: string } })),
   getSession: vi.fn(async () => ({ data: { session: null } })),
-  resend: vi.fn(async () => ({ error: null })),
+  invoke: vi.fn(async () => ({ data: { ok: true }, error: null })),
 }));
 sb.rpc.mockImplementation(async () => ({ data: sb.confirmado, error: null }));
 
@@ -20,7 +20,7 @@ vi.mock("@/contexts/SubscriptionContext", async () => {
   return { ...real, useSubscription: () => ({ subscribed: false, loading: false, status: "needs_card", refreshSubscription: vi.fn() }) };
 });
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { rpc: sb.rpc, auth: { signInWithPassword: sb.signIn, getSession: sb.getSession, resend: sb.resend }, functions: { invoke: vi.fn() }, from: vi.fn() },
+  supabase: { rpc: sb.rpc, auth: { signInWithPassword: sb.signIn, getSession: sb.getSession }, functions: { invoke: sb.invoke }, from: vi.fn() },
 }));
 
 import { ConfirmaCorreo } from "@/components/signup/SignupFlow";
@@ -35,7 +35,7 @@ describe("alta — confirmación del correo", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     sb.confirmado = false;
-    sb.rpc.mockClear(); sb.signIn.mockClear(); sb.resend.mockClear();
+    sb.rpc.mockClear(); sb.signIn.mockClear(); sb.invoke.mockClear();
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -74,16 +74,25 @@ describe("alta — confirmación del correo", () => {
     expect(screen.getByRole("link", { name: /Iniciar sesión/ })).toBeTruthy();
   });
 
-  it("reenviar el correo, tras la espera, vuelve a mandar el enlace al paso de la tarjeta", async () => {
+  it("reenviar el correo, tras la espera, lo pide al servidor (lo manda team@) para ese alta", async () => {
     pinta();
     expect(screen.getByText(/reenvíalo en 60 s/)).toBeTruthy();
     for (let i = 0; i < 61; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     fireEvent.click(screen.getByRole("button", { name: /reenvía el correo/ }));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-    expect(sb.resend).toHaveBeenCalledTimes(1);
-    const arg = (sb.resend.mock.calls[0] as any)[0];
-    expect(arg.type).toBe("signup");
-    expect(arg.options.emailRedirectTo).toMatch(/\/empezar\?paso=tarjeta&plan=starter&periodo=month&verificado=1$/);
+    expect(sb.invoke).toHaveBeenCalledWith("signup-flow", { body: { action: "resend", user_id: "11111111-2222-3333-4444-555555555555" } });
     expect(screen.getByText("Te lo hemos vuelto a enviar.")).toBeTruthy();
+  });
+});
+
+describe("alta — si el primer correo no salió", () => {
+  it("lo dice y deja reenviarlo al momento", () => {
+    render(
+      <MemoryRouter>
+        <ConfirmaCorreo email="ana@acme.com" userId="11111111-2222-3333-4444-555555555555" password="Secreta-123" choice={{ plan: "starter", period: "month" }} mailFailed />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/No hemos podido enviarte el correo/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /reenvía el correo/ })).toBeTruthy();
   });
 });

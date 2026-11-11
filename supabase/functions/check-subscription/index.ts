@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { ESTADOS_CON_ACCESO, leerSuscripcion, rangoEstado, tierDeMetadata } from "../_shared/stripe-plan.ts";
+import { ESTADOS_CON_ACCESO, leerSuscripcion, publicStripeError, rangoEstado, tierDeMetadata } from "../_shared/stripe-plan.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -108,7 +108,7 @@ serve(async (req) => {
       price_id: sub.items.data[0]?.price.id ?? null,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return json({ error: msg }, 500);
+    const pub = publicStripeError(error);
+    return json({ error: pub.message, stripe_unavailable: pub.stripeUnavailable }, pub.status);
   }
 });

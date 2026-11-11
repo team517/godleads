@@ -116,3 +116,6 @@ verify_jwt = false
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+[functions.signup-flow]
+verify_jwt = false

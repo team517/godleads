@@ -95,3 +95,18 @@ export function rangoEstado(status: string): number {
     default: return 0; // canceled, incomplete_expired
   }
 }
+
+/** Error de Stripe que se puede enseñar en pantalla (11-11-2026). Nunca deja ver la clave (Stripe la
+ *  repite enmascarada en "Invalid API Key provided: …"): un problema de clave o de conexión con
+ *  Stripe sale como "el pago no está disponible ahora mismo". */
+export const PAGO_NO_DISPONIBLE = "El pago no está disponible en este momento. Inténtalo de nuevo en unos minutos o escríbenos a team@onepulso.online.";
+export function publicStripeError(e: unknown): { message: string; status: number; stripeUnavailable: boolean } {
+  const err = e as { type?: string; message?: string } | null;
+  const msg = String(err?.message || e || "");
+  if (err?.type === "StripeAuthenticationError" || err?.type === "StripePermissionError" || err?.type === "StripeConnectionError"
+    || /api key|api_key|authentication|permission/i.test(msg)) {
+    return { message: PAGO_NO_DISPONIBLE, status: 503, stripeUnavailable: true };
+  }
+  const limpio = msg.replace(/\b(sk|rk|pk|whsec)_[A-Za-z0-9_*]+/g, "[oculto]").slice(0, 300);
+  return { message: limpio || "No se pudo completar la operación con Stripe.", status: 500, stripeUnavailable: false };
+}

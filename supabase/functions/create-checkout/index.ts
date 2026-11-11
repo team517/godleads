@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { PRECIOS_FUNNYLEADS } from "../_shared/stripe-plan.ts";
+import { PAGO_NO_DISPONIBLE, PRECIOS_FUNNYLEADS, publicStripeError } from "../_shared/stripe-plan.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,7 +21,7 @@ serve(async (req) => {
 
   try {
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) return json({ error: "Stripe no configurado (STRIPE_SECRET_KEY)", unconfigured: true }, 501);
+    if (!stripeKey) return json({ error: PAGO_NO_DISPONIBLE, unconfigured: true }, 501);
 
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
     if (!token) throw new Error("No authorization header");
@@ -72,6 +72,8 @@ serve(async (req) => {
 
     return json({ url: session.url, trial: conPrueba });
   } catch (error) {
-    return json({ error: (error as Error).message }, 500);
+    const pub = publicStripeError(error);
+    console.error("[create-checkout]", (error as any)?.type || "", pub.stripeUnavailable ? "Stripe no disponible (clave o conexión)" : pub.message);
+    return json({ error: pub.message, stripe_unavailable: pub.stripeUnavailable }, pub.status);
   }
 });
