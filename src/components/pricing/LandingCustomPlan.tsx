@@ -4,6 +4,7 @@ import { AnimatedNumber } from "@/components/pricing/CustomPlanBuilder";
 import {
   CUSTOM_DEFAULT_LEVEL, CUSTOM_LEVELS, customLevel, customPerMonth, customYearSavings, fmtVolume, type CustomInterval,
 } from "@/lib/custom-plan";
+import { PlanSlider, StarGlyph, type PlanSliderZone } from "@/components/pricing/PlanSlider";
 
 /* Plan a medida en la landing (11-11-2026). La landing es el diseño de Claude Design servido tal cual
    en un marco (ver Landing.tsx), con sus estilos en línea y en inglés: esta sección se pinta DENTRO
@@ -16,32 +17,30 @@ const STYLE_ID = "fl-custom-plan-style";
 
 const en = (n: number) => n.toLocaleString("en-US");
 
-/** Estilos de la barra (el input range necesita pseudo-elementos: van en un <style> del marco). */
-const RANGE_CSS = `
-#${LANDING_CUSTOM_HOST_ID} input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;margin:0;cursor:pointer}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]:focus{outline:none}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:999px;background:linear-gradient(90deg,#6E58F1 0%,#6E58F1 var(--fl-p),#E6E3F0 var(--fl-p),#E6E3F0 100%)}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]::-moz-range-track{height:8px;border-radius:999px;background:#E6E3F0}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]::-moz-range-progress{height:8px;border-radius:999px;background:#6E58F1}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;margin-top:-8px;border-radius:50%;background:#6E58F1;border:3px solid #fff;box-shadow:0 4px 14px rgba(110,88,241,.45);transition:transform .15s ease}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#6E58F1;border:3px solid #fff;box-shadow:0 4px 14px rgba(110,88,241,.45)}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.1)}
-#${LANDING_CUSTOM_HOST_ID} input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 6px rgba(110,88,241,.22),0 4px 14px rgba(110,88,241,.45)}
-#${LANDING_CUSTOM_HOST_ID} .fl-cp-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+/** Estilos de la sección (rejillas que cambian en móvil): van en un <style> dentro del marco. */
+const SECTION_CSS = `
+#${LANDING_CUSTOM_HOST_ID} .fl-cp-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:18px}
 #${LANDING_CUSTOM_HOST_ID} .fl-cp-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-#${LANDING_CUSTOM_HOST_ID} .fl-cp-side{border-left:1px solid #E6E3F0}
-#${LANDING_CUSTOM_HOST_ID} .fl-cp-tick-odd{display:inline}
-#${LANDING_CUSTOM_HOST_ID} .fl-cp-cta:hover{background:#5B40FB !important}
-@media (max-width: 820px){
-  #${LANDING_CUSTOM_HOST_ID} .fl-cp-grid{grid-template-columns:1fr}
-  #${LANDING_CUSTOM_HOST_ID} .fl-cp-side{border-left:0;border-top:1px solid #E6E3F0}
-}
+#${LANDING_CUSTOM_HOST_ID} .fl-cp-feats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+#${LANDING_CUSTOM_HOST_ID} .fl-cp-cta{transition:filter .15s ease, transform .15s ease}
+#${LANDING_CUSTOM_HOST_ID} .fl-cp-cta:hover{filter:brightness(1.08)}
+#${LANDING_CUSTOM_HOST_ID} .fl-cp-cta:active{transform:scale(.98)}
+@media (max-width: 860px){ #${LANDING_CUSTOM_HOST_ID} .fl-cp-grid{grid-template-columns:1fr} }
 @media (max-width: 560px){
   #${LANDING_CUSTOM_HOST_ID} .fl-cp-stats{grid-template-columns:1fr}
-  #${LANDING_CUSTOM_HOST_ID} .fl-cp-tick-odd{display:none}
+  #${LANDING_CUSTOM_HOST_ID} .fl-cp-feats{grid-template-columns:1fr}
+  #${LANDING_CUSTOM_HOST_ID} .fl-cp-pad{padding:22px 14px !important}
 }`;
 
 const FEATURES = ["Unlimited mailboxes & warmup", "AI agent replies", "A/B testing & follow-ups", "Unibox Pro", "Revenue analytics", "1:1 support"];
+const ZONES_EN: PlanSliderZone[] = [
+  { label: "Basic", short: "Basic", from: 1, to: 3 },
+  { label: "Professional", short: "Pro", from: 4, to: 6 },
+  { label: "Enterprise", short: "Enterprise", from: 7, to: 10 },
+];
+const VOLUMES = CUSTOM_LEVELS.map((x) => x.emails);
+/** "250K", "1M", "1.5M" (la landing va en inglés). */
+const volEn = (n: number) => fmtVolume(n).replace(",", ".");
 
 /** Inserta el hueco de la sección dentro del marco, bajo la tabla de precios, y lo devuelve. */
 export function ensureLandingHost(doc: Document | null | undefined): HTMLElement | null {
@@ -63,7 +62,7 @@ export function ensureLandingHost(doc: Document | null | undefined): HTMLElement
   if (!doc.getElementById(STYLE_ID)) {
     const st = doc.createElement("style");
     st.id = STYLE_ID;
-    st.textContent = RANGE_CSS;
+    st.textContent = SECTION_CSS;
     doc.head?.appendChild(st);
   }
   return host;
@@ -73,87 +72,88 @@ export function LandingCustomPlanSection({ onChoose }: { onChoose: (level: numbe
   const [level, setLevel] = useState(CUSTOM_DEFAULT_LEVEL);
   const [interval, setInterval_] = useState<CustomInterval>("month");
   const l = customLevel(level);
-  const pct = ((level - 1) / (CUSTOM_LEVELS.length - 1)) * 100;
   const pill = (on: boolean): React.CSSProperties => ({
-    fontSize: 14, fontWeight: 600, padding: "7px 14px", borderRadius: 999, cursor: "pointer", border: 0,
-    background: on ? "#fff" : "transparent", color: on ? "#0F172B" : "#45556C", boxShadow: on ? "0 1px 3px rgba(21,17,60,.12)" : "none",
+    fontSize: 14, fontWeight: 600, padding: "8px 16px", borderRadius: 999, cursor: "pointer", border: 0,
+    background: on ? "linear-gradient(100deg,#2E7BFF,#5B3BFF 50%,#8B2CF5)" : "transparent", color: on ? "#fff" : "#45556C",
+    boxShadow: on ? "0 6px 16px rgba(91,59,255,.35)" : "none",
   });
+  const stat = (label: string, value: number) => (
+    <div key={label} style={{ border: "1px solid rgba(110,88,241,.16)", borderRadius: 14, padding: "13px 15px", background: "linear-gradient(180deg,rgba(110,88,241,.06),rgba(110,88,241,0))" }}>
+      <span style={{ display: "block", fontSize: 13, color: "#5A5670" }}>{label}</span>
+      <span style={{ display: "block", marginTop: 4, fontFamily: "'Schibsted Grotesk', sans-serif", fontSize: 25, fontWeight: 700, letterSpacing: "-0.03em", color: "#1B1546" }}>
+        <AnimatedNumber value={value} format={en} />
+      </span>
+    </div>
+  );
 
   return (
-    <div style={{ marginTop: 28, border: "1px solid #E6E3F0", borderRadius: 12, background: "#fff", boxShadow: "0 2px 6px rgba(21,17,60,.04)", overflow: "hidden", fontFamily: "Inter, sans-serif" }}>
-      <div className="fl-cp-grid">
-        <div style={{ padding: "28px 28px 26px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+    <div style={{ marginTop: 32, padding: 1.5, borderRadius: 24, background: "linear-gradient(135deg,rgba(0,200,240,.55),rgba(91,59,255,.45) 45%,rgba(138,28,255,.55))", boxShadow: "0 24px 60px -30px rgba(91,59,255,.55)", fontFamily: "Inter, sans-serif" }}>
+      <div className="fl-cp-pad" style={{ position: "relative", overflow: "hidden", borderRadius: 22.5, background: "rgba(255,255,255,.97)", padding: "32px 32px 30px" }}>
+        <span aria-hidden="true" style={{ position: "absolute", left: -110, top: -110, width: 300, height: 300, borderRadius: "50%", background: "rgba(0,200,240,.10)", filter: "blur(50px)", pointerEvents: "none" }} />
+        <span aria-hidden="true" style={{ position: "absolute", right: -110, top: 40, width: 300, height: 300, borderRadius: "50%", background: "rgba(138,28,255,.10)", filter: "blur(50px)", pointerEvents: "none" }} />
+
+        <div style={{ position: "relative" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
             <div>
-              <span style={{ display: "inline-block", fontSize: 12.5, fontWeight: 600, color: "#6E58F1", background: "#F1EEF8", padding: "5px 11px", borderRadius: 999 }}>Custom plan</span>
-              <h3 style={{ fontFamily: "'Schibsted Grotesk', sans-serif", fontWeight: 600, fontSize: 28, letterSpacing: "-0.03em", color: "#0F172B", margin: "10px 0 0" }}>Need more volume? Build your plan</h3>
-              <p style={{ margin: "6px 0 0", fontSize: 15, color: "#45556C" }}>Slide to your sending volume. Everything in Scale, priced per volume.</p>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#6E58F1", background: "rgba(110,88,241,.10)", padding: "5px 12px", borderRadius: 999 }}>
+                <StarGlyph size={13} /> Custom plan
+              </span>
+              <h3 style={{ fontFamily: "'Schibsted Grotesk', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: "-0.03em", color: "#1B1546", margin: "12px 0 0" }}>Need more volume? Build your plan</h3>
+              <p style={{ margin: "6px 0 0", fontSize: 15, color: "#45556C" }}>Slide to your sending volume. Contacts and client workspaces grow with it — everything in Scale included.</p>
             </div>
-            <div role="radiogroup" aria-label="Billing" style={{ display: "flex", gap: 4, background: "#E6F4EE", border: "1px solid #E6E3F0", borderRadius: 999, padding: 4 }}>
+            <div role="radiogroup" aria-label="Billing" style={{ display: "flex", gap: 4, background: "#F1EEFB", border: "1px solid #E6E3F0", borderRadius: 999, padding: 4 }}>
               <button type="button" role="radio" aria-checked={interval === "month"} onClick={() => setInterval_("month")} style={pill(interval === "month")}>Monthly</button>
               <button type="button" role="radio" aria-checked={interval === "year"} onClick={() => setInterval_("year")} style={pill(interval === "year")}>
-                Yearly <span style={{ fontSize: 10.5, fontWeight: 600, color: "#0A7A52" }}>17% off</span>
+                Yearly <span style={{ fontSize: 10.5, fontWeight: 700, marginLeft: 4, color: interval === "year" ? "#fff" : "#0A7A52" }}>-17%</span>
               </button>
             </div>
           </div>
 
           <div style={{ marginTop: 30 }}>
-            <div style={{ position: "relative", height: 20, marginBottom: 6, fontSize: 12, fontWeight: 500, color: "#5A5670" }} aria-hidden="true">
-              {CUSTOM_LEVELS.map((x, i) => (
-                <span key={x.level} className={i % 2 === 1 && x.level !== level ? "fl-cp-tick-odd" : undefined}
-                  style={{ position: "absolute", left: `${(i / (CUSTOM_LEVELS.length - 1)) * 100}%`, transform: "translateX(-50%)", whiteSpace: "nowrap", color: x.level === level ? "#6E58F1" : "#5A5670", fontWeight: x.level === level ? 700 : 500 }}>
-                  {fmtVolume(x.emails)}
-                </span>
-              ))}
-            </div>
-            <input
-              type="range" min={1} max={10} step={1} value={level}
-              onChange={(e) => setLevel(Number(e.target.value))}
-              aria-label="Emails per month"
-              aria-valuetext={`${en(l.emails)} emails per month`}
-              style={{ ["--fl-p" as any]: `${pct}%` }}
-            />
+            <PlanSlider level={level} onChange={setLevel} zones={ZONES_EN} values={VOLUMES} format={volEn}
+              ariaLabel="Emails per month" valueText={(lv) => `${en(customLevel(lv).emails)} emails per month`} />
           </div>
 
-          <div className="fl-cp-stats" style={{ marginTop: 22 }}>
-            {[["Emails per month", l.emails], ["Contacts stored", l.contacts], ["Client workspaces", l.clients]].map(([label, value]) => (
-              <div key={label as string} style={{ border: "1px solid #EAE7F4", borderRadius: 10, padding: "12px 14px", background: "#FBFAFF" }}>
-                <span style={{ display: "block", fontSize: 13, color: "#5A5670" }}>{label}</span>
-                <span style={{ display: "block", marginTop: 4, fontFamily: "'Schibsted Grotesk', sans-serif", fontSize: 24, fontWeight: 600, letterSpacing: "-0.03em", color: "#0F172B" }}>
-                  <AnimatedNumber value={value as number} format={en} />
-                </span>
+          <div className="fl-cp-grid" style={{ marginTop: 28 }}>
+            <div>
+              <div className="fl-cp-stats">
+                {stat("Emails per month", l.emails)}
+                {stat("Contacts stored", l.contacts)}
+                {stat("Client workspaces", l.clients)}
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="fl-cp-side" style={{ padding: "28px 28px 26px", background: "linear-gradient(160deg,#F7F5FF 0%,#FFFFFF 70%)", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 18 }}>
-          <div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#6E58F1" }}>Level {level} of 10</span>
-            <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 4 }}>
-              <span style={{ fontFamily: "'Schibsted Grotesk', sans-serif", fontSize: 46, fontWeight: 600, letterSpacing: "-0.04em", color: "#0F172B", lineHeight: 1 }}>
-                <AnimatedNumber value={customPerMonth(l, interval)} format={(n) => `${en(n)}€`} />
-              </span>
-              <span style={{ fontSize: 14, color: "#5A5670" }}>/mo</span>
+              <ul className="fl-cp-feats" style={{ listStyle: "none", padding: 0, margin: "16px 0 0" }}>
+                {FEATURES.map((f) => (
+                  <li key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#1D293D" }}>
+                    <span style={{ display: "inline-flex", width: 20, height: 20, borderRadius: 999, alignItems: "center", justifyContent: "center", background: "rgba(110,88,241,.12)", flexShrink: 0 }}>
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#6E58F1" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
+                    </span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <p style={{ margin: "8px 0 0", fontSize: 13.5, color: "#5A5670", minHeight: 20 }}>
-              {interval === "year" ? `Billed ${en(l.eurYear)}€ yearly · save ${en(customYearSavings(l))}€` : "Billed monthly · cancel anytime"}
-            </p>
-            <ul style={{ listStyle: "none", padding: 0, margin: "16px 0 0", display: "grid", gap: 7 }}>
-              {FEATURES.map((f) => (
-                <li key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#1D293D" }}>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#05A063" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg>
-                  {f}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <button type="button" className="fl-cp-cta" data-testid="landing-custom-choose" onClick={() => onChoose(level, interval)}
-              style={{ display: "block", width: "100%", textAlign: "center", fontSize: 16, fontWeight: 600, color: "#fff", background: "#6E58F1", padding: "13px 16px", borderRadius: 8, border: 0, cursor: "pointer", boxShadow: "0 6px 18px rgba(110,88,241,.38)", transition: "background .15s ease" }}>
-              Choose this plan →
-            </button>
-            <p style={{ margin: "10px 0 0", textAlign: "center", fontSize: 12.5, color: "#5A5670" }}>Secure payment with Stripe · charged today, no trial</p>
+
+            <div style={{ border: "1px solid rgba(110,88,241,.22)", borderRadius: 18, padding: 22, background: "linear-gradient(135deg,rgba(59,91,255,.07),rgba(255,255,255,0) 50%,rgba(138,28,255,.08))", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 18 }}>
+              <div>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: "#6E58F1", background: "rgba(110,88,241,.10)", padding: "4px 10px", borderRadius: 999 }}>Level {level} of 10</span>
+                <div style={{ marginTop: 12, display: "flex", alignItems: "baseline", gap: 4 }}>
+                  <span style={{ fontFamily: "'Schibsted Grotesk', sans-serif", fontSize: 48, fontWeight: 700, letterSpacing: "-0.04em", color: "#1B1546", lineHeight: 1 }}>
+                    <AnimatedNumber value={customPerMonth(l, interval)} format={(n) => `${en(n)}€`} />
+                  </span>
+                  <span style={{ fontSize: 14, color: "#5A5670" }}>/mo</span>
+                </div>
+                <p style={{ margin: "8px 0 0", fontSize: 13.5, color: "#5A5670", minHeight: 20 }}>
+                  {interval === "year" ? `Billed ${en(l.eurYear)}€ yearly · save ${en(customYearSavings(l))}€` : "Billed monthly · cancel anytime"}
+                </p>
+              </div>
+              <div>
+                <button type="button" className="fl-cp-cta" data-testid="landing-custom-choose" onClick={() => onChoose(level, interval)}
+                  style={{ display: "block", width: "100%", textAlign: "center", fontSize: 16, fontWeight: 700, color: "#fff", background: "linear-gradient(100deg,#2E7BFF,#5B3BFF 50%,#8B2CF5)", padding: "14px 16px", borderRadius: 12, border: 0, cursor: "pointer", boxShadow: "0 12px 28px rgba(91,59,255,.38)" }}>
+                  Choose this plan →
+                </button>
+                <p style={{ margin: "10px 0 0", textAlign: "center", fontSize: 12.5, color: "#5A5670" }}>Secure payment with Stripe · charged today, no trial</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

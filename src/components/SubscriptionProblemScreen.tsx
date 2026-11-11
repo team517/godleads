@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Loader2, LogOut, RefreshCw, ShieldAlert, XCircle } from "lucide-react";
+import { CreditCard, Loader2, LogOut, ShieldAlert, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PLAN_CONFIG, useSubscription } from "@/contexts/SubscriptionContext";
 import { PlanCards } from "@/components/PlanCards";
 import { toast } from "sonner";
+import { useAutoRefreshSubscription } from "@/hooks/usePaymentConfirmation";
+import { PaymentHelpLine } from "@/components/pricing/PaymentProgress";
 
 /* Problema con la suscripción (10-11-2026):
    · payment_failed (past_due / unpaid / incomplete): "No hemos podido cobrar tu suscripción" → arreglar
-     el método de pago en el portal de Stripe, o "Ya he pagado, comprobar".
+     el método de pago en el portal de Stripe. Sin botón de "ya he pagado" (11-11-2026): la pantalla
+     vuelve a leer el estado del servidor sola y desaparece cuando Stripe confirma el pago.
    · canceled (o periodo vencido sin renovación): "Tu suscripción ha terminado" → elegir plan para reactivar.
    La pone ProtectedRoute para los registros de pago; el equipo y las cuentas gratis nunca la ven. */
 export function SubscriptionProblemScreen({ kind, tier, lastPaymentError, periodEnd }: {
@@ -18,19 +21,11 @@ export function SubscriptionProblemScreen({ kind, tier, lastPaymentError, period
   lastPaymentError: string | null;
   periodEnd: string | null;
 }) {
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const { refreshSubscription } = useSubscription();
-  const [checking, setChecking] = useState(false);
+  useAutoRefreshSubscription(refreshSubscription, user?.id);
   const [portalLoading, setPortalLoading] = useState(false);
   const planLabel = tier !== "free" ? PLAN_CONFIG[tier].label : null;
-
-  const comprobar = async () => {
-    setChecking(true);
-    try {
-      await refreshSubscription();
-      toast.info("Comprobado. Si acabas de pagar, puede tardar unos segundos en reflejarse.");
-    } finally { setChecking(false); }
-  };
 
   const abrirPortal = async () => {
     setPortalLoading(true);
@@ -82,24 +77,12 @@ export function SubscriptionProblemScreen({ kind, tier, lastPaymentError, period
               {portalLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
               Actualizar método de pago
             </Button>
-            <Button variant="outline" className="gap-2" onClick={() => void comprobar()} disabled={checking}>
-              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Ya he pagado, comprobar
-            </Button>
           </div>
         ) : (
-          <>
-            <PlanCards currentTier={tier} />
-            <div className="flex justify-center">
-              <Button variant="outline" className="gap-2" onClick={() => void comprobar()} disabled={checking}>
-                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Ya he pagado, comprobar
-              </Button>
-            </div>
-          </>
+          <PlanCards currentTier={tier} />
         )}
 
-        <p className="text-center text-xs text-muted-foreground">¿Algo no cuadra? Escribe a team@onepulso.online.</p>
+        <div className="flex justify-center"><PaymentHelpLine className="justify-center text-center" /></div>
         <div className="text-center">
           <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={() => signOut()}>
             <LogOut className="h-4 w-4" />

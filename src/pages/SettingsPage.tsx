@@ -397,7 +397,7 @@ export default function SettingsPage() {
                 </div>
               </div>
               {subscribed && billable && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={handlePortal} disabled={portalLoading} className="gap-2">
                     {portalLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
                     Gestionar suscripción

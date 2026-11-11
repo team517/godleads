@@ -1,6 +1,7 @@
 // Lo que el plan lleva consumido este mes: correos y buzones. Y, desde el 10-11-2026, el estado de la
 // suscripción de Stripe (prueba, renovación, cancelación programada, pago pendiente) con los botones
-// "Gestionar suscripción" (portal de Stripe) y "Comprobar pago".
+// "Gestionar suscripción" (portal de Stripe). Sin botón de "comprobar pago" (11-11-2026): el estado lo
+// escribe el servidor (webhook de Stripe); la app lo vuelve a leer al arrancar.
 //
 // Es una MEDIDA, no una puerta: aquí no se bloquea nada. Las cifras vienen de las RPC del servidor
 // (usePlanUsage), que suman al dueño y a sus cuentas de cliente, y los topes de PLAN_CONFIG.
@@ -47,17 +48,12 @@ export function subscriptionStatusLine(s: {
 const STATUS_TONE: Record<"ok" | "warn" | "bad", string> = { ok: "text-foreground", warn: "text-warning", bad: "text-destructive" };
 
 export function SubscriptionStatusBlock() {
-  const { status, trialEnd, periodEnd, cancelAtPeriodEnd, entitlement, billable, refreshSubscription } = useSubscription();
-  const [checking, setChecking] = useState(false);
+  const { status, trialEnd, periodEnd, cancelAtPeriodEnd, entitlement, billable } = useSubscription();
   const [portalLoading, setPortalLoading] = useState(false);
   const line = subscriptionStatusLine({ status, trialEnd, periodEnd, cancelAtPeriodEnd, lastPaymentError: entitlement?.lastPaymentError });
   if (!billable || !line) return null;
   const tieneStripe = status === "active" || status === "trialing" || status === "payment_failed" || status === "canceled";
 
-  const comprobar = async () => {
-    setChecking(true);
-    try { await refreshSubscription(); toast.info("Estado del pago comprobado."); } finally { setChecking(false); }
-  };
   const portal = async () => {
     setPortalLoading(true);
     try {
@@ -79,9 +75,6 @@ export function SubscriptionStatusBlock() {
             {portalLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CreditCard className="h-3.5 w-3.5" />} Gestionar suscripción
           </Button>
         )}
-        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void comprobar()} disabled={checking}>
-          {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Comprobar pago
-        </Button>
       </div>
     </div>
   );

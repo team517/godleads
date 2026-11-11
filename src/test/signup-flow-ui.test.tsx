@@ -10,6 +10,7 @@ const st = vi.hoisted(() => ({
   user: { id: "u1", email: "ana@acme.com" } as null | { id: string; email: string },
   subscribed: false,
   status: "needs_card",
+  ent: null as null | { status: string; custom_level?: number | null },
   invoke: vi.fn(async () => ({ data: { url: "https://checkout.stripe.com/c/pay/cs_test_123", trial: true }, error: null })),
 }));
 
@@ -19,7 +20,8 @@ vi.mock("@/contexts/SubscriptionContext", async () => {
   return { ...real, useSubscription: () => ({ subscribed: st.subscribed, loading: false, status: st.status, refreshSubscription: vi.fn(async () => {}) }) };
 });
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { functions: { invoke: st.invoke }, auth: { signUp: vi.fn() }, from: vi.fn() },
+  supabase: { functions: { invoke: st.invoke }, auth: { signUp: vi.fn() },
+    from: vi.fn(() => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: st.ent, error: null }) }) }) })) },
 }));
 
 import { SignupFlow } from "@/components/signup/SignupFlow";
@@ -31,7 +33,7 @@ describe("alta con tarjeta — pantalla", () => {
   beforeEach(() => {
     localStorage.clear();
     st.user = { id: "u1", email: "ana@acme.com" };
-    st.subscribed = false; st.status = "needs_card";
+    st.subscribed = false; st.status = "needs_card"; st.ent = null;
     st.invoke.mockClear();
     Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, href: "http://localhost/empezar", origin: "http://localhost" } });
   });
@@ -64,14 +66,18 @@ describe("alta con tarjeta — pantalla", () => {
     for (const p of ["Tu prueba", "Tu cuenta", "Tu tarjeta"]) expect(screen.getByText(p)).toBeTruthy();
   });
 
-  it("la vuelta de Stripe sólo da paso cuando el servidor confirma la suscripción", () => {
-    st.subscribed = false;
+  it("?paso=listo por sí solo NUNCA enseña '¡Listo!': sólo cuando el servidor confirma", async () => {
+    st.ent = null;
     const { unmount } = pinta("alta", "/empezar?paso=listo");
-    expect(screen.getByText("Activando tu prueba…")).toBeTruthy();
-    expect(screen.queryByText(/Tu prueba de 14 días ha empezado/)).toBeNull();
+    expect(screen.getByText("Confirmando tu tarjeta con Stripe…")).toBeTruthy();
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.queryByText(/¡Listo!/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /ya he (pagado|añadido)|comprobar/i })).toBeNull();
     unmount();
-    st.subscribed = true; st.status = "trialing";
+    // El webhook firmado de Stripe escribe la prueba de esta cuenta → procesando → listo.
+    st.ent = { status: "trialing" };
     pinta("alta", "/empezar?paso=listo");
-    expect(screen.getByText(/Tu prueba de 14 días ha empezado/)).toBeTruthy();
+    expect(await screen.findByText("Pago recibido · Procesando tu plan…")).toBeTruthy();
+    expect(await screen.findByText(/¡Listo! Tu prueba de 14 días ha empezado/, {}, { timeout: 4000 })).toBeTruthy();
   });
 });

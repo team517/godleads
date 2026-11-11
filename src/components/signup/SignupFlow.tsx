@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, CreditCard, ExternalLink, Eye, EyeOff, Loader2, Lock, LogOut, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, Eye, EyeOff, Loader2, Lock, LogOut, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,9 +12,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription, PLAN_CONFIG } from "@/contexts/SubscriptionContext";
 import { cn } from "@/lib/utils";
 import { CUSTOM_DEFAULT_LEVEL, customLevel, fmtNum } from "@/lib/custom-plan";
+import { usePaymentConfirmation } from "@/hooks/usePaymentConfirmation";
+import { PaymentProgress } from "@/components/pricing/PaymentProgress";
 import {
   SIGNUP_PLANS, SIGNUP_STORAGE_KEY, SIGNUP_TRIAL_DAYS, accountErrors, choiceFromParams, fmtDay, fmtEur, parseSavedChoice,
-  entitlementGivesAccess, passwordStrength, paymentLinkFor, priceIdFor, priceInfo, signupErrorMessage, stepFromParams, trialEndDate,
+  passwordStrength, paymentLinkFor, priceIdFor, priceInfo, signupErrorMessage, stepFromParams, trialEndDate,
   choiceHasTrial, choiceLabel, choicePlanParam,
   type AccountForm, type SignupChoice, type SignupPlan, type SignupStep,
 } from "@/lib/signup-flow";
@@ -148,7 +150,7 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
               {step === "plan" && <PasoPlan choice={choice} setChoice={setChoice} fin={fin} mode={mode} onNext={() => go(mode === "activar" || user ? "tarjeta" : "cuenta")} />}
               {step === "cuenta" && <PasoCuenta choice={choice} onBack={() => go("plan")} onDone={() => go("tarjeta")} />}
               {step === "tarjeta" && <PasoTarjeta choice={choice} fin={fin} cancelado={params.get("cancelado") === "1"} onBack={() => go("plan")} onPaid={() => go("listo")} />}
-              {step === "listo" && <PasoListo refresh={refreshSubscription} subscribed={subscribed} custom={choice.plan === "custom"} />}
+              {step === "listo" && <PasoListo refresh={refreshSubscription} choice={choice} />}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -545,7 +547,11 @@ function Campo({ id, label, hint, error, children }: { id: string; label: string
 /** Cómo se abre el pago: el checkout de la app (vuelve solo) o, si Stripe no deja crearlo, el enlace
  *  de pago del plan en otra pestaña mientras esta espera a que el webhook active la prueba. */
 type ViaPago = { kind: "cargando" } | { kind: "checkout"; url: string } | { kind: "enlace"; url: string } | { kind: "ya" };
-const ESPERA_PAGO_MS = 3000;
+
+/** Qué confirma el pago de esta elección: el nivel a medida o, en los planes normales, la prueba. */
+const quePago = (c: SignupChoice) => (c.plan === "custom"
+  ? { kind: "custom" as const, level: c.level ?? CUSTOM_DEFAULT_LEVEL }
+  : { kind: "plan" as const });
 
 function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: SignupChoice; fin: Date; cancelado: boolean; onBack: () => void; onPaid: () => void }) {
   const navigate = useNavigate();
@@ -560,9 +566,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
   const [err, setErr] = useState<string | null>(null);
   const [via, setVia] = useState<ViaPago>({ kind: "cargando" });
   const [esperando, setEsperando] = useState(false);
-  const [comprobando, setComprobando] = useState(false);
   const preparado = useRef<Promise<ViaPago> | null>(null);
-  const hecho = useRef(false);
   const info = priceInfo(choice);
   const conPrueba = choiceHasTrial(choice);
 
@@ -594,30 +598,12 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
     return () => { vivo = false; };
   }, [user?.id, choice.plan, choice.period, choice.level]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ¿Ya está pagado? Lo dice el servidor (el webhook de Stripe escribe user_entitlements de ESTA cuenta).
-  const comprobarPago = async (): Promise<boolean> => {
-    if (!user || hecho.current) return hecho.current;
-    const { data } = await (supabase as any).from("user_entitlements").select("status").eq("user_id", user.id).maybeSingle();
-    if (entitlementGivesAccess((data as any)?.status)) {
-      hecho.current = true;
-      onPaid();
-      return true;
-    }
-    return false;
-  };
-
-  // Mientras se paga en la otra pestaña: cada 3 s y al volver a esta pestaña.
-  useEffect(() => {
-    if (!esperando || !user) return;
-    let vivo = true;
-    const tick = () => { if (vivo) void comprobarPago(); };
-    tick();
-    const t = setInterval(tick, ESPERA_PAGO_MS);
-    const alVolver = () => { if (document.visibilityState === "visible") tick(); };
-    window.addEventListener("focus", tick);
-    document.addEventListener("visibilitychange", alVolver);
-    return () => { vivo = false; clearInterval(t); window.removeEventListener("focus", tick); document.removeEventListener("visibilitychange", alVolver); };
-  }, [esperando, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ¿Ya está pagado? Lo dice SÓLO el servidor (el webhook firmado de Stripe escribe user_entitlements
+  // de ESTA cuenta). En cuanto lo confirma se pasa a la vuelta ("Procesando tu plan…" → "¡Listo!").
+  const pago = usePaymentConfirmation({
+    active: esperando, userId: user?.id, want: quePago(choice), baseline: null,
+    onConfirmed: () => onPaid(),
+  });
 
   const abrirEnlace = (url: string) => {
     // Pestaña nueva (esta se queda esperando). Si el navegador la bloquea, en esta misma.
@@ -640,32 +626,16 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
     setErr(mensajePago(""));
   };
 
-  const yaHePagado = async () => {
-    setComprobando(true);
-    const ok = await comprobarPago();
-    setComprobando(false);
-    if (!ok) setErr("Aún no nos ha llegado la confirmación de Stripe. Si ya has terminado, espera unos segundos: esta pantalla se actualiza sola.");
-  };
-
   if (esperando) {
     const url = via.kind === "enlace" ? via.url : user ? paymentLinkFor(choice, { id: user.id, email: user.email }) : "";
     return (
-      <section className="text-center" aria-live="polite">
-        <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#6E58F1]" aria-hidden="true" />
-        <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">Completa el pago en la pestaña de Stripe</h1>
-        <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">
-          Hemos abierto el pago seguro de Stripe en otra pestaña. Cuando añadas la tarjeta, <strong className="text-[#0F172B]">esta pantalla pasará sola</strong> a tu cuenta.{conPrueba ? " Hoy no se cobra nada." : ""}
-        </p>
-        {err && <p className="mx-auto mt-4 max-w-md rounded-[10px] border border-[#F2D9B8] bg-[#FFF8EE] px-3 py-2.5 text-[13.5px] text-[#7A4A12]" role="status">{err}</p>}
-        <div className="mt-7 flex flex-col items-center gap-3">
-          <Button className="h-12 gap-2 px-8 text-[15px]" onClick={() => void yaHePagado()} disabled={comprobando}>
-            {comprobando ? <><Loader2 className="h-4 w-4 animate-spin" /> Comprobando…</> : <><Check className="h-4 w-4" /> Ya he añadido la tarjeta</>}
-          </Button>
-          {url && (
-            <a href={url} target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-[#5B40FB] hover:underline">
-              Volver a abrir el pago <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
+      <section className="pt-2">
+        <PaymentProgress
+          tone="light" stage={pago.stage} slow={pago.slow} reopenUrl={url || null}
+          waitingText={<>Hemos abierto el pago seguro de Stripe en otra pestaña. {conPrueba ? "Hoy no se cobra nada. " : ""}Cuando termines, <strong className="text-[#0F172B]">esta pantalla pasará sola</strong> a tu cuenta.</>}
+          doneTitle={conPrueba ? `¡Listo! Tu prueba de ${SIGNUP_TRIAL_DAYS} días ha empezado` : "¡Listo! Tu plan a medida está activo"}
+        />
+        <div className="mt-6 text-center">
           <button type="button" onClick={() => { setEsperando(false); setErr(null); }} className="text-[13px] text-[#65768D] hover:text-[#0F172B]">Cambiar de plan</button>
         </div>
       </section>
@@ -726,58 +696,39 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
 
 /* ── Vuelta de Stripe ─────────────────────────────────────────────────────────────────────── */
 
-const MAX_INTENTOS = 10;
-
-function PasoListo({ refresh, subscribed, custom = false }: { refresh: () => Promise<void>; subscribed: boolean; custom?: boolean }) {
+/** La vuelta de Stripe (/empezar?paso=listo). La URL NO da nada: se espera a que el servidor (webhook
+ *  firmado de Stripe) escriba el plan de esta cuenta, y sólo entonces "Procesando tu plan…" → "¡Listo!". */
+function PasoListo({ refresh, choice }: { refresh: () => Promise<void>; choice: SignupChoice }) {
   const navigate = useNavigate();
-  const [intentos, setIntentos] = useState(0);
-  const [agotado, setAgotado] = useState(false);
+  const { user } = useAuth();
+  const custom = choice.plan === "custom";
+  const pago = usePaymentConfirmation({
+    active: !!user, userId: user?.id, want: quePago(choice), baseline: null,
+    // La suscripción se recarga al pulsar "Entrar" (recargarla antes desmontaría esta pantalla).
+    onConfirmed: () => { try { localStorage.removeItem(SIGNUP_STORAGE_KEY); } catch { /* nada */ } },
+  });
 
-  // La prueba la confirma el servidor (webhook de Stripe / check-subscription), nunca esta URL.
-  useEffect(() => {
-    if (subscribed) return;
-    let vivo = true;
-    (async () => {
-      for (let i = 0; i < MAX_INTENTOS && vivo; i++) {
-        setIntentos(i + 1);
-        try { await supabase.functions.invoke("check-subscription"); } catch { /* reintento */ }
-        await refresh();
-        if (!vivo) return;
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (vivo) setAgotado(true);
-    })();
-    return () => { vivo = false; };
-  }, [subscribed]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => { if (subscribed) { try { localStorage.removeItem(SIGNUP_STORAGE_KEY); } catch { /* nada */ } } }, [subscribed]);
-
-  if (subscribed) {
+  if (!user) {
     return (
       <section className="pt-6 text-center">
-        <motion.span initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 260, damping: 18 }}
-          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#0A7A52] text-white shadow-[0_12px_30px_rgba(10,122,82,.3)]">
-          <Check className="h-8 w-8" />
-        </motion.span>
-        <h1 className="mt-6 font-display text-[32px] font-semibold tracking-[-0.03em] text-[#0F172B]">{custom ? "¡Listo! Tu plan a medida está activo" : `¡Listo! Tu prueba de ${SIGNUP_TRIAL_DAYS} días ha empezado`}</h1>
-        <p className="mx-auto mt-3 max-w-md text-[15.5px] text-[#45556C]">Ya tienes acceso completo. Conecta tus buzones y lanza tu primera campaña.</p>
-        <Button className="mt-8 h-12 gap-2 px-8 text-[15px]" onClick={() => navigate("/dashboard", { replace: true })}>Entrar en Funnyleads <ArrowRight className="h-4 w-4" /></Button>
+        <h1 className="font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">Inicia sesión para ver tu plan</h1>
+        <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">Entra con la cuenta con la que has pagado y tu plan aparecerá activo en cuanto Stripe lo confirme.</p>
+        <Button asChild className="mt-6"><Link to="/auth">Iniciar sesión</Link></Button>
       </section>
     );
   }
 
+  const l = custom ? customLevel(choice.level ?? CUSTOM_DEFAULT_LEVEL) : null;
   return (
-    <section className="pt-6 text-center">
-      <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#6E58F1]" />
-      <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">{custom ? "Activando tu plan…" : "Activando tu prueba…"}</h1>
-      <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">
-        {agotado
-          ? "Stripe está tardando en confirmarlo. Suele ser cuestión de un minuto."
-          : `Estamos confirmando tu tarjeta con Stripe (${intentos}/${MAX_INTENTOS}).`}
-      </p>
-      {agotado && (
-        <Button variant="outline" className="mt-6" onClick={() => { setAgotado(false); setIntentos(0); void refresh(); window.location.reload(); }}>Comprobar de nuevo</Button>
-      )}
+    <section className="pt-6">
+      <PaymentProgress
+        tone="light" stage={pago.stage} slow={pago.slow}
+        waitingTitle={custom ? "Confirmando tu pago con Stripe…" : "Confirmando tu tarjeta con Stripe…"}
+        waitingText="Suele tardar unos segundos. No cierres esta pestaña."
+        doneTitle={custom ? "¡Listo! Tu plan a medida está activo" : `¡Listo! Tu prueba de ${SIGNUP_TRIAL_DAYS} días ha empezado`}
+        doneText={l ? <>{fmtNum(l.emails)} envíos al mes · {fmtNum(l.contacts)} contactos · {l.clients} clientes</> : "Ya tienes acceso completo. Conecta tus buzones y lanza tu primera campaña."}
+        doneAction={<Button className="h-12 gap-2 px-8 text-[15px]" onClick={() => { void refresh().finally(() => navigate("/dashboard", { replace: true })); }}>Entrar en Funnyleads <ArrowRight className="h-4 w-4" /></Button>}
+      />
     </section>
   );
 }

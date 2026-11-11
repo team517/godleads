@@ -1,25 +1,18 @@
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Loader2, LogOut, RefreshCw, ShieldAlert } from "lucide-react";
+import { LogOut, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
 import { PlanCards } from "@/components/PlanCards";
-import { toast } from "sonner";
+import { useAutoRefreshSubscription } from "@/hooks/usePaymentConfirmation";
+import { PaymentHelpLine } from "@/components/pricing/PaymentProgress";
 
-/* Prueba gratuita de 14 días terminada sin pagar: se elige plan (pago por Stripe). "Ya he pagado"
-   vuelve a comprobar en Stripe por si el webhook aún no ha llegado. */
+/* Prueba gratuita de 14 días terminada sin pagar: se elige plan (pago por Stripe). Sin botón de "ya he
+   pagado" (11-11-2026): la pantalla vuelve a leer el estado del servidor sola (al volver a la pestaña y
+   cada 20 s) y desaparece en cuanto el webhook de Stripe confirma el pago. */
 export function TrialExpiredScreen() {
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const { refreshSubscription } = useSubscription();
-  const [checking, setChecking] = useState(false);
-
-  const comprobar = async () => {
-    setChecking(true);
-    try {
-      await refreshSubscription();
-      toast.info("Comprobado. Si acabas de pagar, puede tardar unos segundos en reflejarse.");
-    } finally { setChecking(false); }
-  };
+  useAutoRefreshSubscription(refreshSubscription, user?.id);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
@@ -38,11 +31,8 @@ export function TrialExpiredScreen() {
 
         <PlanCards />
 
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => void comprobar()} disabled={checking}>
-            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Ya he pagado, comprobar
-          </Button>
+        <div className="flex flex-col items-center gap-3">
+          <PaymentHelpLine className="justify-center text-center" />
           <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={() => signOut()}>
             <LogOut className="h-4 w-4" />
             Cerrar sesión

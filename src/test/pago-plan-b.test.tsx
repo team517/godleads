@@ -88,24 +88,30 @@ describe("paso de la tarjeta", () => {
     const url = String(open.mock.calls[0][0]);
     expect(url).toContain("https://buy.stripe.com/dRm14ggaydpG7Gx6s82ZO0i?");
     expect(url).toContain(`client_reference_id=${USER.id}`);
-    expect(await screen.findByText("Completa el pago en la pestaña de Stripe")).toBeTruthy();
+    expect(await screen.findByText("Esperando tu pago en Stripe…")).toBeTruthy();
+    // Nunca hay un botón para darse el plan uno mismo.
+    expect(screen.queryByRole("button", { name: /ya he (pagado|añadido)|comprobar/i })).toBeNull();
 
     // El webhook guarda la prueba de esta cuenta → la pantalla lo detecta (al volver a la pestaña).
     sb.entStatus.value = "trialing";
     await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 10)); });
-    expect(await screen.findByText(/Activando tu prueba|Tu prueba de 14 días ha empezado/)).toBeTruthy();
+    expect(await screen.findByText(/Pago recibido · Procesando tu plan…|Tu prueba de 14 días ha empezado/, {}, { timeout: 4000 })).toBeTruthy();
+    expect(await screen.findByText(/¡Listo! Tu prueba de 14 días ha empezado/, {}, { timeout: 4000 })).toBeTruthy();
     open.mockRestore();
   });
 
-  it("'Ya he añadido la tarjeta' sin confirmación aún: lo explica y sigue esperando", async () => {
+  it("sin confirmación del servidor no hay botón de 'ya he pagado' y la pantalla sigue esperando", async () => {
     sb.invoke.mockResolvedValue({ data: null, error: { message: "non-2xx", context: { json: async () => ({ error: "x" }) } } });
     const open = vi.spyOn(window, "open").mockReturnValue({ opener: {} } as any);
     pintar();
     const boton = await screen.findByRole("button", { name: /Añadir tarjeta y empezar/ });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     fireEvent.click(boton);
-    fireEvent.click(await screen.findByRole("button", { name: /Ya he añadido la tarjeta/ }));
-    expect(await screen.findByText(/Aún no nos ha llegado la confirmación/)).toBeTruthy();
+    expect(await screen.findByText("Esperando tu pago en Stripe…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ya he (pagado|añadido)|comprobar/i })).toBeNull();
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.getByTestId("payment-progress").getAttribute("data-stage")).toBe("esperando");
+    expect(screen.queryByText(/¡Listo!/)).toBeNull();
     open.mockRestore();
   });
 

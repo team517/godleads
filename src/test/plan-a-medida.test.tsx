@@ -172,11 +172,16 @@ describe("barra del plan a medida (Ajustes → Plan)", () => {
     const url = new URL(String(open.mock.calls[0][0]));
     expect(url.origin + url.pathname).toBe("https://buy.stripe.com/cNi4gsbUi85m5ypeYE2ZO0r");
     expect(url.searchParams.get("client_reference_id")).toBe(USER.id);
-    expect(await screen.findByText("Completa el pago en la pestaña de Stripe")).toBeTruthy();
-    // El webhook guarda el plan a medida de ESTA cuenta → la ventana lo detecta.
+    expect(await screen.findByText("Esperando tu pago en Stripe…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ya he (pagado|añadido)|comprobar/i })).toBeNull();
+    // Mientras el servidor no cambia la fila, sigue esperando.
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.getByTestId("payment-progress").getAttribute("data-stage")).toBe("esperando");
+    // El webhook guarda el plan a medida de ESTA cuenta → procesando → listo.
     sb.ent.value = { status: "active", custom_level: 3 };
     await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 10)); });
-    expect(await screen.findByText("¡Listo! Tu plan a medida está activo")).toBeTruthy();
+    expect(await screen.findByText("Pago recibido · Procesando tu plan…")).toBeTruthy();
+    expect(await screen.findByText("¡Listo! Tu plan a medida está activo", {}, { timeout: 4000 })).toBeTruthy();
     open.mockRestore();
   });
 
@@ -190,8 +195,24 @@ describe("barra del plan a medida (Ajustes → Plan)", () => {
     await act(async () => { fireEvent.click(await screen.findByTestId("custom-confirmar")); });
     expect(sb.invoke).toHaveBeenCalledWith("create-checkout", { body: { price_id: "price_1Uafnq2ObXNkJIex2WRv1VZo" } });
     expect(open).not.toHaveBeenCalled();
-    expect(await screen.findByText("Cambiando tu plan…")).toBeTruthy();
+    expect(await screen.findByText("Cambiando tu plan en Stripe…")).toBeTruthy();
     open.mockRestore();
+  });
+
+  it("cambio de plan: tener ya otro nivel activo no cuenta; sólo cuando la fila pasa al nivel nuevo", async () => {
+    sb.sub.value = { hasStripeSubscription: true, subscribed: true, status: "active" };
+    sb.ent.value = { status: "active", custom_level: 2 }; // lo que tenía antes de cambiar
+    sb.invoke.mockResolvedValue({ data: { updated: true }, error: null });
+    pintar();
+    fireEvent.click(screen.getByTestId("custom-elegir"));
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("custom-confirmar")); });
+    expect(await screen.findByText("Cambiando tu plan en Stripe…")).toBeTruthy();
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.getByTestId("payment-progress").getAttribute("data-stage")).toBe("esperando");
+    sb.ent.value = { status: "active", custom_level: 3 };
+    await act(async () => { window.dispatchEvent(new Event("focus")); await new Promise((r) => setTimeout(r, 10)); });
+    expect(await screen.findByText("¡Listo! Tu plan a medida está activo", {}, { timeout: 4000 })).toBeTruthy();
   });
 
   it("sin sesión (landing) lleva al alta con el nivel y el periodo", () => {
