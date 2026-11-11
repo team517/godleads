@@ -1,4 +1,4 @@
-import { HARD_DAILY_CAP } from "@/lib/warmup";
+import { DEFAULT_DAILY_LIMIT } from "@/lib/warmup";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -144,7 +144,7 @@ export default function AccountsTable(p: Props) {
               const prov = providerOf(account);
               const ic = p.imapChecks[account.id];
               const ramp = p.rampOf(account);
-              const limit = ramp ? ramp.eff : Math.min(account.daily_limit || HARD_DAILY_CAP, HARD_DAILY_CAP);
+              const limit = ramp ? ramp.eff : (account.daily_limit || DEFAULT_DAILY_LIMIT);
               const used = account.sent_today || 0;
               const meta = LEVEL_META[verdict.level];
               const dimmed = p.filterTag && !(account.tags || []).includes(p.filterTag);

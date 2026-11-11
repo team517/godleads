@@ -791,8 +791,8 @@ serve(async (req) => {
     // its ramp by hand. Enforce the same HARD_DAILY_CAP=30 ceiling here. (Manual Unibox replies
     // have no campaign_id → always allowed, never counted.)
     if (campaign_id) {
-      // Techo de 15 por buzón y día (17-10-2026), el mismo que el motor.
-      const effCap = Math.min(account.daily_limit ?? 15, 15);
+      // El límite diario de la cuenta, como el motor (sin techo de plataforma desde el 11-11-2026).
+      const effCap = account.daily_limit ?? 15;
       if ((account.sent_today ?? 0) >= effCap) {
         return new Response(JSON.stringify({ error: "Daily sending limit reached for this account" }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }

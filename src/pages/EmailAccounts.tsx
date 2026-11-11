@@ -1300,7 +1300,7 @@ export default function EmailAccounts() {
     // my_account_sending_days), no por calendario. Sin campaña activa → 0 días → se
     // queda en el escalón inicial; fin de semana o día sin envío → no suma.
     const r = effectiveDailyLimit(acc, sendDaysByAccount[acc.id]);
-    const target = Math.min(acc.warmup_limit || acc.daily_limit || 15, 15);
+    const target = acc.warmup_limit || acc.daily_limit || 15; // sin techo de plataforma (11-11-2026)
     return { day: r.accRampDay ?? 1, eff: r.limit, target };
   };
 

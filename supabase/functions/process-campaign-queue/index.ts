@@ -1552,10 +1552,11 @@ serve(async (req) => {
       // OWN daily limit below, so it grows automatically as ramp progresses day
       // by day, or as more accounts get connected/selected — no manual number
       // to keep updating by hand. ═══
-      // 15 al día por buzón como máximo en toda la plataforma (17-10-2026, decisión del dueño; antes
-      // 30). Es un TECHO: el límite de la cuenta, su warm-up y el slow ramp de la campaña siguen
-      // mandando cuando son menores.
-      const HARD_DAILY_CAP = 15;
+      // Sin techo de plataforma desde el 11-11-2026 (decisión del dueño: "que puedan haber más de 15
+      // envíos al día, que no haya tope"). Antes 15 (17-10) y 30. Manda el límite diario de cada
+      // cuenta; su warm-up y el slow ramp de la campaña siguen mandando cuando son menores.
+      // 15 es sólo el valor por defecto de una cuenta sin límite puesto.
+      const DEFAULT_DAILY_LIMIT = 15;
       let rampDaysActive = 0;
       if ((campaign as any).slow_ramp_enabled) {
         const { data: firstSent } = await adminClient
@@ -1573,7 +1574,7 @@ serve(async (req) => {
       }
 
       const getEffectiveLimit = (acc: any) => {
-        let limit = Math.min(acc.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+        let limit = acc.daily_limit ?? DEFAULT_DAILY_LIMIT;
 
         // Account-level slow ramp: ramps by warmup_increment per SENDING day up to
         // warmup_limit. Counting sending days (not calendar days) means the ramp
@@ -1595,8 +1596,8 @@ serve(async (req) => {
           // `target` (warmup_limit = the intended daily max). Do NOT floor it by daily_limit —
           // if an account's daily_limit sits at/below the start (e.g. 18), Math.min(limit, ramp)
           // would freeze the ramp at 18 forever and it never climbs ("no sube al día siguiente").
-          // accRamp is already capped at `target`, and HARD_DAILY_CAP still bounds it.
-          limit = Math.min(accRamp, HARD_DAILY_CAP);
+          // accRamp is already capped at `target` (warmup_limit), the ramp's own ceiling.
+          limit = accRamp;
         }
 
         // Campaign-level slow ramp — anchored to days of ACTUAL sending (rampDaysActive),

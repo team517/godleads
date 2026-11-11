@@ -10,8 +10,12 @@
 //     escalón inicial, no "sube sola";
 //   - un fin de semana o un día sin envíos → no cuenta → la rampa no avanza.
 
-// 15 por buzón y día como máximo (17-10-2026, antes 30): el mismo techo que el motor.
-export const HARD_DAILY_CAP = 15;
+// Sin techo de plataforma desde el 11-11-2026 (decisión del dueño: "que no haya tope"): cada buzón
+// envía lo que diga su límite diario, y el warm-up y el slow ramp siguen mandando cuando son menores.
+// 15 es sólo el valor por defecto de una cuenta sin límite puesto (el mismo que el motor y la base).
+export const DEFAULT_DAILY_LIMIT = 15;
+/** @deprecated nombre antiguo: ya NO es un techo, es el valor por defecto. */
+export const HARD_DAILY_CAP = DEFAULT_DAILY_LIMIT;
 
 export interface WarmupAccount {
   daily_limit?: number | null;
@@ -32,7 +36,7 @@ export function effectiveDailyLimit(
   acc: WarmupAccount | null | undefined,
   realSendDays: number | null | undefined,
 ): { limit: number; accRampDay: number | null; warming: boolean } {
-  let limit = Math.min(acc?.daily_limit ?? HARD_DAILY_CAP, HARD_DAILY_CAP);
+  let limit = acc?.daily_limit ?? DEFAULT_DAILY_LIMIT;
 
   if (acc?.warmup_enabled && acc?.warmup_started_at) {
     const days = Math.max(0, realSendDays ?? 0);
@@ -41,9 +45,9 @@ export function effectiveDailyLimit(
     // warmup_day (reutilizado) = límite del día 1; 0/ausente → arranca en `inc`.
     const startBase = acc.warmup_day && acc.warmup_day > 0 ? acc.warmup_day : inc;
     // Durante el warm-up el valor de la rampa ES el tope del día (no se suelo con
-    // daily_limit, igual que el motor), y HARD_DAILY_CAP lo acota.
+    // daily_limit, igual que el motor); sube hasta warmup_limit.
     const accRamp = Math.min(startBase + days * inc, target);
-    return { limit: Math.max(1, Math.min(accRamp, HARD_DAILY_CAP)), accRampDay: days + 1, warming: true };
+    return { limit: Math.max(1, accRamp), accRampDay: days + 1, warming: true };
   }
 
   return { limit: Math.max(1, limit), accRampDay: null, warming: false };
