@@ -110,3 +110,47 @@ export function publicStripeError(e: unknown): { message: string; status: number
   const limpio = msg.replace(/\b(sk|rk|pk|whsec)_[A-Za-z0-9_*]+/g, "[oculto]").slice(0, 300);
   return { message: limpio || "No se pudo completar la operación con Stripe.", status: 500, stripeUnavailable: false };
 }
+
+/** Enlaces de pago de Funnyleads (14 días de prueba, tarjeta obligatoria). 11-11-2026: son el plan B
+ *  del alta cuando no se puede crear un checkout con la clave de Stripe. */
+export const ENLACES_PAGO_FUNNYLEADS: Record<string, { tier: Plan; interval: "month" | "year" }> = {
+  plink_1UaCM62ObXNkJIexIHPrhQKl: { tier: "starter", interval: "month" },
+  plink_1UaCMC2ObXNkJIexdfaNHg6Q: { tier: "starter", interval: "year" },
+  plink_1UaCMF2ObXNkJIexyE0w92Jw: { tier: "growth", interval: "month" },
+  plink_1UaCMJ2ObXNkJIexE46HfZkS: { tier: "growth", interval: "year" },
+  plink_1UaCMM2ObXNkJIexsjSz4Re3: { tier: "scale", interval: "month" },
+  plink_1UaCMP2ObXNkJIexBbShBoqs: { tier: "scale", interval: "year" },
+};
+export const DIAS_PRUEBA_ENLACE = 14;
+
+/** Derecho de plan a partir SÓLO del aviso checkout.session.completed de un enlace de pago (sin
+ *  preguntar a Stripe, por si la clave falla). null si la sesión no es de un enlace nuestro. Lo
+ *  completa después customer.subscription.created/updated, que trae la suscripción entera. */
+export function filaDesdeSesionDeEnlace(ses: {
+  mode?: string | null; payment_link?: string | null; metadata?: Record<string, string> | null;
+  customer?: string | null; subscription?: string | null; created?: number | null; amount_total?: number | null;
+}, ahoraSeg = Math.floor(Date.now() / 1000)): Record<string, unknown> | null {
+  if (ses.mode !== "subscription" || !ses.customer) return null;
+  const porEnlace = ses.payment_link ? ENLACES_PAGO_FUNNYLEADS[ses.payment_link] : undefined;
+  const md = ses.metadata || {};
+  const tierMd = tierDeMetadata(md);
+  const tier = porEnlace?.tier || (tierMd && esPlan(tierMd) ? (tierMd.toLowerCase() as Plan) : null);
+  if (!tier || (!porEnlace && md.app !== "warmlead")) return null;
+  const interval = porEnlace?.interval || (md.billing === "yearly" ? "year" : "month");
+  const inicio = ses.created || ahoraSeg;
+  // Los enlaces dan 14 días gratis; si la sesión cobró algo, ya no es prueba.
+  const prueba = !ses.amount_total;
+  const fin = new Date((inicio + DIAS_PRUEBA_ENLACE * 86_400) * 1000).toISOString();
+  return {
+    tier,
+    status: prueba ? "trialing" : "active",
+    stripe_customer_id: String(ses.customer),
+    stripe_subscription_id: ses.subscription ? String(ses.subscription) : null,
+    trial_end: prueba ? fin : null,
+    current_period_end: prueba ? fin : null,
+    cancel_at_period_end: false,
+    billing_interval: interval,
+    last_payment_error: null,
+    last_event_at: new Date(ahoraSeg * 1000).toISOString(),
+  };
+}

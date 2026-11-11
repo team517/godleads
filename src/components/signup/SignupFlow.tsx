@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, CreditCard, Eye, EyeOff, Loader2, Lock, LogOut, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, ExternalLink, Eye, EyeOff, Loader2, Lock, LogOut, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +13,7 @@ import { useSubscription, PLAN_CONFIG } from "@/contexts/SubscriptionContext";
 import { cn } from "@/lib/utils";
 import {
   SIGNUP_PLANS, SIGNUP_STORAGE_KEY, SIGNUP_TRIAL_DAYS, accountErrors, choiceFromParams, fmtDay, fmtEur, parseSavedChoice,
-  passwordStrength, priceIdFor, priceInfo, signupErrorMessage, stepFromParams, trialEndDate,
+  entitlementGivesAccess, passwordStrength, paymentLinkFor, priceIdFor, priceInfo, signupErrorMessage, stepFromParams, trialEndDate,
   type AccountForm, type SignupChoice, type SignupStep,
 } from "@/lib/signup-flow";
 
@@ -137,7 +137,7 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
             >
               {step === "plan" && <PasoPlan choice={choice} setChoice={setChoice} fin={fin} mode={mode} onNext={() => go(mode === "activar" || user ? "tarjeta" : "cuenta")} />}
               {step === "cuenta" && <PasoCuenta choice={choice} onBack={() => go("plan")} onDone={() => go("tarjeta")} />}
-              {step === "tarjeta" && <PasoTarjeta choice={choice} fin={fin} cancelado={params.get("cancelado") === "1"} onBack={() => go("plan")} />}
+              {step === "tarjeta" && <PasoTarjeta choice={choice} fin={fin} cancelado={params.get("cancelado") === "1"} onBack={() => go("plan")} onPaid={() => go("listo")} />}
               {step === "listo" && <PasoListo refresh={refreshSubscription} subscribed={subscribed} />}
             </motion.div>
           </AnimatePresence>
@@ -463,8 +463,14 @@ function Campo({ id, label, hint, error, children }: { id: string; label: string
 
 /* ── Paso 3: tarjeta ──────────────────────────────────────────────────────────────────────── */
 
-function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice; fin: Date; cancelado: boolean; onBack: () => void }) {
+/** Cómo se abre el pago: el checkout de la app (vuelve solo) o, si Stripe no deja crearlo, el enlace
+ *  de pago del plan en otra pestaña mientras esta espera a que el webhook active la prueba. */
+type ViaPago = { kind: "cargando" } | { kind: "checkout"; url: string } | { kind: "enlace"; url: string } | { kind: "ya" };
+const ESPERA_PAGO_MS = 3000;
+
+function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: SignupChoice; fin: Date; cancelado: boolean; onBack: () => void; onPaid: () => void }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [params] = useSearchParams();
   const [verificado] = useState(() => {
     let flag = false;
@@ -473,27 +479,118 @@ function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice;
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [via, setVia] = useState<ViaPago>({ kind: "cargando" });
+  const [esperando, setEsperando] = useState(false);
+  const [comprobando, setComprobando] = useState(false);
+  const preparado = useRef<Promise<ViaPago> | null>(null);
+  const hecho = useRef(false);
   const info = priceInfo(choice);
 
-  const abrir = async () => {
-    setBusy(true); setErr(null);
-    try {
-      saveChoice(choice);
-      const { data, error } = await supabase.functions.invoke("create-checkout", { body: { price_id: priceIdFor(choice), trial: true, return_to: "empezar" } });
-      if (error) {
-        const msg = await invokeError(error);
-        if (/ya tienes una suscripción/i.test(msg)) { navigate("/dashboard", { replace: true }); return; }
-        throw new Error(msg);
-      }
-      if ((data as any)?.error) throw new Error((data as any).error);
-      const url = (data as any)?.url;
-      if (!url) throw new Error("No se pudo abrir el pago");
-      window.location.href = url;
-    } catch (e) {
-      setErr(mensajePago(e instanceof Error ? e.message : ""));
-      setBusy(false);
+  // El pago se prepara al entrar en el paso: si la app puede crear el checkout, el botón va directo;
+  // si Stripe no lo deja (clave mal, caído…), el botón abre el enlace de pago del plan. Así el clic
+  // siempre funciona a la primera y la pestaña nueva no la bloquea el navegador.
+  useEffect(() => {
+    if (!user) return;
+    const enlace: ViaPago = { kind: "enlace", url: paymentLinkFor(choice, { id: user.id, email: user.email }) };
+    const p = (async (): Promise<ViaPago> => {
+      try {
+        const { data, error } = await supabase.functions.invoke("create-checkout", { body: { price_id: priceIdFor(choice), trial: true, return_to: "empezar" } });
+        if (error) {
+          const msg = await invokeError(error);
+          if (/ya tienes una suscripción/i.test(msg)) return { kind: "ya" };
+          return enlace;
+        }
+        const url = (data as any)?.url;
+        return url && !(data as any)?.error ? { kind: "checkout", url } : enlace;
+      } catch { return enlace; }
+    })();
+    preparado.current = p;
+    let vivo = true;
+    void p.then((v) => {
+      if (!vivo) return;
+      if (v.kind === "ya") { navigate("/dashboard", { replace: true }); return; }
+      setVia(v);
+    });
+    return () => { vivo = false; };
+  }, [user?.id, choice.plan, choice.period]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ¿Ya está pagado? Lo dice el servidor (el webhook de Stripe escribe user_entitlements de ESTA cuenta).
+  const comprobarPago = async (): Promise<boolean> => {
+    if (!user || hecho.current) return hecho.current;
+    const { data } = await (supabase as any).from("user_entitlements").select("status").eq("user_id", user.id).maybeSingle();
+    if (entitlementGivesAccess((data as any)?.status)) {
+      hecho.current = true;
+      onPaid();
+      return true;
     }
+    return false;
   };
+
+  // Mientras se paga en la otra pestaña: cada 3 s y al volver a esta pestaña.
+  useEffect(() => {
+    if (!esperando || !user) return;
+    let vivo = true;
+    const tick = () => { if (vivo) void comprobarPago(); };
+    tick();
+    const t = setInterval(tick, ESPERA_PAGO_MS);
+    const alVolver = () => { if (document.visibilityState === "visible") tick(); };
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { vivo = false; clearInterval(t); window.removeEventListener("focus", tick); document.removeEventListener("visibilitychange", alVolver); };
+  }, [esperando, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const abrirEnlace = (url: string) => {
+    // Pestaña nueva (esta se queda esperando). Si el navegador la bloquea, en esta misma.
+    const w = window.open(url, "_blank");
+    if (w) { try { w.opener = null; } catch { /* nada */ } } else { window.location.href = url; }
+    setEsperando(true);
+  };
+
+  const abrir = async () => {
+    setErr(null); saveChoice(choice);
+    if (via.kind === "checkout") { setBusy(true); window.location.href = via.url; return; }
+    if (via.kind === "enlace") { abrirEnlace(via.url); return; }
+    // Aún preparándose: se espera y se sigue.
+    setBusy(true);
+    const v = await (preparado.current ?? Promise.resolve<ViaPago>({ kind: "cargando" }));
+    if (v.kind === "checkout") { window.location.href = v.url; return; }
+    if (v.kind === "ya") { navigate("/dashboard", { replace: true }); return; }
+    if (v.kind === "enlace") { setBusy(false); abrirEnlace(v.url); return; }
+    setBusy(false);
+    setErr(mensajePago(""));
+  };
+
+  const yaHePagado = async () => {
+    setComprobando(true);
+    const ok = await comprobarPago();
+    setComprobando(false);
+    if (!ok) setErr("Aún no nos ha llegado la confirmación de Stripe. Si ya has terminado, espera unos segundos: esta pantalla se actualiza sola.");
+  };
+
+  if (esperando) {
+    const url = via.kind === "enlace" ? via.url : user ? paymentLinkFor(choice, { id: user.id, email: user.email }) : "";
+    return (
+      <section className="text-center" aria-live="polite">
+        <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#6E58F1]" aria-hidden="true" />
+        <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">Completa el pago en la pestaña de Stripe</h1>
+        <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">
+          Hemos abierto el pago seguro de Stripe en otra pestaña. Cuando añadas la tarjeta, <strong className="text-[#0F172B]">esta pantalla pasará sola</strong> a tu cuenta. Hoy no se cobra nada.
+        </p>
+        {err && <p className="mx-auto mt-4 max-w-md rounded-[10px] border border-[#F2D9B8] bg-[#FFF8EE] px-3 py-2.5 text-[13.5px] text-[#7A4A12]" role="status">{err}</p>}
+        <div className="mt-7 flex flex-col items-center gap-3">
+          <Button className="h-12 gap-2 px-8 text-[15px]" onClick={() => void yaHePagado()} disabled={comprobando}>
+            {comprobando ? <><Loader2 className="h-4 w-4 animate-spin" /> Comprobando…</> : <><Check className="h-4 w-4" /> Ya he añadido la tarjeta</>}
+          </Button>
+          {url && (
+            <a href={url} target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-[#5B40FB] hover:underline">
+              Volver a abrir el pago <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+          <button type="button" onClick={() => { setEsperando(false); setErr(null); }} className="text-[13px] text-[#65768D] hover:text-[#0F172B]">Cambiar de plan</button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section>
@@ -526,7 +623,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice;
 
       {err && <p className="mt-4 rounded-[10px] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-[13.5px] text-destructive" role="alert">{err}</p>}
 
-      <Button className="mt-6 h-12 w-full gap-2 text-[15px]" onClick={() => void abrir()} disabled={busy}>
+      <Button className="mt-6 h-12 w-full gap-2 text-[15px]" onClick={() => void abrir()} disabled={busy} data-via={via.kind}>
         {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Abriendo el pago seguro…</> : <><CreditCard className="h-4 w-4" /> Añadir tarjeta y empezar mi prueba</>}
       </Button>
       <ul className="mt-5 space-y-2 text-[13px] text-[#65768D]">

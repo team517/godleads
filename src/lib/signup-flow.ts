@@ -45,6 +45,28 @@ export function priceIdFor(c: SignupChoice): string {
   return c.period === "year" ? cfg.annual.priceId : cfg.monthly.priceId;
 }
 
+/** Enlaces de pago de Stripe de Funnyleads (14 días gratis, tarjeta obligatoria). 11-11-2026: si no
+ *  se puede abrir el checkout de la app (clave de Stripe mal o Stripe caído), el alta usa el enlace
+ *  del plan con el usuario en client_reference_id y el webhook le da la prueba a ESA cuenta. */
+export const SIGNUP_PAYMENT_LINKS: Record<SignupPlan, Record<SignupPeriod, string>> = {
+  starter: { month: "https://buy.stripe.com/aFa28kcYmbhy0e55o42ZO0g", year: "https://buy.stripe.com/5kQbIUcYm4Ta0e5bMs2ZO0h" },
+  growth: { month: "https://buy.stripe.com/dRm14ggaydpG7Gx6s82ZO0i", year: "https://buy.stripe.com/00w7sE7E299q6Ct17O2ZO0j" },
+  scale: { month: "https://buy.stripe.com/8x200c0bA2L2e4V17O2ZO0k", year: "https://buy.stripe.com/5kQcMYe2q85m2mddUA2ZO0l" },
+};
+
+/** Enlace de pago del plan para ESTE usuario: su id (para asignarle la suscripción aunque cambie el
+ *  correo en Stripe), su correo ya puesto y Stripe en español. */
+export function paymentLinkFor(c: SignupChoice, u: { id: string; email?: string | null }): string {
+  const q = new URLSearchParams({ client_reference_id: u.id, locale: "es" });
+  if (u.email) q.set("prefilled_email", u.email);
+  return `${SIGNUP_PAYMENT_LINKS[c.plan][c.period]}?${q.toString()}`;
+}
+
+/** Estados de user_entitlements que ya dan acceso (la prueba ha empezado). */
+export function entitlementGivesAccess(status: string | null | undefined): boolean {
+  return status === "trialing" || status === "active";
+}
+
 /** Precio por mes que se enseña (el anual, prorrateado) y lo que se cobra de una vez. */
 export function priceInfo(c: SignupChoice): { perMonth: number; charge: number; chargeLabel: string } {
   const cfg = PLAN_CONFIG[c.plan];

@@ -16,14 +16,16 @@
 // billing_events (un evento repetido por Stripe responde 200 sin reprocesar).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@18.5.0?target=deno";
-import { ESTADOS_BAJA, ESTADOS_IMPAGO, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
+import { ESTADOS_BAJA, ESTADOS_IMPAGO, filaDesdeSesionDeEnlace, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
 Deno.serve(async (req) => {
   const secret = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
-  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "";
-  if (!secret || !stripeKey) return json({ error: "webhook no configurado" }, 501);
+  // 11-11-2026: la firma sólo necesita el secreto del webhook. Sin una clave válida se procesa igual
+  // con lo que trae el aviso (las consultas a Stripe fallan y se usan los datos del evento).
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "sk_sin_configurar";
+  if (!secret) return json({ error: "webhook no configurado" }, 501);
 
   const sig = req.headers.get("stripe-signature");
   if (!sig) return new Response("sin firma", { status: 400 });
@@ -64,7 +66,11 @@ Deno.serve(async (req) => {
     } catch { return null; }
   };
   const findUserId = async (customerId: string, email: string | null, clientRef?: string | null): Promise<string | null> => {
-    if (clientRef && /^[0-9a-f-]{36}$/i.test(clientRef)) return clientRef;
+    if (clientRef && /^[0-9a-f-]{36}$/i.test(clientRef)) {
+      // Sólo si el usuario existe (un id inventado en el enlace no crea filas huérfanas).
+      const { data: u } = await db.auth.admin.getUserById(clientRef);
+      if (u?.user) return clientRef;
+    }
     const { data: known } = await db.from("user_entitlements").select("user_id").eq("stripe_customer_id", customerId).maybeSingle();
     if (known?.user_id) return known.user_id;
     if (!email) return null;
@@ -91,7 +97,7 @@ Deno.serve(async (req) => {
 
     const customerId = String(sub.customer);
     const email = await customerEmail(customerId);
-    const userId = await findUserId(customerId, email, opts.clientRef);
+    const userId = await findUserId(customerId, email, opts.clientRef ?? ((sub.metadata as any)?.user_id || null));
 
     const status = opts.deleted ? "canceled" : sub.status;
     const sinPlan = opts.deleted || (ESTADOS_BAJA as readonly string[]).includes(status) || status === "incomplete_expired";
@@ -150,9 +156,32 @@ Deno.serve(async (req) => {
         const email = (ses.customer_details?.email || ses.customer_email || "").toLowerCase() || null;
         if (ses.mode === "subscription" && ses.subscription) {
           // Enlace de pago de la landing o checkout de la app: la suscripción ya existe al completar.
-          const sub = await stripe.subscriptions.retrieve(String(ses.subscription));
-          const r = await applySubscription(sub, { clientRef: ses.client_reference_id });
-          await registrar({ user_id: r?.userId ?? null, email: r?.email ?? email, tier: r?.row.tier ?? null, status: r?.row.status ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
+          let sub: Stripe.Subscription | null = null;
+          try { sub = await stripe.subscriptions.retrieve(String(ses.subscription)); }
+          catch (e) { console.warn("no se pudo leer la suscripción en Stripe, se usa el aviso:", (e as any)?.type || "error"); }
+          if (sub) {
+            const r = await applySubscription(sub, { clientRef: ses.client_reference_id });
+            await registrar({ user_id: r?.userId ?? null, email: r?.email ?? email, tier: r?.row.tier ?? null, status: r?.row.status ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
+          } else {
+            // Plan B (clave de Stripe mal o caída): el enlace de pago trae el plan en la metadata y el
+            // usuario en client_reference_id. Con eso se da la prueba; customer.subscription.* lo afina.
+            const fila = filaDesdeSesionDeEnlace({
+              mode: ses.mode, payment_link: typeof ses.payment_link === "string" ? ses.payment_link : (ses.payment_link as any)?.id ?? null,
+              metadata: ses.metadata as any, customer: ses.customer ? String(typeof ses.customer === "string" ? ses.customer : (ses.customer as any).id) : null,
+              subscription: String(ses.subscription), created: ses.created, amount_total: ses.amount_total,
+            });
+            const userId = fila ? await findUserId(String(fila.stripe_customer_id), email, ses.client_reference_id) : null;
+            if (fila && userId) {
+              const { error } = await db.from("user_entitlements").upsert({ user_id: userId, ...fila }, { onConflict: "user_id" });
+              if (error) throw new Error(`user_entitlements: ${error.message}`);
+              console.log(`derechos (desde el aviso) actualizados: ${userId} → ${fila.tier}/${fila.status}`);
+            } else if (fila && email) {
+              const { last_payment_error: _e, last_event_at: _t, ...pend } = fila;
+              const { error } = await db.from("pending_entitlements").upsert({ email, ...pend, updated_at: new Date().toISOString() }, { onConflict: "email" });
+              if (error) throw new Error(`pending_entitlements: ${error.message}`);
+            }
+            await registrar({ user_id: userId, email, tier: (fila?.tier as string) ?? null, status: (fila?.status as string) ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
+          }
         } else {
           // Pago único (formación 1:1 de 350 €): sólo queda registrado para el equipo.
           const userId = ses.customer ? await findUserId(String(ses.customer), email, ses.client_reference_id) : null;
@@ -178,7 +207,13 @@ Deno.serve(async (req) => {
           } catch { /* sin detalle del intento */ }
         }
         let r = null;
-        if (subId) r = await applySubscription(await stripe.subscriptions.retrieve(String(subId)), { paymentError });
+        if (subId) {
+          // Sin clave válida no se puede releer: el estado llega igual por customer.subscription.updated.
+          let sub: Stripe.Subscription | null = null;
+          try { sub = await stripe.subscriptions.retrieve(String(subId)); }
+          catch (e) { console.warn("factura sin releer la suscripción:", (e as any)?.type || "error"); }
+          if (sub) r = await applySubscription(sub, { paymentError });
+        }
         await registrar({
           user_id: r?.userId ?? null, email: r?.email ?? ((inv.customer_email || "").toLowerCase() || null),
           tier: r?.row.tier ?? null, status: fallo ? "payment_failed" : "paid",
