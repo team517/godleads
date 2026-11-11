@@ -290,7 +290,10 @@ export default function CampaignOptions({ campaignId }: Props) {
     const load = async () => {
       if (!user) return;
       const [accRes, caRes, campRes, stepsRes, tagsRes, mgrRes, cliRes, otherCampRes] = await Promise.all([
-        supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_increment, warmup_limit").eq("user_id", user.id),
+        // warmup_day = el envío del día 1 de la rampa. Sin él, la capacidad se calculaba como si cada
+        // cuenta empezara en 1 al día (11-11-2026: "Hoy la capacidad de tus cuentas es 7" con 7
+        // buzones que empiezan en 29).
+        supabase.from("email_accounts").select("id, email, status, tags, sent_today, daily_limit, warmup_enabled, warmup_started_at, warmup_day, warmup_increment, warmup_limit").eq("user_id", user.id),
         supabase.from("campaign_accounts").select("account_id").eq("campaign_id", campaignId),
         supabase.from("campaigns").select("*").eq("id", campaignId).single(),
         supabase.from("campaign_steps").select("id, step_order, subject").eq("campaign_id", campaignId).order("step_order"),
