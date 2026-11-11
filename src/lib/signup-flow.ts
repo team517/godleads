@@ -2,6 +2,9 @@
 // periodo vienen preseleccionados, cuánto se cobrará al acabar la prueba, en qué paso se está y
 // las validaciones del formulario. La interfaz está en src/components/signup/SignupFlow.tsx.
 import { PLAN_CONFIG } from "@/contexts/SubscriptionContext";
+import {
+  CUSTOM_DEFAULT_LEVEL, customLevel, customPaymentLink, customPerMonth, customPriceId, fmtVolume, parseCustomLevel,
+} from "@/lib/custom-plan";
 
 export type SignupPlan = "starter" | "growth" | "scale";
 export type SignupPeriod = "month" | "year";
@@ -15,22 +18,47 @@ export const SIGNUP_STORAGE_KEY = "fl_signup_choice_v1";
 const PLAN_ALIAS: Record<string, SignupPlan> = { starter: "starter", basico: "starter", "básico": "starter", basic: "starter", growth: "growth", scale: "scale" };
 const PERIOD_ALIAS: Record<string, SignupPeriod> = { month: "month", mes: "month", mensual: "month", monthly: "month", year: "year", "año": "year", ano: "year", anual: "year", yearly: "year", annual: "year" };
 
-export interface SignupChoice { plan: SignupPlan; period: SignupPeriod }
+/** "custom" = plan a medida (11-11-2026): `level` 1–10, se paga desde el primer día (sin prueba). */
+export interface SignupChoice { plan: SignupPlan | "custom"; period: SignupPeriod; level?: number }
 
-/** Plan y periodo de la URL (?plan=growth&periodo=year); lo que no se entiende → Starter mensual. */
+export const isCustomChoice = (c: SignupChoice): boolean => c.plan === "custom";
+/** Sólo los planes normales tienen los 14 días gratis. */
+export const choiceHasTrial = (c: SignupChoice): boolean => c.plan !== "custom";
+
+/** Plan y periodo de la URL (?plan=growth&periodo=year, ?plan=custom&nivel=5); lo que no se entiende → Starter mensual. */
 export function choiceFromParams(params: URLSearchParams, saved?: SignupChoice | null): SignupChoice {
-  const plan = PLAN_ALIAS[(params.get("plan") || "").trim().toLowerCase()];
-  const period = PERIOD_ALIAS[(params.get("periodo") || params.get("period") || "").trim().toLowerCase()];
-  return { plan: plan ?? saved?.plan ?? "starter", period: period ?? saved?.period ?? "month" };
+  const raw = (params.get("plan") || "").trim().toLowerCase();
+  const period = PERIOD_ALIAS[(params.get("periodo") || params.get("period") || "").trim().toLowerCase()] ?? saved?.period ?? "month";
+  if (raw === "custom" || /^custom-\d{1,2}$/.test(raw)) {
+    const level = parseCustomLevel(params.get("nivel") || params.get("level") || (raw.startsWith("custom-") ? raw : ""))
+      ?? (saved?.plan === "custom" ? saved.level : null) ?? CUSTOM_DEFAULT_LEVEL;
+    return { plan: "custom", period, level };
+  }
+  const plan = PLAN_ALIAS[raw];
+  if (!plan && saved?.plan === "custom") return { plan: "custom", period, level: saved.level ?? CUSTOM_DEFAULT_LEVEL };
+  return { plan: plan ?? (saved?.plan as SignupPlan | undefined) ?? "starter", period };
 }
 
 export function parseSavedChoice(raw: string | null | undefined): SignupChoice | null {
   if (!raw) return null;
   try {
     const j = JSON.parse(raw);
-    if (SIGNUP_PLANS.includes(j?.plan) && (j?.period === "month" || j?.period === "year")) return { plan: j.plan, period: j.period };
+    const okPeriod = j?.period === "month" || j?.period === "year";
+    if (okPeriod && j?.plan === "custom" && parseCustomLevel(j?.level)) return { plan: "custom", period: j.period, level: parseCustomLevel(j.level)! };
+    if (SIGNUP_PLANS.includes(j?.plan) && okPeriod) return { plan: j.plan, period: j.period };
   } catch { /* nada */ }
   return null;
+}
+
+/** Nombre del plan elegido: "Starter" o "A medida · 1M envíos". */
+export function choiceLabel(c: SignupChoice): string {
+  if (c.plan === "custom") return `A medida · ${fmtVolume(customLevel(c.level ?? CUSTOM_DEFAULT_LEVEL).emails)} envíos`;
+  return PLAN_CONFIG[c.plan].label;
+}
+
+/** Valor que se manda al servidor del alta (signup-flow guarda "custom-N"). */
+export function choicePlanParam(c: SignupChoice): string {
+  return c.plan === "custom" ? `custom-${c.level ?? CUSTOM_DEFAULT_LEVEL}` : c.plan;
 }
 
 /** Paso pedido en la URL (?paso=…). El paso "listo" sólo pinta la espera: el acceso lo da el servidor. */
@@ -41,6 +69,7 @@ export function stepFromParams(params: URLSearchParams): SignupStep | null {
 
 /** Price id de Stripe del plan y periodo (los mismos que acepta create-checkout). */
 export function priceIdFor(c: SignupChoice): string {
+  if (c.plan === "custom") return customPriceId(c.level ?? CUSTOM_DEFAULT_LEVEL, c.period);
   const cfg = PLAN_CONFIG[c.plan];
   return c.period === "year" ? cfg.annual.priceId : cfg.monthly.priceId;
 }
@@ -59,7 +88,8 @@ export const SIGNUP_PAYMENT_LINKS: Record<SignupPlan, Record<SignupPeriod, strin
 export function paymentLinkFor(c: SignupChoice, u: { id: string; email?: string | null }): string {
   const q = new URLSearchParams({ client_reference_id: u.id, locale: "es" });
   if (u.email) q.set("prefilled_email", u.email);
-  return `${SIGNUP_PAYMENT_LINKS[c.plan][c.period]}?${q.toString()}`;
+  const base = c.plan === "custom" ? customPaymentLink(c.level ?? CUSTOM_DEFAULT_LEVEL, c.period) : SIGNUP_PAYMENT_LINKS[c.plan][c.period];
+  return `${base}?${q.toString()}`;
 }
 
 /** Estados de user_entitlements que ya dan acceso (la prueba ha empezado). */
@@ -69,6 +99,11 @@ export function entitlementGivesAccess(status: string | null | undefined): boole
 
 /** Precio por mes que se enseña (el anual, prorrateado) y lo que se cobra de una vez. */
 export function priceInfo(c: SignupChoice): { perMonth: number; charge: number; chargeLabel: string } {
+  if (c.plan === "custom") {
+    const l = customLevel(c.level ?? CUSTOM_DEFAULT_LEVEL);
+    const charge = c.period === "year" ? l.eurYear : l.eurMonth;
+    return { perMonth: customPerMonth(l, c.period), charge, chargeLabel: `${fmtEur(charge)} ${c.period === "year" ? "al año" : "al mes"}` };
+  }
   const cfg = PLAN_CONFIG[c.plan];
   if (c.period === "year") return { perMonth: cfg.annual.perMonth, charge: cfg.annual.price, chargeLabel: `${fmtEur(cfg.annual.price)} al año` };
   return { perMonth: cfg.monthly.price, charge: cfg.monthly.price, chargeLabel: `${fmtEur(cfg.monthly.price)} al mes` };

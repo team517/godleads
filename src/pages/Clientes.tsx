@@ -255,9 +255,9 @@ function SetupChips({ setup }: { setup?: ClientSetup }) {
 /** El consumo del plan de este mes, sumando al dueño y a sus clientes. Es una
  *  medida: aquí no se bloquea nada, sólo se cuenta lo que dice el servidor. */
 function PlanConsumoLine() {
-  const { tier, isTrialing } = useSubscription();
+  const { tier, isTrialing, customPlan } = useSubscription();
   const { usage, loading, error } = usePlanUsage();
-  const limit = getPlanLimits(tier, isTrialing).emailsPerMonth;
+  const limit = getPlanLimits(tier, isTrialing, customPlan).emailsPerMonth;
 
   if (loading) {
     return (

@@ -66,8 +66,14 @@ function getTierFromProductId(productId: string | null): PlanTier {
   return "free";
 }
 
-export function getPlanLimits(tier: PlanTier, _isTrialing: boolean) {
+/** Plan a medida (11-11-2026): sus topes. Se guarda con tier "scale" (todas las funciones de Scale). */
+export interface CustomPlanInfo { level: number; emailsPerMonth: number; contacts: number; clients: number }
+
+export function getPlanLimits(tier: PlanTier, _isTrialing: boolean, custom?: CustomPlanInfo | null) {
   if (tier === "free") return FREE_LIMITS;
+  if (custom) {
+    return { maxLeads: custom.contacts, maxAccounts: Infinity, emailsPerMonth: custom.emailsPerMonth, maxClients: custom.clients };
+  }
   return {
     maxLeads: PLAN_CONFIG[tier].maxLeads,
     maxAccounts: PLAN_CONFIG[tier].maxAccounts,
@@ -110,12 +116,21 @@ interface SubscriptionContextType {
   billable: boolean;
   /** Registro desde el corte sin prueba con tarjeta ni plan: la app enseña "Activa tu prueba gratuita". */
   needsCard: boolean;
+  /** Plan a medida (nivel y topes) o null. */
+  customPlan: CustomPlanInfo | null;
+  /** Tiene una suscripción de Stripe (no un plan concedido a mano): el cambio de plan va por Stripe. */
+  hasStripeSubscription: boolean;
   refreshSubscription: () => Promise<void>;
 }
 
 const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined);
 
-const ENTITLEMENT_COLS = "status, tier, trial_end, current_period_end, cancel_at_period_end, last_payment_error, updated_at, last_event_at";
+const ENTITLEMENT_COLS = "status, tier, trial_end, current_period_end, cancel_at_period_end, last_payment_error, updated_at, last_event_at, custom_level, plan_emails_month, plan_contacts, plan_clients, stripe_subscription_id";
+
+function toCustomPlan(row: any): CustomPlanInfo | null {
+  if (!row?.custom_level || !row?.plan_emails_month) return null;
+  return { level: Number(row.custom_level), emailsPerMonth: Number(row.plan_emails_month), contacts: Number(row.plan_contacts) || 0, clients: Number(row.plan_clients) || 0 };
+}
 /** Una fila más vieja que esto se vuelve a comprobar en Stripe en segundo plano. */
 const ENTITLEMENT_STALE_MS = 6 * 60 * 60 * 1000;
 
@@ -148,6 +163,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [paymentProblem, setPaymentProblem] = useState<SubscriptionContextType["paymentProblem"]>(null);
   const [billable, setBillable] = useState(false);
   const [needsCard, setNeedsCard] = useState(false);
+  const [customPlan, setCustomPlan] = useState<CustomPlanInfo | null>(null);
+  const [hasStripeSubscription, setHasStripeSubscription] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const resetSubscriptionState = useCallback(() => {
@@ -155,6 +172,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     setIsTrialing(false); setTrialEnd(null); setTrialDaysLeft(null); setTrialExpired(false);
     setRole(null); setStatus("free"); setEntitlement(null); setPeriodEnd(null);
     setCancelAtPeriodEnd(false); setPaymentProblem(null); setBillable(false); setNeedsCard(false);
+    setCustomPlan(null); setHasStripeSubscription(false);
   }, []);
 
   const applyDecision = useCallback((decision: AccessDecision, ent: EntitlementInput | null) => {
@@ -235,6 +253,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setRole((roleData as any)?.role ?? null);
       const entRow = (entRes as any)?.data ?? null;
       const ent = toEntitlement(entRow);
+      setCustomPlan(toCustomPlan(entRow));
+      setHasStripeSubscription(!!entRow?.stripe_subscription_id);
 
       const baseInput = {
         email: user.email || null,
@@ -290,13 +310,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     refreshSubscription();
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const limits = getPlanLimits(tier, isTrialing);
+  const limits = getPlanLimits(tier, isTrialing, customPlan);
 
   return (
     <SubscriptionContext.Provider value={{
       tier, subscribed, subscriptionEnd, loading, limits, isTrialing, trialEnd, trialExpired, trialDaysLeft,
       role, isAdmin: role === "admin", status, entitlement, periodEnd, cancelAtPeriodEnd, paymentProblem, billable,
-      needsCard, refreshSubscription,
+      needsCard, customPlan, hasStripeSubscription, refreshSubscription,
     }}>
       {children}
     </SubscriptionContext.Provider>

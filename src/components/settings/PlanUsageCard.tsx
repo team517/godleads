@@ -89,7 +89,8 @@ export function SubscriptionStatusBlock() {
 
 export function PlanUsageCard({ tier, isTrialing }: { tier: PlanTier; isTrialing: boolean }) {
   const { usage, loading, error, reload } = usePlanUsage();
-  const limits = getPlanLimits(tier, isTrialing);
+  const { customPlan } = useSubscription();
+  const limits = getPlanLimits(tier, isTrialing, customPlan);
 
   return (
     <Card>

@@ -11,21 +11,30 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription, PLAN_CONFIG } from "@/contexts/SubscriptionContext";
 import { cn } from "@/lib/utils";
+import { CUSTOM_DEFAULT_LEVEL, customLevel, fmtNum } from "@/lib/custom-plan";
 import {
   SIGNUP_PLANS, SIGNUP_STORAGE_KEY, SIGNUP_TRIAL_DAYS, accountErrors, choiceFromParams, fmtDay, fmtEur, parseSavedChoice,
   entitlementGivesAccess, passwordStrength, paymentLinkFor, priceIdFor, priceInfo, signupErrorMessage, stepFromParams, trialEndDate,
-  type AccountForm, type SignupChoice, type SignupStep,
+  choiceHasTrial, choiceLabel, choicePlanParam,
+  type AccountForm, type SignupChoice, type SignupPlan, type SignupStep,
 } from "@/lib/signup-flow";
 
 /* Alta con prueba gratuita de 14 días (11-11-2026). Tres pasos —plan, cuenta, tarjeta— y la vuelta
    de Stripe. "activar" = una cuenta ya creada sin prueba con tarjeta (sólo plan y tarjeta). El acceso
    NUNCA lo da esta pantalla: lo da la suscripción que el webhook de Stripe guarda en el servidor. */
 
-const PLAN_LINES: Record<SignupChoice["plan"], string[]> = {
+const PLAN_LINES: Record<SignupPlan, string[]> = {
   starter: ["15.000 correos al mes", "5.000 contactos", "Buzones y warm-up ilimitados"],
   growth: ["180.000 correos al mes", "60.000 contactos", "Respuestas con IA"],
   scale: ["500.000 correos al mes", "Contactos ilimitados", "Soporte 1:1"],
 };
+
+/** Líneas del plan elegido (las del plan a medida salen de su nivel). */
+function planLines(c: SignupChoice): string[] {
+  if (c.plan !== "custom") return PLAN_LINES[c.plan];
+  const l = customLevel(c.level ?? CUSTOM_DEFAULT_LEVEL);
+  return [`${fmtNum(l.emails)} correos al mes`, `${fmtNum(l.contacts)} contactos`, `${l.clients} clientes`];
+}
 
 const STEPS_ALTA: { id: SignupStep; label: string }[] = [
   { id: "plan", label: "Tu prueba" },
@@ -88,6 +97,7 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
     setStep(next);
     const p = new URLSearchParams(params);
     p.set("paso", next); p.set("plan", choice.plan); p.set("periodo", choice.period); p.delete("cancelado");
+    if (choice.plan === "custom") p.set("nivel", String(choice.level ?? CUSTOM_DEFAULT_LEVEL)); else p.delete("nivel");
     setParams(p, { replace: true });
   };
 
@@ -138,7 +148,7 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
               {step === "plan" && <PasoPlan choice={choice} setChoice={setChoice} fin={fin} mode={mode} onNext={() => go(mode === "activar" || user ? "tarjeta" : "cuenta")} />}
               {step === "cuenta" && <PasoCuenta choice={choice} onBack={() => go("plan")} onDone={() => go("tarjeta")} />}
               {step === "tarjeta" && <PasoTarjeta choice={choice} fin={fin} cancelado={params.get("cancelado") === "1"} onBack={() => go("plan")} onPaid={() => go("listo")} />}
-              {step === "listo" && <PasoListo refresh={refreshSubscription} subscribed={subscribed} />}
+              {step === "listo" && <PasoListo refresh={refreshSubscription} subscribed={subscribed} custom={choice.plan === "custom"} />}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -148,13 +158,25 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
       <aside className="relative m-3 hidden w-[420px] shrink-0 overflow-hidden rounded-[20px] bg-[#312A63] p-9 text-white lg:block [background-image:radial-gradient(120%_90%_at_50%_0%,rgba(160,138,255,.52)_0%,rgba(12,21,18,0)_62%)]">
         <div className="pointer-events-none absolute inset-0 opacity-60 [background-image:radial-gradient(rgba(255,255,255,.10)_1px,transparent_1.3px)] [background-size:22px_22px] [mask-image:radial-gradient(circle_at_50%_30%,#000_0%,transparent_72%)]" />
         <div className="relative">
+          {!choiceHasTrial(choice) ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[12px] font-semibold text-[#E0DCFA]"><Sparkles className="h-3.5 w-3.5" /> Plan a medida</span>
+              <h2 className="mt-5 font-display text-[34px] font-semibold leading-[1.08] tracking-[-0.035em]">Tu volumen.<br />Tu precio.</h2>
+              <ol className="mt-8 space-y-5 text-[14.5px] text-[#E0DCFA]">
+                <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">1</span><span><strong className="text-white">Hoy:</strong> pagas {precio.chargeLabel} y tienes todo lo de Scale con los límites de tu nivel.</span></li>
+                <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">2</span><span><strong className="text-white">Tu plan:</strong> {planLines(choice).join(" · ")}.</span></li>
+                <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">3</span><span><strong className="text-white">Cuando quieras:</strong> cambia de nivel o cancela desde Ajustes.</span></li>
+              </ol>
+            </>
+          ) : (<>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[12px] font-semibold text-[#E0DCFA]"><Sparkles className="h-3.5 w-3.5" /> Prueba gratuita</span>
           <h2 className="mt-5 font-display text-[34px] font-semibold leading-[1.08] tracking-[-0.035em]">{SIGNUP_TRIAL_DAYS} días gratis.<br />Hoy no te cobramos nada.</h2>
           <ol className="mt-8 space-y-5 text-[14.5px] text-[#E0DCFA]">
-            <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">1</span><span><strong className="text-white">Hoy:</strong> acceso completo al plan {PLAN_CONFIG[choice.plan].label}. Pagas 0 €.</span></li>
+            <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">1</span><span><strong className="text-white">Hoy:</strong> acceso completo al plan {choiceLabel(choice)}. Pagas 0 €.</span></li>
             <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">2</span><span><strong className="text-white">Durante la prueba:</strong> conecta buzones, lanza campañas y responde desde el Unibox.</span></li>
             <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">3</span><span><strong className="text-white">El {fmtDay(fin)}:</strong> empieza tu plan a {precio.chargeLabel}. Si cancelas antes desde Ajustes, no se cobra nada.</span></li>
           </ol>
+          </>)}
           <div className="mt-10 flex items-center gap-2 text-[12.5px] text-[#C9C2F2]"><Lock className="h-3.5 w-3.5" /> Pago seguro con Stripe. Tu tarjeta no pasa por nuestros servidores.</div>
         </div>
       </aside>
@@ -164,7 +186,64 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
 
 /* ── Paso 1: plan ─────────────────────────────────────────────────────────────────────────── */
 
+/** Plan a medida (11-11-2026): el nivel elegido en la barra, sin prueba (se paga hoy). */
+function PasoPlanAMedida({ choice, setChoice, onNext }: { choice: SignupChoice; setChoice: (c: SignupChoice) => void; onNext: () => void }) {
+  const l = customLevel(choice.level ?? CUSTOM_DEFAULT_LEVEL);
+  const info = priceInfo(choice);
+  const nivel = (d: number) => setChoice({ ...choice, level: Math.min(10, Math.max(1, l.level + d)) });
+  return (
+    <section>
+      <p className="text-[13px] font-semibold uppercase tracking-wider text-[#6E58F1]">Plan a medida</p>
+      <h1 className="mt-2 font-display text-[30px] font-semibold leading-tight tracking-[-0.03em] text-[#0F172B] sm:text-[34px]">Tu plan, a tu volumen</h1>
+      <p className="mt-3 text-[15.5px] leading-relaxed text-[#45556C]">Todo lo de Scale con los límites de tu nivel. <strong className="text-[#0F172B]">Se paga hoy</strong>: el plan a medida no tiene prueba gratuita.</p>
+
+      <div className="mt-6 inline-flex rounded-full border border-[#E6E3F0] bg-white p-1" role="radiogroup" aria-label="Facturación">
+        {(["month", "year"] as const).map((p) => (
+          <button key={p} type="button" role="radio" aria-checked={choice.period === p} onClick={() => setChoice({ ...choice, period: p })}
+            className={cn("rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-all", choice.period === p ? "bg-[#6E58F1] text-white shadow-sm" : "text-[#65768D] hover:text-[#0F172B]")}>
+            {p === "month" ? "Mensual" : <>Anual <span className={cn("ml-1 rounded-full px-1.5 py-0.5 text-[11px]", choice.period === p ? "bg-white/20" : "bg-[#E8F7F0] text-[#0A7A52]")}>-17 %</span></>}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-5 rounded-[14px] border border-[#6E58F1] bg-white p-4 shadow-[0_0_0_3px_rgba(110,88,241,.14),0_10px_26px_rgba(110,88,241,.12)]" data-testid="plan-a-medida">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-display text-[17px] font-semibold tracking-[-0.02em] text-[#0F172B]">Nivel {l.level} · {choiceLabel(choice)}</p>
+            <ul className="mt-2 space-y-1 text-[13.5px] text-[#45556C]">
+              {planLines(choice).map((t) => <li key={t} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#6E58F1]" /> {t}</li>)}
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#6E58F1]" /> Todo lo de Scale incluido</li>
+            </ul>
+          </div>
+          <span className="shrink-0 text-right">
+            <span className="block font-display text-[22px] font-semibold tracking-[-0.02em] text-[#0F172B]">{fmtEur(info.perMonth)}<span className="text-[12.5px] font-medium text-[#65768D]">/mes</span></span>
+            {choice.period === "year" && <span className="block text-[11.5px] text-[#65768D]">{fmtEur(l.eurYear)} al año</span>}
+          </span>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" className="h-8" disabled={l.level <= 1} onClick={() => nivel(-1)} aria-label="Bajar de nivel">−</Button>
+          <span className="text-[12.5px] text-[#65768D]">Nivel {l.level} de 10</span>
+          <Button type="button" variant="outline" size="sm" className="h-8" disabled={l.level >= 10} onClick={() => nivel(1)} aria-label="Subir de nivel">+</Button>
+        </div>
+      </div>
+
+      <div className="mt-6 flex items-center justify-between gap-3 rounded-[14px] border border-[#E6E3F0] bg-white px-4 py-3">
+        <span className="text-[14px] text-[#0F172B]">Hoy pagas</span>
+        <span className="font-display text-[22px] font-semibold tracking-[-0.02em] text-[#0F172B]" data-testid="hoy-pagas">{fmtEur(info.charge)}</span>
+      </div>
+      <button type="button" onClick={() => setChoice({ plan: "starter", period: choice.period })} className="mt-3 text-[13px] font-medium text-[#5B40FB] hover:underline">
+        Prefiero un plan con 14 días gratis
+      </button>
+
+      <Button className="mt-5 h-12 w-full gap-2 text-[15px]" onClick={onNext}>
+        Continuar <ArrowRight className="h-4 w-4" />
+      </Button>
+    </section>
+  );
+}
+
 function PasoPlan({ choice, setChoice, fin, mode, onNext }: { choice: SignupChoice; setChoice: (c: SignupChoice) => void; fin: Date; mode: "alta" | "activar"; onNext: () => void }) {
+  if (choice.plan === "custom") return <PasoPlanAMedida choice={choice} setChoice={setChoice} onNext={onNext} />;
   return (
     <section>
       <p className="text-[13px] font-semibold uppercase tracking-wider text-[#6E58F1]">{mode === "activar" ? "Activa tu prueba gratuita" : "Empieza gratis"}</p>
@@ -366,7 +445,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
       // 11-11-2026: la cuenta la crea el servidor sin confirmar y el correo con el botón "Verificar mi
       // cuenta" lo manda team@ (antes, Supabase con un enlace a supabase.co que Gmail marcaba).
       const { data, error } = await supabase.functions.invoke("signup-flow", {
-        body: { action: "start", name: f.name.trim(), company: f.company.trim(), email, password: f.password, plan: choice.plan, period: choice.period },
+        body: { action: "start", name: f.name.trim(), company: f.company.trim(), email, password: f.password, plan: choicePlanParam(choice), period: choice.period },
       });
       let body = data as { user_id?: string; error?: string } | null;
       if (error) { try { body = await (error as any).context?.json?.(); } catch { /* sin cuerpo */ } }
@@ -389,7 +468,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
   return (
     <section>
       <h1 className="font-display text-[28px] font-semibold tracking-[-0.03em] text-[#0F172B]">Crea tu cuenta</h1>
-      <p className="mt-2 text-[15px] text-[#45556C]">Un minuto y estás dentro. Prueba del plan {PLAN_CONFIG[choice.plan].label}.</p>
+      <p className="mt-2 text-[15px] text-[#45556C]">Un minuto y estás dentro. {choiceHasTrial(choice) ? `Prueba del plan ${choiceLabel(choice)}.` : `Plan ${choiceLabel(choice)}.`}</p>
 
       <form className="mt-6 space-y-4" onSubmit={submit} noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -485,6 +564,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
   const preparado = useRef<Promise<ViaPago> | null>(null);
   const hecho = useRef(false);
   const info = priceInfo(choice);
+  const conPrueba = choiceHasTrial(choice);
 
   // El pago se prepara al entrar en el paso: si la app puede crear el checkout, el botón va directo;
   // si Stripe no lo deja (clave mal, caído…), el botón abre el enlace de pago del plan. Así el clic
@@ -494,7 +574,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
     const enlace: ViaPago = { kind: "enlace", url: paymentLinkFor(choice, { id: user.id, email: user.email }) };
     const p = (async (): Promise<ViaPago> => {
       try {
-        const { data, error } = await supabase.functions.invoke("create-checkout", { body: { price_id: priceIdFor(choice), trial: true, return_to: "empezar" } });
+        const { data, error } = await supabase.functions.invoke("create-checkout", { body: { price_id: priceIdFor(choice), trial: choiceHasTrial(choice), return_to: "empezar" } });
         if (error) {
           const msg = await invokeError(error);
           if (/ya tienes una suscripción/i.test(msg)) return { kind: "ya" };
@@ -512,7 +592,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
       setVia(v);
     });
     return () => { vivo = false; };
-  }, [user?.id, choice.plan, choice.period]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, choice.plan, choice.period, choice.level]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ¿Ya está pagado? Lo dice el servidor (el webhook de Stripe escribe user_entitlements de ESTA cuenta).
   const comprobarPago = async (): Promise<boolean> => {
@@ -574,7 +654,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
         <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#6E58F1]" aria-hidden="true" />
         <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">Completa el pago en la pestaña de Stripe</h1>
         <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">
-          Hemos abierto el pago seguro de Stripe en otra pestaña. Cuando añadas la tarjeta, <strong className="text-[#0F172B]">esta pantalla pasará sola</strong> a tu cuenta. Hoy no se cobra nada.
+          Hemos abierto el pago seguro de Stripe en otra pestaña. Cuando añadas la tarjeta, <strong className="text-[#0F172B]">esta pantalla pasará sola</strong> a tu cuenta.{conPrueba ? " Hoy no se cobra nada." : ""}
         </p>
         {err && <p className="mx-auto mt-4 max-w-md rounded-[10px] border border-[#F2D9B8] bg-[#FFF8EE] px-3 py-2.5 text-[13.5px] text-[#7A4A12]" role="status">{err}</p>}
         <div className="mt-7 flex flex-col items-center gap-3">
@@ -599,8 +679,13 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
           <Check className="h-4 w-4" strokeWidth={3} /> Cuenta verificada. Ya solo falta tu tarjeta.
         </p>
       )}
-      <h1 className="font-display text-[28px] font-semibold tracking-[-0.03em] text-[#0F172B]">Añade tu tarjeta para activar la prueba</h1>
-      <p className="mt-2 text-[15px] text-[#45556C]">Es sólo para activar la prueba. <strong className="text-[#0F172B]">Hoy no se cobra nada.</strong></p>
+      {conPrueba ? (<>
+        <h1 className="font-display text-[28px] font-semibold tracking-[-0.03em] text-[#0F172B]">Añade tu tarjeta para activar la prueba</h1>
+        <p className="mt-2 text-[15px] text-[#45556C]">Es sólo para activar la prueba. <strong className="text-[#0F172B]">Hoy no se cobra nada.</strong></p>
+      </>) : (<>
+        <h1 className="font-display text-[28px] font-semibold tracking-[-0.03em] text-[#0F172B]">Paga tu plan a medida</h1>
+        <p className="mt-2 text-[15px] text-[#45556C]">El plan a medida no tiene prueba: <strong className="text-[#0F172B]">se cobra hoy</strong> y empieza al momento.</p>
+      </>)}
 
       {cancelado && (
         <p className="mt-4 rounded-[10px] border border-[#F2D9B8] bg-[#FFF8EE] px-3 py-2.5 text-[13.5px] text-[#7A4A12]">No se completó el alta de la tarjeta. Puedes intentarlo de nuevo cuando quieras.</p>
@@ -609,26 +694,31 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
       <div className="mt-6 overflow-hidden rounded-[16px] border border-[#E6E3F0] bg-white">
         <div className="flex items-center justify-between border-b border-[#EEEBF7] px-5 py-4">
           <div>
-            <p className="font-display text-[17px] font-semibold tracking-[-0.02em] text-[#0F172B]">Plan {PLAN_CONFIG[choice.plan].label}</p>
-            <p className="text-[13px] text-[#65768D]">{choice.period === "year" ? "Facturación anual" : "Facturación mensual"} · {PLAN_LINES[choice.plan][0]}</p>
+            <p className="font-display text-[17px] font-semibold tracking-[-0.02em] text-[#0F172B]">Plan {choiceLabel(choice)}</p>
+            <p className="text-[13px] text-[#65768D]">{choice.period === "year" ? "Facturación anual" : "Facturación mensual"} · {planLines(choice)[0]}</p>
           </div>
           <button type="button" onClick={onBack} className="text-[13px] font-medium text-[#5B40FB] hover:underline">Cambiar</button>
         </div>
         <dl className="divide-y divide-[#EEEBF7] text-[14px]">
-          <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Hoy</dt><dd className="font-semibold text-[#0A7A52]">0 €</dd></div>
-          <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Prueba gratuita</dt><dd className="font-medium text-[#0F172B]">{SIGNUP_TRIAL_DAYS} días, hasta el {fmtDay(fin)}</dd></div>
-          <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Después</dt><dd className="font-medium text-[#0F172B]">{info.chargeLabel}</dd></div>
+          {conPrueba ? (<>
+            <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Hoy</dt><dd className="font-semibold text-[#0A7A52]">0 €</dd></div>
+            <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Prueba gratuita</dt><dd className="font-medium text-[#0F172B]">{SIGNUP_TRIAL_DAYS} días, hasta el {fmtDay(fin)}</dd></div>
+            <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Después</dt><dd className="font-medium text-[#0F172B]">{info.chargeLabel}</dd></div>
+          </>) : (<>
+            <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Se cobra hoy</dt><dd className="font-semibold text-[#0F172B]" data-testid="se-cobra-hoy">{fmtEur(info.charge)}</dd></div>
+            <div className="flex items-center justify-between px-5 py-3"><dt className="text-[#45556C]">Renovación</dt><dd className="font-medium text-[#0F172B]">{info.chargeLabel}</dd></div>
+          </>)}
         </dl>
       </div>
 
       {err && <p className="mt-4 rounded-[10px] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-[13.5px] text-destructive" role="alert">{err}</p>}
 
       <Button className="mt-6 h-12 w-full gap-2 text-[15px]" onClick={() => void abrir()} disabled={busy} data-via={via.kind}>
-        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Abriendo el pago seguro…</> : <><CreditCard className="h-4 w-4" /> Añadir tarjeta y empezar mi prueba</>}
+        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Abriendo el pago seguro…</> : <><CreditCard className="h-4 w-4" /> {conPrueba ? "Añadir tarjeta y empezar mi prueba" : `Pagar ${fmtEur(info.charge)} y empezar`}</>}
       </Button>
       <ul className="mt-5 space-y-2 text-[13px] text-[#65768D]">
         <li className="flex items-center gap-2"><Lock className="h-3.5 w-3.5 text-[#0A7A52]" /> Pago seguro con Stripe: tu tarjeta no pasa por nuestros servidores.</li>
-        <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#0A7A52]" /> Cancela cuando quieras desde Ajustes antes del {fmtDay(fin)} y no se cobra nada.</li>
+        <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#0A7A52]" /> {conPrueba ? `Cancela cuando quieras desde Ajustes antes del ${fmtDay(fin)} y no se cobra nada.` : "Cancela cuando quieras desde Ajustes: no se renueva."}</li>
       </ul>
     </section>
   );
@@ -638,7 +728,7 @@ function PasoTarjeta({ choice, fin, cancelado, onBack, onPaid }: { choice: Signu
 
 const MAX_INTENTOS = 10;
 
-function PasoListo({ refresh, subscribed }: { refresh: () => Promise<void>; subscribed: boolean }) {
+function PasoListo({ refresh, subscribed, custom = false }: { refresh: () => Promise<void>; subscribed: boolean; custom?: boolean }) {
   const navigate = useNavigate();
   const [intentos, setIntentos] = useState(0);
   const [agotado, setAgotado] = useState(false);
@@ -669,7 +759,7 @@ function PasoListo({ refresh, subscribed }: { refresh: () => Promise<void>; subs
           className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#0A7A52] text-white shadow-[0_12px_30px_rgba(10,122,82,.3)]">
           <Check className="h-8 w-8" />
         </motion.span>
-        <h1 className="mt-6 font-display text-[32px] font-semibold tracking-[-0.03em] text-[#0F172B]">¡Listo! Tu prueba de {SIGNUP_TRIAL_DAYS} días ha empezado</h1>
+        <h1 className="mt-6 font-display text-[32px] font-semibold tracking-[-0.03em] text-[#0F172B]">{custom ? "¡Listo! Tu plan a medida está activo" : `¡Listo! Tu prueba de ${SIGNUP_TRIAL_DAYS} días ha empezado`}</h1>
         <p className="mx-auto mt-3 max-w-md text-[15.5px] text-[#45556C]">Ya tienes acceso completo. Conecta tus buzones y lanza tu primera campaña.</p>
         <Button className="mt-8 h-12 gap-2 px-8 text-[15px]" onClick={() => navigate("/dashboard", { replace: true })}>Entrar en Funnyleads <ArrowRight className="h-4 w-4" /></Button>
       </section>
@@ -679,7 +769,7 @@ function PasoListo({ refresh, subscribed }: { refresh: () => Promise<void>; subs
   return (
     <section className="pt-6 text-center">
       <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#6E58F1]" />
-      <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">Activando tu prueba…</h1>
+      <h1 className="mt-6 font-display text-[26px] font-semibold tracking-[-0.03em] text-[#0F172B]">{custom ? "Activando tu plan…" : "Activando tu prueba…"}</h1>
       <p className="mx-auto mt-3 max-w-md text-[15px] text-[#45556C]">
         {agotado
           ? "Stripe está tardando en confirmarlo. Suele ser cuestión de un minuto."

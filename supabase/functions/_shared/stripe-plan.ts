@@ -4,12 +4,18 @@
 // Una suscripción que no lleva NINGÚN producto nuestro se ignora: antes se trataba como "free" y
 // habría bajado de plan a quien pagase otra cosa con el mismo correo.
 
+import {
+  CUSTOM_FIELDS_CLEARED, CUSTOM_PRODUCT_ID, customByMetadata, customByPaymentLink, customByPriceId, customEntitlementFields,
+  customLevel, parseCustomLevel, type CustomLevel,
+} from "./custom-plan.ts";
+
 export const PLANES = ["starter", "growth", "scale"] as const;
 export type Plan = typeof PLANES[number];
 
 /** Productos de los planes: los de Funnyleads (landing, 10-11-2026, con metadata.plan) y los
  *  antiguos GodLeads (EUR, pago dentro de la app). */
 export const TIER_BY_PRODUCT: Record<string, Plan> = {
+  // El plan a medida (prod_VbtahTB7Qo9EqB) NO va aquí: lo lee leerSuscripcion por su precio/nivel.
   // Funnyleads (metadata {app: funnyleads, plan})
   prod_VbP8mquDtmuTKr: "starter",
   prod_VbP8T2qoDDeJOO: "growth",
@@ -30,6 +36,17 @@ export const PRECIOS_FUNNYLEADS: Record<string, { tier: Plan; interval: "month" 
   price_1UaCKD2ObXNkJIexO8o0rU1L: { tier: "scale", interval: "year" },
 };
 
+/** Precios del plan a medida (20): nivel e intervalo. create-checkout los acepta además de los 6. */
+export function precioAMedida(priceId: string): { level: CustomLevel; interval: "month" | "year" } | null {
+  return customByPriceId(priceId);
+}
+
+/** ¿Lleva prueba gratuita este checkout? Sólo si se pide, es un plan normal y nunca tuvo suscripción.
+ *  El plan a medida se paga siempre desde el primer día. */
+export function checkoutConPrueba(priceId: string, pedida: boolean, yaTuvoSuscripcion: boolean): boolean {
+  return pedida && !customByPriceId(priceId) && !yaTuvoSuscripcion;
+}
+
 const RANGO: Record<Plan, number> = { starter: 1, growth: 2, scale: 3 };
 const esPlan = (v: unknown): v is Plan => typeof v === "string" && (PLANES as readonly string[]).includes(v.toLowerCase());
 
@@ -41,6 +58,8 @@ export interface LineaSuscripcion {
   priceTier?: string | null;
   /** product.metadata.plan (si el producto viene expandido) */
   productTier?: string | null;
+  /** price.metadata.level (plan a medida) */
+  priceLevel?: string | null;
 }
 
 export interface LecturaSuscripcion {
@@ -48,16 +67,28 @@ export interface LecturaSuscripcion {
   esNuestra: boolean;
   tier: Plan | null;
   extraSlots: number;
+  /** Plan a medida (11-11-2026): su nivel con los topes. null = plan normal. */
+  custom: CustomLevel | null;
 }
 
 /** `subTier`: metadata de la suscripción (`tier` o `plan`). */
-export function leerSuscripcion(lineas: LineaSuscripcion[], subTier: string | null | undefined, slotPriceId = ""): LecturaSuscripcion {
+export function leerSuscripcion(lineas: LineaSuscripcion[], subTier: string | null | undefined, slotPriceId = "", subLevel?: string | null): LecturaSuscripcion {
   let tier: Plan | null = null;
   let extraSlots = 0;
   let slots = false;
+  let custom: CustomLevel | null = null;
   const subir = (t: Plan) => { if (!tier || RANGO[t] > RANGO[tier]) tier = t; };
   for (const l of lineas) {
     if (slotPriceId && l.priceId === slotPriceId) { extraSlots += l.quantity || 0; slots = true; continue; }
+    // Plan a medida: por su precio o, si es un precio nuevo del mismo producto, por su metadata.
+    const aMedida = customByPriceId(l.priceId)?.level
+      ?? (l.productId === CUSTOM_PRODUCT_ID || String(l.priceTier || "").toLowerCase() === "custom"
+        ? (parseCustomLevel(l.priceLevel) ? customLevel(parseCustomLevel(l.priceLevel)!) : null) : null);
+    if (aMedida) {
+      if (!custom || aMedida.level > custom.level) custom = aMedida;
+      subir("scale");
+      continue;
+    }
     const porProducto = TIER_BY_PRODUCT[l.productId];
     if (porProducto) { subir(porProducto); continue; }
     const porPrecio = PRECIOS_FUNNYLEADS[l.priceId];
@@ -66,8 +97,20 @@ export function leerSuscripcion(lineas: LineaSuscripcion[], subTier: string | nu
     if (esPlan(l.productTier)) subir(l.productTier.toLowerCase() as Plan);
   }
   // Último recurso: la metadata que el enlace de pago de la landing pone en la suscripción.
+  if (!tier && String(subTier || "").toLowerCase() === "custom" && parseCustomLevel(subLevel)) {
+    custom = customLevel(parseCustomLevel(subLevel)!);
+    tier = "scale";
+  }
   if (!tier && esPlan(subTier)) tier = subTier.toLowerCase() as Plan;
-  return { esNuestra: !!tier || slots, tier, extraSlots };
+  return { esNuestra: !!tier || slots, tier, extraSlots, custom };
+}
+
+/** Columnas del plan a medida para user_entitlements: los topes del nivel, o vacías si no lo es
+ *  (o si la suscripción ya no da plan). */
+export function camposAMedida(custom: CustomLevel | null, sinPlan = false): Record<string, number | null> {
+  if (!custom || sinPlan) return { ...CUSTOM_FIELDS_CLEARED };
+  const { tier: _t, ...campos } = customEntitlementFields(custom);
+  return campos as Record<string, number>;
 }
 
 /** Lee `tier` o `plan` de un objeto metadata de Stripe. */
@@ -131,8 +174,28 @@ export function filaDesdeSesionDeEnlace(ses: {
   customer?: string | null; subscription?: string | null; created?: number | null; amount_total?: number | null;
 }, ahoraSeg = Math.floor(Date.now() / 1000)): Record<string, unknown> | null {
   if (ses.mode !== "subscription" || !ses.customer) return null;
-  const porEnlace = ses.payment_link ? ENLACES_PAGO_FUNNYLEADS[ses.payment_link] : undefined;
   const md = ses.metadata || {};
+  // Plan a medida: se paga desde el primer día (sin prueba); el periodo es el mes o el año pagado.
+  const medida = (ses.payment_link ? customByPaymentLink(ses.payment_link) : null)
+    ?? (customByMetadata(md) ? { level: customByMetadata(md)!, interval: (md.billing === "yearly" ? "year" : "month") as "month" | "year" } : null);
+  if (medida) {
+    const inicio = ses.created || ahoraSeg;
+    const fin = new Date(inicio * 1000);
+    if (medida.interval === "year") fin.setUTCFullYear(fin.getUTCFullYear() + 1); else fin.setUTCMonth(fin.getUTCMonth() + 1);
+    return {
+      ...customEntitlementFields(medida.level),
+      status: "active",
+      stripe_customer_id: String(ses.customer),
+      stripe_subscription_id: ses.subscription ? String(ses.subscription) : null,
+      trial_end: null,
+      current_period_end: fin.toISOString(),
+      cancel_at_period_end: false,
+      billing_interval: medida.interval,
+      last_payment_error: null,
+      last_event_at: new Date(ahoraSeg * 1000).toISOString(),
+    };
+  }
+  const porEnlace = ses.payment_link ? ENLACES_PAGO_FUNNYLEADS[ses.payment_link] : undefined;
   const tierMd = tierDeMetadata(md);
   const tier = porEnlace?.tier || (tierMd && esPlan(tierMd) ? (tierMd.toLowerCase() as Plan) : null);
   if (!tier || (!porEnlace && md.app !== "warmlead")) return null;
@@ -152,5 +215,6 @@ export function filaDesdeSesionDeEnlace(ses: {
     billing_interval: interval,
     last_payment_error: null,
     last_event_at: new Date(ahoraSeg * 1000).toISOString(),
+    ...CUSTOM_FIELDS_CLEARED,
   };
 }

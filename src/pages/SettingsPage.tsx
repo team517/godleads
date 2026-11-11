@@ -30,6 +30,7 @@ import { BlocklistCard } from "@/components/settings/BlocklistCard";
 import { AiKeyCard } from "@/components/settings/AiKeyCard";
 import { PushDeviceCard } from "@/components/settings/PushDeviceCard";
 import { PlanUsageCard } from "@/components/settings/PlanUsageCard";
+import { CustomPlanBuilder } from "@/components/pricing/CustomPlanBuilder";
 
 const planCards: { tier: PlanTier; features: string[] }[] = [
   // Planes de Funnyleads (10-11-2026): los mismos que la landing y los enlaces de pago de Stripe.
@@ -41,7 +42,7 @@ const planCards: { tier: PlanTier; features: string[] }[] = [
 export default function SettingsPage() {
   const { user } = useAuth();
   const { updateProfile: updateGlobalProfile, refreshProfile } = useProfile();
-  const { tier, subscribed, subscriptionEnd, loading: subLoading, refreshSubscription, isTrialing, trialEnd, trialDaysLeft, status: subStatus, billable, cancelAtPeriodEnd } = useSubscription();
+  const { tier, subscribed, subscriptionEnd, loading: subLoading, refreshSubscription, isTrialing, trialEnd, trialDaysLeft, status: subStatus, billable, cancelAtPeriodEnd, customPlan } = useSubscription();
   const [profile, setProfile] = useState({ full_name: "", company_name: "", contact_email: "", avatar_url: "" });
   const [loading, setLoading] = useState(true);
   const [billingPeriod, setBillingPeriod] = useState<"monthly" | "annual">("monthly");
@@ -273,7 +274,7 @@ export default function SettingsPage() {
         <p className="text-[15px] text-muted-foreground">Gestiona tu perfil, plan y preferencias</p>
       </div>
 
-      <Tabs defaultValue="profile">
+      <Tabs defaultValue={searchParams.get("tab") === "plan" ? "plan" : "profile"}>
         <TabsList>
           <TabsTrigger value="profile">Perfil</TabsTrigger>
           <TabsTrigger value="plan">Plan</TabsTrigger>
@@ -383,7 +384,7 @@ export default function SettingsPage() {
                 <Crown className="h-5 w-5 text-primary" />
                 <div>
                   <p className="font-semibold">
-                    Plan actual: <span className="text-primary capitalize">{tier === "free" ? "Gratuito" : PLAN_CONFIG[tier as keyof typeof PLAN_CONFIG]?.label}</span>
+                    Plan actual: <span className="text-primary">{customPlan ? `A medida · nivel ${customPlan.level}` : tier === "free" ? "Gratuito" : PLAN_CONFIG[tier as keyof typeof PLAN_CONFIG]?.label}</span>
                     {isTrialing && <Badge variant="secondary" className="ml-2 text-xs">Prueba gratuita</Badge>}
                     {subStatus === "payment_failed" && <Badge variant="destructive" className="ml-2 text-xs">Pago pendiente</Badge>}
                     {subStatus === "canceled" && <Badge variant="destructive" className="ml-2 text-xs">Terminada</Badge>}
@@ -426,7 +427,7 @@ export default function SettingsPage() {
           <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-3">
             {planCards.map(({ tier: planTier, features }) => {
               const config = PLAN_CONFIG[planTier as keyof typeof PLAN_CONFIG];
-              const isCurrentPlan = tier === planTier;
+              const isCurrentPlan = tier === planTier && !customPlan;
               const price = billingPeriod === "monthly" ? config.monthly.price : config.annual.price;
               const priceId = billingPeriod === "monthly" ? config.monthly.priceId : config.annual.priceId;
               const popular = planTier === "growth";
@@ -472,6 +473,9 @@ export default function SettingsPage() {
               );
             })}
           </div>
+
+          {/* Plan a medida: la barra con envíos, contactos y clientes (11-11-2026). */}
+          <CustomPlanBuilder />
         </TabsContent>
 
         <TabsContent value="sending" className="space-y-4 mt-4">

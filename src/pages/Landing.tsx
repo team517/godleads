@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { destinoChoose, landingIsPainted, landingTarget, textoDeTarjeta } from "@/lib/landing-links";
+import { LandingCustomPlan } from "@/components/pricing/LandingCustomPlan";
+import { useAuth } from "@/contexts/AuthContext";
+import { useSubscription } from "@/contexts/SubscriptionContext";
 
 /* =============================================================================
    Landing pública: Funnyleads desde el 10-11-2026 (antes la de OnePulso, que sigue en /landing/onepulso-landing.html).
@@ -30,6 +33,13 @@ export default function Landing() {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
+  const { user } = useAuth();
+  const { subscribed } = useSubscription();
+  // Plan a medida (11-11-2026): quien ya tiene plan lo cambia en Ajustes → Plan; el resto, al alta.
+  const elegirAMedida = useCallback((level: number, interval: "month" | "year") => {
+    if (user && subscribed) navigate("/settings?tab=plan");
+    else navigate(`/empezar?plan=custom&nivel=${level}&periodo=${interval}`);
+  }, [user, subscribed, navigate]);
 
   useEffect(() => {
     const prev = document.title;
@@ -88,7 +98,7 @@ export default function Landing() {
         <h2>A sending engine built for cold outreach</h2>
         <p>Unlimited mailboxes and warmup, slow ramp handled for you, AI replies drafted the moment they land, one Master Inbox for every reply, and every email sent at 9am in each contact's own timezone. Send from Gmail, Outlook or your own servers.</p>
         <h2>Pricing</h2>
-        <p>Starter 21 € per month, Growth 65 € per month, Scale 170 € per month, or Enterprise with custom pricing. 17% off with yearly billing.</p>
+        <p>Starter 21 € per month, Growth 65 € per month, Scale 170 € per month, or a custom plan from 250,000 to 5,000,000 emails per month (99 € to 1,229 € per month). 17% off with yearly billing.</p>
         <p><a href="/auth">Log in</a> · <a href="/auth?mode=signup">Start free trial</a></p>
       </section>
       {/* Espera: el fondo de la propia landing y la marca, nada de pantallas de color. */}
@@ -108,6 +118,8 @@ export default function Landing() {
         onLoad={wire}
         className={`absolute inset-0 block h-[100dvh] w-full border-0 bg-[#FBFAFE] transition-opacity duration-500 ${ready ? "opacity-100" : "opacity-0"}`}
       />
+      {/* Plan a medida con la barra, dentro del marco bajo la tabla de precios. */}
+      <LandingCustomPlan frame={frameRef.current} ready={ready} onChoose={elegirAMedida} />
     </div>
   );
 }

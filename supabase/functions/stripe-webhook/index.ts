@@ -16,7 +16,7 @@
 // billing_events (un evento repetido por Stripe responde 200 sin reprocesar).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@18.5.0?target=deno";
-import { ESTADOS_BAJA, ESTADOS_IMPAGO, filaDesdeSesionDeEnlace, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
+import { ESTADOS_BAJA, ESTADOS_IMPAGO, camposAMedida, filaDesdeSesionDeEnlace, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
@@ -88,9 +88,11 @@ Deno.serve(async (req) => {
         quantity: it.quantity || 0,
         priceTier: tierDeMetadata(it.price.metadata as any),
         productTier: typeof it.price.product === "object" ? tierDeMetadata((it.price.product as any)?.metadata) : null,
+        priceLevel: (it.price.metadata as any)?.level ?? null,
       })),
       tierDeMetadata(sub.metadata as any),
       slotPriceId,
+      (sub.metadata as any)?.level ?? null,
     );
     // Suscripción de otro negocio de la misma cuenta de Stripe: no es asunto nuestro.
     if (!lectura.esNuestra) { console.log("suscripción ajena, se ignora:", sub.id); return null; }
@@ -115,6 +117,8 @@ Deno.serve(async (req) => {
       cancel_at_period_end: !!sub.cancel_at_period_end,
       billing_interval: interval,
       last_event_at: new Date().toISOString(),
+      // Plan a medida: sus topes (envíos, contactos, clientes). Con baja se vacían.
+      ...camposAMedida(lectura.custom, opts.deleted || (ESTADOS_BAJA as readonly string[]).includes(status) || status === "incomplete_expired"),
     };
     if (opts.paymentError !== undefined) row.last_payment_error = opts.paymentError;
     else if ((["active", "trialing"] as string[]).includes(status)) row.last_payment_error = null;

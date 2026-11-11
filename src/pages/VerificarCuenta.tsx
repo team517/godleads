@@ -53,7 +53,10 @@ export default function VerificarCuenta() {
       }
       try { sessionStorage.setItem("fl_signup_verified", "1"); } catch { /* sin almacenamiento */ }
       setEstado("verificado");
-      const q = new URLSearchParams({ paso: "tarjeta", plan: d.plan || "starter", periodo: d.period || "month", verificado: "1" });
+      // Plan a medida: el servidor lo guarda como "custom-N" → plan=custom&nivel=N.
+      const medida = /^custom-(\d{1,2})$/.exec(d.plan || "");
+      const q = new URLSearchParams({ paso: "tarjeta", plan: medida ? "custom" : d.plan || "starter", periodo: d.period || "month", verificado: "1" });
+      if (medida) q.set("nivel", medida[1]);
       setTimeout(() => navigate(`/empezar?${q.toString()}`, { replace: true }), 1500);
     })();
   }, [params, navigate]);

@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { ESTADOS_CON_ACCESO, leerSuscripcion, publicStripeError, rangoEstado, tierDeMetadata } from "../_shared/stripe-plan.ts";
+import { ESTADOS_CON_ACCESO, camposAMedida, leerSuscripcion, publicStripeError, rangoEstado, tierDeMetadata } from "../_shared/stripe-plan.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -67,9 +67,11 @@ serve(async (req) => {
             quantity: it.quantity || 0,
             priceTier: tierDeMetadata(it.price.metadata as any),
             productTier: typeof it.price.product === "object" ? tierDeMetadata((it.price.product as any)?.metadata) : null,
+            priceLevel: (it.price.metadata as any)?.level ?? null,
           })),
           tierDeMetadata(sub.metadata as any),
           slotPriceId,
+          (sub.metadata as any)?.level ?? null,
         );
         if (!lectura.esNuestra) continue;
         if (!mejor || rangoEstado(sub.status) > rangoEstado(mejor.sub.status)
@@ -80,7 +82,7 @@ serve(async (req) => {
     }
 
     if (!mejor) {
-      await guardar({ tier: "free", status: "inactive", stripe_customer_id: [...customerIds][0] });
+      await guardar({ tier: "free", status: "inactive", stripe_customer_id: [...customerIds][0], ...camposAMedida(null) });
       return json({ subscribed: false, status: "inactive", tier: "free" });
     }
 
@@ -96,6 +98,7 @@ serve(async (req) => {
       trial_end: sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null,
       cancel_at_period_end: !!sub.cancel_at_period_end,
       billing_interval: sub.items.data[0]?.price?.recurring?.interval || null,
+      ...camposAMedida(lectura.custom, sinPlan),
     };
     if ((ESTADOS_CON_ACCESO as readonly string[]).includes(sub.status)) row.last_payment_error = null;
     if (slotPriceId) row.extra_client_slots = sinPlan ? 0 : lectura.extraSlots;
@@ -105,6 +108,7 @@ serve(async (req) => {
       subscribed: (ESTADOS_CON_ACCESO as readonly string[]).includes(sub.status),
       status: sub.status,
       tier: row.tier,
+      custom_level: (row as any).custom_level ?? null,
       trial_end: row.trial_end,
       current_period_end: row.current_period_end,
       subscription_end: row.current_period_end, // compatibilidad con el frontend anterior

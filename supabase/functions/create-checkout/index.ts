@@ -8,7 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
-import { PAGO_NO_DISPONIBLE, PRECIOS_FUNNYLEADS, publicStripeError } from "../_shared/stripe-plan.ts";
+import { PAGO_NO_DISPONIBLE, PRECIOS_FUNNYLEADS, checkoutConPrueba, precioAMedida, publicStripeError } from "../_shared/stripe-plan.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,7 +32,9 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const price_id = String(body.price_id || "");
-    const precio = PRECIOS_FUNNYLEADS[price_id];
+    // 11-11-2026: también los 20 precios del plan a medida (se pagan desde el primer día, sin prueba).
+    const medida = precioAMedida(price_id);
+    const precio = PRECIOS_FUNNYLEADS[price_id] ?? (medida ? { tier: "scale" as const, interval: medida.interval } : null);
     if (!precio) return json({ error: "Precio no válido" }, 400);
     const quierePrueba = body.trial === true;
     const volverAlAlta = body.return_to === "empezar";
@@ -40,12 +42,27 @@ serve(async (req) => {
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
     // Se reutiliza el cliente de Stripe que ya tengamos guardado o el que lleve su correo.
     const { data: known } = await db.from("user_entitlements").select("stripe_customer_id, stripe_subscription_id, status").eq("user_id", user.id).maybeSingle();
-    // Ya tiene una suscripción con acceso: no se abre otra (evita cobrar dos veces).
-    if (known?.status === "active" || known?.status === "trialing") {
-      return json({ error: "Ya tienes una suscripción activa. Puedes cambiar de plan desde Ajustes.", already: true }, 409);
+    // Ya tiene una suscripción de Stripe con acceso: no se abre otra (evita cobrar dos veces).
+    if ((known?.status === "active" || known?.status === "trialing") && known?.stripe_subscription_id) {
+      if (!medida) return json({ error: "Ya tienes una suscripción activa. Puedes cambiar de plan desde Ajustes.", already: true }, 409);
+      // Pasar al plan a medida (o cambiar de nivel): se cambia el precio de SU suscripción, se cobra
+      // ya la diferencia prorrateada y, si estaba en prueba, la prueba termina (el plan a medida se paga
+      // desde el primer día). El webhook guarda los topes nuevos.
+      const actual = await stripe.subscriptions.retrieve(known.stripe_subscription_id);
+      const item = actual.items.data[0];
+      if (!item) return json({ error: "No encontramos tu suscripción. Escríbenos a team@onepulso.online." }, 409);
+      const mdMedida = { app: "warmlead", plan: "custom", level: String(medida.level.level), emails: String(medida.level.emails), contacts: String(medida.level.contacts), clients: String(medida.level.clients), billing: medida.interval === "year" ? "yearly" : "monthly", user_id: user.id };
+      await stripe.subscriptions.update(actual.id, {
+        items: [{ id: item.id, price: price_id }],
+        proration_behavior: "always_invoice",
+        payment_behavior: "error_if_incomplete",
+        metadata: mdMedida,
+        ...(actual.status === "trialing" ? { trial_end: "now" as const } : {}),
+      });
+      return json({ updated: true });
     }
     // Una sola prueba gratuita por cuenta: quien ya tuvo una suscripción paga desde el primer día.
-    const conPrueba = quierePrueba && !known?.stripe_subscription_id;
+    const conPrueba = checkoutConPrueba(price_id, quierePrueba, !!known?.stripe_subscription_id);
     let customerId: string | undefined = known?.stripe_customer_id || undefined;
     if (!customerId) {
       const customers = await stripe.customers.list({ email: user.email, limit: 1 });
@@ -63,9 +80,12 @@ serve(async (req) => {
       // Tarjeta SIEMPRE, también en la prueba de 0 €: es lo que pidió el dueño.
       payment_method_collection: "always",
       subscription_data: {
-        metadata: { app: "warmlead", plan: precio.tier, billing: precio.interval === "year" ? "yearly" : "monthly", user_id: user.id },
+        metadata: medida
+          ? { app: "warmlead", plan: "custom", level: String(medida.level.level), emails: String(medida.level.emails), contacts: String(medida.level.contacts), clients: String(medida.level.clients), billing: medida.interval === "year" ? "yearly" : "monthly", user_id: user.id }
+          : { app: "warmlead", plan: precio.tier, billing: precio.interval === "year" ? "yearly" : "monthly", user_id: user.id },
         ...(conPrueba ? { trial_period_days: 14, trial_settings: { end_behavior: { missing_payment_method: "cancel" } } } : {}),
       },
+      ...(medida ? { metadata: { app: "warmlead", plan: "custom", level: String(medida.level.level), billing: medida.interval === "year" ? "yearly" : "monthly" } } : {}),
       success_url: volverAlAlta ? `${origin}/empezar?paso=listo` : `${origin}/settings?checkout=success`,
       cancel_url: volverAlAlta ? `${origin}/empezar?paso=tarjeta&cancelado=1` : `${origin}/settings?checkout=cancel`,
     });

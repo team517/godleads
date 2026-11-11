@@ -4,7 +4,7 @@ import { leerSuscripcion, PRECIOS_FUNNYLEADS, rangoEstado, tierDeMetadata } from
 describe("leerSuscripcion", () => {
   it("producto antiguo de la app", () => {
     expect(leerSuscripcion([{ productId: "prod_U29mEi2w9ltRwG", priceId: "p", quantity: 1 }], null))
-      .toEqual({ esNuestra: true, tier: "growth", extraSlots: 0 });
+      .toEqual({ esNuestra: true, tier: "growth", extraSlots: 0, custom: null });
   });
   it("productos de Funnyleads (landing 10-11-2026)", () => {
     expect(leerSuscripcion([{ productId: "prod_VbP8mquDtmuTKr", priceId: "p", quantity: 1 }], null).tier).toBe("starter");
@@ -27,7 +27,7 @@ describe("leerSuscripcion", () => {
     expect(tierDeMetadata(null)).toBeNull();
   });
   it("una suscripción de OTRO negocio de la misma cuenta se ignora (antes bajaba a free)", () => {
-    expect(leerSuscripcion([{ productId: "prod_otro", priceId: "p", quantity: 1 }], null)).toEqual({ esNuestra: false, tier: null, extraSlots: 0 });
+    expect(leerSuscripcion([{ productId: "prod_otro", priceId: "p", quantity: 1 }], null)).toEqual({ esNuestra: false, tier: null, extraSlots: 0, custom: null });
     // La mensualidad de la agencia (MENSUALIDAD ONEPULSO) tampoco es un plan del software.
     expect(leerSuscripcion([{ productId: "prod_UlhBnHZKPBvPCz", priceId: "price_1Tm9mf2ObXNkJIexmKk1Pn0M", quantity: 1 }], null).esNuestra).toBe(false);
   });
@@ -36,7 +36,7 @@ describe("leerSuscripcion", () => {
       { productId: "prod_U29mvQRMbo5m6f", priceId: "p1", quantity: 1 },
       { productId: "prod_slot", priceId: "slot", quantity: 3 },
     ], null, "slot");
-    expect(r).toEqual({ esNuestra: true, tier: "starter", extraSlots: 3 });
+    expect(r).toEqual({ esNuestra: true, tier: "starter", extraSlots: 3, custom: null });
   });
   it("la mejor suscripción: active > trialing > past_due > unpaid > canceled", () => {
     expect(rangoEstado("active")).toBeGreaterThan(rangoEstado("trialing"));

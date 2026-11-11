@@ -28,7 +28,14 @@ export function normalizeSignup(b: Record<string, unknown>): { ok: true; value: 
   const company = String(b.company ?? "").trim().slice(0, 160);
   const email = String(b.email ?? "").trim().toLowerCase();
   const password = String(b.password ?? "");
-  const plan = PLANS.has(String(b.plan)) ? String(b.plan) : "starter";
+  // Plan a medida (11-11-2026): se guarda como "custom-N" (N = nivel 1–10) para volver al pago con él.
+  const nivel = (() => {
+    const m = String(b.plan ?? "").match(/^custom(?:-(\d{1,2}))?$/);
+    if (!m) return null;
+    const n = Number(m[1] ?? b.level);
+    return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+  })();
+  const plan = nivel ? `custom-${nivel}` : PLANS.has(String(b.plan)) ? String(b.plan) : "starter";
   const period = PERIODS.has(String(b.period)) ? String(b.period) : "month";
   if (name.length < 2) return { ok: false, error: "Escribe tu nombre" };
   if (!EMAIL_RE.test(email) || email.length > 254) return { ok: false, error: "Escribe un correo válido" };
