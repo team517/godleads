@@ -104,11 +104,11 @@ describe("CampaignEmailAccounts", () => {
     expect(within(await rowOf("Beto Ruiz")).getByText("Error")).toBeInTheDocument();
   });
 
-  it("muestra el uso del límite diario como «14 / 15» y «93%» (techo de 15 por buzón)", async () => {
+  it("muestra el uso del límite diario de la cuenta: «14 / 30» y «47%» (sin techo de 15 desde el 11-11-2026)", async () => {
     render(<CampaignEmailAccounts campaignId="c1" />);
     const row = await rowOf("Ana Gómez");
-    expect(within(row).getByText("14 / 15")).toBeInTheDocument();
-    expect(within(row).getByText("93%")).toBeInTheDocument();
+    expect(within(row).getByText("14 / 30")).toBeInTheDocument();
+    expect(within(row).getByText("47%")).toBeInTheDocument();
   });
 
   it("muestra el estado compartido de campañas y los leads asignados", async () => {
