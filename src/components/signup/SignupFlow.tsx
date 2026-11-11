@@ -223,6 +223,110 @@ function PasoPlan({ choice, setChoice, fin, mode, onNext }: { choice: SignupChoi
   );
 }
 
+/** A dónde lleva el enlace del correo de confirmación: de vuelta al alta, al paso de la tarjeta. */
+function confirmRedirect(choice: SignupChoice): string {
+  return `${window.location.origin}/empezar?paso=tarjeta&plan=${choice.plan}&periodo=${choice.period}&verificado=1`;
+}
+const VERIFIED_FLAG = "fl_signup_verified";
+const POLL_MS = 3000;
+const POLL_MAX_MS = 45 * 60 * 1000;
+const RESEND_COOLDOWN_S = 60;
+
+/* Mientras la persona confirma su correo, esta pestaña pregunta cada 3 s si ya lo hizo (por el id
+   que devolvió el alta, nunca por el correo). En cuanto está confirmado: "¡Cuenta verificada!",
+   abre la sesión con la contraseña que acaba de escribir y pasa sola a la tarjeta. Si el correo se
+   abre en otra pestaña de este navegador, la sesión llega por ahí y también se avanza. */
+export function ConfirmaCorreo({ email, userId, password, choice }: { email: string; userId: string | null; password: string; choice: SignupChoice }) {
+  const [estado, setEstado] = useState<"esperando" | "verificado" | "entrar">("esperando");
+  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_S);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const hecho = useRef(false);
+
+  useEffect(() => {
+    if (!userId) return;
+    let vivo = true;
+    const inicio = Date.now();
+    const comprobar = async () => {
+      if (!vivo || hecho.current) return;
+      if (Date.now() - inicio > POLL_MAX_MS) { clearInterval(t); return; }
+      const { data, error } = await (supabase as any).rpc("signup_email_confirmed", { p_user: userId });
+      if (!vivo || hecho.current || error || data !== true) return;
+      hecho.current = true;
+      clearInterval(t);
+      try { sessionStorage.setItem(VERIFIED_FLAG, "1"); } catch { /* sin almacenamiento */ }
+      setEstado("verificado");
+      // Un momento para que se vea el "verificada" y se abre la sesión: el alta pasa sola a la tarjeta.
+      await new Promise((r) => setTimeout(r, 1400));
+      const { data: s } = await supabase.auth.getSession();
+      if (s.session) return;
+      const { error: e2 } = await supabase.auth.signInWithPassword({ email, password });
+      if (vivo && e2) setEstado("entrar");
+    };
+    const t = setInterval(() => void comprobar(), POLL_MS);
+    const alVolver = () => { if (document.visibilityState === "visible") void comprobar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    void comprobar();
+    return () => { vivo = false; clearInterval(t); document.removeEventListener("visibilitychange", alVolver); window.removeEventListener("focus", alVolver); };
+  }, [userId, email, password]);
+
+  useEffect(() => {
+    if (estado !== "esperando" || cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown, estado]);
+
+  const reenviar = async () => {
+    setAviso(null);
+    const { error } = await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: confirmRedirect(choice) } });
+    setAviso(error ? "No se pudo reenviar. Prueba en un minuto." : "Te lo hemos vuelto a enviar.");
+    setCooldown(RESEND_COOLDOWN_S);
+  };
+
+  if (estado !== "esperando") {
+    return (
+      <section className="rounded-[16px] border border-[#CDEFD9] bg-white p-6 text-center" aria-live="polite">
+        <motion.span
+          initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 320, damping: 18 }}
+          className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#E7F8EE] text-[#16A34A]"
+        >
+          <Check className="h-7 w-7" strokeWidth={3} />
+        </motion.span>
+        <h1 className="mt-4 font-display text-[24px] font-semibold tracking-[-0.03em] text-[#0F172B]">¡Cuenta verificada!</h1>
+        {estado === "verificado" ? (
+          <p className="mt-2 inline-flex items-center gap-2 text-[15px] text-[#45556C]"><Loader2 className="h-4 w-4 animate-spin" /> Te llevamos al último paso: tu tarjeta…</p>
+        ) : (
+          <>
+            <p className="mt-2 text-[15px] text-[#45556C]">Tu correo ya está confirmado. Inicia sesión para añadir la tarjeta y empezar tu prueba.</p>
+            <Button asChild className="mt-4"><Link to="/auth">Iniciar sesión <ArrowRight className="ml-1 h-4 w-4" /></Link></Button>
+          </>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-[16px] border border-[#E6E3F0] bg-white p-6 text-center">
+      <span className="relative mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#F1EEF8] text-[#6E58F1]">
+        <span className="absolute inset-0 animate-ping rounded-full bg-[#6E58F1]/15 motion-reduce:hidden" aria-hidden="true" />
+        <ShieldCheck className="relative h-6 w-6" />
+      </span>
+      <h1 className="mt-4 font-display text-[24px] font-semibold tracking-[-0.03em] text-[#0F172B]">Confirma tu correo</h1>
+      <p className="mt-2 text-[15px] text-[#45556C]">Te hemos enviado un enlace a <strong className="text-[#0F172B]">{email}</strong>. Ábrelo y esta pantalla pasará sola al último paso.</p>
+      <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#F6F4FC] px-3 py-1.5 text-[13px] text-[#45556C]" aria-live="polite">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#6E58F1]" /> Esperando la confirmación…
+      </p>
+      <div className="mt-4 text-[13px] text-[#65768D]">
+        ¿No te llega? Mira en spam o{" "}
+        {cooldown > 0
+          ? <span>reenvíalo en {cooldown} s</span>
+          : <button type="button" onClick={() => void reenviar()} className="font-medium text-[#5B40FB] hover:underline">reenvía el correo</button>}
+        {aviso && <span className="mt-1 block text-[#45556C]">{aviso}</span>}
+      </div>
+    </section>
+  );
+}
+
 /* ── Paso 2: cuenta ───────────────────────────────────────────────────────────────────────── */
 
 function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: () => void; onDone: () => void }) {
@@ -231,7 +335,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ text: string; alreadyRegistered: boolean } | null>(null);
-  const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{ email: string; userId: string | null } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
 
@@ -253,7 +357,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
         email, password: f.password,
         options: {
           data: { full_name: f.name.trim(), company_name: f.company.trim() },
-          emailRedirectTo: `${window.location.origin}/empezar?paso=tarjeta&plan=${choice.plan}&periodo=${choice.period}`,
+          emailRedirectTo: confirmRedirect(choice),
         },
       });
       if (error) { setErr(signupErrorMessage(error.message)); return; }
@@ -261,7 +365,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
       if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
         setErr(signupErrorMessage("already registered")); return;
       }
-      if (!data.session) { setPendingConfirm(email); return; }
+      if (!data.session) { setPendingConfirm({ email, userId: data.user?.id ?? null }); return; }
       if (f.company.trim() && data.user) {
         await (supabase as any).from("profiles").update({ company_name: f.company.trim() }).eq("user_id", data.user.id);
       }
@@ -272,13 +376,7 @@ function PasoCuenta({ choice, onBack, onDone }: { choice: SignupChoice; onBack: 
   };
 
   if (pendingConfirm) {
-    return (
-      <section className="rounded-[16px] border border-[#E6E3F0] bg-white p-6 text-center">
-        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#F1EEF8] text-[#6E58F1]"><ShieldCheck className="h-6 w-6" /></span>
-        <h1 className="mt-4 font-display text-[24px] font-semibold tracking-[-0.03em] text-[#0F172B]">Confirma tu correo</h1>
-        <p className="mt-2 text-[15px] text-[#45556C]">Te hemos enviado un enlace a <strong className="text-[#0F172B]">{pendingConfirm}</strong>. Al abrirlo volverás aquí para añadir la tarjeta y empezar tu prueba.</p>
-      </section>
-    );
+    return <ConfirmaCorreo email={pendingConfirm.email} userId={pendingConfirm.userId} password={f.password} choice={choice} />;
   }
 
   return (
@@ -360,6 +458,12 @@ function Campo({ id, label, hint, error, children }: { id: string; label: string
 
 function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice; fin: Date; cancelado: boolean; onBack: () => void }) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [verificado] = useState(() => {
+    let flag = false;
+    try { flag = sessionStorage.getItem(VERIFIED_FLAG) === "1"; sessionStorage.removeItem(VERIFIED_FLAG); } catch { /* sin almacenamiento */ }
+    return flag || params.get("verificado") === "1";
+  });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const info = priceInfo(choice);
@@ -386,6 +490,11 @@ function PasoTarjeta({ choice, fin, cancelado, onBack }: { choice: SignupChoice;
 
   return (
     <section>
+      {verificado && (
+        <p className="mb-4 flex items-center gap-2 rounded-xl border border-[#CDEFD9] bg-[#F0FBF4] px-3.5 py-2.5 text-[14px] font-medium text-[#15803D]" role="status">
+          <Check className="h-4 w-4" strokeWidth={3} /> Cuenta verificada. Ya solo falta tu tarjeta.
+        </p>
+      )}
       <h1 className="font-display text-[28px] font-semibold tracking-[-0.03em] text-[#0F172B]">Añade tu tarjeta para activar la prueba</h1>
       <p className="mt-2 text-[15px] text-[#45556C]">Es sólo para activar la prueba. <strong className="text-[#0F172B]">Hoy no se cobra nada.</strong></p>
 
