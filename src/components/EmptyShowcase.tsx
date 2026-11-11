@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { BarChart3, Bot, Mail, MessageSquareReply, Plus, Settings2, Sparkles, Users, Zap } from "lucide-react";
 import { SparkMark } from "@/components/SparkMark";
 import { cn } from "@/lib/utils";
@@ -175,28 +175,79 @@ function Decor({ variant }: { variant: EmptyVariant }) {
   );
 }
 
+/* ── Ajuste a la pantalla ───────────────────────────────────────────────────────────── */
+
+/** Escala del dibujo para que la pantalla vacía entera (dibujo + título + texto + botón) quepa
+ *  desde donde empieza hasta el borde de abajo de la ventana (11-11-2026: en el Unibox, con las
+ *  barras de filtros encima, el título se cortaba). Pura: se prueba con vitest. */
+export function fitScale(o: { viewportH: number; top: number; textH: number; naturalH: number; padding: number; min?: number }): number {
+  const disponible = o.viewportH - Math.max(0, o.top) - o.textH - o.padding - 12;
+  if (o.naturalH <= 0) return 1;
+  return Math.max(o.min ?? 0.42, Math.min(1, disponible / o.naturalH));
+}
+
+function useFitScale() {
+  const section = useRef<HTMLElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const textBlock = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [naturalH, setNaturalH] = useState(0);
+
+  useLayoutEffect(() => {
+    const sec = section.current, st = stage.current, tx = textBlock.current;
+    if (!sec || !st || !tx) return;
+    let raf = 0;
+    const medir = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const nat = st.offsetHeight; // sin la escala (transform no cambia offsetHeight)
+        const cs = getComputedStyle(sec);
+        const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const s = fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: tx.offsetHeight, naturalH: nat, padding });
+        setNaturalH(nat);
+        setScale((prev) => (Math.abs(prev - s) > 0.01 ? s : prev));
+      });
+    };
+    medir();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(medir) : null;
+    ro?.observe(sec); ro?.observe(tx); ro?.observe(st);
+    window.addEventListener("resize", medir);
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); window.removeEventListener("resize", medir); };
+  }, []);
+
+  return { section, stage, textBlock, scale, naturalH };
+}
+
 /* ── Pantalla vacía ────────────────────────────────────────────────────────────────── */
 
 export default function EmptyShowcase({ variant, title, text, cta, secondary, className }: Props) {
+  const { section, stage, textBlock, scale, naturalH } = useFitScale();
   return (
-    <section className={cn("relative overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-12 pt-8 text-center dark:border-border dark:from-card dark:to-background", className)}>
+    <section ref={section} data-fit-scale={scale.toFixed(2)} className={cn("relative flex min-h-0 flex-col justify-center overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-8 pt-6 text-center dark:border-border dark:from-card dark:to-background", className)}>
       {/* ola y luces de fondo */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <span className="absolute -left-[10%] bottom-[-45%] h-[80%] w-[70%] rounded-[50%] bg-gradient-to-tr from-[#e7e4ff]/70 to-transparent" />
-        <span className="absolute -right-[10%] bottom-[-50%] h-[85%] w-[75%] rounded-[50%] bg-gradient-to-tl from-[#f3e6ff]/70 to-transparent" />
+        <span className="absolute -left-[10%] bottom-[-45%] h-[80%] w-[70%] rounded-[50%] bg-gradient-to-tr from-[#e7e4ff]/70 to-transparent dark:from-primary/10" />
+        <span className="absolute -right-[10%] bottom-[-50%] h-[85%] w-[75%] rounded-[50%] bg-gradient-to-tl from-[#f3e6ff]/70 to-transparent dark:from-primary/5" />
         <span className="absolute left-1/2 top-[18%] h-[260px] w-[260px] -translate-x-1/2 rounded-full bg-[#b9a8ff]/15 blur-3xl" />
       </div>
-      <div className="relative mx-auto min-h-[250px] max-w-[1100px] md:min-h-[330px]">
-        <Paths />
-        <Decor variant={variant} />
-        <div className="relative pt-2 md:pt-10"><Center variant={variant} /></div>
+      {/* El dibujo se encoge (sin deformarse) hasta que todo cabe en la pantalla. */}
+      <div className="relative w-full shrink-0" style={naturalH ? { height: Math.round(naturalH * scale) } : undefined}>
+        <div
+          ref={stage}
+          className="relative mx-auto min-h-[250px] max-w-[1100px] origin-top transition-transform duration-300 ease-out motion-reduce:transition-none md:min-h-[330px]"
+          style={scale < 1 ? { transform: `scale(${scale})` } : undefined}
+        >
+          <Paths />
+          <Decor variant={variant} />
+          <div className="relative pt-2 md:pt-10"><Center variant={variant} /></div>
+        </div>
       </div>
-      <div className="relative mx-auto -mt-2 max-w-[560px]">
+      <div ref={textBlock} className="relative mx-auto mt-1 max-w-[560px] shrink-0">
         <h2 className="font-display text-[clamp(24px,2.6vw,34px)] font-semibold tracking-[-0.02em] text-[#0b1040] dark:text-foreground">{title}</h2>
         <p className="mt-2 text-[clamp(15px,1.4vw,18px)] leading-[1.5] text-[#6470a8] dark:text-muted-foreground">{text}</p>
         {cta && (
           <button type="button" onClick={cta.onClick}
-            className="mt-6 inline-flex h-[54px] items-center gap-2.5 rounded-[16px] bg-gradient-to-r from-[#5b5cf6] to-[#a24bf5] px-8 text-[17px] font-semibold text-white shadow-[0_12px_28px_rgba(106,76,255,.35)] transition hover:brightness-110 active:scale-[.98]">
+            className="mt-5 inline-flex h-[50px] items-center gap-2 whitespace-nowrap rounded-[16px] bg-gradient-to-r from-[#5b5cf6] to-[#a24bf5] px-6 text-[15.5px] font-semibold sm:h-[54px] sm:gap-2.5 sm:px-8 sm:text-[17px] text-white shadow-[0_12px_28px_rgba(106,76,255,.35)] transition hover:brightness-110 active:scale-[.98]">
             <Plus className="h-5 w-5" /> {cta.label}
           </button>
         )}

@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { Wordmark } from "@/components/Wordmark";
+import { SparkMark } from "@/components/SparkMark";
 import { SourceMark } from "@/components/welcome/BrandMarks";
 import { markWelcomeDone } from "@/hooks/useWelcomeGate";
 import PortalBuilding from "@/components/welcome/PortalBuilding";
@@ -52,11 +53,11 @@ function Backdrop() {
   );
 }
 
-/** La chispa de la marca dentro de su baldosa de cristal. */
-function SparkBadge() {
+/** El logo de Funnyleads (baldosa con la estrella), el mismo que en el resto de la app. */
+function SparkBadge({ compactHide = false }: { compactHide?: boolean }) {
   return (
-    <span className="soft-glass mx-auto mb-[23px] flex h-[110px] w-[110px] items-center justify-center rounded-[28px]">
-      <span className="soft-spark block h-[62px] w-[62px]" />
+    <span className={cn("wv-badge mx-auto flex w-fit rounded-[22%] shadow-[0_15px_35px_rgba(82,78,200,.14)]", compactHide && "wv-badge-optional")} data-testid="welcome-logo">
+      <SparkMark size="var(--wv-badge)" className="rounded-[22%]" />
     </span>
   );
 }
@@ -83,20 +84,20 @@ function Choice({ selected, small, onClick, delay, icon, children }: {
 
 function Continue({ label = "Continuar", disabled, busy, onClick }: { label?: string; disabled?: boolean; busy?: boolean; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled || busy} className="soft-cta group mt-[55px] inline-flex w-[420px] max-w-[90%] items-center justify-center">
+    <button type="button" onClick={onClick} disabled={disabled || busy} className="soft-cta wv-cta group inline-flex w-[420px] max-w-full items-center justify-center">
       {label}
       {busy
-        ? <Loader2 className="ml-[15px] h-6 w-6 animate-spin" />
-        : <ArrowRight className="ml-[15px] h-6 w-6 transition-transform duration-200 group-hover:translate-x-1" />}
+        ? <Loader2 className="ml-3 h-5 w-5 animate-spin" />
+        : <ArrowRight className="ml-3 h-5 w-5 transition-transform duration-200 group-hover:translate-x-1" />}
     </button>
   );
 }
 
 const H1 = ({ children }: { children: React.ReactNode }) => (
-  <h1 className="font-display text-[clamp(40px,4vw,58px)] font-semibold leading-[1.05] tracking-[-2px] text-[#080d35]">{children}</h1>
+  <h1 className="wv-h1 font-display font-semibold text-[#080d35]">{children}</h1>
 );
 const Sub = ({ children }: { children: React.ReactNode }) => (
-  <p className="mx-auto mb-[45px] mt-[14px] max-w-[620px] text-[clamp(19px,1.8vw,24px)] leading-[1.4] text-[#6470a8]">{children}</p>
+  <p className="wv-sub mx-auto text-[#6470a8]">{children}</p>
 );
 
 /* ── Pantalla ─────────────────────────────────────────────────────────────── */
@@ -169,7 +170,7 @@ export default function Welcome() {
   const canContinue = step === "source" ? !!source : step === "goals" ? goals.length > 0 : true;
 
   return (
-    <div className="soft-hero relative min-h-[100dvh] overflow-x-hidden">
+    <div className="soft-hero wv-page relative min-h-[100dvh] overflow-x-hidden">
       <Backdrop />
 
       {pasos ? (
@@ -178,24 +179,24 @@ export default function Welcome() {
         </main>
       ) : (
 
-      <main className="relative z-[2] mx-auto w-[min(1050px,90%)] pb-20 pt-9 sm:pt-[60px]">
+      <main className="relative z-[2] mx-auto flex min-h-[100dvh] w-[min(1050px,calc(100%-32px))] flex-col pt-[clamp(14px,3.6dvh,48px)]">
         {/* Progreso */}
         <header>
           <div className="flex items-end justify-between gap-4">
             <div className="flex items-baseline gap-[9px]">
-              <strong className="font-display text-[32px] font-semibold leading-none tracking-[-2px] text-[#080d35] sm:text-[43px]">{progress}%</strong>
-              <span className="text-[15px] text-[#5f689f] sm:text-[20px]">configurado</span>
+              <strong className="font-display text-[26px] font-semibold leading-none tracking-[-1.5px] text-[#080d35] sm:text-[clamp(28px,4.4dvh,40px)]">{progress}%</strong>
+              <span className="text-[14px] text-[#5f689f] sm:text-[18px]">configurado</span>
             </div>
-            <span className="text-[15px] text-[#5f689f] sm:text-[19px]">Paso {stepIndex + 1} de {STEPS.length}</span>
+            <span className="text-[14px] text-[#5f689f] sm:text-[17px]">Paso {stepIndex + 1} de {STEPS.length}</span>
           </div>
 
-          <div className="soft-progress relative mt-4 w-full">
+          <div className="soft-progress relative mt-3 w-full">
             <span className="soft-progress-fill block" style={{ width: `${progress}%` }} />
             <span className="soft-progress-dot absolute top-1/2 -translate-x-1/2 -translate-y-1/2" style={{ left: `${progress}%` }} />
           </div>
 
-          <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[15px] text-[#5c6597] sm:text-[17px]">
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[14px] text-[#5c6597] sm:text-[16px]">
               {stepIndex === 0
                 ? "Cuatro preguntas rápidas y empezamos."
                 : stepIndex === STEPS.length - 1
@@ -216,13 +217,13 @@ export default function Welcome() {
         </header>
 
         {/* Cada paso entra con la misma animación del panel. */}
-        <section key={step} className="page-enter mt-[55px] text-center sm:mt-[72px]">
+        <section key={step} className="page-enter flex flex-1 flex-col items-center justify-center py-[clamp(12px,3dvh,40px)] text-center">
           {step === "source" && (
             <>
-              <SparkBadge />
+              <SparkBadge compactHide />
               <H1>¿Cómo nos has encontrado?</H1>
               <Sub>Cuéntanos qué canal te ha traído hasta aquí.</Sub>
-              <div className="flex flex-wrap justify-center gap-[18px]">
+              <div className="wv-options wv-options-sm flex w-full flex-wrap justify-center">
                 {SOURCES.map((s, i) => (
                   <Choice key={s.id} small selected={source === s.id} delay={i * 0.03} onClick={() => setSource(s.id)} icon={<SourceMark id={s.id} />}>
                     {s.label}
@@ -236,7 +237,7 @@ export default function Welcome() {
                   onChange={(e) => setSourceOther(e.target.value)}
                   placeholder="¿Dónde nos viste?"
                   maxLength={120}
-                  className="soft-field mx-auto mt-6 max-w-[420px] text-center"
+                  className="soft-field mx-auto mt-4 max-w-[420px] text-center"
                 />
               )}
               <Continue disabled={!canContinue} onClick={next} />
@@ -248,7 +249,7 @@ export default function Welcome() {
               <SparkBadge />
               <H1>Hola, soy Funnyleads</H1>
               <Sub>Tu plataforma de correo en frío: buzones, secuencias, respuestas y resultados, todo en el mismo sitio.</Sub>
-              <div className="grid gap-[18px] sm:grid-cols-3">
+              <div className="grid w-full gap-[clamp(8px,1.6dvh,18px)] sm:grid-cols-3">
                 {[
                   { Icon: Search, title: "Buzones listos para enviar", text: "Conecta Gmail, Outlook o cualquier SMTP y deja el SPF, el DKIM y el DMARC bien configurados." },
                   { Icon: Sparkles, title: "Secuencias con IA", text: "Escribe y personaliza cada paso, con reparto entre buzones y rampa de envío." },
@@ -257,11 +258,13 @@ export default function Welcome() {
                   <article
                     key={title}
                     style={{ animationDelay: `${0.08 + i * 0.09}s` }}
-                    className="chip-pop soft-glass rounded-[19px] p-7 text-left"
+                    className="chip-pop soft-glass wv-card flex gap-3.5 rounded-[19px] text-left sm:block"
                   >
-                    <span className="soft-option-icon mb-5"><Icon className="h-6 w-6" strokeWidth={1.9} /></span>
-                    <h2 className="font-display text-[18px] font-semibold tracking-[-0.02em] text-[#080d35]">{title}</h2>
-                    <p className="mt-2 text-[15.5px] leading-[1.55] text-[#6470a8]">{text}</p>
+                    <span className="soft-option-icon wv-card-icon sm:mb-[clamp(10px,2dvh,20px)]"><Icon className="h-6 w-6" strokeWidth={1.9} /></span>
+                    <div className="min-w-0">
+                      <h2 className="font-display text-[16px] font-semibold tracking-[-0.02em] text-[#080d35] sm:text-[18px]">{title}</h2>
+                      <p className="mt-1 text-[13.5px] leading-[1.5] text-[#6470a8] sm:mt-2 sm:text-[clamp(14px,1.9dvh,15.5px)]">{text}</p>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -274,14 +277,14 @@ export default function Welcome() {
               <SparkBadge />
               <H1>¿Cuál es el sitio web<br className="hidden sm:block" /> de tu empresa?</H1>
               <Sub>Nos ayuda a entender a qué te dedicas y a personalizar tus campañas.</Sub>
-              <div className="soft-glass mx-auto w-full max-w-[760px] rounded-[25px] p-6 text-left sm:p-8">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                  <label htmlFor="wv-web" className="text-[17px] font-semibold text-[#080d35]">URL de tu empresa</label>
-                  <span className="inline-flex items-center gap-2 text-[14px] text-[#6470a8]"><Link2 className="h-4 w-4" /> Usaremos tu web para entender tu negocio</span>
+              <div className="soft-glass wv-card mx-auto w-full max-w-[760px] rounded-[22px] text-left">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <label htmlFor="wv-web" className="text-[16px] font-semibold text-[#080d35] sm:text-[17px]">URL de tu empresa</label>
+                  <span className="inline-flex items-center gap-2 text-[13px] text-[#6470a8] sm:text-[14px]"><Link2 className="h-4 w-4" /> Usaremos tu web para entender tu negocio</span>
                 </div>
-                <div className={cn("flex h-[76px] items-center gap-3 rounded-[18px] border bg-white px-6 transition-colors",
+                <div className={cn("wv-field flex items-center gap-3 rounded-[16px] border bg-white px-5 transition-colors",
                   websiteError ? "border-[#e5484d]" : "border-[#dce1f2] focus-within:border-[#765cff]")}>
-                  <Globe className="h-6 w-6 shrink-0 text-[#9299bc]" strokeWidth={1.8} />
+                  <Globe className="h-5 w-5 shrink-0 text-[#9299bc]" strokeWidth={1.8} />
                   <input
                     id="wv-web"
                     autoFocus
@@ -291,14 +294,14 @@ export default function Welcome() {
                     placeholder="tuempresa.com"
                     inputMode="url"
                     maxLength={200}
-                    className="w-full bg-transparent text-[19px] text-[#101640] outline-none placeholder:text-[#9299bc]"
+                    className="w-full bg-transparent text-[17px] text-[#101640] outline-none placeholder:text-[#9299bc] sm:text-[19px]"
                   />
                 </div>
                 {websiteError && <p className="mt-3 text-[15px] font-medium text-[#e5484d]">Eso no parece una dirección web. Escríbela como «tuempresa.com».</p>}
               </div>
               <Continue onClick={next} />
               <div>
-                <button type="button" onClick={() => { setWebsite(""); setWebsiteError(false); setStepIndex((i) => i + 1); }} className="mt-5 text-[15px] font-semibold text-[#9aa2c8] transition-colors hover:text-[#6245ff]">
+                <button type="button" onClick={() => { setWebsite(""); setWebsiteError(false); setStepIndex((i) => i + 1); }} className="mt-3 text-[15px] font-semibold text-[#9aa2c8] transition-colors hover:text-[#6245ff]">
                   Ahora no
                 </button>
               </div>
@@ -310,7 +313,7 @@ export default function Welcome() {
               <SparkBadge />
               <H1>¿Qué quieres lograr?</H1>
               <Sub>Elige hasta {MAX_GOALS} opciones. Así sabemos por dónde empezar contigo.</Sub>
-              <div className="flex flex-wrap justify-center gap-[18px]">
+              <div className="wv-options flex w-full flex-wrap justify-center">
                 {GOALS.map((g, i) => {
                   const Icon = GOAL_ICON[g.id] ?? Bot;
                   const selected = goals.includes(g.id);
@@ -327,13 +330,13 @@ export default function Welcome() {
                   );
                 })}
               </div>
-              <p className="mt-6 text-[15px] text-[#6470a8]">{goals.length} de {MAX_GOALS} seleccionadas</p>
+              <p className="mt-[clamp(8px,1.8dvh,20px)] text-[14px] text-[#6470a8]">{goals.length} de {MAX_GOALS} seleccionadas</p>
               <Continue label="Entrar en Funnyleads" disabled={!canContinue} busy={saving} onClick={next} />
             </>
           )}
         </section>
 
-        <footer className="mt-14 flex items-center justify-center opacity-70">
+        <footer className="wv-footer flex items-center justify-center pb-[clamp(10px,2dvh,22px)] opacity-70">
           <Wordmark className="h-4" colorClassName="text-[#6E58F1]" />
         </footer>
       </main>

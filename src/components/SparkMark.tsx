@@ -13,8 +13,8 @@ import star from "@/assets/onepulso-spark-star.png";
  * Las cuentas de CLIENTE con su propio logo siguen viendo el suyo. */
 
 interface Props {
-  /** Lado en píxeles. */
-  size?: number;
+  /** Lado en píxeles, o un valor CSS (p. ej. "clamp(52px, 10dvh, 100px)") para que se adapte. */
+  size?: number | string;
   /** "tile" (por defecto) = icono con baldosa; "star" = sólo la estrella, sin fondo. */
   variant?: "tile" | "star";
   className?: string;
@@ -25,8 +25,8 @@ export function SparkMark({ size = 32, variant = "tile", className }: Props) {
     <img
       src={variant === "star" ? star : tile}
       alt="Funnyleads"
-      width={size}
-      height={size}
+      width={typeof size === "number" ? size : undefined}
+      height={typeof size === "number" ? size : undefined}
       draggable={false}
       decoding="async"
       className={cn("block shrink-0 select-none object-contain", className)}

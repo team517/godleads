@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useFunnyTeamAccess } from "@/hooks/useFunnyTeamAccess";
-import { CalendarCheck, ExternalLink, LineChart, MailCheck, PenLine, Server } from "lucide-react";
+import { ExternalLink, LineChart, MailCheck, PenLine, Server } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { TeamAvatars } from "@/components/chatbot/TeamAvatars";
@@ -73,7 +73,9 @@ function CalInline({ name, email, dark, onReady }: { name: string; email: string
     if (name.trim()) config.name = name.trim();
     if (email.trim()) config.email = email.trim();
     Cal.ns[CAL_NS]("inline", { elementOrSelector: `#${id}`, calLink: CAL_LINK, config });
-    Cal.ns[CAL_NS]("ui", { theme: dark ? "dark" : "light", hideEventTypeDetails: false, layout: "month_view", cssVarsPerTheme: { light: { "cal-brand": "#6E58F1" }, dark: { "cal-brand": "#8B7BFF" } } });
+    // En móvil, sin la ficha del evento (la cabecera ya lo cuenta): el calendario sale antes.
+    const movil = typeof window !== "undefined" && window.innerWidth < 768;
+    Cal.ns[CAL_NS]("ui", { theme: dark ? "dark" : "light", hideEventTypeDetails: movil, layout: "month_view", cssVarsPerTheme: { light: { "cal-brand": "#6E58F1" }, dark: { "cal-brand": "#8B7BFF" } } });
     // Cal.com marca su elemento con loading="done" cuando la agenda ya está pintada; si tardara, a
     // los 12 s se quita el aviso de carga igualmente (la agenda sigue cargando debajo).
     let done = false;
@@ -83,7 +85,7 @@ function CalInline({ name, email, dark, onReady }: { name: string; email: string
     const t = setTimeout(ready, 12_000);
     return () => { obs.disconnect(); clearTimeout(t); };
   }, [name, email, dark, onReady]);
-  return <div ref={ref} className="min-h-[640px] w-full" />;
+  return <div ref={ref} className="min-h-[460px] w-full" />;
 }
 
 const AYUDA = [
@@ -94,6 +96,15 @@ const AYUDA = [
 ];
 
 export default function FunnyTeam() {
+  const access = useFunnyTeamAccess();
+  // Sólo clientes nuevos con suscripción (y el equipo): los del portal de la agencia vuelven al inicio.
+  if (!access.loading && !access.allowed) return <Navigate to="/" replace />;
+  return <FunnyTeamView />;
+}
+
+/** La página (sin la comprobación de acceso). 11-11-2026: la agenda a todo el ancho para que Cal.com
+ *  enseñe el mes y las horas lado a lado sin barra interna; la ayuda, en una fila debajo. */
+export function FunnyTeamView() {
   const { user } = useAuth();
   const { profile } = useProfile();
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
@@ -110,44 +121,57 @@ export default function FunnyTeam() {
   const name = (profile as { full_name?: string | null } | null)?.full_name || "";
   const email = (profile as { contact_email?: string | null } | null)?.contact_email || user?.email || "";
   const onReady = useMemo(() => () => setLoaded(true), []);
-  const access = useFunnyTeamAccess();
-
-  // Sólo clientes nuevos con suscripción (y el equipo): los del portal de la agencia vuelven al inicio.
-  if (!access.loading && !access.allowed) return <Navigate to="/" replace />;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
-      {/* Cabecera */}
-      <section className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#3B2BD9] via-[#6E58F1] to-[#4F8BFF] px-6 py-8 text-white shadow-[0_18px_40px_rgba(79,62,230,.25)] sm:px-10">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-2xl" aria-hidden="true" />
-        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="max-w-xl">
-            <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-white/75">Funny Team</p>
-            <h1 className="mt-1 font-display text-[30px] font-semibold leading-tight tracking-[-0.03em] sm:text-[36px]">
+    <div className="mx-auto w-full max-w-6xl space-y-3 px-4 pb-5 pt-3 sm:px-6">
+      {/* Cabecera compacta: así la agenda entera cabe en la pantalla */}
+      <section className="relative overflow-hidden rounded-[20px] bg-gradient-to-br from-[#3B2BD9] via-[#6E58F1] to-[#4F8BFF] px-5 py-3.5 text-white shadow-[0_14px_32px_rgba(79,62,230,.22)] sm:px-7">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl" aria-hidden="true" />
+        <div className="relative flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <h1 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.03em] sm:text-[26px]">
               Reserva una reunión con tu equipo
             </h1>
-            <p className="mt-2 text-[15px] leading-relaxed text-white/85">
-              Personas reales que te ayudan con tus campañas. Elige el día y la hora que te vengan bien:
-              la reunión es de 15 minutos por Google Meet, puedes dejarnos una nota con lo que quieres ver
-              y te llega la invitación al correo.
+            <p className="mt-1 text-[13.5px] leading-relaxed text-white/85 sm:text-[14.5px]">
+              15 minutos por Google Meet con personas reales. Elige día y hora, déjanos una nota y te llega la invitación al correo.
             </p>
           </div>
-          <div className="flex items-center gap-3 rounded-2xl bg-white/12 px-4 py-3 backdrop-blur">
-            <TeamAvatars size={44} />
-            <div className="text-[13px] leading-tight">
-              <p className="font-semibold">Equipo de Funnyleads</p>
-              <p className="flex items-center gap-1.5 text-white/80"><span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" /> Disponible esta semana</p>
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2.5 rounded-2xl bg-white/12 px-3 py-2 backdrop-blur">
+              <TeamAvatars size={34} />
+              <div className="text-[12.5px] leading-tight">
+                <p className="font-semibold">Funny Team</p>
+                <p className="flex items-center gap-1.5 text-white/80"><span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" /> Disponible esta semana</p>
+              </div>
             </div>
+            <a href={FUNNY_TEAM_BOOKING_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl px-2 py-1.5 text-[12.5px] font-medium text-white/90 hover:bg-white/10 hover:text-white">
+              Abrir en otra pestaña <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
           </div>
         </div>
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        {/* En qué te ayudamos */}
-        <section className="space-y-3" aria-labelledby="ayuda-title">
-          <h2 id="ayuda-title" className="font-display text-lg font-semibold tracking-[-0.02em] text-foreground">En qué te ayudamos</h2>
+      {/* Agenda (a todo el ancho: Cal.com pone el mes y las horas lado a lado) */}
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="Elige día y hora">
+        <div className="relative min-h-[460px]">
+          {!loaded && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+              <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary/25 border-t-primary" aria-hidden="true" />
+              Cargando la agenda…
+            </div>
+          )}
+          <div aria-label="Reservar una reunión con el equipo de Funnyleads" role="region" className={loaded ? "relative opacity-100 transition-opacity duration-300" : "relative opacity-0"}>
+            <CalInline name={name} email={email} dark={dark} onReady={onReady} />
+          </div>
+        </div>
+      </section>
+
+      {/* En qué te ayudamos */}
+      <section aria-labelledby="ayuda-title">
+        <h2 id="ayuda-title" className="mb-3 font-display text-[17px] font-semibold tracking-[-0.02em] text-foreground">En qué te ayudamos</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {AYUDA.map(({ icon: Icon, title, text }) => (
-            <div key={title} className="flex gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div key={title} className="flex gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
                 <Icon className="h-5 w-5" aria-hidden="true" />
               </span>
@@ -157,34 +181,11 @@ export default function FunnyTeam() {
               </div>
             </div>
           ))}
-          <p className="px-1 text-[12.5px] text-muted-foreground">
-            ¿Prefieres escribir? Abre el chat de abajo a la derecha y elige <b>Habla con nuestro equipo</b>.
-          </p>
-        </section>
-
-        {/* Agenda */}
-        <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-labelledby="agenda-title">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <h2 id="agenda-title" className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-              <CalendarCheck className="h-4 w-4 text-primary" aria-hidden="true" /> Elige día y hora
-            </h2>
-            <a href={FUNNY_TEAM_BOOKING_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-primary hover:underline">
-              Abrir en otra pestaña <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            </a>
-          </div>
-          <div className="relative min-h-[640px]">
-            {!loaded && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-                <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary/25 border-t-primary" aria-hidden="true" />
-                Cargando la agenda…
-              </div>
-            )}
-            <div aria-label="Reservar una reunión con el equipo de Funnyleads" role="region" className="relative">
-              <CalInline name={name} email={email} dark={dark} onReady={onReady} />
-            </div>
-          </div>
-        </section>
-      </div>
+        </div>
+        <p className="mt-3 px-1 text-[12.5px] text-muted-foreground">
+          ¿Prefieres escribir? Abre el chat de abajo a la derecha y elige <b>Habla con nuestro equipo</b>.
+        </p>
+      </section>
     </div>
   );
 }
