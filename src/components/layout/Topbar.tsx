@@ -1,4 +1,4 @@
-import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2 } from "lucide-react";
+import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,6 +20,7 @@ import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import coinIcon from "@/assets/coin-icon.png";
 import { AccountSwitcherDialog } from "@/components/AccountSwitcherDialog";
 import { canUseAccountSwitcher, returnToOwnAccount, stateMatchesUser, useImpersonation } from "@/lib/impersonation";
+import { canReplayTour, openTour } from "@/lib/tour";
 import {
   Popover,
   PopoverContent,
@@ -76,7 +77,9 @@ const COIN_PACKS = [
 ];
 
 export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: TopbarProps) {
-  const { isTrialing, trialDaysLeft, tier, subscribed } = useSubscription();
+  const { isTrialing, trialDaysLeft, tier, subscribed, status: subStatus, isAdmin } = useSubscription();
+  // Mini tutorial: suscriptores y equipo pueden volver a verlo (sin cambiar lo que contestaron).
+  const tourReplay = canReplayTour(subStatus, subStatus === "staff" || isAdmin);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { profile: profileData } = useProfile();
@@ -504,6 +507,12 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <Settings className="h-4 w-4 text-muted-foreground" /> Configuración
               </Link>
+              {tourReplay && (
+                <button type="button" onClick={() => { setAccountMenuOpen(false); openTour(); }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                  <PlayCircle className="h-4 w-4 text-muted-foreground" /> Ver el tutorial
+                </button>
+              )}
               <a href="mailto:support@onepulso.online" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <LifeBuoy className="h-4 w-4 text-muted-foreground" /> Ayuda
               </a>

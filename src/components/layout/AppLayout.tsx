@@ -10,6 +10,7 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
 import { PushPrompt } from "@/components/PushPrompt";
+import { ProductTour } from "@/components/tour/ProductTour";
 import { ensurePushSubscription } from "@/lib/push-notifications";
 import { startVersionWatcher } from "@/lib/version-check";
 import { brandStyleFor } from "@/lib/brandColor";
@@ -138,6 +139,8 @@ export function AppLayout() {
       {/* Token caducado: se dice en vez de enseñar listas vacías. */}
       <SessionExpiredBanner />
       <PushPrompt />
+      {/* Mini tutorial: se ofrece una vez a las cuentas nuevas con suscripción. */}
+      <ProductTour />
     </div>
   );
 }
