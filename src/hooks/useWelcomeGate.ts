@@ -42,9 +42,23 @@ export function useWelcomeGate(): WelcomeStatus {
     if (known) { setStatus(known); return; }
     let done = false;
     try { done = localStorage.getItem(welcomeDoneKey(userId)) === "1"; } catch { /* sin almacenamiento */ }
-    if (done) { remember(userId, "done"); setStatus("done"); return; }
-
     let alive = true;
+    if (done) {
+      remember(userId, "done"); setStatus("done");
+      // Se entra ya, pero se mira en segundo plano si el equipo ha reiniciado la cuenta (fila con
+      // completed_at vacío, 11-11-2026): entonces se olvida la marca y vuelve la bienvenida. Una
+      // fila que no existe (guardado fallido) NO la vuelve a enseñar.
+      void (async () => {
+        const { data, error } = await (supabase as any)
+          .from("user_onboarding").select("completed_at").eq("user_id", userId).maybeSingle();
+        if (!alive || error || !data || (data as any).completed_at) return;
+        try { localStorage.removeItem(welcomeDoneKey(userId)); } catch { /* sin almacenamiento */ }
+        remember(userId, "pending");
+        setStatus("pending");
+      })();
+      return () => { alive = false; };
+    }
+
     void (async () => {
       const { data, error } = await (supabase as any)
         .from("user_onboarding").select("completed_at").eq("user_id", userId).maybeSingle();
