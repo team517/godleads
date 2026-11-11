@@ -53,7 +53,7 @@ function Row({
     rose: "bg-rose-500/10 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
   };
   return (
-    <div className={`px-4 py-3.5 ${className}`}>
+    <div className={`px-4 py-3.5 ${className}`} data-tour-row={title}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           {icon && <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${tints[tint]}`}>{icon}</span>}

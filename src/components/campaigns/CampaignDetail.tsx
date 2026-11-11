@@ -125,7 +125,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, health, ra
   const launchLabel = active ? "Pausar" : campaign.status === "draft" ? "Lanzar" : "Reanudar";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-tour-campaign={campaign.id}>
       {/* Barra de la campaña */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[20px] border border-[#e8eaf5] bg-card/90 px-3 py-2.5 shadow-[0_8px_24px_rgba(82,94,170,.05)] backdrop-blur dark:border-border sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:flex-none">
@@ -173,6 +173,7 @@ export default function CampaignDetail({ campaign, nameSlot, metrics, health, ra
           </button>
           <button
             type="button"
+            data-tour="campaign-launch"
             onClick={onToggleStatus}
             className={cn(
               "inline-flex h-11 items-center gap-2 rounded-[14px] px-4 text-[15px] font-semibold transition-all sm:px-5",

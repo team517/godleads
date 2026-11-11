@@ -628,7 +628,7 @@ export default function Campaigns() {
           {campaigns.map((campaign) => {
             const status = statusConfig[campaign.status] || statusConfig.draft;
             return (
-              <Card key={campaign.id} className="hover:shadow-raised transition-shadow cursor-pointer" onClick={() => setSelectedId(campaign.id)}>
+              <Card key={campaign.id} data-tour="campaign-row" data-campaign-id={campaign.id} className="hover:shadow-raised transition-shadow cursor-pointer" onClick={() => setSelectedId(campaign.id)}>
                 <CardContent className="p-3 sm:p-5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
