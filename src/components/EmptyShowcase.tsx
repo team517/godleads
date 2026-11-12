@@ -189,39 +189,42 @@ export function fitScale(o: { viewportH: number; top: number; textH: number; nat
 function useFitScale() {
   const section = useRef<HTMLElement>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const textBlock = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [naturalH, setNaturalH] = useState(0);
 
   useLayoutEffect(() => {
-    const sec = section.current, st = stage.current, tx = textBlock.current;
-    if (!sec || !st || !tx) return;
+    const sec = section.current, st = stage.current;
+    if (!sec || !st) return;
     let raf = 0;
     const medir = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const nat = st.offsetHeight; // sin la escala (transform no cambia offsetHeight)
+        // 12-11-2026: se encoge TODO junto (dibujo, título, texto y botón) para que no quede un
+        // dibujo pequeño con un título enorme. offsetHeight no cuenta la escala.
+        const nat = st.offsetHeight;
         const cs = getComputedStyle(sec);
         const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-        const s = fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: tx.offsetHeight, naturalH: nat, padding });
+        // En móvil no se encoge (la letra quedaría diminuta: se baja con el dedo); en ordenador,
+        // como mucho al 75 % para que el texto se siga leyendo bien.
+        const s = window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
         setNaturalH(nat);
         setScale((prev) => (Math.abs(prev - s) > 0.01 ? s : prev));
       });
     };
     medir();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(medir) : null;
-    ro?.observe(sec); ro?.observe(tx); ro?.observe(st);
+    ro?.observe(sec); ro?.observe(st);
     window.addEventListener("resize", medir);
     return () => { cancelAnimationFrame(raf); ro?.disconnect(); window.removeEventListener("resize", medir); };
   }, []);
 
-  return { section, stage, textBlock, scale, naturalH };
+  return { section, stage, scale, naturalH };
 }
 
 /* ── Pantalla vacía ────────────────────────────────────────────────────────────────── */
 
 export default function EmptyShowcase({ variant, title, text, cta, secondary, className }: Props) {
-  const { section, stage, textBlock, scale, naturalH } = useFitScale();
+  const { section, stage, scale, naturalH } = useFitScale();
   return (
     <section ref={section} data-fit-scale={scale.toFixed(2)} className={cn("relative flex min-h-0 flex-col justify-center overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-8 pt-6 text-center dark:border-border dark:from-card dark:to-background", className)}>
       {/* ola y luces de fondo */}
@@ -230,19 +233,19 @@ export default function EmptyShowcase({ variant, title, text, cta, secondary, cl
         <span className="absolute -right-[10%] bottom-[-50%] h-[85%] w-[75%] rounded-[50%] bg-gradient-to-tl from-[#f3e6ff]/70 to-transparent dark:from-primary/5" />
         <span className="absolute left-1/2 top-[18%] h-[260px] w-[260px] -translate-x-1/2 rounded-full bg-[#b9a8ff]/15 blur-3xl" />
       </div>
-      {/* El dibujo se encoge (sin deformarse) hasta que todo cabe en la pantalla. */}
+      {/* Todo (dibujo + textos + botón) se encoge a la vez, sin deformarse, hasta que cabe. */}
       <div className="relative w-full shrink-0" style={naturalH ? { height: Math.round(naturalH * scale) } : undefined}>
         <div
           ref={stage}
-          className="relative mx-auto min-h-[250px] max-w-[1100px] origin-top transition-transform duration-300 ease-out motion-reduce:transition-none md:min-h-[330px]"
+          className="relative mx-auto max-w-[1100px] origin-top transition-transform duration-300 ease-out motion-reduce:transition-none"
           style={scale < 1 ? { transform: `scale(${scale})` } : undefined}
         >
-          <Paths />
-          <Decor variant={variant} />
-          <div className="relative pt-2 md:pt-10"><Center variant={variant} /></div>
-        </div>
-      </div>
-      <div ref={textBlock} className="relative mx-auto mt-1 max-w-[560px] shrink-0">
+          <div className="relative min-h-[250px] md:min-h-[330px]">
+            <Paths />
+            <Decor variant={variant} />
+            <div className="relative pt-2 md:pt-10"><Center variant={variant} /></div>
+          </div>
+      <div className="relative mx-auto mt-1 max-w-[560px]">
         <h2 className="font-display text-[clamp(24px,2.6vw,34px)] font-semibold tracking-[-0.02em] text-[#0b1040] dark:text-foreground">{title}</h2>
         <p className="mt-2 text-[clamp(15px,1.4vw,18px)] leading-[1.5] text-[#6470a8] dark:text-muted-foreground">{text}</p>
         {cta && (
@@ -252,6 +255,8 @@ export default function EmptyShowcase({ variant, title, text, cta, secondary, cl
           </button>
         )}
         {secondary && <div className="mt-4 text-[14px] text-[#6470a8] dark:text-muted-foreground">{secondary}</div>}
+      </div>
+        </div>
       </div>
       <Sparkles aria-hidden className="absolute right-6 top-6 h-5 w-5 text-[#c9c2f5]" />
     </section>
