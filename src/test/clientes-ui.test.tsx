@@ -223,6 +223,34 @@ describe("Clientes", () => {
     expect(calls.some((c) => c.action === "add_slots")).toBe(false);
   });
 
+  it("al crear un cliente se le puede poner su color y su logo (se mandan al servidor)", async () => {
+    routes.create = { status: 200, body: { client: client("nueva", "Nueva SL") } };
+    const { container } = renderPage();
+    await screen.findByText("3 de 5 clientes · plan Growth");
+    fireEvent.click(addButton());
+    fireEvent.change(await screen.findByLabelText("Nombre"), { target: { value: "Nueva SL" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Color #E11D48" }));
+    expect(screen.getByLabelText("Código del color")).toHaveValue("#E11D48");
+    const file = new File(["x"], "logo.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Archivo de logo"), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getAllByAltText("Logo del cliente").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Crear cliente" }));
+    await waitFor(() => expect(calls.some((c) => c.action === "create")).toBe(true));
+    const sent = calls.find((c) => c.action === "create")!.payload;
+    expect(sent.logo_url).toBe("https://cdn.test/logo.png");
+    expect(sent.brand_color).toMatch(/^#[0-9A-F]{6}$/);
+    expect(container).toBeTruthy();
+  });
+
+  it("un código de color mal escrito no deja crear el cliente", async () => {
+    renderPage();
+    await screen.findByText("3 de 5 clientes · plan Growth");
+    fireEvent.click(addButton());
+    fireEvent.change(await screen.findByLabelText("Nombre"), { target: { value: "Nueva SL" } });
+    fireEvent.change(screen.getByLabelText("Código del color"), { target: { value: "rojo" } });
+    expect(screen.getByRole("button", { name: "Crear cliente" })).toBeDisabled();
+  });
+
   it("explica qué es un cliente cuando no hay ninguno", async () => {
     routes.list.body = { clients: [], usage: usage({ used: 0, remaining: 5 }) };
     renderPage();

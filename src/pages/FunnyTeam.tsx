@@ -75,7 +75,13 @@ function CalInline({ name, email, dark, onReady }: { name: string; email: string
     Cal.ns[CAL_NS]("inline", { elementOrSelector: `#${id}`, calLink: CAL_LINK, config });
     // En móvil, sin la ficha del evento (la cabecera ya lo cuenta): el calendario sale antes.
     const movil = typeof window !== "undefined" && window.innerWidth < 768;
-    Cal.ns[CAL_NS]("ui", { theme: dark ? "dark" : "light", hideEventTypeDetails: movil, layout: "month_view", cssVarsPerTheme: { light: { "cal-brand": "#6E58F1" }, dark: { "cal-brand": "#8B7BFF" } } });
+    // Fondo transparente: sin él, alrededor de la agenda quedaba un marco blanco (el fondo de la
+    // página de Cal.com) que en modo oscuro quedaba fatal. Así se ve el de nuestra tarjeta.
+    Cal.ns[CAL_NS]("ui", {
+      theme: dark ? "dark" : "light", hideEventTypeDetails: movil, layout: "month_view",
+      styles: { body: { background: "transparent" } },
+      cssVarsPerTheme: { light: { "cal-brand": "#6E58F1", "cal-bg": "transparent" }, dark: { "cal-brand": "#8B7BFF", "cal-bg": "transparent" } },
+    });
     // Cal.com marca su elemento con loading="done" cuando la agenda ya está pintada; si tardara, a
     // los 12 s se quita el aviso de carga igualmente (la agenda sigue cargando debajo).
     let done = false;

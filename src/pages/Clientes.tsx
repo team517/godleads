@@ -49,6 +49,7 @@ import {
   Plus,
   RefreshCw,
   Send,
+  ImagePlus,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -213,7 +214,25 @@ async function callClients(action: string, payload: Record<string, unknown> = {}
   return { status: resp.status, body };
 }
 
-const emptyForm = { name: "", company_name: "", contact_email: "", notes: "" };
+const emptyForm = { name: "", company_name: "", contact_email: "", notes: "", logo_url: "", brand_color: "" };
+
+/** Colores rápidos para la marca del cliente (además del selector y "sacar del logo"). */
+const BRAND_SWATCHES = ["#6E58F1", "#2563EB", "#0EA5E9", "#14B8A6", "#16A34A", "#F59E0B", "#EA580C", "#E11D48", "#DB2777", "#0F172A"];
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** Sube el logo de un cliente al almacén público y devuelve su URL y el color que sale de él. */
+async function uploadClientLogo(file: File): Promise<{ url: string; color: string | null }> {
+  if (!/^image\//.test(file.type)) throw new Error("Sube una imagen (PNG, JPG, SVG o WebP).");
+  if (file.size > 3 * 1024 * 1024) throw new Error("El logo debe pesar menos de 3 MB");
+  const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
+  const rand = Math.random().toString(36).slice(2, 10);
+  const path = `client-logos/${Date.now()}-${rand}.${ext}`;
+  const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
+  if (error) throw error;
+  const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
+  const color = await extractLogoColor(file).catch(() => null);
+  return { url: data.publicUrl, color };
+}
 
 function Stat({ value, label, className }: { value: number; label: string; className: string }) {
   return (
@@ -305,6 +324,30 @@ export default function Clientes() {
   const [form, setForm] = useState(emptyForm);
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const pickLogo = async (file: File | null | undefined) => {
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      const { url, color } = await uploadClientLogo(file);
+      setForm((f) => ({ ...f, logo_url: url, brand_color: color || f.brand_color }));
+      toast.success(color ? `Logo subido · color de marca ${color}` : "Logo subido");
+    } catch (e) {
+      toast.error((e as Error).message || "No se pudo subir el logo");
+    }
+    setLogoBusy(false);
+    if (logoInputRef.current) logoInputRef.current.value = "";
+  };
+  const colorFromFormLogo = async () => {
+    if (!form.logo_url) return;
+    setLogoBusy(true);
+    const hex = await extractLogoColor(form.logo_url).catch(() => null);
+    setLogoBusy(false);
+    if (hex) setForm((f) => ({ ...f, brand_color: hex }));
+    else toast.error("No pudimos sacar el color de ese logo. Elígelo a mano.");
+  };
   // Configuración por fases: se guarda SÓLO el id. El cliente que se pinta sale
   // siempre de la lista recién cargada, así que las fases hechas vienen del
   // servidor y no de lo que esta pantalla crea recordar.
@@ -345,6 +388,8 @@ export default function Clientes() {
       company_name: c.company_name || "",
       contact_email: c.contact_email || "",
       notes: c.notes || "",
+      logo_url: c.logo_url || "",
+      brand_color: c.brand_color || "",
     });
     setNameError(null);
     setDialogOpen(true);
@@ -363,6 +408,8 @@ export default function Clientes() {
       company_name: form.company_name.trim(),
       contact_email: form.contact_email.trim(),
       notes: form.notes.trim(),
+      logo_url: form.logo_url.trim(),
+      brand_color: HEX_RE.test(form.brand_color.trim()) ? form.brand_color.trim().toUpperCase() : "",
     };
     const { status, body } = await callClients(
       editing ? "update" : "create",
@@ -685,7 +732,7 @@ export default function Clientes() {
 
       {/* Crear / editar */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!saving) setDialogOpen(o); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[92dvh] max-w-md overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display tracking-[-0.03em]">
               {editing ? `Editar «${editing.name}»` : "Añadir cliente"}
@@ -725,6 +772,101 @@ export default function Clientes() {
                 placeholder="ana@verasalud.com"
               />
             </div>
+            {/* Marca del cliente: su logo y su color (así verá la plataforma al entrar) */}
+            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[13.5px]">Logo y color de marca</Label>
+                <span className="text-[11.5px] text-muted-foreground">Opcional</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => { e.preventDefault(); setDragOver(false); void pickLogo(e.dataTransfer.files?.[0]); }}
+                  disabled={logoBusy}
+                  aria-label={form.logo_url ? "Cambiar el logo" : "Subir el logo"}
+                  className={`relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-colors ${
+                    dragOver ? "border-primary bg-primary/10" : "border-border bg-background hover:border-primary/60"
+                  }`}
+                >
+                  {logoBusy ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  ) : form.logo_url ? (
+                    <img src={form.logo_url} alt="Logo del cliente" className="h-full w-full object-contain p-1.5" />
+                  ) : (
+                    <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </button>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  className="hidden"
+                  aria-label="Archivo de logo"
+                  onChange={(e) => void pickLogo(e.target.files?.[0])}
+                />
+                <div className="min-w-0 flex-1 text-[12.5px] leading-snug text-muted-foreground">
+                  {form.logo_url ? (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <button type="button" className="font-semibold text-primary hover:underline" onClick={() => logoInputRef.current?.click()} disabled={logoBusy}>Cambiar</button>
+                      <button type="button" className="font-semibold text-muted-foreground hover:text-foreground" onClick={() => setForm({ ...form, logo_url: "" })} disabled={logoBusy}>Quitar</button>
+                      <button type="button" className="inline-flex items-center gap-1 font-semibold text-muted-foreground hover:text-foreground" onClick={colorFromFormLogo} disabled={logoBusy}>
+                        <Palette className="h-3 w-3" /> Color del logo
+                      </button>
+                    </div>
+                  ) : (
+                    <>Pulsa o arrastra su logo (PNG, JPG, SVG · máx. 3 MB). Sacamos su color solo.</>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Color de marca">
+                {BRAND_SWATCHES.map((c) => {
+                  const on = form.brand_color.toUpperCase() === c;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      aria-label={`Color ${c}`}
+                      onClick={() => setForm({ ...form, brand_color: c })}
+                      className={`h-6 w-6 rounded-full border border-black/10 transition-transform hover:scale-110 ${on ? "ring-2 ring-offset-2 ring-offset-background" : ""}`}
+                      style={{ background: c, ...(on ? { boxShadow: `0 0 0 2px ${c}` } : {}) }}
+                    />
+                  );
+                })}
+                <label className="ml-1 inline-flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    aria-label="Elegir otro color"
+                    value={HEX_RE.test(form.brand_color) ? form.brand_color : "#6E58F1"}
+                    onChange={(e) => setForm({ ...form, brand_color: e.target.value.toUpperCase() })}
+                    className="h-7 w-9 cursor-pointer rounded-md border border-border bg-background"
+                  />
+                  <Input
+                    value={form.brand_color}
+                    onChange={(e) => setForm({ ...form, brand_color: e.target.value })}
+                    placeholder="#6E58F1"
+                    aria-label="Código del color"
+                    className={`h-7 w-[92px] px-2 font-mono text-[12px] ${form.brand_color && !HEX_RE.test(form.brand_color) ? "border-destructive" : ""}`}
+                  />
+                </label>
+              </div>
+              {/* Vista previa de cómo verá su cabecera */}
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
+                {form.logo_url ? (
+                  <img src={form.logo_url} alt="" className="h-6 max-w-[80px] object-contain" />
+                ) : (
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: `${HEX_RE.test(form.brand_color) ? form.brand_color : "#6E58F1"}1f`, color: HEX_RE.test(form.brand_color) ? form.brand_color : "#6E58F1" }}>
+                    <Building2 className="h-3.5 w-3.5" />
+                  </span>
+                )}
+                <span className="truncate text-[13px] font-semibold text-foreground">{form.company_name.trim() || form.name.trim() || "Tu cliente"}</span>
+                <span className="ml-auto h-2 w-10 rounded-full" style={{ background: HEX_RE.test(form.brand_color) ? form.brand_color : "#6E58F1" }} aria-hidden="true" />
+              </div>
+            </div>
             <div className="space-y-1">
               <Label htmlFor="cliente-notas">Notas</Label>
               <Textarea
@@ -732,7 +874,7 @@ export default function Clientes() {
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 placeholder="Qué vende, a quién y cualquier cosa que convenga recordar."
-                rows={3}
+                rows={2}
               />
             </div>
           </div>
@@ -740,7 +882,7 @@ export default function Clientes() {
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button onClick={submit} disabled={saving || !form.name.trim()} className="gap-2">
+            <Button onClick={submit} disabled={saving || logoBusy || !form.name.trim() || (!!form.brand_color && !HEX_RE.test(form.brand_color.trim()))} className="gap-2">
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {editing ? "Guardar cambios" : "Crear cliente"}
             </Button>
