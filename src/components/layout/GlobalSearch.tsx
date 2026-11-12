@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Rocket, Bot, CornerDownLeft, CalendarHeart } from "lucide-react";
+import { Search, Loader2, Send, Users, Mail, Inbox, LayoutDashboard, BarChart3, ShieldCheck, Brain, Rocket, Bot, CornerDownLeft, CalendarHeart, GraduationCap } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,6 +28,7 @@ const NAV: { label: string; path: string; keywords: string; icon: any }[] = [
   { label: "Agentes IA", path: "/ai-prompts", keywords: "agentes ia ai prompts inteligencia respuestas asistente", icon: Brain },
   { label: "Onboarding", path: "/onboarding", keywords: "onboarding clientes progreso fases alta acceso", icon: Rocket },
   { label: "Funny Team", path: "/funny-team", keywords: "funny team equipo reunion reunión agendar reservar cita llamada videollamada ayuda soporte calendario", icon: CalendarHeart },
+  { label: "Funny Pro", path: "/funny-pro", keywords: "funny pro formacion formación curso aprender clase 1:1 pro entrenamiento", icon: GraduationCap },
   { label: "Mensajes del chat", path: "/peticiones", keywords: "mensajes chat en directo clientes responder peticiones hablar equipo contactos demo solicitudes conversaciones historial", icon: Bot },
   { label: "Modificaciones IA", path: "/modificaciones-ia", keywords: "modificaciones ia pulsebot chat cliente mensajes variantes secuencia metricas campana automatizar", icon: Bot },
 ];
@@ -87,7 +88,7 @@ export function GlobalSearch() {
     const navMatches: SearchResult[] = NAV
       .filter((n) => !OWNER_ONLY.has(n.path) || isOwner) // owner-only agency tools
       .filter((n) => n.path !== "/modificaciones-ia" || puedeVerIaMod(user?.email))
-      .filter((n) => n.path !== "/funny-team" || funnyTeamAllowed)
+      .filter((n) => (n.path !== "/funny-team" && n.path !== "/funny-pro") || funnyTeamAllowed)
       .filter((n) => n.label.toLowerCase().includes(lower) || n.keywords.includes(lower))
       .slice(0, 4)
       .map((n) => ({ kind: "page", id: n.path, title: n.label, subtitle: "Sección", to: n.path }));

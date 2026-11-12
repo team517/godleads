@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import {
-  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound, CalendarHeart } from "lucide-react";
+  type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound, CalendarHeart, GraduationCap } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { CoBrand } from "@/components/clients/CoBrand";
@@ -52,6 +52,7 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   { id: "support", title: "Soporte", items: [
     { icon: CalendarHeart, label: "Funny Team", path: "/funny-team" },
+    { icon: GraduationCap, label: "Funny Pro", path: "/funny-pro" },
   ] },
   { id: "perf", title: "Rendimiento", items: [
     { icon: BarChart3, label: "Estadísticas", path: "/stats" },
@@ -110,6 +111,8 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     // Funny Team (reservar reunión con el equipo): clientes nuevos con suscripción activa o en prueba,
     // y el equipo. Los clientes del portal de la agencia no.
     if (path === "/funny-team") return canUseFunnyTeam(subStatus, isAgency);
+    // Funny Pro (formación 1:1 de pago): quien ve Funny Team.
+    if (path === "/funny-pro") return canUseFunnyTeam(subStatus, isAgency);
     if (allowedRoutes && !allowedRoutes.includes(path)) return false;
     if (path === "/clientes") return !isAgency;
     if (path === "/automatizacion") return canAutomation;

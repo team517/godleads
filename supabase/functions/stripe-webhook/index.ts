@@ -17,6 +17,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@18.5.0?target=deno";
 import { ESTADOS_BAJA, ESTADOS_IMPAGO, camposAMedida, filaDesdeSesionDeEnlace, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
+import { esPagoFunnyPro } from "../_shared/funny-pro.ts";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
@@ -187,8 +188,21 @@ Deno.serve(async (req) => {
             await registrar({ user_id: userId, email, tier: (fila?.tier as string) ?? null, status: (fila?.status as string) ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
           }
         } else {
-          // Pago único (formación 1:1 de 350 €): sólo queda registrado para el equipo.
-          const userId = ses.customer ? await findUserId(String(ses.customer), email, ses.client_reference_id) : null;
+          // Pago único (formación 1:1 de 350 €, Funny Pro). Queda registrado y, si es Funny Pro ya
+          // cobrado, se guarda la compra: eso abre la agenda en /funny-pro (12-11-2026).
+          const userId = await findUserId(ses.customer ? String(ses.customer) : "", email, ses.client_reference_id);
+          const sesPago = {
+            mode: ses.mode, payment_status: ses.payment_status, metadata: ses.metadata as any,
+            payment_link: typeof ses.payment_link === "string" ? ses.payment_link : (ses.payment_link as any)?.id ?? null,
+          };
+          if (esPagoFunnyPro(sesPago)) {
+            const { error } = await db.from("funny_pro_purchases").upsert({
+              stripe_session_id: ses.id, user_id: userId, email, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null,
+              paid_at: new Date((ses.created || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+            }, { onConflict: "stripe_session_id" });
+            if (error) throw new Error(`funny_pro_purchases: ${error.message}`);
+            console.log(`Funny Pro pagado: ${userId || email || "sin usuario"}`);
+          }
           await registrar({ user_id: userId, email, tier: null, status: ses.payment_status ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
         }
         break;

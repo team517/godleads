@@ -59,7 +59,7 @@ function ensureCal(): any {
 }
 
 /** La agenda incrustada con la integración oficial: sin marcos en blanco y con la altura justa. */
-function CalInline({ name, email, dark, onReady }: { name: string; email: string; dark: boolean; onReady: () => void }) {
+export function CalInline({ name, email, dark, onReady }: { name: string; email: string; dark: boolean; onReady: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
