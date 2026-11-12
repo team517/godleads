@@ -394,6 +394,67 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
 [data-brand] .is-selected { color: hsl(var(--sidebar-accent-foreground)) !important; }
 [data-brand] .is-selected svg { color: hsl(var(--sidebar-accent-foreground)); }
 
+/* MARCA DEL CLIENTE, también en los violetas escritos a mano (12-11-2026): muchas piezas llevan
+   nuestro violeta como clase fija (text-[#6E58F1], degradados from-/to-…). Dentro de la cuenta de
+   un cliente pasan a ser SU color (o el de su agencia si él no tiene), igual que el resto. */
+[data-brand] .text-\[\#6E58F1\],
+[data-brand] .text-\[\#5B40FB\],
+[data-brand] .text-\[\#6a4cff\],
+[data-brand] .text-\[\#8B5CF6\],
+[data-brand] .text-\[\#7C5CFF\],
+[data-brand] .hover\:text-\[\#6E58F1\]:hover { color: hsl(var(--primary)) !important; }
+[data-brand] .bg-\[\#6E58F1\],
+[data-brand] .bg-\[\#5B40FB\],
+[data-brand] .bg-\[\#7C5CFF\] { background-color: hsl(var(--primary)) !important; }
+[data-brand] .hover\:bg-\[\#5F49E6\]:hover,
+[data-brand] .hover\:bg-\[\#5B40FB\]:hover { background-color: hsl(var(--brand-bar)) !important; }
+[data-brand] .bg-\[\#F0EDFE\],
+[data-brand] .bg-\[\#f2effe\],
+[data-brand] .bg-\[\#F1EEFB\],
+[data-brand] .bg-\[\#f4f1ff\],
+[data-brand] .bg-\[\#f7f5ff\],
+[data-brand] .bg-\[\#f5f2ff\],
+[data-brand] .bg-\[\#F4F1FF\],
+[data-brand] .hover\:bg-\[\#F1EEFC\]:hover,
+[data-brand] .hover\:bg-\[\#f5f3ff\]:hover,
+[data-brand] .hover\:bg-\[\#f2effe\]:hover { background-color: hsl(var(--brand-h) 70% 96%) !important; }
+[data-brand] .border-\[\#6E58F1\],
+[data-brand] .border-\[\#7C5CFF\],
+[data-brand] .ring-\[\#6E58F1\] { border-color: hsl(var(--primary)) !important; --tw-ring-color: hsl(var(--primary)) !important; }
+[data-brand] .from-\[\#6E58F1\],
+[data-brand] .from-\[\#6a4cff\],
+[data-brand] .from-\[\#7B66F5\],
+[data-brand] .from-\[\#7C5CFF\],
+[data-brand] .from-\[\#5b5cf6\],
+[data-brand] .from-\[\#3B2BD9\],
+[data-brand] .from-\[\#3B5BFF\] { --tw-gradient-from: hsl(var(--primary)) var(--tw-gradient-from-position) !important; }
+[data-brand] .to-\[\#8A1CFF\],
+[data-brand] .to-\[\#8B3CF5\],
+[data-brand] .to-\[\#a24bf5\],
+[data-brand] .to-\[\#5B45E8\],
+[data-brand] .to-\[\#5B40FB\],
+[data-brand] .to-\[\#8b7bff\],
+[data-brand] .to-\[\#4F8BFF\] { --tw-gradient-to: hsl(var(--brand-bar)) var(--tw-gradient-to-position) !important; }
+[data-brand] .via-\[\#6E58F1\] { --tw-gradient-stops: var(--tw-gradient-from), hsl(var(--primary)) var(--tw-gradient-via-position), var(--tw-gradient-to) !important; }
+.dark[data-brand] .bg-\[\#F0EDFE\],
+.dark[data-brand] .bg-\[\#f2effe\],
+.dark[data-brand] .bg-\[\#F1EEFB\],
+.dark[data-brand] .bg-\[\#f4f1ff\],
+.dark[data-brand] .bg-\[\#f7f5ff\],
+.dark[data-brand] .bg-\[\#f5f2ff\],
+.dark[data-brand] .bg-\[\#F4F1FF\],
+.dark[data-brand] .hover\:bg-\[\#F1EEFC\]:hover,
+.dark[data-brand] .hover\:bg-\[\#f5f3ff\]:hover,
+.dark[data-brand] .hover\:bg-\[\#f2effe\]:hover { background-color: hsl(var(--brand-h) 28% 20%) !important; }
+
+/* Bienvenida de la cuenta de un cliente */
+@keyframes cw-pop { 0% { opacity: 0; transform: translateY(10px) scale(.92); } 100% { opacity: 1; transform: none; } }
+@keyframes cw-in { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: none; } }
+.cw-pop { animation: cw-pop .55s cubic-bezier(.2,.8,.2,1.15) both; }
+.cw-step { animation: cw-in .32s ease-out both; }
+.cw-item { animation: cw-in .36s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .cw-pop, .cw-step, .cw-item { animation: none; } }
+
 /* Secciones plegables del menú: la altura se anima con grid (sin medir nada en JS). */
 .collapse-grid { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .24s cubic-bezier(.2,.7,.2,1), opacity .2s ease; }
 .collapse-grid[data-open="false"] { grid-template-rows: 0fr; opacity: 0; }

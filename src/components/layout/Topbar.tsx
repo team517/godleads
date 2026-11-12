@@ -12,6 +12,9 @@ import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushState } f
 import { usePlanUsageAlert } from "@/hooks/usePlanUsageAlert";
 import { planAlertCopy } from "@/lib/plan-alerts";
 import { clientLogoutPath } from "@/lib/client-access";
+import { CoBrand } from "@/components/clients/CoBrand";
+import { CLIENT_WELCOME_EVENT } from "@/components/clients/ClientWelcome";
+import { useAgencyBrand } from "@/hooks/useAgencyBrand";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { Wordmark } from "@/components/Wordmark";
@@ -206,6 +209,8 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   const canSeeAI = !allowed || allowed.includes("/ai-prompts");
   // Cuenta de un cliente: su agencia paga y gestiona el plan → ni planes, ni monedas, ni tutorial.
   const clientLogin = !!profileData.client_login_of;
+  // Marca doble: logo de la agencia × logo del cliente.
+  const agencyBrand = useAgencyBrand();
   const planAlert = usePlanUsageAlert();
   const planAlertText = planAlert ? planAlertCopy(planAlert) : null;
 
@@ -238,17 +243,14 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           </button>
         )}
         <Link to="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="Ir al panel">
-          {profileData.logo_url ? (
+          {clientLogin ? (
+            <CoBrand
+              agency={agencyBrand}
+              client={{ name: profileData.company_name || "Tu empresa", logo: profileData.logo_url, color: profileData.brand_color }}
+            />
+          ) : profileData.logo_url ? (
             <span className="flex h-8 items-center rounded-md bg-white px-2 shadow-rest">
               <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[120px] object-contain" />
-            </span>
-          ) : clientLogin && profileData.company_name ? (
-            // Cliente sin logo: su nombre, con la inicial en su color (nunca la marca Funnyleads).
-            <span className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-[14px] font-bold text-primary-foreground">
-                {profileData.company_name.trim().charAt(0).toUpperCase()}
-              </span>
-              <span className="hidden max-w-[180px] truncate text-[15px] font-semibold text-white sm:inline">{profileData.company_name}</span>
             </span>
           ) : (
             <>
@@ -541,6 +543,12 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <Settings className="h-4 w-4 text-muted-foreground" /> Configuración
               </Link>
+              {clientLogin && (
+                <button type="button" onClick={() => { setAccountMenuOpen(false); window.dispatchEvent(new Event(CLIENT_WELCOME_EVENT)); }}
+                  className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                  <PlayCircle className="h-4 w-4 text-muted-foreground" /> Ver la bienvenida
+                </button>
+              )}
               {tourReplay && !clientLogin && (
                 <button type="button" onClick={() => { setAccountMenuOpen(false); openTour(); }}
                   className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">

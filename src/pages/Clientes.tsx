@@ -31,6 +31,9 @@ import { BRAND_SWATCHES, HEX_RE, callClients, uploadBrandLogo, type AgencyBrandi
 import { agencyLoginUrl } from "@/lib/client-access";
 import { cn } from "@/lib/utils";
 import { AgencyBrandCard } from "@/components/clients/AgencyBrandCard";
+import { CoBrand } from "@/components/clients/CoBrand";
+import { rowToAgency } from "@/hooks/useAgencyBrand";
+import { brandBarHsl } from "@/lib/brandColor";
 import {
   Archive,
   BarChart3,
@@ -871,6 +874,7 @@ export default function Clientes() {
         <ClientSetupDialog
           client={configClient}
           agencySlug={agency?.slug ?? null}
+          agency={agency}
           onClose={() => setConfigId(null)}
           onChanged={load}
         />
@@ -970,11 +974,13 @@ const softBtn = "inline-flex h-9 items-center gap-1.5 rounded-xl border border-[
 function ClientSetupDialog({
   client,
   agencySlug,
+  agency,
   onClose,
   onChanged,
 }: {
   client: ClientRow;
   agencySlug?: string | null;
+  agency?: AgencyBranding | null;
   onClose: () => void;
   onChanged: () => Promise<void> | void;
 }) {
@@ -1006,7 +1012,8 @@ function ClientSetupDialog({
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Fase 4 · Colores
-  const [color, setColor] = useState(client.brand_color || "#6E58F1");
+  // Sin color propio, su panel sale con el de tu agencia: la propuesta parte de ahí.
+  const [color, setColor] = useState(client.brand_color || (agency?.brand_color && HEX_RE.test(agency.brand_color) ? agency.brand_color.toUpperCase() : "#6E58F1"));
 
   // Fase 5 · Permisos
   const [sections, setSections] = useState<string[]>(() => [...(client.allowed_sections || [])]);
@@ -1170,6 +1177,10 @@ function ClientSetupDialog({
   const spin = (key: string) => busy === key;
   const hex = HEX_RE.test(color) ? color : "#6E58F1";
   const clientColor = HEX_RE.test(client.brand_color || "") ? client.brand_color! : "#6E58F1";
+  // Vista previa de la marca doble y de la bienvenida que verá al entrar.
+  const agencyPreview = rowToAgency(agency) ?? { name: "Tu agencia", logo: null, color: null };
+  const barOf = (h: string) => { const b = brandBarHsl(h); return b ? `hsl(${b.h} ${b.s}% ${b.l}%)` : h; };
+  const welcomeHex = agencyPreview.color || hex;
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
@@ -1466,15 +1477,15 @@ function ClientSetupDialog({
                 </SetupCard>
 
                 {/* Vista previa de su panel, con su color */}
-                <SetupCard icon={Eye} title="Vista previa" help="Así se verá su panel con este color.">
+                <SetupCard icon={Eye} title="Vista previa" help="Así se verá su panel: tu logo y el suyo arriba, y todo con su color.">
                   <div className="overflow-hidden rounded-2xl border border-[#ECE9F6] shadow-[0_10px_24px_-18px_rgba(30,20,90,.5)]">
-                    <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: hex }}>
-                      {logoUrl ? (
-                        <span className="flex h-7 items-center rounded-md bg-white px-1.5"><img src={logoUrl} alt="" className="h-5 max-w-[90px] object-contain" /></span>
-                      ) : (
-                        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-white/20 text-[12px] font-bold text-white">{(client.company_name || client.name || "C").charAt(0).toUpperCase()}</span>
-                      )}
-                      <span className="text-[13px] font-semibold text-white">{client.company_name || client.name}</span>
+                    <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: barOf(hex) }}>
+                      <CoBrand
+                        size="mini"
+                        agency={agencyPreview}
+                        client={{ name: client.company_name || client.name || "Cliente", logo: logoUrl || null, color: hex }}
+                      />
+                      <span className="ml-1 truncate text-[13px] font-semibold text-white">{client.company_name || client.name}</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 bg-[#FBFAFE] p-3">
                       <span className="rounded-lg border border-[#ECE9F6] bg-white px-2.5 py-1 text-[12px] font-semibold text-[#65768D]">
@@ -1488,6 +1499,29 @@ function ClientSetupDialog({
                       </span>
                     </div>
                   </div>
+                </SetupCard>
+
+                {/* La bienvenida que verá la primera vez que entre */}
+                <SetupCard icon={Sparkles} title="Su bienvenida" help="La primera vez que entre verá esto, con el logo y los colores de tu agencia, y un mini tutorial de su panel.">
+                  <div className="overflow-hidden rounded-2xl border border-[#ECE9F6] bg-white shadow-[0_10px_24px_-18px_rgba(30,20,90,.5)]">
+                    <div className="relative overflow-hidden px-4 pb-4 pt-5 text-center text-white" style={{ background: `linear-gradient(140deg, ${barOf(welcomeHex)} 0%, ${welcomeHex} 100%)` }}>
+                      <span aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-white/10 blur-xl" />
+                      <div className="relative flex justify-center">
+                        <CoBrand size="mini" agency={agencyPreview} client={{ name: client.company_name || client.name || "Cliente", logo: logoUrl || null, color: hex }} />
+                      </div>
+                      <p className="relative mt-3 font-display text-[18px] font-semibold tracking-[-0.02em]">Bienvenido a {agencyPreview.name}</p>
+                      <p className="relative mt-1 text-[12px] text-white/85">Hemos preparado este panel para {client.company_name || client.name}.</p>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+                      <span className="flex items-center gap-1">
+                        {[0, 1, 2].map((i) => <span key={i} className="h-1.5 rounded-full" style={{ width: i === 0 ? 16 : 6, background: i === 0 ? welcomeHex : "#E4E2F0" }} />)}
+                      </span>
+                      <span className="rounded-lg px-3 py-1 text-[12px] font-semibold text-white" style={{ background: welcomeHex }}>Ver mi panel →</span>
+                    </div>
+                  </div>
+                  {!agency?.agency_name && (
+                    <p className="mt-2 text-[12.5px] text-[#65768D]">Pon el nombre y el logo de tu agencia en «Tu marca de agencia» (arriba en Clientes) para que salgan aquí.</p>
+                  )}
                 </SetupCard>
               </>
             )}

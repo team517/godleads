@@ -12,6 +12,8 @@ import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
 import { PushPrompt } from "@/components/PushPrompt";
 import { ProductTour } from "@/components/tour/ProductTour";
 import { PlanUsageBanner } from "@/components/PlanUsageBanner";
+import { ClientWelcome } from "@/components/clients/ClientWelcome";
+import { useAgencyBrand } from "@/hooks/useAgencyBrand";
 import { ensurePushSubscription } from "@/lib/push-notifications";
 import { startVersionWatcher } from "@/lib/version-check";
 import { brandStyleFor } from "@/lib/brandColor";
@@ -48,8 +50,11 @@ export function AppLayout() {
     return () => obs.disconnect();
   }, [profile.client_login_of, profile.company_name]);
 
-  // Per-client branding: tint the accent color from brand_color.
-  const brandStyle = brandStyleFor(profile.brand_color);
+  // Per-client branding: tint the accent color from brand_color. La cuenta de un cliente sin
+  // color propio se pinta con el de SU agencia (nunca con el violeta de Funnyleads).
+  const agencyBrand = useAgencyBrand();
+  const brandHex = profile.brand_color || (profile.client_login_of ? agencyBrand?.color ?? null : null);
+  const brandStyle = brandStyleFor(brandHex);
 
   // La marca se pone en <html>, no en el envoltorio: los diálogos, menús y avisos se pintan en
   // un portal FUERA de este árbol, y con la marca en un div interior salían con nuestro violeta
@@ -67,7 +72,7 @@ export function AppLayout() {
     };
     // brand_color es lo único de lo que depende brandStyle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.brand_color]);
+  }, [brandHex]);
 
   // La cuenta de un cliente usa el MISMO envoltorio que cualquier otra: barra
   // lateral, barra superior y navegación inferior. Lo que ve dentro lo deciden sus
@@ -156,6 +161,8 @@ export function AppLayout() {
       <PushPrompt />
       {/* Mini tutorial: se ofrece una vez a las cuentas nuevas con suscripción. */}
       <ProductTour />
+      {/* Cuenta de un cliente: "Bienvenido a <agencia>" la primera vez que entra. */}
+      <ClientWelcome />
     </div>
   );
 }

@@ -4,6 +4,8 @@ import {
   type LucideIcon, LayoutDashboard, Globe, Mail, Send, Users, Inbox, BarChart3, Settings, LogOut, Home, BotMessageSquare, Shield, ShieldCheck, Sparkles, Rocket, Bot, Workflow, CalendarClock, Loader2, FileText, Building2, ChevronDown, Briefcase, X, UsersRound, CalendarHeart } from "lucide-react";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
+import { CoBrand } from "@/components/clients/CoBrand";
+import { useAgencyBrand } from "@/hooks/useAgencyBrand";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
@@ -75,6 +77,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { profile: profileData } = useProfile();
+  const agencyBrand = useAgencyBrand();
   const navigate = useNavigate();
   // Real relevant-unread count, published by the Unibox (matches what it shows).
   // Counting raw unread rows here showed a fake "99+" of warm-up noise.
@@ -243,10 +246,10 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
       {/* Cajón móvil: cabecera propia (la barra superior queda debajo). */}
       {isMobile && (
         <div className="topbar-surface flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between px-4 pt-[env(safe-area-inset-top)]">
-          {profileData.logo_url
-            ? <span className="flex h-8 items-center rounded-md bg-white px-2"><img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[130px] object-contain" /></span>
-            : profileData.client_login_of && profileData.company_name
-              ? <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-[14px] font-bold text-primary-foreground">{profileData.company_name.trim().charAt(0).toUpperCase()}</span><span className="max-w-[160px] truncate text-[15px] font-semibold text-white">{profileData.company_name}</span></span>
+          {profileData.client_login_of
+            ? <CoBrand agency={agencyBrand} client={{ name: profileData.company_name || "Tu empresa", logo: profileData.logo_url, color: profileData.brand_color }} />
+            : profileData.logo_url
+              ? <span className="flex h-8 items-center rounded-md bg-white px-2"><img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[130px] object-contain" /></span>
               : <span className="flex items-center gap-2.5"><SparkMark size={28} variant="star" /><Wordmark className="h-[20px]" colorClassName="text-white" /></span>}
           <button onClick={onClose} aria-label="Cerrar menú" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white">
             <X className="h-5 w-5" />
