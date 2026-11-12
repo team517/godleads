@@ -12,23 +12,51 @@ import { evaluarVuelta, parseOooReturn, programarVuelta } from "./ooo-return.ts"
 export type OooStatus =
   | "pendiente" | "programado" | "sin_fecha" | "pasado" | "secuencia_terminada" | "desactivado" | "ya_respondio" | "no_aplica";
 
-export interface CampaniaOoo { ooo_reschedule: boolean | null; timezone: string | null; send_start_hour: number | null }
+export interface CampaniaOoo {
+  ooo_reschedule: boolean | null; timezone: string | null; send_start_hour: number | null;
+  /** Días de margen tras la vuelta antes de escribirle (12-11-2026; 0 = el mismo día). */
+  ooo_delay_days?: number | null;
+  /** Si no dice cuándo vuelve: días de espera desde que llegó (0 = seguir la secuencia normal). */
+  ooo_no_date_days?: number | null;
+}
 export interface LeadOoo { status: string | null; current_step: number | null; next_attempt_at: string | null }
 
 /** Estados de campaign_leads en los que el lead sigue en la secuencia. */
 export const EN_SECUENCIA = ["pending", "in_progress", "active"];
 
-/** Decisión PURA (con pruebas): qué hacer con un fuera de oficina con (o sin) fecha de vuelta. */
+const DIA_MS = 86_400_000;
+const clampDias = (v: unknown, max: number) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
+/** "2026-10-29" + n días → "2026-11-01". */
+export function sumarDias(fecha: string, n: number): string {
+  return new Date(Date.parse(fecha + "T00:00:00Z") + n * DIA_MS).toISOString().slice(0, 10);
+}
+
+/** Decisión PURA (con pruebas): qué hacer con un fuera de oficina con (o sin) fecha de vuelta.
+ *  `espera` = no dijo cuándo vuelve y la campaña pide esperar unos días igualmente. */
 export function decidirReprogramacion(i: {
   fecha: string | null; recibidoIso: string; nowMs: number;
   campania: CampaniaOoo | null; lead: LeadOoo | null; pasos: number;
-}): { status: OooStatus; scheduledFor: string | null; nextAttempt: string | null } {
+  /** El texto no es de vacaciones (ya no trabaja allí, buzón cerrado, antispam): esperar no sirve. */
+  noEsAusencia?: boolean;
+}): { status: OooStatus; scheduledFor: string | null; nextAttempt: string | null; espera?: boolean } {
   const nada = (status: OooStatus, scheduledFor: string | null = null) => ({ status, scheduledFor, nextAttempt: null });
   if (!i.campania || !i.lead) return nada("no_aplica");
   const ev = evaluarVuelta(i.fecha, i.recibidoIso);
-  if (ev === "sin_fecha" || ev === "lejana") return nada("sin_fecha");
-  if (ev === "pasada") return nada("pasado");
-  const scheduledFor = programarVuelta(i.fecha!, i.campania.timezone, i.campania.send_start_hour);
+  let scheduledFor: string;
+  let espera = false;
+  if (ev === "sin_fecha" || ev === "lejana") {
+    // Sin fecha: por defecto sigue la secuencia normal; si la campaña lo pide, se espera N días.
+    const dias = clampDias(i.campania.ooo_no_date_days, 30);
+    if (ev === "lejana" || !dias || i.noEsAusencia || i.campania.ooo_reschedule === false) return nada("sin_fecha");
+    scheduledFor = programarVuelta(sumarDias(i.recibidoIso.slice(0, 10), dias), i.campania.timezone, i.campania.send_start_hour);
+    espera = true;
+  } else if (ev === "pasada") {
+    return nada("pasado");
+  } else {
+    // Con fecha: el día que vuelve, más el margen elegido (para que no le pille con la bandeja llena).
+    const margen = clampDias(i.campania.ooo_delay_days, 7);
+    scheduledFor = programarVuelta(sumarDias(i.fecha!, margen), i.campania.timezone, i.campania.send_start_hour);
+  }
   if (Date.parse(scheduledFor) <= i.nowMs) return nada("pasado", scheduledFor);
   if (i.campania.ooo_reschedule === false) return nada("desactivado", scheduledFor);
   const st = String(i.lead.status || "");
@@ -38,7 +66,7 @@ export function decidirReprogramacion(i: {
   // Nunca adelantar: si ya esperaba a algo posterior (otro fuera de oficina, un reintento), se deja.
   const actual = i.lead.next_attempt_at ? Date.parse(i.lead.next_attempt_at) : NaN;
   const nextAttempt = Number.isFinite(actual) && actual > Date.parse(scheduledFor) ? new Date(actual).toISOString() : scheduledFor;
-  return { status: "programado", scheduledFor, nextAttempt };
+  return espera ? { status: "programado", scheduledFor, nextAttempt, espera: true } : { status: "programado", scheduledFor, nextAttempt };
 }
 
 /* ── Respaldo con IA: sólo cuando las reglas no sacan fecha y el texto habla de tiempo ─────────── */
@@ -96,7 +124,7 @@ export interface EntradaOoo { messageId: string; campaignId: string; leadId: str
 export async function reprogramarFueraDeOficina(db: any, e: EntradaOoo, opts: { apiKey?: string; useAi?: boolean; nowMs?: number } = {}): Promise<{ status: OooStatus; usedAi: boolean; fecha: string | null }> {
   const parsed = parseOooReturn(e.text, e.receivedAt);
   let fecha = parsed.date;
-  let source: "reglas" | "ia" | null = fecha ? "reglas" : null;
+  let source: "reglas" | "ia" | "espera" | null = fecha ? "reglas" : null;
   let usedAi = false;
   if (!fecha && !parsed.notVacation && parsed.hasTimeRef && opts.useAi && opts.apiKey) {
     usedAi = true;
@@ -105,11 +133,12 @@ export async function reprogramarFueraDeOficina(db: any, e: EntradaOoo, opts: { 
   }
 
   const [{ data: campania }, { data: lead }, { count }] = await Promise.all([
-    db.from("campaigns").select("ooo_reschedule, timezone, send_start_hour").eq("id", e.campaignId).maybeSingle(),
+    db.from("campaigns").select("ooo_reschedule, ooo_delay_days, ooo_no_date_days, timezone, send_start_hour").eq("id", e.campaignId).maybeSingle(),
     db.from("campaign_leads").select("status, current_step, next_attempt_at").eq("campaign_id", e.campaignId).eq("lead_id", e.leadId).maybeSingle(),
     db.from("campaign_steps").select("id", { count: "exact", head: true }).eq("campaign_id", e.campaignId),
   ]);
-  const d = decidirReprogramacion({ fecha, recibidoIso: e.receivedAt, nowMs: opts.nowMs ?? Date.now(), campania, lead, pasos: count || 0 });
+  const d = decidirReprogramacion({ fecha, recibidoIso: e.receivedAt, nowMs: opts.nowMs ?? Date.now(), campania, lead, pasos: count || 0, noEsAusencia: !!parsed.notVacation });
+  if (d.espera) source = "espera";
 
   if (d.status === "programado") {
     const { error } = await db.from("campaign_leads").update({ next_attempt_at: d.nextAttempt })

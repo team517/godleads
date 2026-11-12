@@ -16,6 +16,7 @@ import { CalendarClock, Mail, Settings, Tag, FlaskConical, Sparkles, Trash2, Loa
 import { Textarea } from "@/components/ui/textarea";
 import { effectiveDailyLimit, sendDaysMap } from "@/lib/warmup";
 import { LeadMixControl, type LeadMixValue } from "@/components/campaigns/LeadMixControl";
+import { OooOptions } from "@/components/campaigns/OooOptions";
 
 interface Props { campaignId: string; }
 
@@ -111,6 +112,9 @@ export default function CampaignOptions({ campaignId }: Props) {
   const [stopOnReply, setStopOnReply] = useState(true);
   // Fuera de oficina con fecha: esperar a que vuelva (10-11-2026). Activado por defecto.
   const [oooReschedule, setOooReschedule] = useState(true);
+  // 12-11-2026: margen tras la vuelta y qué hacer si no dice cuándo vuelve (0 y 0 = como antes).
+  const [oooDelay, setOooDelay] = useState(0);
+  const [oooNoDate, setOooNoDate] = useState(0);
   const [includeUnsubscribe, setIncludeUnsubscribe] = useState(false);
   const [unsubAll, setUnsubAll] = useState(true);
   const [unsubAccountIds, setUnsubAccountIds] = useState<string[]>([]);
@@ -341,6 +345,8 @@ export default function CampaignOptions({ campaignId }: Props) {
         setDailyLimit(d.daily_limit && d.daily_limit > 0 ? d.daily_limit : 0); // 0 = auto
         setStopOnReply(d.stop_on_reply ?? true);
         setOooReschedule(d.ooo_reschedule ?? true);
+        setOooDelay(Number(d.ooo_delay_days ?? 0) || 0);
+        setOooNoDate(Number(d.ooo_no_date_days ?? 0) || 0);
         setIncludeUnsubscribe(d.include_unsubscribe ?? false);
         setUnsubAll(d.unsubscribe_all ?? true);
         setUnsubAccountIds(d.unsubscribe_account_ids || []);
@@ -402,6 +408,8 @@ export default function CampaignOptions({ campaignId }: Props) {
       daily_limit: dailyLimit > 0 ? dailyLimit : 0,
       stop_on_reply: stopOnReply,
       ooo_reschedule: oooReschedule,
+      ooo_delay_days: oooDelay,
+      ooo_no_date_days: oooNoDate,
       include_unsubscribe: includeUnsubscribe,
       unsubscribe_all: unsubAll,
       unsubscribe_account_ids: unsubAccountIds,
@@ -584,9 +592,19 @@ export default function CampaignOptions({ campaignId }: Props) {
         />
         <Row icon={<CalendarClock className="h-4 w-4" />} tint="amber"
           title="Fuera de oficina: esperar a que vuelva"
-          desc="Si alguien responde que está fuera hasta una fecha, no le enviamos más correos hasta ese día y ese mismo día recibe el siguiente de la secuencia."
+          desc="Si alguien responde que está fuera hasta una fecha, no le enviamos nada mientras esté fuera y, cuando vuelve, recibe el siguiente correo de la secuencia en el mismo hilo. La fecha se lee sola en cualquier idioma."
           control={<Switch checked={oooReschedule} onCheckedChange={v => { setOooReschedule(v); markDirty(); }} aria-label="Fuera de oficina: esperar a que vuelva" />}
-        />
+        >
+          {oooReschedule && (
+            <OooOptions
+              campaignId={campaignId}
+              delay={oooDelay}
+              noDate={oooNoDate}
+              onDelay={(v) => { setOooDelay(v); markDirty(); }}
+              onNoDate={(v) => { setOooNoDate(v); markDirty(); }}
+            />
+          )}
+        </Row>
         <Row icon={<Ban className="h-4 w-4" />} tint="rose"
           title="Incluir enlace de baja"
           desc="Añade abajo un pequeño enlace de baja. Si lo pulsan, salen de la lista y no se les vuelve a contactar en ninguna campaña."

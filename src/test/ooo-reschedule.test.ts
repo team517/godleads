@@ -41,6 +41,30 @@ describe("decidirReprogramacion", () => {
   });
 });
 
+describe("opciones de la campaña (12-11-2026)", () => {
+  it("margen tras la vuelta: vuelve el jueves 29 y con 1 día de margen se le escribe el viernes 30", () => {
+    expect(decide({ campania: { ...CAMP, ooo_delay_days: 1 } }).scheduledFor).toBe("2026-10-30T08:00:00.000Z");
+  });
+  it("el margen que cae en fin de semana pasa al lunes", () => {
+    expect(decide({ campania: { ...CAMP, ooo_delay_days: 2 } }).scheduledFor).toBe("2026-11-02T08:00:00.000Z");
+  });
+  it("sin fecha y opción en 0 (por defecto): sigue la secuencia normal", () => {
+    expect(decide({ fecha: null }).status).toBe("sin_fecha");
+    expect(decide({ fecha: null, campania: { ...CAMP, ooo_no_date_days: 0 } }).status).toBe("sin_fecha");
+  });
+  it("sin fecha y «esperar 7 días»: se le vuelve a escribir 7 días después de su respuesta", () => {
+    const r = decide({ fecha: null, campania: { ...CAMP, ooo_no_date_days: 7 } });
+    expect(r).toMatchObject({ status: "programado", espera: true, scheduledFor: "2026-10-27T08:00:00.000Z" });
+  });
+  it("sin fecha pero no es una ausencia (ya no trabaja, buzón cerrado) o la opción general apagada: no se espera", () => {
+    expect(decide({ fecha: null, campania: { ...CAMP, ooo_no_date_days: 7 }, noEsAusencia: true }).status).toBe("sin_fecha");
+    expect(decide({ fecha: null, campania: { ...CAMP, ooo_no_date_days: 7, ooo_reschedule: false } }).status).toBe("sin_fecha");
+  });
+  it("valores raros se acotan (nunca más de 7 días de margen)", () => {
+    expect(decide({ campania: { ...CAMP, ooo_delay_days: 99 } }).scheduledFor).toBe("2026-11-05T08:00:00.000Z");
+  });
+});
+
 /** Base simulada mínima: guarda lo que se actualiza y se inserta. */
 function fakeDb(state: { camp: any; lead: any; pasos: number }) {
   const writes: { table: string; op: string; row: any; filters: any[] }[] = [];
@@ -87,5 +111,14 @@ describe("reprogramarFueraDeOficina (con base simulada)", () => {
     expect(r.status).toBe("sin_fecha");
     expect(writes.some((w) => w.table === "campaign_leads")).toBe(false);
     expect(writes.find((w) => w.table === "ooo_returns")?.row.status).toBe("sin_fecha");
+  });
+  it("sin fecha con «esperar 7 días»: programa y lo anota como espera", async () => {
+    const { db, writes } = fakeDb({ camp: { ...CAMP, ooo_no_date_days: 7 }, lead: LEAD, pasos: 3 });
+    const r = await reprogramarFueraDeOficina(db, {
+      messageId: "m3", campaignId: "c1", leadId: "l1", receivedAt: RECIBIDO, text: "Estoy fuera de la oficina unos días.",
+    }, { nowMs: AHORA, useAi: false });
+    expect(r.status).toBe("programado");
+    expect(writes.find((w) => w.table === "campaign_leads")?.row).toEqual({ next_attempt_at: "2026-10-27T08:00:00.000Z" });
+    expect(writes.find((w) => w.table === "ooo_returns")?.row).toMatchObject({ status: "programado", source: "espera", return_date: null });
   });
 });
