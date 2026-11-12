@@ -25,7 +25,8 @@ import { useTheme } from "@/hooks/use-theme";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import coinIcon from "@/assets/coin-icon.png";
 import { AccountSwitcherDialog } from "@/components/AccountSwitcherDialog";
-import { canUseAccountSwitcher, returnToOwnAccount, stateMatchesUser, useImpersonation } from "@/lib/impersonation";
+import { canUseAccountSwitcher, returnToOwnAccount, stateMatchesUser, useCanEnterMyClients, useImpersonation } from "@/lib/impersonation";
+import { canImpersonate } from "../../../supabase/functions/_shared/impersonation-rules";
 import { canReplayTour, openTour } from "@/lib/tour";
 import {
   Popover,
@@ -110,7 +111,10 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   // Cambio de cuenta (sólo hello@ y equipo@): "Clientes" en el menú del perfil.
   const impersonation = useImpersonation();
   const insideClient = stateMatchesUser(impersonation, user?.id) ? impersonation : null;
-  const switcherEnabled = canUseAccountSwitcher(insideClient, user?.email);
+  // Agencia con clientes con acceso (12-11-2026): también entra en los SUYOS sin contraseña.
+  const agenciaPuede = useCanEnterMyClients(insideClient ? null : user?.id);
+  const switcherEnabled = canUseAccountSwitcher(insideClient, user?.email, agenciaPuede);
+  const switcherAgencia = !canImpersonate(insideClient?.actor.email ?? user?.email ?? null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
@@ -574,7 +578,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               {switcherEnabled && (
                 <button type="button" onClick={() => { setAccountMenuOpen(false); setSwitcherOpen(true); }}
                   className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
-                  <Building2 className="h-4 w-4 text-muted-foreground" /> Clientes
+                  <Building2 className="h-4 w-4 text-muted-foreground" /> {switcherAgencia ? "Entrar en un cliente" : "Clientes"}
                 </button>
               )}
               <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
@@ -603,7 +607,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             </div>
           </PopoverContent>
         </Popover>
-        {switcherEnabled && <AccountSwitcherDialog open={switcherOpen} onOpenChange={setSwitcherOpen} current={insideClient} />}
+        {switcherEnabled && <AccountSwitcherDialog open={switcherOpen} onOpenChange={setSwitcherOpen} current={insideClient} agencia={switcherAgencia} />}
       </div>
       </div>
     </header>

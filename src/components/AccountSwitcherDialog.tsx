@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { enterClient, listClientsForSwitch, returnToOwnAccount, type ImpersonationState } from "@/lib/impersonation";
 import { coincideCliente, nombreCuenta, type ClienteListado } from "../../supabase/functions/_shared/impersonation-rules";
 
-/* "Clientes" del menú del perfil (sólo hello@ y equipo@): lista de todas las cuentas para entrar en
+/* "Clientes" del menú del perfil (hello@ y equipo@: todas las cuentas; una agencia: las de SUS clientes) para entrar en
    una sin contraseña. Un clic entra; en la que ya estás, "Quitar" vuelve a tu cuenta. */
 
 const PLAN_LABEL: Record<string, string> = { starter: "Starter", growth: "Growth", scale: "Scale" };
@@ -27,10 +27,12 @@ function planTexto(c: ClienteListado): string | null {
   return null;
 }
 
-export function AccountSwitcherDialog({ open, onOpenChange, current }: {
+export function AccountSwitcherDialog({ open, onOpenChange, current, agencia = false }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   current: ImpersonationState | null;
+  /** Agencia (12-11-2026): sólo ve y entra en los accesos de SUS clientes. */
+  agencia?: boolean;
 }) {
   const [clients, setClients] = useState<ClienteListado[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +81,9 @@ export function AccountSwitcherDialog({ open, onOpenChange, current }: {
             <Building2 className="h-4 w-4 text-primary" aria-hidden="true" /> Clientes
           </DialogTitle>
           <DialogDescription className="text-[12.5px]">
-            Entra en la cuenta de cualquier cliente sin contraseña. Vuelves a la tuya desde el aviso de abajo o desde tu perfil.
+            {agencia
+              ? "Entra en la cuenta de cualquiera de tus clientes sin contraseña, para ver o preparar lo suyo. Vuelves a la tuya desde el aviso de abajo o desde tu perfil."
+              : "Entra en la cuenta de cualquier cliente sin contraseña. Vuelves a la tuya desde el aviso de abajo o desde tu perfil."}
           </DialogDescription>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -116,7 +120,7 @@ export function AccountSwitcherDialog({ open, onOpenChange, current }: {
             </div>
           )}
           {clients && visibles.length === 0 && (
-            <p className="py-10 text-center text-sm text-muted-foreground">{q.trim() ? `Ninguna cuenta coincide con «${q.trim()}».` : "No hay cuentas de clientes."}</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">{q.trim() ? `Ninguna cuenta coincide con «${q.trim()}».` : (agencia ? "Tus clientes aún no tienen acceso. Créaselo en Clientes → Configurar → Acceso." : "No hay cuentas de clientes.")}</p>
           )}
           {visibles.map((c) => {
             const dentro = current?.target.userId === c.id;

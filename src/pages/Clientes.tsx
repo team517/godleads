@@ -29,6 +29,7 @@ import { familyNote, monthlyEmailsLine, usageTone } from "@/lib/plan-usage";
 import { extractLogoColor } from "@/lib/logoColor";
 import { BRAND_SWATCHES, HEX_RE, callClients, uploadBrandLogo, type AgencyBranding } from "@/lib/clients-api";
 import { agencyLoginUrl } from "@/lib/client-access";
+import { enterClient } from "@/lib/impersonation";
 import { cn } from "@/lib/utils";
 import { AgencyBrandCard } from "@/components/clients/AgencyBrandCard";
 import { CoBrand } from "@/components/clients/CoBrand";
@@ -67,6 +68,7 @@ import {
   UserCog,
   Users,
   X,
+  LogIn,
 } from "lucide-react";
 
 type ClientStats = { campaigns: number; sent: number; replied: number };
@@ -95,6 +97,8 @@ export type ClientRow = {
   created_at: string;
   stats?: ClientStats;
   login_email?: string | null;
+  /** Cuenta de acceso del cliente (si se le ha creado): con ella se puede entrar sin contraseña. */
+  login_user_id?: string | null;
   allowed_sections?: string[] | null;
   setup?: ClientSetup;
 };
@@ -326,6 +330,14 @@ export default function Clientes() {
   // siempre de la lista recién cargada, así que las fases hechas vienen del
   // servidor y no de lo que esta pantalla crea recordar.
   const [configId, setConfigId] = useState<string | null>(null);
+  // Entrar en la cuenta de un cliente sin contraseña (12-11-2026). La función comprueba que es tuyo.
+  const [entrando, setEntrando] = useState<string | null>(null);
+  const entrarEnCliente = async (c: ClientRow) => {
+    if (!c.login_user_id || entrando) return;
+    setEntrando(c.id);
+    try { await enterClient(c.login_user_id); }
+    catch (e) { toast.error((e as Error).message || "No se pudo entrar en su cuenta"); setEntrando(null); }
+  };
   // Marca de la agencia (su entrada exclusiva para clientes): la carga la tarjeta de arriba.
   const [agency, setAgency] = useState<AgencyBranding | null>(null);
   const configClient = useMemo(() => clients.find((c) => c.id === configId) || null, [clients, configId]);
@@ -671,6 +683,18 @@ export default function Clientes() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
+                      {c.login_user_id && (
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1.5 text-[13px]"
+                          aria-label={`Entrar en la cuenta de ${c.name}`}
+                          title="Entrar en su cuenta sin contraseña"
+                          disabled={entrando !== null}
+                          onClick={() => void entrarEnCliente(c)}
+                        >
+                          {entrando === c.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />} Entrar
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"

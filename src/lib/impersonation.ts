@@ -1,6 +1,7 @@
 // Cambio de cuenta del equipo ("entrar como cliente", 10-11-2026).
 //
-// Sólo hello@onepulso.blog y equipo@onepulso.online. Al entrar en un cliente:
+// El equipo (hello@onepulso.blog y equipo@onepulso.online) en cualquier cliente; desde el 12-11-2026
+// también una agencia, sólo en los accesos de SUS clientes (lo comprueba la función). Al entrar:
 //   1. se guarda aparte (localStorage, clave propia) la sesión ORIGINAL del equipo;
 //   2. la función `impersonate` (que comprueba de nuevo quién llama) devuelve un token de un solo uso;
 //   3. el navegador abre la sesión del cliente con verifyOtp y recarga entero en /dashboard, para que
@@ -10,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { canImpersonate, type ClienteListado } from "../../supabase/functions/_shared/impersonation-rules";
+import { canImpersonate, type ClienteListado, type ModoCambio } from "../../supabase/functions/_shared/impersonation-rules";
 
 export const IMPERSONATION_KEY = "fl_impersonation_v1";
 export const AUTH_NOTICE_KEY = "fl_auth_notice";
@@ -30,6 +31,8 @@ export interface ImpersonationState {
   target: { userId: string; email: string; company: string | null };
   startedAt: string;
   logId: string | null;
+  /** "equipo" (hello@, equipo@: cualquier cliente) o "agencia" (sólo los suyos, 12-11-2026). */
+  mode?: ModoCambio;
 }
 
 /* ── Parte pura (con pruebas) ───────────────────────────────────────────────────────────────── */
@@ -45,12 +48,16 @@ export function parseImpersonationState(raw: string | null | undefined): Imperso
     if (!a || !t) return null;
     if (![a.userId, a.email, a.accessToken, a.refreshToken, t.userId, t.email].every(esTexto)) return null;
     if (typeof a.expiresAt !== "number") return null;
-    if (!canImpersonate(a.email)) return null;
+    // El equipo por su correo; una agencia sólo si se guardó al entrar como agencia. (Quien decide si
+    // se puede entrar es siempre el servidor; esto sólo es la vuelta a su propia sesión.)
+    const mode: ModoCambio = canImpersonate(a.email) ? "equipo" : s.mode === "agencia" ? "agencia" : ("" as ModoCambio);
+    if (!mode) return null;
     return {
       actor: { userId: a.userId, email: String(a.email).toLowerCase(), accessToken: a.accessToken, refreshToken: a.refreshToken, expiresAt: a.expiresAt },
       target: { userId: t.userId, email: String(t.email).toLowerCase(), company: esTexto(t.company) ? t.company : null },
       startedAt: esTexto(s.startedAt) ? s.startedAt : new Date(0).toISOString(),
       logId: esTexto(s.logId) ? s.logId : null,
+      mode,
     };
   } catch {
     return null;
@@ -84,9 +91,10 @@ export function realAccountEmail(state: ImpersonationState | null, currentEmail:
   return state?.actor.email ?? (currentEmail ? currentEmail.toLowerCase() : null);
 }
 
-/** ¿Se enseña "Clientes" en el menú del perfil? Sólo si la cuenta real es hello@ o equipo@. */
-export function canUseAccountSwitcher(state: ImpersonationState | null, currentEmail: string | null | undefined): boolean {
-  return canImpersonate(realAccountEmail(state, currentEmail));
+/** ¿Se enseña "Clientes" en el menú del perfil? Al equipo (hello@, equipo@) siempre; a una agencia
+ *  si el servidor dice que tiene clientes con acceso (`agencia`) o si ya está dentro de uno suyo. */
+export function canUseAccountSwitcher(state: ImpersonationState | null, currentEmail: string | null | undefined, agencia = false): boolean {
+  return canImpersonate(realAccountEmail(state, currentEmail)) || agencia || state?.mode === "agencia";
 }
 
 /** ¿Hay que renovar el access token guardado antes de usarlo? (margen de 90 s) */
@@ -160,7 +168,8 @@ async function actorSession(): Promise<ActorSession> {
   }
   const { data } = await supabase.auth.getSession();
   const s = data.session;
-  if (!s?.user?.email || !canImpersonate(s.user.email)) throw new Error("Esta cuenta no puede entrar en otras");
+  // El servidor decide quién puede entrar y dónde (equipo: cualquiera; agencia: sólo sus clientes).
+  if (!s?.user?.email) throw new Error("Esta cuenta no puede entrar en otras");
   return {
     userId: s.user.id,
     email: s.user.email.toLowerCase(),
@@ -192,7 +201,7 @@ export async function listClientsForSwitch(): Promise<ClienteListado[]> {
 export async function enterClient(targetUserId: string): Promise<void> {
   const previous = readImpersonation();
   const actor = await actorSession();
-  const r = await callImpersonate<{ token_hash: string; target: { id: string; email: string; company: string | null }; log_id: string | null }>(
+  const r = await callImpersonate<{ token_hash: string; target: { id: string; email: string; company: string | null }; log_id: string | null; mode?: ModoCambio }>(
     actor.accessToken, { action: "start", target_user_id: targetUserId },
   );
   if (previous?.logId) void callImpersonate(actor.accessToken, { action: "end", log_id: previous.logId }).catch(() => {});
@@ -204,6 +213,7 @@ export async function enterClient(targetUserId: string): Promise<void> {
     target: { userId: r.target.id, email: r.target.email, company: r.target.company },
     startedAt: new Date().toISOString(),
     logId: r.log_id,
+    mode: r.mode === "agencia" ? "agencia" : "equipo",
   };
   writeImpersonation(next);
   const { error } = await supabase.auth.verifyOtp({ token_hash: r.token_hash, type: "magiclink" });
@@ -233,4 +243,17 @@ export async function returnToOwnAccount(): Promise<void> {
     return;
   }
   window.location.assign("/dashboard");
+}
+
+/** ¿Esta cuenta es una agencia con clientes en los que puede entrar? (sólo para enseñar el menú;
+ *  quien decide es la función `impersonate`). */
+export function useCanEnterMyClients(userId: string | null | undefined): boolean {
+  const [can, setCan] = useState(false);
+  useEffect(() => {
+    if (!userId) { setCan(false); return; }
+    let vivo = true;
+    (supabase as any).rpc("can_enter_my_clients").then(({ data }: { data: unknown }) => { if (vivo) setCan(data === true); }, () => {});
+    return () => { vivo = false; };
+  }, [userId]);
+  return can;
 }

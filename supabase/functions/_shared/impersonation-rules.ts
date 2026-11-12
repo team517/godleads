@@ -42,6 +42,26 @@ export function decideStart(actor: { id: string; email: string | null }, target:
   return { ok: true };
 }
 
+/** Cómo entra: el equipo (en cualquier cliente) o una agencia (sólo en los SUYOS, 12-11-2026). */
+export type ModoCambio = "equipo" | "agencia";
+
+/** Una agencia (usuario con clientes en su plan) entrando en el acceso de UNO DE SUS clientes. El
+ *  servidor ya ha comprobado en la base de datos `esSuyo` (clients.owner_user_id = quien llama y
+ *  login_user_id = destino, y el perfil del destino es client_login_of de quien llama) y sus plazas. */
+export function decideStartAgencia(
+  actor: { id: string; email: string | null },
+  target: TargetInfo | null,
+  o: { esSuyo: boolean; plazas: number },
+): StartDecision {
+  if (!target || !target.id) return { ok: false, status: 404, error: "Esa cuenta no existe" };
+  if (target.id === actor.id) return { ok: false, status: 400, error: "Ya estás en tu cuenta" };
+  if (!norm(target.email)) return { ok: false, status: 400, error: "Esa cuenta no tiene correo de acceso" };
+  if (isStaffTarget(target)) return { ok: false, status: 403, error: "No se puede entrar en una cuenta del equipo" };
+  if (!o.esSuyo) return { ok: false, status: 403, error: "Sólo puedes entrar en las cuentas de tus clientes" };
+  if (!(o.plazas > 0)) return { ok: false, status: 403, error: "Tu plan no incluye clientes" };
+  return { ok: true };
+}
+
 export type TipoCuenta = "cliente" | "acceso_cliente" | "registro";
 
 export interface ClienteListado {

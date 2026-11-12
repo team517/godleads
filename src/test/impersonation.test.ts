@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  AGENCY_EMAILS, IMPERSONATION_ACTORS, canImpersonate, coincideCliente, decideStart, isStaffTarget, nombreCuenta,
+  AGENCY_EMAILS, IMPERSONATION_ACTORS, canImpersonate, coincideCliente, decideStart, decideStartAgencia, isStaffTarget, nombreCuenta,
   ordenarClientes, tipoDeCuenta,
 } from "../../supabase/functions/_shared/impersonation-rules";
 import {
@@ -81,7 +81,7 @@ describe("estado guardado en el navegador", () => {
     logId: "l1",
   };
   it("se lee bien lo que se guardó", () => {
-    expect(parseImpersonationState(JSON.stringify(valido))).toEqual(valido);
+    expect(parseImpersonationState(JSON.stringify(valido))).toEqual({ ...valido, mode: "equipo" });
   });
   it("cualquier cosa rara = sin cambio de cuenta", () => {
     expect(parseImpersonationState(null)).toBeNull();
@@ -89,8 +89,11 @@ describe("estado guardado en el navegador", () => {
     expect(parseImpersonationState(JSON.stringify({ ...valido, actor: { ...valido.actor, refreshToken: "" } }))).toBeNull();
     expect(parseImpersonationState(JSON.stringify({ ...valido, target: undefined }))).toBeNull();
   });
-  it("un estado cuyo 'actor' no es hello@ ni equipo@ se ignora (no se puede fabricar a mano)", () => {
-    expect(parseImpersonationState(JSON.stringify({ ...valido, actor: { ...valido.actor, email: "info@seoinnova.es" } }))).toBeNull();
+  it("un estado cuyo 'actor' no es hello@ ni equipo@ se ignora, salvo que se guardara al entrar como agencia", () => {
+    const deAgencia = { ...valido, actor: { ...valido.actor, email: "info@seoinnova.es" } };
+    expect(parseImpersonationState(JSON.stringify(deAgencia))).toBeNull();
+    expect(parseImpersonationState(JSON.stringify({ ...deAgencia, mode: "agencia" }))?.mode).toBe("agencia");
+    expect(parseImpersonationState(JSON.stringify({ ...deAgencia, mode: "equipo" }))).toBeNull(); // no se cuela como equipo
   });
   it("sólo vale para la sesión del cliente en el que se entró", () => {
     expect(stateMatchesUser(valido, "c1")).toBe(true);
@@ -103,6 +106,9 @@ describe("estado guardado en el navegador", () => {
     expect(canUseAccountSwitcher(null, "hello@onepulso.blog")).toBe(true);
     expect(canUseAccountSwitcher(null, "info@seoinnova.es")).toBe(false);    // usuario normal: no existe
     expect(canUseAccountSwitcher(null, "support@onepulso.online")).toBe(false);
+    // Agencia con clientes con acceso (lo dice el servidor) o ya dentro de uno suyo: sí.
+    expect(canUseAccountSwitcher(null, "info@seoinnova.es", true)).toBe(true);
+    expect(canUseAccountSwitcher({ ...valido, actor: { ...valido.actor, email: "info@seoinnova.es" }, mode: "agencia" }, "cliente@x.test")).toBe(true);
   });
   it("renovar el token guardado con margen de 90 s", () => {
     const now = Date.parse("2026-11-10T10:00:00Z");
@@ -138,5 +144,23 @@ describe("isStaleImpersonation — no borrar el estado mientras se entra", () =>
   it("sin estado o sin usuario: nada que borrar", () => {
     expect(isStaleImpersonation(null, "equipo", ahora)).toBe(false);
     expect(isStaleImpersonation(st("2026-11-10T17:59:58Z"), null, ahora)).toBe(false);
+  });
+});
+
+describe("una agencia entra sólo en los accesos de SUS clientes (12-11-2026)", () => {
+  const agencia = { id: "ag1", email: "info@agencia.test" };
+  const acceso = { id: "c9", email: "acceso@cliente.test", role: "client", isClientManager: false };
+  it("su cliente, con plazas en el plan: sí", () => {
+    expect(decideStartAgencia(agencia, acceso, { esSuyo: true, plazas: 2 })).toEqual({ ok: true });
+  });
+  it("el cliente de otro, o sin plazas: no (403)", () => {
+    expect(decideStartAgencia(agencia, acceso, { esSuyo: false, plazas: 2 })).toMatchObject({ ok: false, status: 403 });
+    expect(decideStartAgencia(agencia, acceso, { esSuyo: true, plazas: 0 })).toMatchObject({ ok: false, status: 403 });
+  });
+  it("nunca una cuenta del equipo, la propia o una que no existe", () => {
+    expect(decideStartAgencia(agencia, { ...acceso, email: "hello@onepulso.blog" }, { esSuyo: true, plazas: 2 })).toMatchObject({ ok: false, status: 403 });
+    expect(decideStartAgencia(agencia, { ...acceso, role: "admin" }, { esSuyo: true, plazas: 2 })).toMatchObject({ ok: false, status: 403 });
+    expect(decideStartAgencia(agencia, { ...acceso, id: "ag1" }, { esSuyo: true, plazas: 2 })).toMatchObject({ ok: false, status: 400 });
+    expect(decideStartAgencia(agencia, null, { esSuyo: true, plazas: 2 })).toMatchObject({ ok: false, status: 404 });
   });
 });

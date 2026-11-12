@@ -1,6 +1,7 @@
 // impersonate (10-11-2026): el equipo entra en la cuenta de un cliente sin contraseña y vuelve.
 //
-// Sólo hello@onepulso.blog y equipo@onepulso.online (lista fija en _shared/impersonation-rules.ts).
+// El equipo (hello@onepulso.blog y equipo@onepulso.online, lista fija en _shared/impersonation-rules.ts)
+// entra en cualquier cliente; una agencia (12-11-2026), sólo en los accesos de SUS clientes.
 // Acciones (POST JSON, Authorization: Bearer <token de la cuenta del EQUIPO, nunca el del cliente>):
 //   list               → todas las cuentas que NO son del equipo, para el diálogo "Clientes".
 //   start {target_user_id} → token de un solo uso (hashed_token de un enlace mágico generado por el
@@ -10,7 +11,7 @@
 // Se despliega con --no-verify-jwt: el token se valida aquí con auth.getUser.
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import {
-  canImpersonate, decideStart, ordenarClientes, tipoDeCuenta, AGENCY_EMAILS, type ClienteListado,
+  canImpersonate, decideStart, decideStartAgencia, ordenarClientes, tipoDeCuenta, AGENCY_EMAILS, type ClienteListado,
 } from "../_shared/impersonation-rules.ts";
 
 const corsHeaders = {
@@ -35,12 +36,57 @@ Deno.serve(async (req) => {
   const actor = ud?.user;
   if (ue || !actor) return json({ error: "No autorizado" }, 401);
   const actorEmail = String(actor.email || "").toLowerCase();
-  if (!canImpersonate(actorEmail)) return json({ error: "Sólo hello@ y equipo@ pueden entrar en las cuentas de los clientes" }, 403);
+  // El equipo (hello@, equipo@) entra en cualquier cliente. Una AGENCIA (12-11-2026) sólo en los
+  // accesos de SUS clientes: los de su tabla clients con login, si su plan incluye clientes.
+  const equipo = canImpersonate(actorEmail);
+  // login_user_id → su fila de clients (profiles.client_login_of apunta a clients.id, no al dueño).
+  let suyos = new Map<string, { clientId: string; company: string | null; logo: string | null }>();
+  let plazas = 0;
+  if (!equipo) {
+    const [{ data: cl }, { data: sl }] = await Promise.all([
+      db.from("clients").select("id, login_user_id, name, company_name, logo_url").eq("owner_user_id", actor.id).is("archived_at", null).not("login_user_id", "is", null),
+      db.rpc("client_slots_for", { p_user_id: actor.id }),
+    ]);
+    suyos = new Map((cl || []).map((c: any) => [c.login_user_id, { clientId: c.id, company: c.company_name || c.name || null, logo: c.logo_url || null }]));
+    plazas = Number(sl) || 0;
+    if (suyos.size === 0 || plazas <= 0) return json({ error: "Esta cuenta no puede entrar en otras" }, 403);
+  }
+  const modo = equipo ? "equipo" : "agencia";
 
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || "");
 
   try {
+    if (action === "list" && !equipo) {
+      // Agencia: sólo los accesos de sus clientes (y que de verdad sean accesos suyos).
+      const ids = [...suyos.keys()];
+      const [{ data: perfiles }, { data: activas }] = await Promise.all([
+        db.from("profiles").select("user_id, full_name, company_name, avatar_url, logo_url, client_login_of, paused_by_admin_at").in("user_id", ids),
+        db.from("campaigns").select("user_id").eq("status", "active").in("user_id", ids),
+      ]);
+      const nActivas = new Map<string, number>();
+      for (const c of activas || []) nActivas.set((c as any).user_id, (nActivas.get((c as any).user_id) || 0) + 1);
+      const lista: ClienteListado[] = [];
+      for (const p of (perfiles || []) as any[]) {
+        if (!suyos.has(p.user_id) || p.client_login_of !== suyos.get(p.user_id)!.clientId) continue;
+        const { data: u } = await db.auth.admin.getUserById(p.user_id);
+        const email = String(u?.user?.email || "").toLowerCase();
+        if (!email || AGENCY_EMAILS.includes(email)) continue;
+        const c = suyos.get(p.user_id);
+        lista.push({
+          id: p.user_id, email,
+          company_name: c?.company || p.company_name || null,
+          full_name: p.full_name || null,
+          avatar_url: c?.logo || p.logo_url || p.avatar_url || null,
+          tipo: "acceso_cliente", plan_tier: null, plan_status: null,
+          active_campaigns: nActivas.get(p.user_id) || 0,
+          last_sign_in_at: u?.user?.last_sign_in_at ?? null,
+          paused_by_admin_at: p.paused_by_admin_at || null,
+        });
+      }
+      return json({ clients: ordenarClientes(lista), mode: modo });
+    }
+
     if (action === "list") {
       // Todas las cuentas de acceso (son pocas decenas; se pagina por si crece).
       const users: { id: string; email: string; last_sign_in_at: string | null }[] = [];
@@ -83,7 +129,7 @@ Deno.serve(async (req) => {
           paused_by_admin_at: p.paused_by_admin_at || null,
         });
       }
-      return json({ clients: ordenarClientes(lista) });
+      return json({ clients: ordenarClientes(lista), mode: modo });
     }
 
     if (action === "start") {
@@ -93,12 +139,15 @@ Deno.serve(async (req) => {
       const target = tu?.user || null;
       const [{ data: r }, { data: p }] = await Promise.all([
         db.from("user_roles").select("role").eq("user_id", targetId).maybeSingle(),
-        db.from("profiles").select("is_client_manager, company_name, full_name").eq("user_id", targetId).maybeSingle(),
+        db.from("profiles").select("is_client_manager, company_name, full_name, client_login_of").eq("user_id", targetId).maybeSingle(),
       ]);
-      const decision = decideStart(
-        { id: actor.id, email: actorEmail },
-        target ? { id: target.id, email: target.email ?? null, role: (r as any)?.role ?? null, isClientManager: (p as any)?.is_client_manager ?? false } : null,
-      );
+      const info = target ? { id: target.id, email: target.email ?? null, role: (r as any)?.role ?? null, isClientManager: (p as any)?.is_client_manager ?? false } : null;
+      const decision = equipo
+        ? decideStart({ id: actor.id, email: actorEmail }, info)
+        : decideStartAgencia({ id: actor.id, email: actorEmail }, info, {
+            esSuyo: suyos.has(targetId) && (p as any)?.client_login_of === suyos.get(targetId)!.clientId,
+            plazas,
+          });
       if (!decision.ok) return json({ error: decision.error }, decision.status);
 
       const targetEmail = String(target!.email).toLowerCase();
@@ -111,11 +160,12 @@ Deno.serve(async (req) => {
         actor_user_id: actor.id, actor_email: actorEmail, target_user_id: targetId, target_email: targetEmail,
         user_agent: (req.headers.get("user-agent") || "").slice(0, 300),
       }).select("id").single();
-      console.log(`cambio de cuenta: ${actorEmail} → ${targetEmail}`);
+      console.log(`cambio de cuenta (${modo}): ${actorEmail} → ${targetEmail}`);
       return json({
         token_hash: hashed,
-        target: { id: targetId, email: targetEmail, company: (p as any)?.company_name || (p as any)?.full_name || null },
+        target: { id: targetId, email: targetEmail, company: suyos.get(targetId)?.company || (p as any)?.company_name || (p as any)?.full_name || null },
         log_id: (log as any)?.id ?? null,
+        mode: modo,
       });
     }
 
