@@ -219,7 +219,12 @@ function useFitScale() {
       const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
       // En móvil no se encoge (la letra quedaría diminuta: se baja con el dedo); en ordenador,
       // como mucho al 75 % para que el texto se siga leyendo bien.
-      const sAlto = window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
+      // Si la pantalla vacía RELLENA un hueco de alto fijo (en el Unibox va con flex-1 bajo los
+      // filtros), manda ese hueco y no la ventana: si no, se salía por arriba y por abajo.
+      const rellena = parseFloat(getComputedStyle(sec).flexGrow || "0") > 0;
+      const sAlto = rellena
+        ? Math.max(0.5, Math.min(1, (sec.clientHeight - padding - 8) / nat))
+        : window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
       const s = Math.min(sAlto, widthScale(wr.clientWidth, window.innerWidth));
       setNaturalH((prev) => (prev === nat ? prev : nat));
       setScale((prev) => (Math.abs(prev - s) > 0.01 ? s : prev));
