@@ -27,6 +27,10 @@ import { PLAN_CONFIG, getPlanLimits, useSubscription } from "@/contexts/Subscrip
 import { usePlanUsage } from "@/hooks/usePlanUsage";
 import { familyNote, monthlyEmailsLine, usageTone } from "@/lib/plan-usage";
 import { extractLogoColor } from "@/lib/logoColor";
+import { BRAND_SWATCHES, HEX_RE, callClients, uploadBrandLogo, type AgencyBranding } from "@/lib/clients-api";
+import { agencyLoginUrl } from "@/lib/client-access";
+import { cn } from "@/lib/utils";
+import { AgencyBrandCard } from "@/components/clients/AgencyBrandCard";
 import {
   Archive,
   BarChart3,
@@ -50,6 +54,9 @@ import {
   RefreshCw,
   Send,
   ImagePlus,
+  Info,
+  ExternalLink,
+  User,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -193,46 +200,10 @@ export type ClientUsage = {
 const tierLabel = (tier: string) =>
   (PLAN_CONFIG as Record<string, { label: string }>)[tier]?.label || "Gratuito";
 
-/** Una sola puerta al servidor: devuelve el STATUS además del cuerpo, porque el
- *  tope (402) y la plaza aún sin precio (501) se distinguen por código. */
-async function callClients(action: string, payload: Record<string, unknown> = {}) {
-  const { data } = await supabase.auth.getSession();
-  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/clients`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${data?.session?.access_token || ""}`,
-    },
-    body: JSON.stringify({ action, ...payload }),
-  });
-  let body: any = {};
-  try {
-    body = await resp.json();
-  } catch {
-    body = {};
-  }
-  return { status: resp.status, body };
-}
-
 const emptyForm = { name: "", company_name: "", contact_email: "", notes: "", logo_url: "", brand_color: "" };
 
-/** Colores rápidos para la marca del cliente (además del selector y "sacar del logo"). */
-const BRAND_SWATCHES = ["#6E58F1", "#2563EB", "#0EA5E9", "#14B8A6", "#16A34A", "#F59E0B", "#EA580C", "#E11D48", "#DB2777", "#0F172A"];
-const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-
-/** Sube el logo de un cliente al almacén público y devuelve su URL y el color que sale de él. */
-async function uploadClientLogo(file: File): Promise<{ url: string; color: string | null }> {
-  if (!/^image\//.test(file.type)) throw new Error("Sube una imagen (PNG, JPG, SVG o WebP).");
-  if (file.size > 3 * 1024 * 1024) throw new Error("El logo debe pesar menos de 3 MB");
-  const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "") || "png";
-  const rand = Math.random().toString(36).slice(2, 10);
-  const path = `client-logos/${Date.now()}-${rand}.${ext}`;
-  const { error } = await supabase.storage.from("godtube-media").upload(path, file, { upsert: true, contentType: file.type });
-  if (error) throw error;
-  const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
-  const color = await extractLogoColor(file).catch(() => null);
-  return { url: data.publicUrl, color };
-}
+/** Sube el logo de un cliente (mismo almacén que el resto de logos). */
+const uploadClientLogo = (file: File) => uploadBrandLogo(file, "client-logos");
 
 function Stat({ value, label, className }: { value: number; label: string; className: string }) {
   return (
@@ -352,6 +323,8 @@ export default function Clientes() {
   // siempre de la lista recién cargada, así que las fases hechas vienen del
   // servidor y no de lo que esta pantalla crea recordar.
   const [configId, setConfigId] = useState<string | null>(null);
+  // Marca de la agencia (su entrada exclusiva para clientes): la carga la tarjeta de arriba.
+  const [agency, setAgency] = useState<AgencyBranding | null>(null);
   const configClient = useMemo(() => clients.find((c) => c.id === configId) || null, [clients, configId]);
 
   const load = useCallback(async () => {
@@ -559,6 +532,9 @@ export default function Clientes() {
           </Button>
         )}
       </div>
+
+      {/* Tu marca de agencia: lo que ven tus clientes en su entrada exclusiva */}
+      <AgencyBrandCard onLoaded={setAgency} />
 
       {loadError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4">
@@ -894,6 +870,7 @@ export default function Clientes() {
       {configClient && (
         <ClientSetupDialog
           client={configClient}
+          agencySlug={agency?.slug ?? null}
           onClose={() => setConfigId(null)}
           onChanged={load}
         />
@@ -910,23 +887,77 @@ function firstPendingStep(setup?: ClientSetup): StepKey {
 
 const STEP_ORDER: StepKey[] = [...PHASES.map((p) => p.key), "final"];
 
+/** Icono y texto de cada paso del menú lateral. */
+const STEP_META: Record<StepKey, { icon: typeof User; label: string; hint: string }> = {
+  datos: { icon: User, label: "Datos", hint: "Quién es" },
+  acceso: { icon: KeyRound, label: "Acceso", hint: "Su usuario" },
+  logo: { icon: ImagePlus, label: "Logo", hint: "Su imagen" },
+  colores: { icon: Palette, label: "Colores", hint: "Su color" },
+  permisos: { icon: ShieldCheck, label: "Permisos", hint: "Qué ve" },
+  final: { icon: Sparkles, label: "Resumen", hint: "Y el enlace" },
+};
+
 /** Un aviso corto, siempre visible, dentro de una fase. */
 function PhaseNote({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-md border border-border bg-muted/40 p-2.5 text-[13px] text-muted-foreground">{children}</p>
+    <p className="flex items-start gap-2 rounded-xl border border-[#E8E4F7] bg-[#F8F6FF] px-3 py-2.5 text-[13px] leading-relaxed text-[#4B5576]">
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6E58F1]" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
   );
 }
 
-function PhaseHeader({ n, title, help }: { n: number | null; title: string; help: string }) {
+/** El dibujo "3D" de cada fase: una baldosa con degradado y brillo, ladeada. */
+function PhaseArt({ icon: Icon }: { icon: typeof User }) {
   return (
-    <div className="space-y-1">
-      <p className="font-display text-[17px] font-semibold tracking-[-0.03em] text-foreground">
-        {n ? `Fase ${n} · ${title}` : title}
-      </p>
-      <p className="text-[13px] text-muted-foreground">{help}</p>
+    <div aria-hidden="true" className="relative hidden h-[92px] w-[120px] shrink-0 sm:block">
+      <span className="absolute right-3 top-1 h-16 w-16 rounded-full bg-[#B9A8FF]/40 blur-2xl" />
+      <span className="absolute left-3 top-6 h-2 w-2 rounded-full bg-[#8B6BFF]/60" />
+      <span className="absolute left-8 top-1 h-1.5 w-1.5 rounded-full bg-[#4FC3F7]/70" />
+      <span className="absolute bottom-3 left-1 h-1.5 w-1.5 rounded-full bg-[#C084FC]/70" />
+      <span className="absolute right-2 top-2 flex h-[76px] w-[76px] rotate-[-8deg] items-center justify-center rounded-[22px] bg-gradient-to-br from-[#8B7BFF] via-[#6E58F1] to-[#4B33D9] shadow-[0_18px_30px_-10px_rgba(91,64,251,.65),inset_0_2px_0_rgba(255,255,255,.35)]">
+        <span className="absolute inset-[6px] rounded-[16px] border border-white/25" />
+        <Icon className="h-9 w-9 text-white drop-shadow-[0_4px_8px_rgba(30,10,120,.45)]" strokeWidth={1.8} />
+      </span>
     </div>
   );
 }
+
+/** Tarjeta de contenido: baldosa de icono, título, subtítulo y lo que lleve dentro. */
+function SetupCard({ icon: Icon, title, help, art, children }: {
+  icon: typeof User; title: string; help?: string; art?: boolean; children?: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-[20px] border border-[#ECE9F6] bg-white p-4 shadow-[0_10px_30px_-22px_rgba(46,30,140,.35)] sm:p-5">
+      <div className="flex items-start gap-3.5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#F1EDFF] to-[#E6EEFF] text-[#6E58F1]">
+          <Icon className="h-5 w-5" strokeWidth={1.9} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-[16px] font-semibold tracking-[-0.02em] text-[#0F172B]">{title}</h3>
+          {help && <p className="mt-0.5 text-[13px] leading-relaxed text-[#65768D]">{help}</p>}
+        </div>
+        {art && <PhaseArt icon={Icon} />}
+      </div>
+      {children && <div className="mt-4 space-y-3.5">{children}</div>}
+    </section>
+  );
+}
+
+/** Botón principal del diseño: degradado violeta con su marca de "hecho". */
+function PrimaryAction({ onClick, disabled, busy, children, icon: Icon = Check }: {
+  onClick: () => void; disabled?: boolean; busy?: boolean; children: React.ReactNode; icon?: typeof User;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled || busy}
+      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#6E58F1] to-[#8B3CF5] px-5 text-[14px] font-semibold text-white shadow-[0_12px_24px_-10px_rgba(106,76,255,.75)] transition hover:brightness-110 active:scale-[.98] disabled:opacity-60">
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />} {children}
+    </button>
+  );
+}
+
+const fieldClass = "h-11 rounded-xl border-[#E2DEEF] bg-white text-[14.5px] text-[#0F172B] focus-visible:ring-[#6E58F1]/30";
+const softBtn = "inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#E2DEEF] bg-white px-3 text-[13px] font-semibold text-[#334063] transition-colors hover:bg-[#F6F4FD] disabled:opacity-50";
 
 /**
  * Configuración por fases de un cliente.
@@ -934,13 +965,16 @@ function PhaseHeader({ n, title, help }: { n: number | null; title: string; help
  * No es un formulario largo: son cinco fases que se pueden hacer en cualquier
  * orden, dejar a medias y retomar otro día. El progreso NO se guarda aquí —
  * se lee de `client.setup`, que el servidor deriva de las propias columnas.
+ * Diseño (12-11-2026): menú lateral con iconos y tarjetas, siempre en claro.
  */
 function ClientSetupDialog({
   client,
+  agencySlug,
   onClose,
   onChanged,
 }: {
   client: ClientRow;
+  agencySlug?: string | null;
   onClose: () => void;
   onChanged: () => Promise<void> | void;
 }) {
@@ -977,8 +1011,10 @@ function ClientSetupDialog({
   // Fase 5 · Permisos
   const [sections, setSections] = useState<string[]>(() => [...(client.allowed_sections || [])]);
 
-  const accessLink = `${window.location.origin}/acceso-cliente`;
+  // La entrada EXCLUSIVA de los clientes de esta agencia (con su logo), no el login de Funnyleads.
+  const accessLink = agencyLoginUrl(window.location.origin, agencySlug || null);
   const pending = useMemo(() => PHASES.filter((p) => !setup?.[p.key]), [setup]);
+  const doneCount = PHASES.length - pending.length;
   const goNext = () => {
     const i = STEP_ORDER.indexOf(step);
     setStep(STEP_ORDER[Math.min(i + 1, STEP_ORDER.length - 1)]);
@@ -1070,23 +1106,11 @@ function ClientSetupDialog({
   };
 
   const uploadLogo = async (file: File) => {
-    if (file.size > 3 * 1024 * 1024) {
-      toast.error("El logo debe pesar menos de 3 MB");
-      return;
-    }
     setUploading(true);
     try {
-      const ext = (file.name.split(".").pop() || "png").toLowerCase();
-      const rand = Math.random().toString(36).slice(2, 10);
-      const path = `client-logos/${Date.now()}-${rand}.${ext}`;
-      const { error } = await supabase.storage
-        .from("godtube-media")
-        .upload(path, file, { upsert: true, contentType: file.type });
-      if (error) throw error;
-      const { data } = supabase.storage.from("godtube-media").getPublicUrl(path);
-      setLogoUrl(data.publicUrl);
+      const { url, color: hex } = await uploadClientLogo(file);
+      setLogoUrl(url);
       // De paso, el color de marca sale del propio logo.
-      const hex = await extractLogoColor(file).catch(() => null);
       if (hex) setColor(hex);
       toast.success("Logo subido. Guárdalo para dejarlo fijo.");
     } catch (e) {
@@ -1144,218 +1168,242 @@ function ClientSetupDialog({
     setSections((s) => (s.includes(key) ? s.filter((x) => x !== key) : [...s, key]));
 
   const spin = (key: string) => busy === key;
+  const hex = HEX_RE.test(color) ? color : "#6E58F1";
+  const clientColor = HEX_RE.test(client.brand_color || "") ? client.brand_color! : "#6E58F1";
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-display tracking-[-0.03em]">Configurar «{client.name}»</DialogTitle>
-          <DialogDescription>
-            Cinco fases. Puedes hacerlas en el orden que quieras, dejarlo a medias y volver: lo hecho se queda hecho.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="force-light flex max-h-[94dvh] w-[calc(100vw-1rem)] max-w-[1000px] flex-col gap-0 overflow-hidden rounded-[26px] border border-white bg-[#F6F5FB] p-0 shadow-[0_40px_90px_-30px_rgba(30,20,90,.5)] sm:w-[calc(100vw-2rem)]">
+        {/* Cabecera */}
+        <div className="relative shrink-0 overflow-hidden border-b border-[#ECE9F6] bg-white px-5 pb-4 pt-5 sm:px-7">
+          <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-28 h-60 w-[420px] rotate-[-12deg] rounded-full bg-gradient-to-r from-transparent via-[#C9B8FF]/50 to-[#7C5CFF]/40 blur-2xl" />
+          <div className="relative flex items-center gap-3.5 pr-8">
+            {client.logo_url ? (
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[#ECE9F6] bg-white p-1.5 shadow-sm">
+                <img src={client.logo_url} alt="" className="max-h-full max-w-full object-contain" />
+              </span>
+            ) : (
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-[19px] font-bold text-white shadow-[0_10px_22px_-10px_rgba(30,20,90,.55)]" style={{ background: `linear-gradient(135deg, ${clientColor}, ${clientColor}cc)` }}>
+                {(client.name || "C").charAt(0).toUpperCase()}
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <DialogTitle className="truncate font-display text-[20px] font-semibold tracking-[-0.03em] text-[#0F172B] sm:text-[22px]">
+                Configurar «{client.name}»
+              </DialogTitle>
+              <DialogDescription className="text-[13px] text-[#65768D]">
+                Cinco fases en el orden que quieras. Lo que guardas se queda guardado.
+              </DialogDescription>
+            </div>
+            <div className="hidden w-44 shrink-0 sm:block">
+              <p className="text-right text-[12px] font-semibold text-[#4B5576]">{doneCount} de {PHASES.length} fases</p>
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#EEEBF7]">
+                <span className="block h-full rounded-full bg-gradient-to-r from-[#6E58F1] to-[#A855F7] transition-all duration-500" style={{ width: `${(doneCount / PHASES.length) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
 
-        <div className="grid gap-5 sm:grid-cols-[190px_1fr]">
-          {/* Navegación de fases */}
-          <nav aria-label="Fases de configuración" className="flex flex-row flex-wrap gap-1 sm:flex-col">
-            {PHASES.map((p) => {
-              const done = !!setup?.[p.key];
-              const active = step === p.key;
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] md:grid-cols-[230px_minmax(0,1fr)] md:grid-rows-1">
+          {/* Menú de fases: lateral en ordenador, fila deslizable en móvil */}
+          <nav aria-label="Fases de configuración" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-[#ECE9F6] bg-white/60 px-3 py-2.5 md:flex-col md:gap-1 md:overflow-visible md:border-b-0 md:border-r md:px-3 md:py-4">
+            {STEP_ORDER.map((key) => {
+              const meta = STEP_META[key];
+              const Icon = meta.icon;
+              const active = step === key;
+              const done = key !== "final" && !!setup?.[key as PhaseKey];
               return (
                 <button
-                  key={p.key}
+                  key={key}
                   type="button"
-                  onClick={() => setStep(p.key)}
+                  onClick={() => setStep(key)}
                   aria-current={active ? "step" : undefined}
-                  className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-[13px] font-semibold transition-colors ${
-                    active ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted/50"
-                  }`}
+                  className={cn(
+                    "group relative flex shrink-0 items-center gap-2.5 rounded-2xl px-3 py-2 text-left transition-all md:w-full md:py-2.5",
+                    active
+                      ? "bg-gradient-to-r from-[#6E58F1] to-[#8B3CF5] text-white shadow-[0_12px_24px_-12px_rgba(106,76,255,.85)]"
+                      : "text-[#334063] hover:bg-white hover:shadow-[0_6px_16px_-12px_rgba(46,30,140,.4)]",
+                  )}
                 >
-                  <span
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10.5px] ${
-                      done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {done ? <Check className="h-3 w-3" /> : p.n}
+                  <span className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors",
+                    active ? "bg-white/20 text-white" : "bg-[#F1EEFB] text-[#6E58F1]",
+                  )}>
+                    <Icon className="h-4 w-4" strokeWidth={2} />
                   </span>
-                  {p.label}
+                  <span className="min-w-0">
+                    <span className="block text-[13.5px] font-semibold leading-tight">{meta.label}</span>
+                    <span className={cn("hidden text-[11.5px] leading-tight md:block", active ? "text-white/75" : "text-[#8A93AD]")}>{meta.hint}</span>
+                  </span>
+                  {key !== "final" && (
+                    <span className={cn(
+                      "ml-auto hidden h-5 w-5 shrink-0 items-center justify-center rounded-full md:flex",
+                      done ? (active ? "bg-white text-[#6E58F1]" : "bg-[#16A34A] text-white") : (active ? "border-2 border-white/60" : "border-2 border-[#DCD6F2]"),
+                    )}>
+                      {done && <Check className="h-3 w-3" strokeWidth={3} />}
+                    </span>
+                  )}
+                  {key !== "final" && done && (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#16A34A] text-white ring-2 ring-white md:hidden">
+                      <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                    </span>
+                  )}
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={() => setStep("final")}
-              aria-current={step === "final" ? "step" : undefined}
-              className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left text-[13px] font-semibold transition-colors ${
-                step === "final" ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted/50"
-              }`}
-            >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <ShieldCheck className="h-3 w-3" />
-              </span>
-              Resumen
-            </button>
           </nav>
 
           {/* Contenido de la fase */}
-          <div className="min-w-0 space-y-4">
+          <div className="min-h-0 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
             {step === "datos" && (
               <>
-                <PhaseHeader n={1} title="Datos" help="Quién es el cliente. Solo el nombre es obligatorio." />
-                <div className="space-y-1">
-                  <Label htmlFor="fase1-nombre">Nombre</Label>
-                  <Input
-                    id="fase1-nombre"
-                    value={datos.name}
-                    aria-invalid={!!datosError}
-                    onChange={(e) => { setDatos({ ...datos, name: e.target.value }); setDatosError(null); }}
-                  />
+                <SetupCard icon={User} title="Datos del cliente" help="Quién es el cliente. Solo el nombre es obligatorio." art>
+                  <div className="grid gap-3.5 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="fase1-nombre" className="text-[13px] text-[#334063]">Nombre</Label>
+                      <Input
+                        id="fase1-nombre"
+                        className={fieldClass}
+                        value={datos.name}
+                        aria-invalid={!!datosError}
+                        onChange={(e) => { setDatos({ ...datos, name: e.target.value }); setDatosError(null); }}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="fase1-empresa" className="text-[13px] text-[#334063]">Empresa</Label>
+                      <Input
+                        id="fase1-empresa"
+                        className={fieldClass}
+                        value={datos.company_name}
+                        onChange={(e) => setDatos({ ...datos, company_name: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="fase1-email" className="text-[13px] text-[#334063]">Email de contacto</Label>
+                    <Input
+                      id="fase1-email"
+                      type="email"
+                      className={fieldClass}
+                      value={datos.contact_email}
+                      onChange={(e) => setDatos({ ...datos, contact_email: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="fase1-notas" className="text-[13px] text-[#334063]">Notas</Label>
+                    <Textarea
+                      id="fase1-notas"
+                      rows={3}
+                      className="rounded-xl border-[#E2DEEF] bg-white text-[14.5px]"
+                      value={datos.notes}
+                      onChange={(e) => setDatos({ ...datos, notes: e.target.value })}
+                    />
+                  </div>
                   {datosError && <p className="text-[13px] font-semibold text-destructive">{datosError}</p>}
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="fase1-empresa">Empresa</Label>
-                  <Input
-                    id="fase1-empresa"
-                    value={datos.company_name}
-                    onChange={(e) => setDatos({ ...datos, company_name: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="fase1-email">Email de contacto</Label>
-                  <Input
-                    id="fase1-email"
-                    type="email"
-                    value={datos.contact_email}
-                    onChange={(e) => setDatos({ ...datos, contact_email: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="fase1-notas">Notas</Label>
-                  <Textarea
-                    id="fase1-notas"
-                    rows={3}
-                    value={datos.notes}
-                    onChange={(e) => setDatos({ ...datos, notes: e.target.value })}
-                  />
-                </div>
-                <Button onClick={saveDatos} disabled={spin("datos")} className="gap-2">
-                  {spin("datos") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar datos
-                </Button>
+                  <PrimaryAction onClick={saveDatos} busy={spin("datos")}>Guardar datos</PrimaryAction>
+                </SetupCard>
               </>
             )}
 
             {step === "acceso" && (
               <>
-                <PhaseHeader
-                  n={2}
-                  title="Acceso"
-                  help="La cuenta con la que el cliente entra a la plataforma. Es una cuenta normal: trabaja con sus propios datos, y sólo ve las secciones que le abras en la fase 5."
-                />
-                {client.login_email ? (
-                  <>
-                    <div className="rounded-md border border-border bg-card p-3 shadow-rest">
-                      <p className="text-[13px] text-muted-foreground">El cliente ya puede entrar con</p>
-                      <p className="mt-0.5 flex items-center gap-2 break-all font-mono text-[15px] font-semibold text-foreground">
-                        {client.login_email}
-                        <button
-                          type="button"
-                          aria-label="Copiar el email de acceso"
-                          className="text-muted-foreground hover:text-primary"
-                          onClick={() => copyToClipboard(client.login_email || "", "Email")}
-                        >
-                          <Copy className="h-3.5 w-3.5" />
+                <SetupCard
+                  icon={KeyRound}
+                  title="Su acceso"
+                  help="El usuario con el que tu cliente entra por TU enlace de clientes. Trabaja en su propio panel, con sus datos, y solo ve las secciones que le abras en Permisos."
+                  art
+                >
+                  {client.login_email ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#D9F2E3] bg-[#F2FBF5] p-3.5">
+                        <div className="min-w-0">
+                          <p className="text-[12.5px] font-medium text-[#3F7A57]">Ya puede entrar con</p>
+                          <p className="mt-0.5 break-all font-mono text-[15px] font-semibold text-[#0F172B]">{client.login_email}</p>
+                        </div>
+                        <button type="button" className={softBtn} onClick={() => copyToClipboard(client.login_email || "", "Email")}>
+                          <Copy className="h-3.5 w-3.5" /> Copiar email
                         </button>
-                      </p>
-                    </div>
-                    {lastPassword && (
-                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-                        <p className="text-[13px] font-semibold text-foreground">
-                          Esta es la contraseña que acabas de poner. Cópiala ahora: no la guardamos.
-                        </p>
-                        <p className="mt-1 flex items-center gap-2 break-all font-mono text-[15px] text-foreground">
-                          {lastPassword}
-                          <button
-                            type="button"
-                            aria-label="Copiar la contraseña"
-                            className="text-muted-foreground hover:text-primary"
-                            onClick={() => copyToClipboard(lastPassword, "Contraseña")}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                        </p>
                       </div>
-                    )}
-                    <div className="space-y-2">
-                      <Label htmlFor="fase2-nueva">Cambiar contraseña</Label>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Input id="fase2-nueva" className="w-56 font-mono" value={password} onChange={(e) => setPassword(e.target.value)} />
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPassword(generatePassword())}>
-                          <RefreshCw className="h-3.5 w-3.5" /> Generar otra
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(password, "Contraseña")}>
-                          <Copy className="h-3.5 w-3.5" /> Copiar
-                        </Button>
-                      </div>
-                      <PhaseNote>
-                        No la guardamos en ningún sitio: si el cliente la pierde, le pones una nueva desde aquí.
-                      </PhaseNote>
-                      <Button onClick={resetPassword} disabled={spin("password") || password.length < 8} className="gap-2">
-                        {spin("password") && <Loader2 className="h-4 w-4 animate-spin" />} Cambiar contraseña
-                      </Button>
-                    </div>
-                    {accesoError && <p className="text-[13px] font-semibold text-destructive">{accesoError}</p>}
-                    <div className="border-t border-border pt-3">
-                      <Button variant="outline" size="sm" className="gap-1.5 text-destructive" onClick={removeAccess} disabled={spin("quitar")}>
-                        {spin("quitar") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Quitar acceso
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="space-y-1">
-                      <Label htmlFor="fase2-email">Email de acceso</Label>
+                      {lastPassword && (
+                        <div className="rounded-2xl border border-[#D9D2FB] bg-[#F5F2FF] p-3.5">
+                          <p className="text-[13px] font-semibold text-[#2E2560]">
+                            Esta es la contraseña que acabas de poner. Cópiala ahora: no la guardamos.
+                          </p>
+                          <p className="mt-1.5 flex flex-wrap items-center gap-2 break-all font-mono text-[15px] text-[#0F172B]">
+                            {lastPassword}
+                            <button type="button" className={softBtn} onClick={() => copyToClipboard(lastPassword, "Contraseña")}>
+                              <Copy className="h-3.5 w-3.5" /> Copiar
+                            </button>
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="fase2-email" className="text-[13px] text-[#334063]">Email de acceso</Label>
                       <Input
                         id="fase2-email"
                         type="email"
+                        className={fieldClass}
                         value={loginEmail}
                         onChange={(e) => { setLoginEmail(e.target.value); setAccesoError(null); }}
                         placeholder="ana@verasalud.com"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="fase2-pass">Contraseña</Label>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Input
-                          id="fase2-pass"
-                          className="w-56 font-mono"
-                          value={password}
-                          onChange={(e) => { setPassword(e.target.value); setAccesoError(null); }}
-                        />
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setPassword(generatePassword())}>
-                          <RefreshCw className="h-3.5 w-3.5" /> Generar otra
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(password, "Contraseña")}>
-                          <Copy className="h-3.5 w-3.5" /> Copiar
-                        </Button>
-                      </div>
-                    </div>
-                    <PhaseNote>
-                      Cópiala y mándasela al cliente: <strong>no la guardamos</strong> en ningún sitio. Si se pierde, le
-                      pones una nueva desde aquí — nadie puede recuperarla.
-                    </PhaseNote>
-                    {accesoError && <p className="text-[13px] font-semibold text-destructive">{accesoError}</p>}
-                    <Button onClick={createAccess} disabled={spin("acceso")} className="gap-2">
-                      {spin("acceso") ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Crear acceso
-                    </Button>
-                  </>
-                )}
+                  )}
+                </SetupCard>
+
+                <SetupCard
+                  icon={RefreshCw}
+                  title={client.login_email ? "Cambiar contraseña" : "Contraseña"}
+                  help="No la guardamos en ningún sitio: cópiala y mándasela. Si la pierde, le pones una nueva desde aquí."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      id={client.login_email ? "fase2-nueva" : "fase2-pass"}
+                      aria-label={client.login_email ? "Cambiar contraseña" : "Contraseña"}
+                      className={cn(fieldClass, "w-full max-w-[260px] font-mono")}
+                      value={password}
+                      onChange={(e) => { setPassword(e.target.value); setAccesoError(null); }}
+                    />
+                    <button type="button" className={softBtn} onClick={() => setPassword(generatePassword())}>
+                      <RefreshCw className="h-3.5 w-3.5" /> Generar otra
+                    </button>
+                    <button type="button" className={softBtn} onClick={() => copyToClipboard(password, "Contraseña")}>
+                      <Copy className="h-3.5 w-3.5" /> Copiar
+                    </button>
+                  </div>
+                  {accesoError && <p className="text-[13px] font-semibold text-destructive">{accesoError}</p>}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {client.login_email ? (
+                      <>
+                        <PrimaryAction onClick={resetPassword} disabled={password.length < 8} busy={spin("password")}>Cambiar contraseña</PrimaryAction>
+                        <button type="button" className={cn(softBtn, "h-11 text-destructive hover:bg-destructive/5")} onClick={removeAccess} disabled={spin("quitar")}>
+                          {spin("quitar") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Quitar acceso
+                        </button>
+                      </>
+                    ) : (
+                      <PrimaryAction onClick={createAccess} busy={spin("acceso")} icon={KeyRound}>Crear acceso</PrimaryAction>
+                    )}
+                  </div>
+                </SetupCard>
               </>
             )}
 
             {step === "logo" && (
-              <>
-                <PhaseHeader n={3} title="Logo" help="El logo del cliente. Lo verá en la barra lateral al entrar." />
-                <div className="flex flex-wrap items-center gap-3">
+              <SetupCard icon={ImagePlus} title="Su logo" help="Lo verá arriba del todo en su panel al entrar, en lugar del de Funnyleads." art>
+                <div className="flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={uploading}
+                    className="group flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-[#DCD6F2] bg-[#FBFAFF] transition-colors hover:border-[#6E58F1]"
+                    aria-label={logoUrl ? "Cambiar el logo" : "Subir el logo"}
+                  >
+                    {uploading ? <Loader2 className="h-6 w-6 animate-spin text-[#6E58F1]" />
+                      : logoUrl ? <img src={logoUrl} alt="Logo del cliente" className="h-full w-full object-contain p-2" />
+                      : <ImageIcon className="h-7 w-7 text-[#9A93BD] group-hover:text-[#6E58F1]" />}
+                  </button>
                   <input
                     ref={fileRef}
                     type="file"
@@ -1364,132 +1412,115 @@ function ClientSetupDialog({
                     aria-label="Archivo de logo"
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo(f); }}
                   />
-                  <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={uploading} onClick={() => fileRef.current?.click()}>
-                    {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir archivo
-                  </Button>
-                  {logoUrl ? (
-                    <img src={logoUrl} alt="Logo del cliente" className="h-10 max-w-[140px] rounded-md border border-border object-contain" />
-                  ) : (
-                    <span className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
-                      <ImageIcon className="h-4 w-4" />
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="fase3-url">…o pega la dirección de una imagen</Label>
-                  <Input id="fase3-url" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" />
+                  <div className="min-w-[220px] flex-1 space-y-2">
+                    <button type="button" className={softBtn} disabled={uploading} onClick={() => fileRef.current?.click()}>
+                      {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} Subir archivo
+                    </button>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="fase3-url" className="text-[13px] text-[#334063]">…o pega la dirección de una imagen</Label>
+                      <Input id="fase3-url" className={fieldClass} value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…/logo.png" />
+                    </div>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button onClick={saveLogo} disabled={spin("logo") || uploading} className="gap-2">
-                    {spin("logo") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar logo
-                  </Button>
+                  <PrimaryAction onClick={saveLogo} disabled={uploading} busy={spin("logo")}>Guardar logo</PrimaryAction>
                   {logoUrl && (
-                    <Button variant="outline" size="sm" onClick={() => setLogoUrl("")} disabled={spin("logo")}>
-                      Quitar
-                    </Button>
+                    <button type="button" className={cn(softBtn, "h-11")} onClick={() => setLogoUrl("")} disabled={spin("logo")}>Quitar</button>
                   )}
                 </div>
-              </>
+              </SetupCard>
             )}
 
             {step === "colores" && (
               <>
-                <PhaseHeader n={4} title="Colores" help="El color con el que se le pinta la plataforma. Así la ve él." />
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="fase4-color">Color de marca</Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="fase4-color"
-                        type="color"
-                        value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6E58F1"}
-                        onChange={(e) => setColor(e.target.value.toUpperCase())}
-                        className="h-9 w-12 cursor-pointer rounded-md border border-border bg-background"
-                      />
-                      <Input value={color} onChange={(e) => setColor(e.target.value)} className="w-28 font-mono" />
+                <SetupCard icon={Palette} title="Su color" help="El color con el que se le pinta la plataforma: botones, menú y detalles. Así la ve él." art>
+                  <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Color de marca del cliente">
+                    {BRAND_SWATCHES.map((c) => {
+                      const on = color.toUpperCase() === c;
+                      return (
+                        <button key={c} type="button" role="radio" aria-checked={on} aria-label={`Color ${c}`} onClick={() => setColor(c)}
+                          className={cn("h-8 w-8 rounded-full border border-black/10 transition-transform hover:scale-110", on && "ring-2 ring-white")}
+                          style={{ background: c, ...(on ? { boxShadow: `0 0 0 4px ${c}55` } : {}) }} />
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="fase4-color" className="text-[13px] text-[#334063]">Color de marca</Label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="fase4-color"
+                          type="color"
+                          value={hex}
+                          onChange={(e) => setColor(e.target.value.toUpperCase())}
+                          className="h-11 w-14 cursor-pointer rounded-xl border border-[#E2DEEF] bg-white"
+                        />
+                        <Input value={color} onChange={(e) => setColor(e.target.value)} className={cn(fieldClass, "w-32 font-mono")} aria-label="Código del color de marca" />
+                      </div>
                     </div>
+                    <button type="button" className={cn(softBtn, "h-11")} disabled={!(logoUrl.trim() || client.logo_url) || spin("color-logo")} onClick={colorFromLogo}>
+                      {spin("color-logo") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Palette className="h-3.5 w-3.5" />} Sacar del logo
+                    </button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={!(logoUrl.trim() || client.logo_url) || spin("color-logo")}
-                    onClick={colorFromLogo}
-                  >
-                    {spin("color-logo") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Palette className="h-3.5 w-3.5" />} Sacar del logo
-                  </Button>
-                </div>
-                {/* Vista previa de su área, con su color */}
-                <div className="overflow-hidden rounded-md border border-border shadow-rest">
-                  <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2">
-                    {logoUrl ? (
-                      <img src={logoUrl} alt="" className="h-6 max-w-[90px] object-contain" />
-                    ) : (
-                      <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: `${color}1a`, color }}>
-                        <Building2 className="h-3 w-3" />
+                  <PrimaryAction onClick={saveColor} busy={spin("colores")} disabled={!HEX_RE.test(color)}>Guardar color</PrimaryAction>
+                </SetupCard>
+
+                {/* Vista previa de su panel, con su color */}
+                <SetupCard icon={Eye} title="Vista previa" help="Así se verá su panel con este color.">
+                  <div className="overflow-hidden rounded-2xl border border-[#ECE9F6] shadow-[0_10px_24px_-18px_rgba(30,20,90,.5)]">
+                    <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: hex }}>
+                      {logoUrl ? (
+                        <span className="flex h-7 items-center rounded-md bg-white px-1.5"><img src={logoUrl} alt="" className="h-5 max-w-[90px] object-contain" /></span>
+                      ) : (
+                        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-white/20 text-[12px] font-bold text-white">{(client.company_name || client.name || "C").charAt(0).toUpperCase()}</span>
+                      )}
+                      <span className="text-[13px] font-semibold text-white">{client.company_name || client.name}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 bg-[#FBFAFE] p-3">
+                      <span className="rounded-lg border border-[#ECE9F6] bg-white px-2.5 py-1 text-[12px] font-semibold text-[#65768D]">
+                        Enviados <span className="tabular-nums text-[#0F172B]">1.240</span>
                       </span>
-                    )}
-                    <span className="text-[13px] font-semibold text-foreground">{client.company_name || client.name}</span>
-                    <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <Eye className="h-3 w-3" /> Vista previa
-                    </span>
-                  </div>
-                  <div className="space-y-2 bg-background p-3">
-                    <div className="flex gap-2">
-                      <span className="rounded-md border border-border bg-card px-2 py-1 text-[12px] font-semibold text-muted-foreground">
-                        Enviados <span className="tabular-nums text-foreground">1.240</span>
-                      </span>
-                      <span className="rounded-md border px-2 py-1 text-[12px] font-semibold" style={{ borderColor: `${color}55`, background: `${color}14`, color }}>
+                      <span className="rounded-lg border px-2.5 py-1 text-[12px] font-semibold" style={{ borderColor: `${hex}55`, background: `${hex}14`, color: hex }}>
                         Respuestas <span className="tabular-nums">37</span>
                       </span>
+                      <span className="ml-auto inline-flex rounded-lg px-3 py-1.5 text-[12.5px] font-semibold text-white" style={{ background: hex }}>
+                        Así se ven sus botones
+                      </span>
                     </div>
-                    <span className="inline-flex rounded-md px-3 py-1.5 text-[13px] font-semibold text-white" style={{ background: color }}>
-                      Así se ven sus botones
-                    </span>
                   </div>
-                </div>
-                <Button onClick={saveColor} disabled={spin("colores")} className="gap-2">
-                  {spin("colores") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar color
-                </Button>
+                </SetupCard>
               </>
             )}
 
             {step === "permisos" && (
-              <>
-                <PhaseHeader
-                  n={5}
-                  title="Qué puede ver"
-                  help="Marca las secciones de la plataforma que quieres abrirle. Trabajará en ellas con sus propios datos; todo lo demás no existe para él."
-                />
-                <div className="space-y-2">
+              <SetupCard
+                icon={ShieldCheck}
+                title="Qué puede usar"
+                help="Las secciones de su panel. Trabaja en ellas con sus propios datos; lo que envíe cuenta en tu plan. Para lanzar campañas necesita Cuentas de email y Leads."
+                art
+              >
+                <div className="grid gap-2.5 sm:grid-cols-2">
                   {CLIENT_SECTIONS.map((s) => {
                     const on = sections.includes(s.key);
                     return (
                       <label
                         key={s.key}
                         htmlFor={`fase5-${s.key}`}
-                        className={`flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5 transition-colors ${
-                          on ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted/40"
-                        }`}
+                        className={cn(
+                          "relative flex cursor-pointer items-start gap-3 rounded-2xl border bg-white p-3.5 pr-10 transition-all",
+                          on ? "border-[#7C5CFF] shadow-[0_0_0_3px_rgba(124,92,255,.14),0_12px_24px_-16px_rgba(106,76,255,.7)]" : "border-[#ECE9F6] hover:border-[#D9D2FB]",
+                        )}
                       >
-                        <Checkbox
-                          id={`fase5-${s.key}`}
-                          className="mt-0.5"
-                          checked={on}
-                          onCheckedChange={() => toggleSection(s.key)}
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
-                            on ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          <s.icon className="h-4 w-4" strokeWidth={1.9} />
+                        <Checkbox id={`fase5-${s.key}`} className="sr-only" checked={on} onCheckedChange={() => toggleSection(s.key)} />
+                        <span aria-hidden="true" className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", on ? "bg-gradient-to-br from-[#7C5CFF] to-[#5B40FB] text-white" : "bg-[#F1EEFB] text-[#6E58F1]")}>
+                          <s.icon className="h-[18px] w-[18px]" strokeWidth={1.9} />
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-[15px] font-semibold text-foreground">{s.label}</span>
-                          <span className="block text-[13px] text-muted-foreground">{s.help}</span>
+                          <span className="block text-[14.5px] font-semibold text-[#0F172B]">{s.label}</span>
+                          <span className="block text-[12.5px] leading-snug text-[#65768D]">{s.help}</span>
+                        </span>
+                        <span aria-hidden="true" className={cn("absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full", on ? "bg-[#6E58F1] text-white" : "border-2 border-[#DCD6F2]")}>
+                          {on && <Check className="h-3 w-3" strokeWidth={3} />}
                         </span>
                       </label>
                     );
@@ -1498,72 +1529,63 @@ function ClientSetupDialog({
                 {sections.length === 0 && (
                   <PhaseNote>Sin ninguna marcada, el cliente entra y no ve nada. Marca al menos una.</PhaseNote>
                 )}
-                <Button onClick={savePermisos} disabled={spin("permisos")} className="gap-2">
-                  {spin("permisos") && <Loader2 className="h-4 w-4 animate-spin" />} Guardar permisos
-                </Button>
-              </>
+                <div className="flex flex-wrap items-center gap-2">
+                  <PrimaryAction onClick={savePermisos} busy={spin("permisos")}>Guardar permisos</PrimaryAction>
+                  <button type="button" className={cn(softBtn, "h-11")} onClick={() => setSections(CLIENT_SECTIONS.map((s) => s.key))}>Marcar todas</button>
+                </div>
+              </SetupCard>
             )}
 
             {step === "final" && (
               <>
-                <PhaseHeader n={null} title="Resumen" help="Lo que queda por hacer, y el enlace que le mandas al cliente." />
-                {pending.length === 0 ? (
-                  <div className="rounded-md border border-success/40 bg-success/10 p-3">
-                    <p className="flex items-center gap-1.5 font-display text-[15px] font-semibold tracking-[-0.02em] text-foreground">
-                      <Check className="h-4 w-4 text-success" /> Todo listo: {client.name} ya está conectado
-                    </p>
-                    <p className="mt-1 text-[13px] text-muted-foreground">
-                      Entra con <span className="font-mono text-foreground">{client.login_email}</span> y ve
-                      {" "}
-                      {(client.allowed_sections || []).length} sección
-                      {(client.allowed_sections || []).length === 1 ? "" : "es"} de la plataforma.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
-                    <p className="font-display text-[15px] font-semibold tracking-[-0.02em] text-foreground">
-                      Todavía falta {pending.length === 1 ? "una fase" : `${pending.length} fases`}
-                    </p>
-                    <ul className="mt-1.5 space-y-1">
-                      {pending.map((p) => (
-                        <li key={p.key} className="text-[13px] text-muted-foreground">
-                          <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setStep(p.key)}>
-                            Fase {p.n} · {p.label}
+                <SetupCard
+                  icon={Sparkles}
+                  title={pending.length === 0 ? `Todo listo: ${client.name} ya está conectado` : `Todavía ${pending.length === 1 ? "falta una fase" : `faltan ${pending.length} fases`}`}
+                  help={pending.length === 0
+                    ? `Entra con ${client.login_email || "su email"} y ve ${(client.allowed_sections || []).length} sección${(client.allowed_sections || []).length === 1 ? "" : "es"} de su panel.`
+                    : "Puedes dejarlo aquí y seguir otro día: lo guardado no se pierde."}
+                  art
+                >
+                  <ul className="grid gap-2 sm:grid-cols-2">
+                    {PHASES.map((p) => {
+                      const done = !!setup?.[p.key];
+                      const Icon = STEP_META[p.key].icon;
+                      return (
+                        <li key={p.key}>
+                          <button type="button" onClick={() => setStep(p.key)}
+                            className="flex w-full items-center gap-2.5 rounded-xl border border-[#ECE9F6] bg-[#FBFAFE] px-3 py-2 text-left transition-colors hover:bg-white">
+                            <Icon className="h-4 w-4 text-[#6E58F1]" />
+                            <span className="text-[13.5px] font-semibold text-[#0F172B]">Fase {p.n} · {p.label}</span>
+                            <span className={cn("ml-auto flex h-5 w-5 items-center justify-center rounded-full", done ? "bg-[#16A34A] text-white" : "border-2 border-[#DCD6F2]")}>
+                              {done && <Check className="h-3 w-3" strokeWidth={3} />}
+                            </span>
                           </button>
                         </li>
-                      ))}
-                    </ul>
-                    <p className="mt-2 text-[13px] text-muted-foreground">
-                      Puedes dejarlo aquí y seguir otro día: lo guardado no se pierde.
-                    </p>
-                  </div>
-                )}
+                      );
+                    })}
+                  </ul>
+                </SetupCard>
 
-                {/* Qué es, exactamente, lo que el cliente se lleva. */}
-                <PhaseNote>
-                  Entra en la plataforma con su cuenta y trabaja con sus propias campañas, buzones y respuestas; lo que
-                  envíe cuenta en tu plan.
-                </PhaseNote>
-
-                <div className="space-y-1">
-                  <Label htmlFor="fase-final-enlace">Enlace de acceso del cliente</Label>
+                <SetupCard icon={Link2} title="Enlace de acceso del cliente" help="Su entrada exclusiva: sale el logo de tu agencia y, al entrar, su propio panel con su logo. No es el inicio de sesión de Funnyleads.">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Input id="fase-final-enlace" readOnly value={accessLink} className="max-w-xs font-mono text-[13px]" />
-                    <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => copyToClipboard(accessLink, "Enlace")}>
-                      <Copy className="h-3.5 w-3.5" /> Copiar enlace
-                    </Button>
+                    <Input id="fase-final-enlace" aria-label="Enlace de acceso del cliente" readOnly value={accessLink} className={cn(fieldClass, "min-w-0 flex-1 font-mono text-[13px]")} />
+                    <PrimaryAction onClick={() => copyToClipboard(accessLink, "Enlace")} icon={Copy}>Copiar enlace</PrimaryAction>
+                    <a href={accessLink} target="_blank" rel="noreferrer" className={cn(softBtn, "h-11")}>
+                      Abrir <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
                   </div>
-                  <p className="text-[13px] text-muted-foreground">
-                    <Link2 className="mr-1 inline h-3.5 w-3.5" />
-                    Entra ahí con su email y su contraseña y aterriza directamente en la plataforma.
-                  </p>
-                </div>
+                  {!agencySlug && (
+                    <PhaseNote>Pon tu logo y el nombre de tu agencia en «Tu marca de agencia», arriba en Clientes: es lo que verá en esa entrada.</PhaseNote>
+                  )}
+                  <PhaseNote>
+                    Entra con su email y su contraseña y trabaja en su panel: crea campañas, ve sus respuestas en el Unibox,
+                    sus estadísticas y la IA. Todo lo que envíe cuenta en tu plan.
+                  </PhaseNote>
+                </SetupCard>
 
                 {!setup?.campanas && (
                   <PhaseNote>
-                    <UserCog className="mr-1 inline h-3.5 w-3.5" />
-                    Aún no tiene ninguna campaña asignada. Se hace desde las opciones de cada campaña, y entonces
-                    empezará a ver cifras.
+                    También puedes llevarle tú campañas: asígnaselas desde las opciones de cada campaña y las verás por cliente aquí.
                   </PhaseNote>
                 )}
               </>
@@ -1571,11 +1593,19 @@ function ClientSetupDialog({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={!!busy}>
-            Cerrar
-          </Button>
-        </DialogFooter>
+        {/* Pie */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#ECE9F6] bg-white px-5 py-3 sm:px-7">
+          <p className="hidden text-[12.5px] text-[#8A93AD] sm:block">Los cambios se guardan con el botón de cada fase.</p>
+          <div className="ml-auto flex items-center gap-2">
+            {step !== "final" && (
+              <button type="button" className={softBtn} onClick={goNext}>Siguiente fase</button>
+            )}
+            <button type="button" onClick={onClose} disabled={!!busy}
+              className="inline-flex h-9 items-center rounded-xl bg-[#0F172B] px-4 text-[13px] font-semibold text-white transition hover:bg-[#1E2745] disabled:opacity-60">
+              Cerrar
+            </button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

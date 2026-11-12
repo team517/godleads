@@ -39,6 +39,7 @@ const SettingsPage = lazyWithRetry(() => import("./pages/SettingsPage"));
 const AIPrompts = lazyWithRetry(() => import("./pages/AIPrompts"));
 const AdminPanel = lazyWithRetry(() => import("./pages/AdminPanel"));
 const ClientPortal = lazyWithRetry(() => import("./pages/ClientPortal"));
+const AccesoCliente = lazyWithRetry(() => import("./pages/AccesoCliente"));
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
 const Install = lazyWithRetry(() => import("./pages/Install"));
 const Community = lazyWithRetry(() => import("./pages/Community"));
@@ -89,7 +90,8 @@ const App = () => (
               {/* Entrada del cliente: el mismo login, con una dirección que se le
                   puede mandar tal cual. Dentro usa la aplicación normal, acotada
                   por sus allowed_routes. */}
-              <Route path="/acceso-cliente" element={<Auth />} />
+              <Route path="/acceso-cliente" element={<AccesoCliente />} />
+              <Route path="/acceso/:slug" element={<AccesoCliente />} />
               {/* Bienvenida del primer acceso: ocupa toda la pantalla, sin menú ni barra. */}
               <Route path="/bienvenida" element={<ProtectedRoute><Welcome /></ProtectedRoute>} />
               {/* La app del móvil: sólo la Unibox y la cuenta, a pantalla completa (sin menú). */}

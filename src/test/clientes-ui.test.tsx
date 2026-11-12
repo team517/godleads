@@ -331,7 +331,7 @@ describe("Clientes · configuración por fases", () => {
     only(client("vera", "Clínica Vera", { setup: { datos: true, acceso: true, logo: true, colores: false, permisos: false, campanas: true } }));
     renderPage();
     await openConfig("Clínica Vera");
-    expect(await screen.findByText("Fase 4 · Colores")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Su color" })).toBeInTheDocument();
   });
 
   it("la fase de acceso avisa en claro de que la contraseña NO se guarda", async () => {
@@ -339,7 +339,7 @@ describe("Clientes · configuración por fases", () => {
     renderPage();
     await openConfig("Clínica Vera");
 
-    expect(await screen.findByText("Fase 2 · Acceso")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Su acceso" })).toBeInTheDocument();
     expect(screen.getByText(/no la guardamos/i)).toBeInTheDocument();
     expect(screen.getByText(/le pones una nueva desde aquí/i)).toBeInTheDocument();
     // Y viene una contraseña fuerte ya puesta, con su botón de copiar.
@@ -388,7 +388,7 @@ describe("Clientes · configuración por fases", () => {
     );
     renderPage();
     await openConfig("Clínica Vera");
-    expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Qué puede usar" })).toBeInTheDocument();
 
     // Las mismas siete de client_routes_for_sections, ni una más.
     for (const label of [
@@ -444,7 +444,7 @@ describe("Clientes · configuración por fases", () => {
     routes.set_sections = { status: 200, body: { ok: true, allowed_sections: ["dashboard", "campanas"] } };
     renderPage();
     await openConfig("Clínica Vera");
-    expect(await screen.findByText("Fase 5 · Qué puede ver")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Qué puede usar" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Guardar permisos/ }));
     await waitFor(() => expect(calls.some((c) => c.action === "set_sections")).toBe(true));
@@ -494,5 +494,46 @@ describe("Clientes · configuración por fases", () => {
     await openConfig("Clínica Vera");
     expect(await screen.findByText(/Todo listo: Clínica Vera ya está conectado/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Copiar enlace/ })).toBeInTheDocument();
+  });
+});
+
+// ── Marca de la agencia y su entrada exclusiva para clientes (12-11-2026) ────────────────
+describe("Clientes · marca de la agencia", () => {
+  const agency = { slug: "mi-agencia", agency_name: "Mi Agencia", logo_url: null, brand_color: "#E11D48" };
+
+  it("la tarjeta de marca enseña el enlace propio de los clientes y guarda los cambios", async () => {
+    routes.get_agency = { status: 200, body: { agency } };
+    routes.set_agency = { status: 200, body: { agency: { ...agency, agency_name: "Mi Agencia Pro" } } };
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Tu marca de agencia" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Enlace de acceso de tus clientes")).toHaveValue("mi-agencia");
+    fireEvent.change(screen.getByLabelText("Nombre de tu agencia"), { target: { value: "Mi Agencia Pro" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar marca/ }));
+    await waitFor(() => expect(calls.some((c) => c.action === "set_agency")).toBe(true));
+    const sent = calls.find((c) => c.action === "set_agency")!.payload;
+    expect(sent).toMatchObject({ agency_name: "Mi Agencia Pro", slug: "mi-agencia", brand_color: "#E11D48" });
+  });
+
+  it("una dirección con caracteres raros no se guarda", async () => {
+    routes.get_agency = { status: 200, body: { agency } };
+    renderPage();
+    await screen.findByRole("heading", { name: "Tu marca de agencia" });
+    fireEvent.change(screen.getByLabelText("Enlace de acceso de tus clientes"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar marca/ }));
+    expect(await screen.findByText(/entre 3 y 40 letras/)).toBeInTheDocument();
+    expect(calls.some((c) => c.action === "set_agency")).toBe(false);
+  });
+
+  it("el resumen del cliente da la entrada de la agencia (/acceso/<slug>), no el login de Funnyleads", async () => {
+    routes.get_agency = { status: 200, body: { agency } };
+    routes.list.body.clients = [client("vera", "Clínica Vera", {
+      setup: { datos: true, acceso: false, logo: true, colores: true, permisos: true, campanas: true },
+    })];
+    renderPage();
+    await screen.findByRole("heading", { name: "Tu marca de agencia" });
+    fireEvent.click(await screen.findByRole("button", { name: "Configurar el cliente Clínica Vera" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Resumen/ }));
+    const input = (await screen.findByLabelText("Enlace de acceso del cliente")) as HTMLInputElement;
+    expect(input.value).toMatch(/\/acceso\/mi-agencia$/);
   });
 });

@@ -1092,3 +1092,32 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
   .wv-page .wv-options-sm .soft-option-sm { height: 40px; }
   .wv-page .wv-options .soft-option > svg:last-child { width: 16px; height: 16px; }
 }
+
+/* ── Zona siempre clara (12-11-2026) ──────────────────────────────────────────────────────
+   Para piezas diseñadas en claro aunque la app esté en modo noche (el panel "Configurar
+   cliente"). Redefine los colores base dentro de la zona; los portales hijos la heredan. */
+.force-light {
+  color-scheme: light;
+  --background: 255 67% 99%;
+  --foreground: 223 48% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 223 48% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 223 48% 11%;
+  --primary: 249 84% 65%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 255 30% 96%;
+  --secondary-foreground: 215 22% 35%;
+  --muted: 214 26% 95%;
+  --muted-foreground: 214 17% 47%;
+  --accent: 258 42% 95%;
+  --accent-foreground: 249 84% 65%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 254 37% 93%;
+  --input: 254 37% 93%;
+  --ring: 249 84% 65%;
+  --success: 156 94% 32%;
+  --warning: 38 95% 48%;
+  color: hsl(var(--foreground));
+}

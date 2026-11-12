@@ -41,7 +41,9 @@ const planCards: { tier: PlanTier; features: string[] }[] = [
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const { updateProfile: updateGlobalProfile, refreshProfile } = useProfile();
+  const { updateProfile: updateGlobalProfile, refreshProfile, profile: globalProfile } = useProfile();
+  // Cuenta de un cliente: el plan lo paga y lo gestiona su agencia → sin pestaña de plan.
+  const clientLogin = !!globalProfile.client_login_of;
   const { tier, subscribed, subscriptionEnd, loading: subLoading, refreshSubscription, isTrialing, trialEnd, trialDaysLeft, status: subStatus, billable, cancelAtPeriodEnd, customPlan } = useSubscription();
   const [profile, setProfile] = useState({ full_name: "", company_name: "", contact_email: "", avatar_url: "" });
   const [loading, setLoading] = useState(true);
@@ -271,13 +273,13 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-semibold tracking-[-0.03em]">Configuración</h1>
-        <p className="text-[15px] text-muted-foreground">Gestiona tu perfil, plan y preferencias</p>
+        <p className="text-[15px] text-muted-foreground">{clientLogin ? "Gestiona tu perfil y tus preferencias" : "Gestiona tu perfil, plan y preferencias"}</p>
       </div>
 
-      <Tabs defaultValue={searchParams.get("tab") === "plan" ? "plan" : "profile"}>
+      <Tabs defaultValue={searchParams.get("tab") === "plan" && !clientLogin ? "plan" : "profile"}>
         <TabsList>
           <TabsTrigger value="profile">Perfil</TabsTrigger>
-          <TabsTrigger value="plan">Plan</TabsTrigger>
+          {!clientLogin && <TabsTrigger value="plan">Plan</TabsTrigger>}
           <TabsTrigger value="sending">Envío</TabsTrigger>
         </TabsList>
 
@@ -376,7 +378,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="plan" className="space-y-6 mt-4">
+        {!clientLogin && <TabsContent value="plan" className="space-y-6 mt-4">
           {/* Current plan banner */}
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-4">
@@ -476,7 +478,7 @@ export default function SettingsPage() {
 
           {/* Plan a medida: la barra con envíos, contactos y clientes (11-11-2026). */}
           <CustomPlanBuilder />
-        </TabsContent>
+        </TabsContent>}
 
         <TabsContent value="sending" className="space-y-4 mt-4">
           <AiKeyCard />

@@ -4,6 +4,7 @@ import { SparkMark } from "@/components/SparkMark";
 import { isMobileAppPath, isPhoneDevice } from "@/lib/mobile-app";
 import { lazyWithRetry } from "@/lib/lazy-retry";
 import { useAuth } from "@/contexts/AuthContext";
+import { useOptionalProfile } from "@/contexts/ProfileContext";
 import { teamThread, teamUnread, visitorId } from "@/lib/chat-hub-client";
 
 /* El botón flotante de PulseBot, SIN el chat detrás.
@@ -25,6 +26,8 @@ export function chatbotHiddenAt(pathname: string): boolean {
   return pathname.startsWith("/unibox")
     || pathname.startsWith("/bienvenida")
     || pathname.startsWith("/modificaciones-ia")
+    // Entrada de clientes de una agencia: es SU página, sin el asistente de Funnyleads.
+    || pathname.startsWith("/acceso")
     || isMobileAppPath(pathname);
 }
 
@@ -61,7 +64,10 @@ export function ChatbotLauncher() {
   const [mounted, setMounted] = useState(false);
   const [unread, setUnread] = useState(0);
   const { user } = useAuth();
-  const hidden = chatbotHiddenAt(location.pathname);
+  // Las cuentas de cliente de una agencia no ven el asistente de Funnyleads (su soporte es su
+  // agencia; "hablar con el equipo" llegaría a Funnyleads, no a ella).
+  const clientLogin = !!useOptionalProfile()?.client_login_of;
+  const hidden = chatbotHiddenAt(location.pathname) || clientLogin;
 
   // Chat en directo: si en este navegador hay un hilo abierto con el equipo, se mira cada 30 s si
   // han respondido, para poner el número en el botón aunque el chat no se haya abierto todavía.

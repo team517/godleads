@@ -1,4 +1,4 @@
-import { Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2, PlayCircle } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -9,6 +9,9 @@ import { useProfile } from "@/contexts/ProfileContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useState, useCallback, useEffect } from "react";
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushState } from "@/lib/push-notifications";
+import { usePlanUsageAlert } from "@/hooks/usePlanUsageAlert";
+import { planAlertCopy } from "@/lib/plan-alerts";
+import { clientLogoutPath } from "@/lib/client-access";
 import { toast } from "sonner";
 import { Link, useNavigate } from "react-router-dom";
 import { Wordmark } from "@/components/Wordmark";
@@ -201,14 +204,20 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
 
   const allowed = profileData.allowed_routes;
   const canSeeAI = !allowed || allowed.includes("/ai-prompts");
+  // Cuenta de un cliente: su agencia paga y gestiona el plan → ni planes, ni monedas, ni tutorial.
+  const clientLogin = !!profileData.client_login_of;
+  const planAlert = usePlanUsageAlert();
+  const planAlertText = planAlert ? planAlertCopy(planAlert) : null;
 
   const handleSignOut = async () => {
     // Dentro de la cuenta de un cliente, "Cerrar sesión" primero devuelve al equipo a su cuenta
     // (nunca deja abierta la sesión del cliente) y no toca su preferencia de mantener la sesión.
     if (insideClient) { await returnToOwnAccount(); return; }
     clearKeepSession();
+    // El cliente vuelve a la entrada de SU agencia, no a la web de Funnyleads.
+    const back = clientLogin ? await clientLogoutPath() : "/";
     await signOut();
-    navigate("/");
+    navigate(back);
   };
 
   // Barra de programa: el índigo oscuro del diseño, a todo el ancho y por encima del menú lateral.
@@ -232,6 +241,14 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           {profileData.logo_url ? (
             <span className="flex h-8 items-center rounded-md bg-white px-2 shadow-rest">
               <img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[120px] object-contain" />
+            </span>
+          ) : clientLogin && profileData.company_name ? (
+            // Cliente sin logo: su nombre, con la inicial en su color (nunca la marca Funnyleads).
+            <span className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-[14px] font-bold text-primary-foreground">
+                {profileData.company_name.trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="hidden max-w-[180px] truncate text-[15px] font-semibold text-white sm:inline">{profileData.company_name}</span>
             </span>
           ) : (
             <>
@@ -280,6 +297,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           {theme === "dark" ? <Sun className="h-[18px] w-[18px] text-amber-300" /> : <Moon className="h-[18px] w-[18px]" />}
         </button>
 
+        {!clientLogin && (<>
         {/* Coin / Credits button */}
         <Popover>
           <PopoverTrigger asChild>
@@ -392,6 +410,8 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           </PopoverContent>
         </Popover>
 
+        </>)}
+
         {/* Notifications */}
         <Popover>
           <PopoverTrigger asChild>
@@ -401,13 +421,25 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               ) : (
                 <BellOff className="!h-[18px] !w-[18px] text-white/55" />
               )}
-              {notifyEnabled && (
+              {planAlert ? (
+                <span className="absolute right-1.5 top-1.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-[#F43F5E] px-1 text-[9.5px] font-bold text-white ring-2 ring-[hsl(var(--topbar))]">1</span>
+              ) : notifyEnabled && (
                 <span className="live-dot absolute right-2 top-2 h-2 w-2 rounded-full bg-[#05D17F] ring-2 ring-[hsl(var(--topbar))]" />
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 p-4" align="end">
+          <PopoverContent className="w-72 p-4" align="end">
             <div className="space-y-4">
+              {planAlert && planAlertText && (
+                <Link to="/settings?tab=plan" className="block rounded-xl border border-[#F6D7A8] bg-[#FFF7EB] p-3 text-left transition-colors hover:bg-[#FFF1DC] dark:border-warning/40 dark:bg-warning/10">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#B45309] dark:text-warning">
+                    <AlertTriangle className="h-3.5 w-3.5" /> Aviso de tu plan
+                  </span>
+                  <span className="mt-1 block text-[13.5px] font-semibold text-foreground">{planAlertText.title}</span>
+                  <span className="mt-0.5 block text-[12.5px] text-muted-foreground">{planAlertText.text}</span>
+                  <span className="mt-1.5 inline-block text-[12.5px] font-semibold text-primary">Mejorar plan →</span>
+                </Link>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Sonido</span>
                 <Button
@@ -485,7 +517,9 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             <div className="border-b p-3.5">
               <p className="truncate text-[14px] font-semibold text-foreground">{profileData.full_name || "Sin nombre"}</p>
               <p className="truncate text-[12.5px] text-muted-foreground">{user?.email}</p>
-              <span className="mt-2 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground">Plan {currentPlanLabel}</span>
+              {clientLogin
+                ? (profileData.company_name && <span className="mt-2 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground">{profileData.company_name}</span>)
+                : <span className="mt-2 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground">Plan {currentPlanLabel}</span>}
             </div>
             {insideClient && (
               <div className="border-b bg-primary/5 px-3.5 py-2.5">
@@ -507,15 +541,17 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
               <Link to="/settings" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <Settings className="h-4 w-4 text-muted-foreground" /> Configuración
               </Link>
-              {tourReplay && (
+              {tourReplay && !clientLogin && (
                 <button type="button" onClick={() => { setAccountMenuOpen(false); openTour(); }}
                   className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
                   <PlayCircle className="h-4 w-4 text-muted-foreground" /> Ver el tutorial
                 </button>
               )}
-              <a href="mailto:support@onepulso.online" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
-                <LifeBuoy className="h-4 w-4 text-muted-foreground" /> Ayuda
-              </a>
+              {!clientLogin && (
+                <a href="mailto:support@onepulso.online" className="flex items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                  <LifeBuoy className="h-4 w-4 text-muted-foreground" /> Ayuda
+                </a>
+              )}
               <button type="button" onClick={handleSignOut} className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
                 <LogOut className="h-4 w-4" /> {insideClient ? "Salir del cliente" : "Cerrar sesión"}
               </button>

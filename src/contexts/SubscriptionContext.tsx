@@ -261,6 +261,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         role: (roleData as any)?.role ?? null,
         isClientManager: !!(profileCheck as any)?.is_client_manager,
         allowedRoutes: (profileCheck as any)?.allowed_routes ?? null,
+        clientLogin: !!(profileCheck as any)?.client_login_of,
         contactEmail: (profileCheck as any)?.contact_email ?? null,
         // Immutable account creation time → the trial can't be reset/gamed.
         createdAt: (user as any)?.created_at || (profileCheck as any)?.created_at || null,

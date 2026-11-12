@@ -40,6 +40,15 @@ async function syncClientRoutes(db: any, loginUserId: string, sections: string[]
     .eq("user_id", loginUserId);
 }
 
+/** "Clínica Vera S.L." → "clinica-vera-sl": la parte de la dirección de acceso de la agencia. */
+function slugify(v: string): string {
+  const s = String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
+  return s.length >= 3 ? s : "";
+}
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -309,8 +318,10 @@ Deno.serve(async (req) => {
     }
 
     // ── Crear el acceso del cliente ───────────────────────────────────────────
-    // Crea una cuenta que sólo sirve para MIRAR lo de este cliente. La marca
-    // profiles.client_login_of es lo que impide que sea un usuario normal.
+    // Crea la cuenta con la que el cliente entra por la página de acceso de la agencia
+    // (/acceso/<slug>). Es una cuenta de la plataforma acotada a sus secciones; la marca
+    // profiles.client_login_of la distingue (no paga: paga su dueño; no ve planes).
+    // Su logo y su color los copia el trigger clients_brand_to_login a su perfil.
     if (action === "create_login") {
       const id = String(body?.id || "");
       const email = String(body?.email || "").trim().toLowerCase();
@@ -375,6 +386,71 @@ Deno.serve(async (req) => {
       await db.from("clients").update({ login_user_id: null }).eq("id", id).eq("owner_user_id", user.id);
       await db.auth.admin.deleteUser(cli.login_user_id as string).catch(() => {});
       return json({ ok: true });
+    }
+
+    // ── Marca de la agencia y su entrada exclusiva para clientes ─────────────
+    // Cada dueño tiene UNA marca (nombre, logo, color) y una dirección propia:
+    // /acceso/<slug>. Al pedirla por primera vez se crea con un slug libre.
+    const agencyRow = async () => {
+      const { data } = await db.from("agency_branding")
+        .select("slug, agency_name, logo_url, brand_color, updated_at").eq("owner_user_id", user.id).maybeSingle();
+      return data;
+    };
+    const freeSlug = async (base: string) => {
+      const root = slugify(base) || "agencia";
+      for (let i = 0; i < 50; i++) {
+        const cand = i === 0 ? root : `${root.slice(0, 36)}-${i + 1}`;
+        const { data: taken } = await db.from("agency_branding").select("owner_user_id").eq("slug", cand).maybeSingle();
+        if (!taken || taken.owner_user_id === user.id) return cand;
+      }
+      return `${root.slice(0, 30)}-${crypto.randomUUID().slice(0, 6)}`;
+    };
+
+    if (action === "get_agency") {
+      let row = await agencyRow();
+      if (!row) {
+        const { data: prof } = await db.from("profiles").select("company_name, full_name").eq("user_id", user.id).maybeSingle();
+        const name = String(prof?.company_name || "").trim() || null;
+        const slug = await freeSlug(name || String(user.email || "").split("@")[0] || "agencia");
+        await db.from("agency_branding").insert({ owner_user_id: user.id, slug, agency_name: name });
+        row = await agencyRow();
+      }
+      return json({ agency: row });
+    }
+
+    if (action === "set_agency") {
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (body?.agency_name !== undefined) {
+        const v = String(body.agency_name ?? "").trim().slice(0, 80);
+        patch.agency_name = v || null;
+      }
+      if (body?.logo_url !== undefined) {
+        const v = String(body.logo_url ?? "").trim();
+        if (v && !/^https:\/\//i.test(v)) return json({ error: "El logo debe ser una dirección https" }, 400);
+        patch.logo_url = v || null;
+      }
+      if (body?.brand_color !== undefined) {
+        const v = String(body.brand_color ?? "").trim();
+        if (v && !HEX_RE.test(v)) return json({ error: "Color no válido (usa #RRGGBB)" }, 400);
+        patch.brand_color = v ? v.toUpperCase() : null;
+      }
+      if (body?.slug !== undefined) {
+        const v = String(body.slug ?? "").trim().toLowerCase();
+        if (!SLUG_RE.test(v)) return json({ error: "La dirección debe tener entre 3 y 40 letras, números o guiones" }, 400);
+        const { data: taken } = await db.from("agency_branding").select("owner_user_id").eq("slug", v).maybeSingle();
+        if (taken && taken.owner_user_id !== user.id) return json({ error: "Esa dirección ya la usa otra agencia" }, 409);
+        patch.slug = v;
+      }
+      const existing = await agencyRow();
+      if (existing) {
+        const { error } = await db.from("agency_branding").update(patch).eq("owner_user_id", user.id);
+        if (error) throw error;
+      } else {
+        const slug = (patch.slug as string) || await freeSlug(String(patch.agency_name || user.email?.split("@")[0] || "agencia"));
+        const { error } = await db.from("agency_branding").insert({ owner_user_id: user.id, ...patch, slug });
+        if (error) throw error;
+      }
+      return json({ agency: await agencyRow() });
     }
 
     return json({ error: "Acción no reconocida" }, 400);

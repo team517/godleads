@@ -58,6 +58,9 @@ export interface AccessInput {
   role: string | null;                 // user_roles.role
   isClientManager: boolean;
   allowedRoutes: string[] | null | undefined;
+  /** Cuenta de acceso de un cliente (profiles.client_login_of): paga su agencia, nunca ve el
+   *  muro de pago aunque su dueño le haya quitado todas las secciones. */
+  clientLogin?: boolean;
   contactEmail: string | null;
   createdAt: string | null;            // account creation (immutable, set by auth)
   /** Compatibilidad: "Stripe dice que está suscrito" sin más detalle → subscribed. */
@@ -128,7 +131,7 @@ export function decideAccess(i: AccessInput): AccessDecision {
   const createdMs = i.createdAt ? Date.parse(i.createdAt) : NaN;
   const grandfathered = Number.isNaN(createdMs) ? true : createdMs < TRIAL_CUTOFF_MS;
   // Admin-created client OR pre-existing account → free + unlimited.
-  if (hasRoutes || grandfathered) return { kind: "free" };
+  if (hasRoutes || grandfathered || i.clientLogin) return { kind: "free" };
 
   const now = i.nowMs ?? Date.now();
   // New self-signup: what the server knows about the subscription wins.

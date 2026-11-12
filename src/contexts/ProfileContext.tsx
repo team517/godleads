@@ -106,6 +106,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Como useProfile, pero sin exigir el proveedor (devuelve null fuera de él). */
+export function useOptionalProfile() {
+  return useContext(ProfileContext)?.profile ?? null;
+}
+
 export function useProfile() {
   const ctx = useContext(ProfileContext);
   if (!ctx) throw new Error("useProfile must be used within ProfileProvider");

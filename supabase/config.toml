@@ -119,3 +119,6 @@ verify_jwt = false
 
 [functions.signup-flow]
 verify_jwt = false
+
+[functions.plan-usage-alerts]
+verify_jwt = false

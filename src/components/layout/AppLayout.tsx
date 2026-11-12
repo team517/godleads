@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUniboxUnreadWatcher } from "@/hooks/useUniboxUnreadWatcher";
 import { PushPrompt } from "@/components/PushPrompt";
 import { ProductTour } from "@/components/tour/ProductTour";
+import { PlanUsageBanner } from "@/components/PlanUsageBanner";
 import { ensurePushSubscription } from "@/lib/push-notifications";
 import { startVersionWatcher } from "@/lib/version-check";
 import { brandStyleFor } from "@/lib/brandColor";
@@ -34,6 +35,18 @@ export function AppLayout() {
   }, [user?.id]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "1");
+
+  // Cuenta de un cliente: la pestaña del navegador lleva SU nombre, no el de Funnyleads.
+  useEffect(() => {
+    if (!profile.client_login_of || !profile.company_name) return;
+    const name = profile.company_name;
+    const apply = () => { if (!document.title.startsWith(name)) document.title = name; };
+    apply();
+    const obs = new MutationObserver(apply);
+    const t = document.querySelector("title");
+    if (t) obs.observe(t, { childList: true });
+    return () => obs.disconnect();
+  }, [profile.client_login_of, profile.company_name]);
 
   // Per-client branding: tint the accent color from brand_color.
   const brandStyle = brandStyleFor(profile.brand_color);
@@ -127,6 +140,8 @@ export function AppLayout() {
         }`}
       >
         <main className={`relative z-[1] flex-1 ${isMobile ? "p-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]" : "p-6"}`}>
+          {/* Aviso del 80 / 95 / 100 % de los envíos del mes (sólo el dueño del plan). */}
+          <PlanUsageBanner />
           {pathAllowed
             ? <div key={section} className="page-enter"><Outlet /></div>
             : <Navigate to={allowed![0]} replace />}
