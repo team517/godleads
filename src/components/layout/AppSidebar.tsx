@@ -187,7 +187,7 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     "soft-sidebar fixed left-0 z-40 flex flex-col text-sidebar-foreground transition-[transform,width] duration-200",
     isMobile
       ? "top-0 z-[60] h-[100dvh] w-[272px] shadow-modal"
-      : "top-[calc(3.5rem+env(safe-area-inset-top))] h-[calc(100dvh-3.5rem-env(safe-area-inset-top))]",
+      : "top-[calc(var(--topbar-h)+env(safe-area-inset-top))] h-[calc(100dvh-var(--topbar-h)-env(safe-area-inset-top))]",
     !isMobile && (collapsed ? "w-16" : "w-[270px]"),
     isMobile && !isOpen && "-translate-x-full",
     isMobile && isOpen && "translate-x-0"
@@ -245,13 +245,13 @@ export function AppSidebar({ isMobile, isOpen, onClose, collapsed }: AppSidebarP
     <aside className={sidebarClasses} aria-label="Menú principal">
       {/* Cajón móvil: cabecera propia (la barra superior queda debajo). */}
       {isMobile && (
-        <div className="topbar-surface flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between px-4 pt-[env(safe-area-inset-top)]">
+        <div className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between border-b border-[#ebe8f8] bg-white px-4 pt-[env(safe-area-inset-top)] dark:border-border dark:bg-card">
           {profileData.client_login_of
-            ? <CoBrand agency={agencyBrand} client={{ name: profileData.company_name || "Tu empresa", logo: profileData.logo_url, color: profileData.brand_color }} />
+            ? <CoBrand tone="dark" agency={agencyBrand} client={{ name: profileData.company_name || "Tu empresa", logo: profileData.logo_url, color: profileData.brand_color }} />
             : profileData.logo_url
               ? <span className="flex h-8 items-center rounded-md bg-white px-2"><img src={profileData.logo_url} alt={profileData.company_name || "Logo"} className="h-5 max-w-[130px] object-contain" /></span>
-              : <span className="flex items-center gap-2.5"><SparkMark size={28} variant="star" /><Wordmark className="h-[20px]" colorClassName="text-white" /></span>}
-          <button onClick={onClose} aria-label="Cerrar menú" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10 hover:text-white">
+              : <span className="flex items-center gap-2.5"><SparkMark size={28} variant="star" /><Wordmark className="h-[20px]" colorClassName="text-[#0b1040] dark:text-white" /></span>}
+          <button onClick={onClose} aria-label="Cerrar menú" className="flex h-9 w-9 items-center justify-center rounded-full text-[#3b3f6b] hover:bg-[#f3f1fd] hover:text-primary dark:text-white/80 dark:hover:bg-white/10">
             <X className="h-5 w-5" />
           </button>
         </div>

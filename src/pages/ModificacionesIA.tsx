@@ -247,7 +247,7 @@ export default function ModificacionesIA() {
 
   return (
     <div className={fondo}>
-      <div className="flex gap-4 h-[calc(100dvh-120px)] min-h-[560px]">
+      <div className="flex gap-4 h-[calc(100dvh-var(--topbar-h)-64px)] min-h-[560px]">
         {/* ── Chat ─────────────────────────────────────────────────────── */}
         <section
           onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setArrastrando(true); } }}
@@ -482,7 +482,7 @@ function PantallaClientes({ clientes, recientes, onElegir }: { clientes: IaClien
   ];
 
   return (
-    <div className="flex h-[calc(100dvh-120px)] min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
+    <div className="flex h-[calc(100dvh-var(--topbar-h)-64px)] min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[#ECE8F7] bg-card/90 shadow-[0_8px_30px_-12px_rgba(49,42,99,0.18)] backdrop-blur dark:border-border">
       <div className="border-b border-[#F0EDF8] px-5 pb-5 pt-6 sm:px-8 dark:border-border">
         <div className="flex items-center gap-4 sm:gap-5">
           <span className="sm:hidden"><SparkMark size={52} className="rounded-2xl shadow-[0_6px_20px_-8px_rgba(110,88,241,0.55)]" /></span>

@@ -1182,3 +1182,21 @@ main table > tbody > tr:nth-child(n+8) { animation-delay: .21s; }
   --warning: 38 95% 48%;
   color: hsl(var(--foreground));
 }
+
+/* ── Barra superior flotante y clara (12-11-2026, diseño del dueño) ───────────────────────────── */
+:root { --topbar-h: 4.25rem; }
+@media (min-width: 768px) { :root { --topbar-h: 4.6rem; } }
+/* Lo que pasa por debajo al bajar se funde con el fondo en el hueco alrededor de la píldora. */
+.topbar-float { background: linear-gradient(hsl(var(--background)) 0 72%, hsl(var(--background) / 0)); }
+.topbar-ai { background: linear-gradient(90deg, #5B7CFA 0%, #7B5CF6 52%, #A24BF5 100%); }
+[data-brand] .topbar-ai { background: hsl(var(--primary)); }
+/* La onda violeta suave que cruza la barra por detrás del buscador. */
+.topbar-wave {
+  background:
+    linear-gradient(112deg, transparent 34%, rgba(167, 139, 250, .30) 46%, rgba(196, 181, 253, .14) 56%, transparent 68%),
+    linear-gradient(112deg, transparent 52%, rgba(139, 92, 246, .14) 60%, transparent 72%);
+}
+.dark .topbar-wave { opacity: .45; }
+[data-brand] .topbar-wave {
+  background: linear-gradient(112deg, transparent 34%, hsl(var(--primary) / .22) 46%, hsl(var(--primary) / .08) 56%, transparent 68%);
+}

@@ -1,4 +1,4 @@
-import { AlertTriangle, Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2, PlayCircle } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Clock, Menu, Volume2, Moon, Sun, Zap, Crown, Rocket, Coins, Smartphone, PanelLeftClose, PanelLeftOpen, Sparkles, ChevronDown, Settings, LogOut, LifeBuoy, Building2, Undo2, PlayCircle, Home, Layers, Mail, Bot, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,7 +16,7 @@ import { CoBrand } from "@/components/clients/CoBrand";
 import { CLIENT_WELCOME_EVENT } from "@/components/clients/ClientWelcome";
 import { useAgencyBrand } from "@/hooks/useAgencyBrand";
 import { toast } from "sonner";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Wordmark } from "@/components/Wordmark";
 import { SparkMark } from "@/components/SparkMark";
 import { clearKeepSession } from "@/components/KeepSessionBanner";
@@ -53,7 +53,17 @@ interface TopbarProps {
 }
 
 /** Botón de icono sobre la barra oscura. */
-const TOPBAR_ICON = "relative flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40";
+// Barra clara y flotante (12-11-2026, diseño del dueño): botones redondos en tinta oscura.
+const TOPBAR_ICON = "relative flex h-10 w-10 items-center justify-center rounded-full text-[#3b3f6b] transition-colors hover:bg-[#f3f1fd] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-white/80 dark:hover:bg-white/10 dark:hover:text-white";
+
+/** Accesos rápidos de la barra (en pantallas anchas). Sólo salen los que la cuenta puede abrir. */
+const TOP_NAV = [
+  { to: "/dashboard", label: "Inicio", icon: Home },
+  { to: "/campaigns", label: "Campañas", icon: Layers },
+  { to: "/email-accounts", label: "Buzones", icon: Mail },
+  { to: "/ai-prompts", label: "Agentes IA", icon: Bot },
+  { to: "/stats", label: "Reportes", icon: BarChart3 },
+] as const;
 
 const PLANS = [
   {
@@ -88,6 +98,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
   const tourReplay = canReplayTour(subStatus, subStatus === "staff" || isAdmin);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { profile: profileData } = useProfile();
   const { theme, toggleTheme } = useTheme();
   const [notifyEnabled, setNotifyEnabled] = useState(_notifEnabled);
@@ -225,14 +236,15 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
     navigate(back);
   };
 
-  // Barra de programa: el índigo oscuro del diseño, a todo el ancho y por encima del menú lateral.
-  // h + pt: en iOS a pantalla completa la vista corre bajo la barra de estado, así que la
-  // cabecera crece con el área segura (0 en el resto) y la pinta del mismo índigo.
+  // Barra flotante clara (12-11-2026): una "píldora" blanca con sombra violeta, por encima del menú
+  // lateral. Alto en --topbar-h (index.css); en iOS crece con el área segura.
+  const topNav = TOP_NAV.filter((n) => !allowed || allowed.length === 0 || allowed.includes(n.to));
+  const isActive = (to: string) => location.pathname === to || location.pathname.startsWith(to + "/");
   return (
-    <header className="topbar-surface fixed inset-x-0 top-0 z-50 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between gap-3 border-b border-white/10 px-3 pt-[env(safe-area-inset-top)] text-[15px] font-medium text-topbar-foreground shadow-[0_2px_10px_rgba(21,17,60,.18)] md:px-4">
-      <span className="topbar-sheen" aria-hidden="true" />
-      <span className="brand-line" aria-hidden="true" />
-      <div className="relative flex min-w-0 items-center gap-2 md:gap-3">
+    <header className="topbar-float fixed inset-x-0 top-0 z-50 h-[calc(var(--topbar-h)+env(safe-area-inset-top))] px-2 pb-1.5 pt-[calc(env(safe-area-inset-top)+8px)] text-[15px] font-medium md:px-4">
+      <div className="topbar-pill relative flex h-full items-center justify-between gap-2 overflow-hidden rounded-[22px] border border-[#ebe8f8] bg-white/90 px-2 shadow-[0_14px_34px_-18px_rgba(110,88,241,.45),0_2px_6px_rgba(16,24,64,.04)] backdrop-blur-xl dark:border-border dark:bg-card/90 md:gap-3 md:px-3">
+      <span className="topbar-wave pointer-events-none absolute inset-y-0 right-[18%] hidden w-[420px] lg:block" aria-hidden="true" />
+      <div className="relative flex min-w-0 flex-1 items-center gap-1.5 md:gap-2.5">
         {isMobile ? (
           <button type="button" onClick={onMenuToggle} aria-label="Abrir menú" className={TOPBAR_ICON}>
             <Menu className="h-5 w-5" />
@@ -245,6 +257,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         <Link to="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="Ir al panel">
           {clientLogin ? (
             <CoBrand
+              tone="dark"
               agency={agencyBrand}
               client={{ name: profileData.company_name || "Tu empresa", logo: profileData.logo_url, color: profileData.brand_color }}
             />
@@ -254,23 +267,47 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
             </span>
           ) : (
             <>
-              <SparkMark size={30} variant="star" />
-              <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-white" />
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#ebe8f8] bg-white shadow-[0_2px_6px_rgba(110,88,241,.12)] dark:border-border dark:bg-background">
+                <SparkMark size={24} variant="star" />
+              </span>
+              <Wordmark className="hidden h-[22px] sm:inline-block" colorClassName="text-[#0b1040] dark:text-white" />
             </>
           )}
         </Link>
-        {!isMobile && <span className="mx-1 hidden h-5 w-px bg-white/15 lg:block" />}
-        {!isMobile && <div className="hidden lg:block"><GlobalSearch /></div>}
+        {!isMobile && topNav.length > 0 && (
+          <>
+            <span className="mx-1 hidden h-7 w-px shrink-0 bg-[#e6e3f3] dark:bg-border 2xl:block" aria-hidden="true" />
+            <nav aria-label="Accesos rápidos" className="hidden shrink-0 items-center gap-0.5 2xl:flex">
+              {topNav.map(({ to, label, icon: Icon }) => {
+                const on = isActive(to);
+                return (
+                  <Link
+                    key={to}
+                    to={to}
+                    onMouseEnter={() => prefetchRoute(to)}
+                    aria-current={on ? "page" : undefined}
+                    className={`flex h-10 items-center gap-2 whitespace-nowrap rounded-xl px-3 text-[14.5px] font-semibold transition-colors ${on ? "bg-primary/10 text-primary" : "text-[#1b1f45] hover:bg-[#f5f3ff] hover:text-primary dark:text-foreground/85 dark:hover:bg-white/5"}`}
+                  >
+                    <Icon className={`h-[18px] w-[18px] ${on ? "" : "text-[#4b4f86] dark:text-muted-foreground"}`} strokeWidth={1.9} />
+                    {label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </>
+        )}
+        {!isMobile && <span className="mx-1 hidden h-7 w-px shrink-0 bg-[#e6e3f3] dark:bg-border lg:block" aria-hidden="true" />}
+        {!isMobile && <div className="hidden min-w-0 max-w-[400px] flex-1 lg:block"><GlobalSearch /></div>}
       </div>
 
-      <div className="relative flex items-center gap-1 md:gap-1.5">
+      <div className="relative flex shrink-0 items-center gap-1 md:gap-1.5">
         {isTrialing && trialDaysLeft !== null && (
           <Badge
             variant="outline"
             className={`mr-1 gap-1.5 px-2 py-1 text-xs font-semibold md:px-3 md:text-[13px] ${
               trialDaysLeft < 1
-                ? "border-red-300/50 bg-red-500/20 text-red-100"
-                : "border-white/20 bg-white/10 text-white/90"
+                ? "border-red-300 bg-red-50 text-red-600 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300"
+                : "border-[#e3e0f5] bg-[#f6f4ff] text-[#4b3fc4] dark:border-white/15 dark:bg-white/10 dark:text-white/90"
             }`}
           >
             <Clock className="h-3 w-3 md:h-3.5 md:w-3.5" />
@@ -282,9 +319,9 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           <Link
             to="/ai-prompts"
             onMouseEnter={() => prefetchRoute("/ai-prompts")}
-            className="mr-1 hidden h-8 items-center gap-1.5 rounded-md bg-white px-3 text-[13px] font-semibold text-[hsl(var(--topbar))] shadow-[0_2px_6px_rgba(21,17,60,.18)] transition-transform hover:-translate-y-px active:translate-y-0 sm:inline-flex"
+            className="topbar-ai mr-1 hidden h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 text-[14px] font-semibold text-white shadow-[0_10px_22px_-10px_rgba(110,88,241,.8)] transition-all hover:-translate-y-px hover:brightness-110 active:translate-y-0 sm:inline-flex"
           >
-            <Sparkles className="brand-spark h-3.5 w-3.5" /> <span className="text-gradient-brand">Pregunta a la IA</span>
+            <Sparkles className="h-4 w-4" /> Pregunta a la IA
           </Link>
         )}
 
@@ -296,7 +333,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           aria-label={theme === "dark" ? "Modo claro" : "Modo noche"}
           className={TOPBAR_ICON}
         >
-          {theme === "dark" ? <Sun className="h-[18px] w-[18px] text-amber-300" /> : <Moon className="h-[18px] w-[18px]" />}
+          {theme === "dark" ? <Sun className="h-[19px] w-[19px] text-amber-300" /> : <Moon className="h-[19px] w-[19px]" />}
         </button>
 
         {!clientLogin && (<>
@@ -304,7 +341,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className={TOPBAR_ICON} title="Monedas">
-              <img src={coinIcon} alt="Monedas" className="h-7 w-7" />
+              <Coins className="h-[19px] w-[19px]" aria-label="Monedas" />
               {(profileData.coins > 0 || profileData.infiniteCoins) && (
                 <span className="absolute -top-0.5 -right-1 bg-warning text-warning-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
                   {coinDisplay}
@@ -419,14 +456,14 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           <PopoverTrigger asChild>
             <Button variant="ghost" size="icon" className={TOPBAR_ICON} aria-label="Notificaciones">
               {notifyEnabled ? (
-                <Bell className="!h-[18px] !w-[18px]" />
+                <Bell className="!h-[19px] !w-[19px]" />
               ) : (
-                <BellOff className="!h-[18px] !w-[18px] text-white/55" />
+                <BellOff className="!h-[19px] !w-[19px] text-[#9aa0c4] dark:text-white/55" />
               )}
               {planAlert ? (
-                <span className="absolute right-1.5 top-1.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-[#F43F5E] px-1 text-[9.5px] font-bold text-white ring-2 ring-[hsl(var(--topbar))]">1</span>
+                <span className="absolute right-1.5 top-1.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-[#F43F5E] px-1 text-[9.5px] font-bold text-white ring-2 ring-white dark:ring-card">1</span>
               ) : notifyEnabled && (
-                <span className="live-dot absolute right-2 top-2 h-2 w-2 rounded-full bg-[#05D17F] ring-2 ring-[hsl(var(--topbar))]" />
+                <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-white dark:ring-card" />
               )}
             </Button>
           </PopoverTrigger>
@@ -505,14 +542,14 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         {/* Cuenta: avatar + desplegable, como en cualquier programa. */}
         <Popover open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
           <PopoverTrigger asChild>
-            <button type="button" aria-label="Cuenta" className="ml-1 flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
-              <span className="brand-ring rounded-full p-[2px]"><Avatar className="h-8 w-8 ring-2 ring-[hsl(var(--topbar))]">
+            <button type="button" aria-label="Cuenta" className="ml-1 flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-[#f3f1fd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:hover:bg-white/10">
+              <span className="rounded-full border border-[#ebe8f8] bg-white p-[2px] shadow-[0_2px_6px_rgba(16,24,64,.08)] dark:border-border dark:bg-card"><Avatar className="h-9 w-9">
                 <AvatarImage src={profileData.avatar_url || `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(user?.email || 'user')}&backgroundColor=b6e3f4`} />
-                <AvatarFallback className="bg-white/15 text-sm font-bold text-white">
+                <AvatarFallback className="bg-primary/10 text-sm font-bold text-primary">
                   {(profileData.full_name || user?.email || "U").charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar></span>
-              <ChevronDown className="hidden h-3.5 w-3.5 text-white/70 sm:block" />
+              <ChevronDown className="hidden h-4 w-4 text-[#4b4f86] dark:text-white/70 sm:block" />
             </button>
           </PopoverTrigger>
           <PopoverContent className="w-64 p-0" align="end">
@@ -567,6 +604,7 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
           </PopoverContent>
         </Popover>
         {switcherEnabled && <AccountSwitcherDialog open={switcherOpen} onOpenChange={setSwitcherOpen} current={insideClient} />}
+      </div>
       </div>
     </header>
   );

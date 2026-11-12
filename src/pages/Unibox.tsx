@@ -2570,7 +2570,7 @@ export default function Unibox() {
   const selectedCatConfig = selectedCategory ? categoryConfig[selectedCategory] : null;
 
   return (
-    <div className="flex h-[calc(100dvh-132px)] min-h-0 flex-col gap-2.5 lg:h-[calc(100vh-80px)] lg:gap-3">
+    <div className="flex h-[calc(100dvh-var(--topbar-h)-76px)] min-h-0 flex-col gap-2.5 lg:h-[calc(100vh-var(--topbar-h)-24px)] lg:gap-3">
       {/* Header */}
       <div className="rounded-md border border-border/60 bg-card px-3 py-2.5 shadow-rest md:px-4 md:py-3">
         <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">

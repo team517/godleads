@@ -49,6 +49,21 @@ export function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
+  // Atajo Ctrl/⌘ + K: salta al buscador desde cualquier pantalla.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const reqIdRef = useRef(0);
 
   // Close on outside click
@@ -129,8 +144,8 @@ export function GlobalSearch() {
   };
 
   return (
-    <div ref={boxRef} className="group relative w-80 xl:w-96">
-      <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-white/60 transition-colors group-focus-within:text-muted-foreground" />
+    <div ref={boxRef} className="group relative w-full min-w-[180px]">
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 z-10 h-[18px] w-[18px] -translate-y-1/2 text-[#3b3f6b] transition-colors group-focus-within:text-primary dark:text-white/60" />
       {/* El propio Input ya trae la superficie de campo del diseño (clara y oscura);
           aquí solo se ajusta el espacio para la lupa y el spinner. */}
       <Input
@@ -138,10 +153,14 @@ export function GlobalSearch() {
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => { if (query.trim()) setOpen(true); }}
         onKeyDown={onKeyDown}
+        ref={inputRef}
         placeholder="Buscar campañas, leads, correos..."
-        className="h-9 border-white/15 bg-white/10 pl-10 pr-9 text-[14px] text-white placeholder:text-white/55 transition-colors hover:bg-white/[0.14] focus-visible:border-white focus-visible:bg-white focus-visible:text-foreground focus-visible:placeholder:text-muted-foreground focus-visible:ring-white/20 dark:bg-white/10 dark:focus-visible:bg-card"
+        aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
+        className="h-10 rounded-full border-[#e6e3f3] bg-white/95 pl-11 pr-16 text-[14px] text-foreground shadow-[0_1px_2px_rgba(16,24,64,.05)] placeholder:text-[#6470a8] transition-colors hover:border-primary/40 focus-visible:border-primary focus-visible:ring-primary/20 dark:border-border dark:bg-background/80 dark:placeholder:text-muted-foreground"
       />
-      {loading && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-white/70 group-focus-within:text-muted-foreground" />}
+      {loading
+        ? <Loader2 className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+        : !query && <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md bg-[#f1eefe] px-1.5 py-0.5 font-sans text-[11px] font-semibold text-primary dark:bg-white/10">{isMac ? "⌘ K" : "Ctrl K"}</kbd>}
 
       {open && query.trim() && (
         <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-float">
