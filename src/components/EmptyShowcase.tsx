@@ -186,45 +186,58 @@ export function fitScale(o: { viewportH: number; top: number; textH: number; nat
   return Math.max(o.min ?? 0.42, Math.min(1, disponible / o.naturalH));
 }
 
+/** Ancho de diseño del dibujo en ordenador: tarjetas y caminos de puntos están colocados sobre
+ *  este lienzo fijo (el SVG de los caminos es de 1000 de ancho), así que siempre encajan; luego
+ *  el conjunto se escala entero. En pantallas pequeñas (sin tarjetas) el lienzo es fluido. */
+export const DESIGN_W = 1000;
+const LG = 1024;
+
+/** Escala por ancho: el lienzo de 1000 px nunca se sale del hueco que tiene. */
+export function widthScale(containerW: number, viewportW: number): number {
+  if (viewportW < LG || containerW <= 0) return 1;
+  return Math.min(1, containerW / DESIGN_W);
+}
+
 function useFitScale() {
   const section = useRef<HTMLElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [naturalH, setNaturalH] = useState(0);
 
   useLayoutEffect(() => {
-    const sec = section.current, st = stage.current;
-    if (!sec || !st) return;
-    let raf = 0;
+    const sec = section.current, st = stage.current, wr = wrap.current;
+    if (!sec || !st || !wr) return;
+    // Se mide en el momento (sin esperar al siguiente fotograma): en una pestaña en segundo plano
+    // requestAnimationFrame no corre y se quedaban medidas viejas (el botón salía cortado).
     const medir = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        // 12-11-2026: se encoge TODO junto (dibujo, título, texto y botón) para que no quede un
-        // dibujo pequeño con un título enorme. offsetHeight no cuenta la escala.
-        const nat = st.offsetHeight;
-        const cs = getComputedStyle(sec);
-        const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-        // En móvil no se encoge (la letra quedaría diminuta: se baja con el dedo); en ordenador,
-        // como mucho al 75 % para que el texto se siga leyendo bien.
-        const s = window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
-        setNaturalH(nat);
-        setScale((prev) => (Math.abs(prev - s) > 0.01 ? s : prev));
-      });
+      // 12-11-2026: se escala TODO junto (dibujo, título, texto y botón) para que no quede un
+      // dibujo pequeño con un título enorme. offsetHeight no cuenta la escala.
+      const nat = st.offsetHeight;
+      if (!nat) return;
+      const cs = getComputedStyle(sec);
+      const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+      // En móvil no se encoge (la letra quedaría diminuta: se baja con el dedo); en ordenador,
+      // como mucho al 75 % para que el texto se siga leyendo bien.
+      const sAlto = window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
+      const s = Math.min(sAlto, widthScale(wr.clientWidth, window.innerWidth));
+      setNaturalH((prev) => (prev === nat ? prev : nat));
+      setScale((prev) => (Math.abs(prev - s) > 0.01 ? s : prev));
     };
     medir();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(medir) : null;
-    ro?.observe(sec); ro?.observe(st);
+    ro?.observe(sec); ro?.observe(st); ro?.observe(wr);
     window.addEventListener("resize", medir);
-    return () => { cancelAnimationFrame(raf); ro?.disconnect(); window.removeEventListener("resize", medir); };
+    return () => { ro?.disconnect(); window.removeEventListener("resize", medir); };
   }, []);
 
-  return { section, stage, scale, naturalH };
+  return { section, wrap, stage, scale, naturalH };
 }
 
 /* ── Pantalla vacía ────────────────────────────────────────────────────────────────── */
 
 export default function EmptyShowcase({ variant, title, text, cta, secondary, className }: Props) {
-  const { section, stage, scale, naturalH } = useFitScale();
+  const { section, wrap, stage, scale, naturalH } = useFitScale();
   return (
     <section ref={section} data-fit-scale={scale.toFixed(2)} className={cn("relative flex min-h-0 flex-col justify-center overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-8 pt-6 text-center dark:border-border dark:from-card dark:to-background", className)}>
       {/* ola y luces de fondo */}
@@ -233,11 +246,16 @@ export default function EmptyShowcase({ variant, title, text, cta, secondary, cl
         <span className="absolute -right-[10%] bottom-[-50%] h-[85%] w-[75%] rounded-[50%] bg-gradient-to-tl from-[#f3e6ff]/70 to-transparent dark:from-primary/5" />
         <span className="absolute left-1/2 top-[18%] h-[260px] w-[260px] -translate-x-1/2 rounded-full bg-[#b9a8ff]/15 blur-3xl" />
       </div>
-      {/* Todo (dibujo + textos + botón) se encoge a la vez, sin deformarse, hasta que cabe. */}
-      <div className="relative w-full shrink-0" style={naturalH ? { height: Math.round(naturalH * scale) } : undefined}>
+      {/* Todo (dibujo + textos + botón) se escala a la vez, sin deformarse, hasta que cabe. Sale ya a
+          su tamaño (sin la animación de "encogerse" al cargar): invisible hasta medir y luego un fundido. */}
+      <div
+        ref={wrap}
+        className={cn("relative flex w-full shrink-0 items-start justify-center transition-opacity duration-500 ease-out motion-reduce:transition-none", naturalH ? "opacity-100" : "opacity-0")}
+        style={naturalH ? { height: Math.round(naturalH * scale) } : undefined}
+      >
         <div
           ref={stage}
-          className="relative mx-auto max-w-[1100px] origin-top transition-transform duration-300 ease-out motion-reduce:transition-none"
+          className="relative w-full max-w-[1100px] shrink-0 origin-top lg:w-[1000px] lg:max-w-none"
           style={scale < 1 ? { transform: `scale(${scale})` } : undefined}
         >
           <div className="relative min-h-[250px] md:min-h-[330px]">
