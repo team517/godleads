@@ -57,19 +57,27 @@ export function monedasDeSesion(s: SesionCompra | null | undefined): number {
   return 0;
 }
 
+/** ¿Esta cuenta (por su correo de acceso, rol y gestor) tiene monedas ilimitadas? */
+export function esIlimitada(i: { email: string | null; role?: string | null; isClientManager?: boolean | null }): boolean {
+  const email = String(i.email || "").trim().toLowerCase();
+  return MONEDAS_INFINITAS.includes(email) || i.role === "admin" || !!i.isClientManager;
+}
+
 /** Quién paga las monedas de una acción. Puro: los datos los trae el llamador.
- *  · equipo / cuentas especiales / clientes gestionados por la agencia (allowed_routes) → gratis
- *  · acceso de un cliente de un usuario (client_login_of) → paga la agencia dueña del cliente
+ *  · equipo / cuentas especiales (y admins y gestores) → gratis
+ *  · acceso de un cliente creado en Clientes (client_login_of): si su agencia es del equipo
+ *    (hello@, equipo@…) → gratis, todo ilimitado; si no → paga la agencia dueña del cliente
+ *    (OJO: estos accesos también llevan allowed_routes, por eso se mira ANTES que eso)
+ *  · clientes gestionados desde el panel de admin (allowed_routes, sin client_login_of) → gratis
  *  · el resto → paga él mismo */
 export function quienPaga(i: {
   userId: string; email: string | null;
   role?: string | null; isClientManager?: boolean | null;
-  allowedRoutes?: string[] | null; agenciaDelCliente?: string | null;
+  allowedRoutes?: string[] | null; agenciaDelCliente?: string | null; agenciaIlimitada?: boolean;
 }): { gratis: true } | { gratis: false; payer: string } {
-  const email = String(i.email || "").trim().toLowerCase();
-  if (MONEDAS_INFINITAS.includes(email) || i.role === "admin" || i.isClientManager) return { gratis: true };
+  if (esIlimitada(i)) return { gratis: true };
+  if (i.agenciaDelCliente) return i.agenciaIlimitada ? { gratis: true } : { gratis: false, payer: i.agenciaDelCliente };
   if (i.allowedRoutes && i.allowedRoutes.length > 0) return { gratis: true };
-  if (i.agenciaDelCliente) return { gratis: false, payer: i.agenciaDelCliente };
   return { gratis: false, payer: i.userId };
 }
 
@@ -77,22 +85,40 @@ export function quienPaga(i: {
 
 export type Cobro = { ok: true; gratis: boolean; restantes: number | null } | { ok: false; required: number; available: number };
 
+/** Datos de la base para decidir quién paga (y si la agencia del cliente es del equipo). */
+// deno-lint-ignore no-explicit-any
+async function resolverPago(db: any, userId: string, email: string | null) {
+  const [{ data: perfil }, { data: rol }] = await Promise.all([
+    db.from("profiles").select("allowed_routes, is_client_manager, client_login_of").eq("user_id", userId).maybeSingle(),
+    db.from("user_roles").select("role").eq("user_id", userId).maybeSingle(),
+  ]);
+  let agencia: string | null = null;
+  let agenciaIlimitada = false;
+  if (perfil?.client_login_of) {
+    const { data: c } = await db.from("clients").select("owner_user_id").eq("id", perfil.client_login_of).maybeSingle();
+    agencia = c?.owner_user_id ?? null;
+    if (agencia) {
+      const [{ data: u }, { data: pa }, { data: ra }] = await Promise.all([
+        db.auth.admin.getUserById(agencia),
+        db.from("profiles").select("is_client_manager").eq("user_id", agencia).maybeSingle(),
+        db.from("user_roles").select("role").eq("user_id", agencia).maybeSingle(),
+      ]);
+      agenciaIlimitada = esIlimitada({ email: u?.user?.email ?? null, role: ra?.role ?? null, isClientManager: pa?.is_client_manager ?? false });
+    }
+  }
+  return quienPaga({
+    userId, email, role: rol?.role ?? null, isClientManager: perfil?.is_client_manager ?? false,
+    allowedRoutes: perfil?.allowed_routes ?? null, agenciaDelCliente: agencia, agenciaIlimitada,
+  });
+}
+
 /** Cobra `cantidad` monedas por una acción de `userId` (o a su agencia). Atómico en la base de datos:
  *  nunca deja el saldo en negativo aunque haya dos peticiones a la vez. */
 // deno-lint-ignore no-explicit-any
 export async function cobrarMonedas(db: any, userId: string, email: string | null, cantidad: number): Promise<Cobro> {
   const n = Math.max(0, Math.ceil(cantidad));
   if (n === 0) return { ok: true, gratis: false, restantes: null };
-  const [{ data: perfil }, { data: rol }] = await Promise.all([
-    db.from("profiles").select("allowed_routes, is_client_manager, client_login_of").eq("user_id", userId).maybeSingle(),
-    db.from("user_roles").select("role").eq("user_id", userId).maybeSingle(),
-  ]);
-  let agencia: string | null = null;
-  if (perfil?.client_login_of) {
-    const { data: c } = await db.from("clients").select("owner_user_id").eq("id", perfil.client_login_of).maybeSingle();
-    agencia = c?.owner_user_id ?? null;
-  }
-  const q = quienPaga({ userId, email, role: rol?.role ?? null, isClientManager: perfil?.is_client_manager ?? false, allowedRoutes: perfil?.allowed_routes ?? null, agenciaDelCliente: agencia });
+  const q = await resolverPago(db, userId, email);
   if (q.gratis) return { ok: true, gratis: true, restantes: null };
   const { data, error } = await db.rpc("spend_coins", { p_user: q.payer, p_amount: n });
   if (error) throw new Error(`spend_coins: ${error.message}`);
@@ -108,16 +134,7 @@ export async function cobrarMonedas(db: any, userId: string, email: string | nul
 export async function devolverMonedas(db: any, userId: string, email: string | null, cantidad: number): Promise<void> {
   const n = Math.max(0, Math.floor(cantidad));
   if (n === 0) return;
-  const [{ data: perfil }, { data: rol }] = await Promise.all([
-    db.from("profiles").select("allowed_routes, is_client_manager, client_login_of").eq("user_id", userId).maybeSingle(),
-    db.from("user_roles").select("role").eq("user_id", userId).maybeSingle(),
-  ]);
-  let agencia: string | null = null;
-  if (perfil?.client_login_of) {
-    const { data: c } = await db.from("clients").select("owner_user_id").eq("id", perfil.client_login_of).maybeSingle();
-    agencia = c?.owner_user_id ?? null;
-  }
-  const q = quienPaga({ userId, email, role: rol?.role ?? null, isClientManager: perfil?.is_client_manager ?? false, allowedRoutes: perfil?.allowed_routes ?? null, agenciaDelCliente: agencia });
+  const q = await resolverPago(db, userId, email);
   if (q.gratis) return;
   await db.rpc("refund_coins", { p_user: q.payer, p_amount: n });
 }

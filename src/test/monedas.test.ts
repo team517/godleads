@@ -41,8 +41,12 @@ describe("compra confirmada por Stripe", () => {
 describe("quién paga", () => {
   const base = { userId: "u1", email: "ana@acme.test" };
   it("un usuario normal paga él", () => expect(quienPaga(base)).toEqual({ gratis: false, payer: "u1" }));
-  it("el acceso de un cliente de una agencia paga con las monedas de la agencia", () => {
+  it("el acceso de un cliente de una agencia paga con las monedas de la agencia (aunque lleve secciones)", () => {
     expect(quienPaga({ ...base, agenciaDelCliente: "ag1" })).toEqual({ gratis: false, payer: "ag1" });
+    expect(quienPaga({ ...base, agenciaDelCliente: "ag1", allowedRoutes: ["/campaigns", "/unibox"] })).toEqual({ gratis: false, payer: "ag1" });
+  });
+  it("un cliente creado por hello@ o equipo@ (agencia del equipo): todo ilimitado", () => {
+    expect(quienPaga({ ...base, agenciaDelCliente: "hello", agenciaIlimitada: true, allowedRoutes: ["/campaigns"] })).toEqual({ gratis: true });
   });
   it("equipo, admins, gestores y clientes gestionados por la agencia: gratis", () => {
     expect(quienPaga({ ...base, email: "hello@onepulso.blog" })).toEqual({ gratis: true });
