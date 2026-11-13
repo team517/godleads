@@ -1,4 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { cobrarMonedas, devolverMonedas, COSTE_PERSONALIZAR } from "../_shared/coins.ts";
+import { resolveAiKeyForUser } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, generatePersonalized } from "../_shared/personalize-ai.ts";
 
@@ -69,26 +71,20 @@ serve(async (req) => {
       });
     }
 
-    // Check coins
+    // Monedas (13-11-2026): con clave de IA propia o siendo del equipo / cliente gestionado, gratis;
+    // si no, la IA de la plataforma a 2 monedas por lead (atómico; los fallidos se devuelven al final).
     const totalLeads = (job.lead_ids as string[]).length;
-    const cost = Math.ceil(totalLeads * 0.1);
-    const { data: profile } = await db.from("profiles").select("coins").eq("user_id", userId).single();
-    const currentCoins = profile?.coins ?? 0;
-
-    // Check for infinite coins (special accounts handled client-side, but also check here)
-    const INFINITE_EMAILS = ["oliver@llueert.com", "oliver@pannggostudioo.com", "alex@lluert.net", "rk@coldabry.com", "hello@onepulso.blog", "oliver@osakaadigital.com", "eric@dekano-core.es"];
-    const hasInfinite = INFINITE_EMAILS.includes(authEmail);
-
-    if (!hasInfinite && currentCoins < cost) {
-      await db.from("personalization_jobs").update({ status: "failed" }).eq("id", job_id);
-      return new Response(JSON.stringify({ error: "insufficient_coins" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Deduct coins
-    if (!hasInfinite) {
-      await db.from("profiles").update({ coins: currentCoins - cost }).eq("user_id", userId);
+    const aiKey = await resolveAiKeyForUser(db as any, userId, authEmail);
+    let cobradas = 0;
+    if (aiKey === "needs_key") {
+      const cobro = await cobrarMonedas(db, userId, authEmail, totalLeads * COSTE_PERSONALIZAR);
+      if (!cobro.ok) {
+        await db.from("personalization_jobs").update({ status: "failed" }).eq("id", job_id);
+        return new Response(JSON.stringify({ error: "insufficient_coins", required: cobro.required, available: cobro.available }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      cobradas = cobro.gratis ? 0 : totalLeads * COSTE_PERSONALIZAR;
     }
 
     // Mark as running
@@ -102,8 +98,10 @@ serve(async (req) => {
 
     // Process in background using waitUntil pattern via EdgeRuntime.
     // Prefer Claude (follows the prompt better) when its key is set; else DeepSeek.
-    const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-    const CLAUDE_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    // Con clave propia se usa la suya; si no, la de la plataforma (Claude si está, si no DeepSeek).
+    const propia = aiKey !== "needs_key" && aiKey.source === "user" ? aiKey : null;
+    const DEEPSEEK_API_KEY = propia ? propia.apiKey : Deno.env.get("DEEPSEEK_API_KEY");
+    const CLAUDE_API_KEY = propia ? undefined : Deno.env.get("ANTHROPIC_API_KEY");
     const provider: "claude" | "deepseek" = CLAUDE_API_KEY ? "claude" : "deepseek";
     if (!DEEPSEEK_API_KEY && !CLAUDE_API_KEY) {
       await db.from("personalization_jobs").update({ status: "failed", errors: job.total }).eq("id", job_id);
@@ -153,6 +151,7 @@ serve(async (req) => {
             provider,
             deepseekKey: DEEPSEEK_API_KEY,
             claudeKey: CLAUDE_API_KEY,
+            ...(propia ? { baseUrl: propia.baseUrl, model: propia.model } : {}),
             system: PERSONALIZE_SYSTEM,
             userPrompt,
             temperature: 0.7,
@@ -180,6 +179,10 @@ serve(async (req) => {
         errors,
       }).eq("id", job_id);
     }
+
+    // Lo que no se pudo personalizar (fallos o leads que ya no existen) no se cobra.
+    const sinHacer = errors + Math.max(0, totalLeads - allLeads.length);
+    if (cobradas > 0 && sinHacer > 0) await devolverMonedas(db, userId, authEmail, sinHacer * COSTE_PERSONALIZAR);
 
     // Mark as done
     await db.from("personalization_jobs").update({

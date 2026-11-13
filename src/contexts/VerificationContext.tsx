@@ -3,6 +3,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
+import { openCoinStore, textoSinMonedas } from "@/lib/coins";
+
+/** El servidor dice que no hay monedas para verificar (1 moneda por correo). */
+class SinMonedasError extends Error {
+  constructor(public required?: number, public available?: number) { super("Monedas insuficientes"); }
+}
 
 const FINAL_VERIFICATION_STATUSES = new Set(["valid", "risky", "invalid"]);
 
@@ -65,10 +71,11 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
 
   const verifyBatch = useCallback(async (leadIds: string[]) => {
     const { data, error } = await supabase.functions.invoke("verify-leads", {
-      body: { lead_ids: leadIds, skip_coin_check: true },
+      body: { lead_ids: leadIds },
     });
     if (error) throw new Error(error.message || "Error verificando");
-    if (data?.error === "insufficient_coins") throw new Error("Monedas insuficientes");
+    // 13-11-2026: verificar cuesta 1 moneda por correo; sin saldo se para y se ofrece la tienda.
+    if (data?.error === "insufficient_coins") throw new SinMonedasError(data.required, data.available);
     return { valid: data?.results?.valid || 0, invalid: data?.results?.invalid || 0, risky: data?.results?.risky || 0 };
   }, []);
 
@@ -105,6 +112,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
         }
 
         const results = await Promise.allSettled(subBatches.map(sb => verifyBatch(sb)));
+        const sinMonedas = results.find((r) => r.status === "rejected" && r.reason instanceof SinMonedasError) as PromiseRejectedResult | undefined;
 
         let anySuccess = false;
         for (const r of results) {
@@ -115,6 +123,17 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
             totalRisky += r.value.risky;
             processed += (r.value.valid + r.value.invalid + r.value.risky);
           }
+        }
+
+        if (sinMonedas) {
+          setProgress({ current: processed, total: allPendingIds.length, valid: totalValid, invalid: totalInvalid, risky: totalRisky });
+          const e = sinMonedas.reason as SinMonedasError;
+          toast.error(`${textoSinMonedas(e.required, e.available)} Se han verificado ${processed} de ${allPendingIds.length}.`, {
+            id: toastId, duration: 12000,
+            action: { label: "Comprar monedas", onClick: () => openCoinStore() },
+          });
+          await refreshProfile();
+          return;
         }
 
         if (anySuccess) {

@@ -26,6 +26,7 @@ import { cacheGet, cacheSet } from "@/lib/instant-cache";
 import { normalizeLeadQuery } from "@/lib/campaign-metrics";
 import { applyInChunks } from "@/lib/bulk-apply";
 import { leadsCountKey, needsRecount } from "@/lib/leads-paging";
+import { COSTE_VERIFICAR, fmtNum, openCoinStore, useCoinStatus } from "@/lib/coins";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DOMAIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
@@ -51,6 +52,9 @@ export default function Leads() {
   const confirm = useConfirm();
   const { profile, refreshProfile } = useProfile();
   const { verifying, progress: verifyProgress, startVerification } = useVerification();
+  // Monedas (13-11-2026): verificar cuesta 1 moneda por correo; el saldo lo da el servidor.
+  const { status: coinSt, refresh: refreshCoinSt } = useCoinStatus();
+  useEffect(() => { if (!verifying) void refreshCoinSt(); }, [verifying, refreshCoinSt]);
   // Instant re-entry: seed from session cache (default view), refresh in background.
   const [leads, setLeads] = useState<any[]>(() => cacheGet<any>("leads:first")?.leads || []);
   const [lists, setLists] = useState<any[]>(() => cacheGet<any>("leads:first")?.lists || []);
@@ -850,7 +854,7 @@ export default function Leads() {
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <Checkbox checked={verifyAfterImport} onCheckedChange={(v) => setVerifyAfterImport(!!v)} />
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-              Verificar al importar (gratis)
+              Verificar al importar (1 moneda por correo)
             </label>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => { setShowCsvReview(false); setCsvRows([]); setCsvHeaders([]); parsedRowsRef.current = []; }}>
@@ -892,9 +896,19 @@ export default function Leads() {
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">Coste</span>
-                      <span className="font-semibold text-success">Gratis</span>
+                      <span className={coinSt?.free ? "font-semibold text-success" : "font-semibold"}>{coinSt?.free ? "Gratis" : `${fmtNum(unverifiedTotalCount * COSTE_VERIFICAR)} monedas (1 por correo)`}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">Tu saldo</span>
+                      <span className="font-semibold tabular-nums">{!coinSt ? "…" : coinSt.free ? "∞" : fmtNum(coinSt.coins)} monedas</span>
                     </div>
                   </div>
+                  {coinSt && !coinSt.free && coinSt.coins < unverifiedTotalCount * COSTE_VERIFICAR && (
+                    <p className="text-[13.5px] text-destructive">
+                      Con tu saldo se verificarán {fmtNum(coinSt.coins)} y el resto quedará pendiente.{" "}
+                      <button type="button" className="font-semibold underline" onClick={() => openCoinStore()}>Comprar monedas</button>
+                    </p>
+                  )}
 
                   <p className="text-[15px] text-muted-foreground">
                     Se procesarán absolutamente todos los leads pendientes de la lista actual y los no contactables se eliminarán automáticamente.

@@ -47,3 +47,17 @@ export async function resolveAiKeyForAuth(authHeader: string): Promise<AiKeyResu
     ? { apiKey, baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "user" }
     : { apiKey, baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", source: "user" };
 }
+
+/** Lo mismo que resolveAiKeyForAuth pero desde el servidor, por usuario (trabajos en segundo plano). */
+export async function resolveAiKeyForUser(admin: ReturnType<typeof createClient>, userId: string, email: string): Promise<AiKey | "needs_key"> {
+  if (await isPlatformAiEligible(admin, userId, email)) {
+    return { apiKey: Deno.env.get("DEEPSEEK_API_KEY") || "", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "platform" };
+  }
+  const { data: uk } = await admin.from("user_ai_keys").select("provider, api_key").eq("user_id", userId).maybeSingle();
+  const apiKey = String((uk as any)?.api_key || "").trim();
+  if (!apiKey) return "needs_key";
+  const provider = String((uk as any)?.provider || "openai").toLowerCase();
+  return provider === "deepseek"
+    ? { apiKey, baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "user" }
+    : { apiKey, baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", source: "user" };
+}

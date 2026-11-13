@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
 import { crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos } from "@/lib/personalization-store";
 import { colorEtiqueta, columnasDe, csvPersonalizado, estadoTrabajo, etiquetasDe, hayActivas, limpiarEtiqueta, nombreDescarga, ordenarCola, pasaFiltroEtiqueta, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
+import { COSTE_PERSONALIZAR, fmtNum, openCoinStore, parseCoinStatus } from "@/lib/coins";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -380,6 +381,11 @@ export default function Personalizacion() {
       });
       if (resp.status === 404) throw new Error("La función 'personalize-batch' aún no está desplegada en el servidor.");
       const json = await resp.json();
+      if (json?.insufficient_coins) {
+        toast.error(json.error || "Te faltan monedas.", { duration: 12000, action: { label: "Comprar monedas", onClick: () => openCoinStore() } });
+        setPreviewing(false);
+        return;
+      }
       if (!resp.ok) throw new Error(json?.error || `HTTP ${resp.status}`);
       const r = json.results?.[0];
       if (r?.error) toast.error(`Error de la IA: ${r.error}`);
@@ -397,6 +403,16 @@ export default function Personalizacion() {
     if (!rows.length) { toast.error("Sube un CSV primero"); return; }
     if (!prompt.trim()) { toast.error("Escribe un prompt"); return; }
     if (!user) return;
+    // 13-11-2026: con la IA de la plataforma, 2 monedas por lead (gratis con clave propia o siendo
+    // del equipo). Se avisa antes; si se acaban a mitad, la lista espera y sigue sola al recargar.
+    const { data: stRaw } = await (supabase as any).rpc("my_coin_status");
+    const st = parseCoinStatus(stRaw);
+    if (st && !st.free && !st.ownAiKey && st.coins < rows.length * COSTE_PERSONALIZAR) {
+      toast.error(`Personalizar ${fmtNum(rows.length)} leads cuesta ${fmtNum(rows.length * COSTE_PERSONALIZAR)} monedas y tienes ${fmtNum(st.coins)}. Compra monedas o conecta tu clave de IA en Ajustes → IA.`, {
+        duration: 14000, action: { label: "Comprar monedas", onClick: () => openCoinStore() },
+      });
+      return;
+    }
     setStarting(true);
     // Fresh job every run (regenerate = new job). Los leads se suben por tandas: con miles de
     // filas, una sola petición de decenas de MB se cortaba ("Failed to fetch").
@@ -780,6 +796,9 @@ export default function Personalizacion() {
                             {est.txt === "Generando" && <Loader2 className="h-3 w-3 animate-spin" />}
                             {est.txt}{puesto ? ` · ${puesto}º` : ""}
                           </span>
+                          {h.status === "sin_monedas" && (
+                            <button type="button" onClick={() => openCoinStore()} className="ml-2 text-[11.5px] font-semibold text-primary hover:underline">Comprar monedas</button>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <div className="w-48 space-y-1">

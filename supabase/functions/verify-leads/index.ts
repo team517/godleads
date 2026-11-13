@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import { cobrarMonedas, COSTE_VERIFICAR } from "../_shared/coins.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -239,42 +240,32 @@ serve(async (req) => {
     const { lead_ids } = await req.json();
     if (!lead_ids?.length) throw new Error("No lead_ids provided");
 
-    // Verification is FREE today (the app relies on it: src/contexts/VerificationContext.tsx). The
-    // old code let the CLIENT decide that by sending skip_coin_check — any caller could waive its
-    // own charge on any billed endpoint that copied the pattern. The price is a server decision:
-    // flip this constant to start charging, and the client cannot override it either way.
-    const VERIFICATION_IS_FREE = true;
-    if (!VERIFICATION_IS_FREE) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("coins")
-        .eq("user_id", user.id)
-        .single();
-
-      // Immutable auth email, not profiles.contact_email — the user edits that freely in Settings.
-      const isInfinite = ["hello@onepulso.blog", "eric@dekano-core.es"].includes((user.email ?? "").toLowerCase());
-      const cost = Math.ceil(lead_ids.length * 0.1);
-
-      if (!isInfinite && (profile?.coins ?? 0) < cost) {
-        return new Response(JSON.stringify({ error: "insufficient_coins", required: cost, available: profile?.coins ?? 0 }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      if (!isInfinite) {
-        await supabase.from("profiles").update({ coins: (profile?.coins ?? 0) - cost }).eq("user_id", user.id);
-      }
-    }
-
     // Fetch leads
-    const { data: leads } = await supabase
+    const { data: todos } = await supabase
       .from("leads")
-      .select("id, email, custom_fields")
+      .select("id, email, custom_fields, verification_status")
       .in("id", lead_ids)
       .eq("user_id", user.id);
 
-    if (!leads?.length) throw new Error("No leads found");
+    if (!todos?.length) throw new Error("No leads found");
+    // Los ya verificados no se repiten (ni se cobran dos veces).
+    const leads = todos.filter((l) => l.verification_status !== "valid" && l.verification_status !== "risky");
+    if (!leads.length) {
+      return new Response(JSON.stringify({ success: true, results: { valid: 0, invalid: 0, risky: 0, total: 0 }, skipped: todos.length }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Monedas (13-11-2026): verificar cuesta 1 moneda por correo. Lo decide el servidor (el navegador
+    // no puede saltárselo) y se cobra de forma atómica; equipo y clientes gestionados no pagan, y el
+    // acceso de un cliente de una agencia paga con las monedas de la agencia.
+    const cobro = await cobrarMonedas(supabase, user.id, user.email ?? null, leads.length * COSTE_VERIFICAR);
+    if (!cobro.ok) {
+      // 200 para que el navegador lea el motivo (con invoke, un 4xx se pierde).
+      return new Response(JSON.stringify({ error: "insufficient_coins", required: cobro.required, available: cobro.available }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const results = { valid: 0, invalid: 0, risky: 0, total: leads.length };
     const invalidIds: string[] = [];

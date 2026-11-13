@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, promptForLead, generatePersonalized } from "../_shared/personalize-ai.ts";
-import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
+import { resolveAiKeyForAuth, type AiKey } from "../_shared/ai-key.ts";
+import { cobrarMonedas, devolverMonedas, COSTE_PERSONALIZAR } from "../_shared/coins.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,9 +35,23 @@ serve(async (req) => {
     if (rows.length > 25) return new Response(JSON.stringify({ error: "Máximo 25 filas por lote" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     // BYOK: agency + agency-created clients use the platform key; external users use their own.
-    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
-    if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para personalizar.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const aiRes = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    if (aiRes === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Monedas (13-11-2026): sin clave propia se usa la IA de la plataforma pagando 2 monedas por lead.
+    // Con clave propia no se cobra nada (ya paga su proveedor); equipo y clientes gestionados, gratis.
+    let ai: AiKey;
+    let cobradas = 0;
+    const admin = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    if (aiRes === "needs_key") {
+      const cobro = await cobrarMonedas(admin, userData.user.id, userData.user.email ?? null, rows.length * COSTE_PERSONALIZAR);
+      if (!cobro.ok) {
+        return new Response(JSON.stringify({ error: `Te faltan monedas: personalizar ${rows.length} leads cuesta ${cobro.required} y tienes ${cobro.available}. Compra monedas o conecta tu clave de IA en Ajustes → IA.`, insufficient_coins: true, required: cobro.required, available: cobro.available }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      cobradas = cobro.gratis ? 0 : rows.length * COSTE_PERSONALIZAR;
+      ai = { apiKey: Deno.env.get("DEEPSEEK_API_KEY") || "", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "platform" };
+    } else {
+      ai = aiRes;
+    }
 
     const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
     let genBase: Record<string, unknown>;
@@ -73,7 +88,10 @@ serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ results, provider: useProvider }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Los que fallaron no se cobran.
+    const fallidos = results.filter((r) => r.error || !r.message).length;
+    if (cobradas > 0 && fallidos > 0) await devolverMonedas(admin, userData.user.id, userData.user.email ?? null, fallidos * COSTE_PERSONALIZAR);
+    return new Response(JSON.stringify({ results, provider: useProvider, coins_spent: cobradas - (cobradas > 0 ? fallidos * COSTE_PERSONALIZAR : 0) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

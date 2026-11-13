@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shared/cron-auth.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, promptForLead, generatePersonalized } from "../_shared/personalize-ai.ts";
+import { resolveAiKeyForUser } from "../_shared/ai-key.ts";
+import { cobrarMonedas, devolverMonedas, COSTE_PERSONALIZAR } from "../_shared/coins.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,13 +46,25 @@ serve(async (req) => {
 
   /** Una tanda de UN trabajo: hasta 120 leads o 90 s. Devuelve cómo ha quedado. */
   const procesar = async (job: any) => {
-    const provider = job.provider === "claude" && claudeKey ? "claude" : "deepseek";
-    if (provider === "deepseek" && !deepseekKey) {
+    // Monedas (13-11-2026): con clave de IA propia o siendo del equipo / cliente gestionado, gratis;
+    // si no, la IA de la plataforma a 2 monedas por lead, cobradas por grupos (atómico). Sin monedas
+    // el trabajo se queda en "sin_monedas" y sigue solo en cuanto haya saldo.
+    const { data: dueno } = await db.auth.admin.getUserById(job.user_id);
+    const email = String(dueno?.user?.email || "").toLowerCase();
+    const aiKey = await resolveAiKeyForUser(db as any, job.user_id, email);
+    const propia = aiKey !== "needs_key" && aiKey.source === "user" ? aiKey : null;
+    const cobra = aiKey === "needs_key";
+    const provider = !propia && job.provider === "claude" && claudeKey ? "claude" : "deepseek";
+    if (provider === "deepseek" && !(propia?.apiKey || deepseekKey)) {
       await jobs().update({ status: "error", updated_at: ahora() }).eq("id", job.id);
       return { job_id: job.id, error: "DEEPSEEK_API_KEY missing" };
     }
     const system = PERSONALIZE_SYSTEM;
-    const gen = (p: string) => generatePersonalized({ provider: provider as "claude" | "deepseek", deepseekKey, claudeKey, system, userPrompt: p, temperature: 0.7, retries: 2 });
+    const gen = (p: string) => generatePersonalized({
+      provider: provider as "claude" | "deepseek", deepseekKey: propia?.apiKey || deepseekKey, claudeKey: propia ? undefined : claudeKey,
+      ...(propia ? { baseUrl: propia.baseUrl, model: propia.model } : {}),
+      system, userPrompt: p, temperature: 0.7, retries: 2,
+    });
     const porFilas = job.storage === "rows";
 
     // ── De dónde salen los leads pendientes y dónde se guarda cada mensaje ──
@@ -103,8 +117,21 @@ serve(async (req) => {
         return { job_id: job.id, cancelled: true };
       }
       const chunk = pendientes.slice(i, i + CONCURRENCY);
+      let cobradasGrupo = 0;
+      if (cobra) {
+        const cobro = await cobrarMonedas(db, job.user_id, email, chunk.length * COSTE_PERSONALIZAR);
+        if (!cobro.ok) {
+          await recontar();
+          await jobs().update({ ...(porFilas ? {} : { results }), status: "sin_monedas", done, ok, failed, total, updated_at: ahora() }).eq("id", job.id).neq("status", "cancelled");
+          return { job_id: job.id, sin_monedas: true, required: cobro.required, available: cobro.available };
+        }
+        cobradasGrupo = cobro.gratis ? 0 : chunk.length * COSTE_PERSONALIZAR;
+      }
       // UN lead = UNA llamada a la IA con SUS datos; el resultado se guarda en SU fila / su idx.
       const settled = await Promise.allSettled(chunk.map((r) => gen(promptForLead(job.prompt, r.data))));
+      // Los que fallan no se cobran (se reintentan y se cobran cuando salgan bien).
+      const fallos = settled.filter((x) => x.status !== "fulfilled" || !x.value).length;
+      if (cobradasGrupo > 0 && fallos > 0) await devolverMonedas(db, job.user_id, email, fallos * COSTE_PERSONALIZAR);
       const salidas = settled.map((s, j) => {
         const intentos = (chunk[j].attempts || 0) + 1;
         const error = s.status === "fulfilled" ? null : String((s as PromiseRejectedResult).reason).slice(0, 200);
@@ -152,7 +179,8 @@ serve(async (req) => {
     // primero los que más llevan esperando, así varias personalizaciones avanzan a la par.
     // ("uploading" = todavía se están subiendo sus leads: no se toca.)
     const staleIso = new Date(Date.now() - STALE_MS).toISOString();
-    const disponible = `status.eq.pending,and(status.eq.running,updated_at.lt.${staleIso})`;
+    // "sin_monedas": se vuelve a intentar en cada pasada; en cuanto haya saldo, sigue solo.
+    const disponible = `status.eq.pending,status.eq.sin_monedas,and(status.eq.running,updated_at.lt.${staleIso})`;
     let q = jobs().select("id").or(disponible).order("updated_at", { ascending: true }).limit(MAX_JOBS);
     if (onlyUser) q = q.eq("user_id", onlyUser);
     const { data: candidatos } = await q;

@@ -18,6 +18,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@18.5.0?target=deno";
 import { ESTADOS_BAJA, ESTADOS_IMPAGO, camposAMedida, filaDesdeSesionDeEnlace, leerSuscripcion, tierDeMetadata } from "../_shared/stripe-plan.ts";
 import { esPagoFunnyPro } from "../_shared/funny-pro.ts";
+import { monedasDeSesion } from "../_shared/coins.ts";
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 
@@ -202,6 +203,17 @@ Deno.serve(async (req) => {
             }, { onConflict: "stripe_session_id" });
             if (error) throw new Error(`funny_pro_purchases: ${error.message}`);
             console.log(`Funny Pro pagado: ${userId || email || "sin usuario"}`);
+          }
+          // Pack de monedas (13-11-2026): se suman una sola vez por sesión. Sin cuenta enlazada se
+          // guardan con el correo y se suman cuando esa persona entre (claim_my_coin_purchases).
+          const monedas = monedasDeSesion({ ...sesPago, amount_total: ses.amount_total ?? null });
+          if (monedas > 0) {
+            const { data: sumadas, error } = await db.rpc("credit_coin_purchase", {
+              p_session: ses.id, p_user: userId, p_email: email, p_coins: monedas,
+              p_amount: ses.amount_total ?? null, p_currency: ses.currency ?? null,
+            });
+            if (error) throw new Error(`credit_coin_purchase: ${error.message}`);
+            console.log(`monedas: +${monedas} → ${userId || email || "sin usuario"}${sumadas ? "" : " (ya estaban)"}`);
           }
           await registrar({ user_id: userId, email, tier: null, status: ses.payment_status ?? null, amount_cents: ses.amount_total ?? null, currency: ses.currency ?? null });
         }

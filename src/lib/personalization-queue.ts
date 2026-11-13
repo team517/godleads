@@ -46,6 +46,8 @@ export function estadoTrabajo(h: Pick<TrabajoCola, "status" | "done">): EstadoCo
   if (h.status === "pending") return { txt: "En cola", cls: "soft-state-wait", activo: true, enCola: true };
   if (h.status === "completed") return { txt: "Completada", cls: "soft-state-good", activo: false, enCola: false };
   if (h.status === "cancelled") return { txt: "Parada", cls: "soft-state-wait", activo: false, enCola: false };
+  // 13-11-2026: sin monedas se queda esperando y sigue sola en cuanto haya saldo.
+  if (h.status === "sin_monedas") return { txt: "Sin monedas", cls: "soft-state-bad", activo: false, enCola: false };
   return { txt: "Con errores", cls: "soft-state-bad", activo: false, enCola: false };
 }
 

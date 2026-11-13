@@ -23,6 +23,7 @@ import { chunk } from "@/lib/bulk-apply";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 import { esperasPorLead, textoVuelta, tooltipVuelta, type EsperaOoo } from "@/lib/ooo-chip";
+import { COSTE_PERSONALIZAR, COSTE_VERIFICAR, alcanza, fmtNum, openCoinStore, parseCoinStatus, textoSinMonedas, useCoinStatus } from "@/lib/coins";
 
 const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
 
@@ -104,6 +105,12 @@ export default function CampaignLeads({ campaignId }: Props) {
   // Verification state
   const { profile, refreshProfile } = useProfile();
   const [showVerify, setShowVerify] = useState(false);
+  // Monedas (13-11-2026): saldo y si paga, del servidor; se pregunta al abrir los diálogos.
+  const { status: coinSt, refresh: refreshCoinSt } = useCoinStatus(false);
+  useEffect(() => { if (showVerify || showPersonalize) void refreshCoinSt(); }, [showVerify, showPersonalize, refreshCoinSt]);
+  const persGratis = !!coinSt && (coinSt.free || coinSt.ownAiKey);
+  const persCoste = totalLeadCount * COSTE_PERSONALIZAR;
+  const saldoTxt = !coinSt ? "…" : coinSt.free ? "∞" : fmtNum(coinSt.coins);
   const [verifying, setVerifying] = useState(false);
   const [verifyProgress, setVerifyProgress] = useState({ current: 0, total: 0 });
 
@@ -869,10 +876,16 @@ export default function CampaignLeads({ campaignId }: Props) {
     }
 
     const total = leadIds.length;
-    const personalizeCost = Math.ceil(total * 0.1);
-
-    if (!profile.infiniteCoins && profile.coins < personalizeCost) {
-      toast.error(`Necesitas ${personalizeCost} monedas pero solo tienes ${profile.coins}. Recarga monedas.`);
+    // 13-11-2026: personalizar con la IA de la plataforma cuesta 2 monedas por lead (con clave de IA
+    // propia, o siendo del equipo / cliente gestionado, es gratis). Lo cobra el servidor; aquí sólo
+    // se avisa antes de empezar para no lanzar un trabajo que se quedaría sin monedas.
+    const personalizeCost = total * COSTE_PERSONALIZAR;
+    const { data: stRaw } = await (supabase as any).rpc("my_coin_status");
+    const st = parseCoinStatus(stRaw);
+    if (st && !st.ownAiKey && !alcanza(st, personalizeCost)) {
+      toast.error(`Personalizar ${fmtNum(total)} leads cuesta ${fmtNum(personalizeCost)} monedas y tienes ${fmtNum(st.coins)}.`, {
+        duration: 12000, action: { label: "Comprar monedas", onClick: () => openCoinStore() },
+      });
       return;
     }
 
@@ -942,11 +955,6 @@ export default function CampaignLeads({ campaignId }: Props) {
 
   const handleVerifyLeads = async () => {
     if (totalLeadCount === 0) return;
-    const cost = Math.ceil(totalLeadCount * 0.1);
-    if (!profile.infiniteCoins && profile.coins < cost) {
-      toast.error(`Necesitas ${cost} monedas pero solo tienes ${profile.coins}. Recarga monedas.`);
-      return;
-    }
     setVerifying(true);
     setVerifyProgress({ current: 0, total: totalLeadCount });
     setShowVerify(false);
@@ -970,7 +978,10 @@ export default function CampaignLeads({ campaignId }: Props) {
         try {
           const { data, error } = await supabase.functions.invoke("verify-leads", { body: { lead_ids: batch } });
           if (error) throw error;
-          if (data?.error === "insufficient_coins") { toast.error("Monedas insuficientes"); break; }
+          if (data?.error === "insufficient_coins") {
+            toast.error(textoSinMonedas(data.required, data.available), { duration: 12000, action: { label: "Comprar monedas", onClick: () => openCoinStore() } });
+            break;
+          }
           if (data?.results) {
             totalValid += data.results.valid || 0;
             totalInvalid += data.results.invalid || 0;
@@ -1294,16 +1305,17 @@ export default function CampaignLeads({ campaignId }: Props) {
             )}
             <div className="rounded-md bg-muted/50 p-3 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Leads a personalizar:</span><span className="font-semibold">{totalLeadCount.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{Math.ceil(totalLeadCount * 0.1)} monedas</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{profile.infiniteCoins ? "∞" : profile.coins} monedas</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{persGratis ? "Gratis" : `${fmtNum(persCoste)} monedas (2 por lead)`}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{saldoTxt} monedas</span></div>
             </div>
-            {!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1) && (
-              <p className="text-sm text-destructive">No tienes suficientes monedas.</p>
+            {!persGratis && coinSt && coinSt.coins < persCoste && (
+              <p className="text-sm text-destructive">No tienes suficientes monedas. <button type="button" className="font-semibold underline" onClick={() => openCoinStore()}>Comprar monedas</button></p>
             )}
+            {coinSt?.ownAiKey && !coinSt.free && <p className="text-xs text-muted-foreground">Usas tu propia clave de IA: personalizar no gasta monedas.</p>}
             <Button
               onClick={handlePersonalize}
-              disabled={personalizeProgress.running || !personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1))}
-              variant={!personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1)) ? "secondary" : "default"}
+              disabled={personalizeProgress.running || !personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!persGratis && !!coinSt && coinSt.coins < persCoste)}
+              variant={!personalizePrompt.trim() || personalizeFields.size === 0 || !personalizeColName.trim() || (!persGratis && !!coinSt && coinSt.coins < persCoste) ? "secondary" : "default"}
               className="w-full gap-2"
             >
               {personalizeProgress.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
@@ -1320,16 +1332,17 @@ export default function CampaignLeads({ campaignId }: Props) {
           <div className="space-y-4">
             <div className="rounded-md bg-muted/50 p-3 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Leads a verificar:</span><span className="font-semibold">{totalLeadCount.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{Math.ceil(totalLeadCount * 0.1)} monedas</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{profile.infiniteCoins ? "∞" : profile.coins} monedas</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{coinSt?.free ? "Gratis" : `hasta ${fmtNum(totalLeadCount * COSTE_VERIFICAR)} monedas`}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{saldoTxt} monedas</span></div>
             </div>
-            {!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1) && (
-              <p className="text-sm text-destructive">No tienes suficientes monedas.</p>
+            <p className="text-xs text-muted-foreground">1 moneda por correo. Los que ya están verificados no se cobran ni se repiten.</p>
+            {!coinSt?.free && coinSt && coinSt.coins < 1 && (
+              <p className="text-sm text-destructive">No tienes monedas. <button type="button" className="font-semibold underline" onClick={() => openCoinStore()}>Comprar monedas</button></p>
             )}
             <Button
               className="w-full gap-2"
-              disabled={!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1)}
-              variant={!profile.infiniteCoins && profile.coins < Math.ceil(totalLeadCount * 0.1) ? "secondary" : "default"}
+              disabled={!coinSt?.free && !!coinSt && coinSt.coins < 1}
+              variant={!coinSt?.free && !!coinSt && coinSt.coins < 1 ? "secondary" : "default"}
               onClick={handleVerifyLeads}
             >
               <ShieldCheck className="h-4 w-4" /> Verificar {totalLeadCount.toLocaleString()} leads
