@@ -96,7 +96,7 @@ function IconTile({ Icon, className, delay = 0, tone = "text-[#6a4cff]" }: { Ico
 /** Caminos de puntos que unen las tarjetas con la chispa del centro. */
 function Paths() {
   return (
-    <svg viewBox="0 0 1000 360" preserveAspectRatio="none" className="pointer-events-none absolute inset-x-0 top-6 hidden h-[360px] w-full lg:block" aria-hidden>
+    <svg viewBox="0 0 1000 360" preserveAspectRatio="none" className="pointer-events-none absolute inset-x-0 top-5 hidden h-[305px] w-full lg:block" aria-hidden>
       <g fill="none" stroke="#c9c2f5" strokeWidth="1.5" strokeDasharray="4 7" className="wv-dash">
         <path d="M120 260 C 220 180, 300 300, 400 190 S 470 150, 500 180" />
         <path d="M880 250 C 780 170, 720 300, 610 190 S 530 150, 500 180" />
@@ -223,7 +223,7 @@ function useFitScale() {
       // filtros), manda ese hueco y no la ventana: si no, se salía por arriba y por abajo.
       const rellena = parseFloat(getComputedStyle(sec).flexGrow || "0") > 0;
       const sAlto = rellena
-        ? Math.max(0.5, Math.min(1, (sec.clientHeight - padding - 8) / nat))
+        ? Math.max(0.72, Math.min(1, (sec.clientHeight - padding - 6) / nat))
         : window.innerWidth < 768 ? 1 : fitScale({ viewportH: window.innerHeight, top: sec.getBoundingClientRect().top, textH: 0, naturalH: nat, padding, min: 0.75 });
       const s = Math.min(sAlto, widthScale(wr.clientWidth, window.innerWidth));
       setNaturalH((prev) => (prev === nat ? prev : nat));
@@ -244,7 +244,7 @@ function useFitScale() {
 export default function EmptyShowcase({ variant, title, text, cta, secondary, className }: Props) {
   const { section, wrap, stage, scale, naturalH } = useFitScale();
   return (
-    <section ref={section} data-fit-scale={scale.toFixed(2)} className={cn("relative flex min-h-0 flex-col justify-center overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-8 pt-6 text-center dark:border-border dark:from-card dark:to-background", className)}>
+    <section ref={section} data-fit-scale={scale.toFixed(2)} className={cn("relative flex min-h-0 flex-col justify-center overflow-hidden rounded-[26px] border border-[#eceef7] bg-gradient-to-b from-[#fbfbff] to-[#f5f4fd] px-5 pb-5 pt-4 text-center dark:border-border dark:from-card dark:to-background", className)}>
       {/* ola y luces de fondo */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
         <span className="absolute -left-[10%] bottom-[-45%] h-[80%] w-[70%] rounded-[50%] bg-gradient-to-tr from-[#e7e4ff]/70 to-transparent dark:from-primary/10" />
@@ -263,21 +263,21 @@ export default function EmptyShowcase({ variant, title, text, cta, secondary, cl
           className="relative w-full max-w-[1100px] shrink-0 origin-top lg:w-[1000px] lg:max-w-none"
           style={scale < 1 ? { transform: `scale(${scale})` } : undefined}
         >
-          <div className="relative min-h-[250px] md:min-h-[330px]">
+          <div className="relative min-h-[240px] md:min-h-[280px]">
             <Paths />
             <Decor variant={variant} />
-            <div className="relative pt-2 md:pt-10"><Center variant={variant} /></div>
+            <div className="relative pt-2 md:pt-6"><Center variant={variant} /></div>
           </div>
       <div className="relative mx-auto mt-1 max-w-[560px]">
         <h2 className="font-display text-[clamp(24px,2.6vw,34px)] font-semibold tracking-[-0.02em] text-[#0b1040] dark:text-foreground">{title}</h2>
         <p className="mt-2 text-[clamp(15px,1.4vw,18px)] leading-[1.5] text-[#6470a8] dark:text-muted-foreground">{text}</p>
         {cta && (
           <button type="button" onClick={cta.onClick}
-            className="mt-5 inline-flex h-[50px] items-center gap-2 whitespace-nowrap rounded-[16px] bg-gradient-to-r from-[#5b5cf6] to-[#a24bf5] px-6 text-[15.5px] font-semibold sm:h-[54px] sm:gap-2.5 sm:px-8 sm:text-[17px] text-white shadow-[0_12px_28px_rgba(106,76,255,.35)] transition hover:brightness-110 active:scale-[.98]">
+            className="mt-4 inline-flex h-[50px] items-center gap-2 whitespace-nowrap rounded-[16px] bg-gradient-to-r from-[#5b5cf6] to-[#a24bf5] px-6 text-[15.5px] font-semibold sm:h-[54px] sm:gap-2.5 sm:px-8 sm:text-[17px] text-white shadow-[0_12px_28px_rgba(106,76,255,.35)] transition hover:brightness-110 active:scale-[.98]">
             <Plus className="h-5 w-5" /> {cta.label}
           </button>
         )}
-        {secondary && <div className="mt-4 text-[14px] text-[#6470a8] dark:text-muted-foreground">{secondary}</div>}
+        {secondary && <div className="mt-3 text-[14px] text-[#6470a8] dark:text-muted-foreground">{secondary}</div>}
       </div>
         </div>
       </div>
