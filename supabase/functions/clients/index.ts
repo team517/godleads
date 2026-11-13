@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
         return json({
           error: "sin_plazas",
           message: usage.slots === 0
-            ? "Tu plan no incluye clientes. Sube a Growth (5 clientes) o Scale (10)."
+            ? "Tu plan no incluye clientes. Sube a Growth (5 clientes) o Pack Agency (10)."
             : `Has usado las ${usage.slots} plazas de cliente de tu plan.`,
           usage,
         }, 402);

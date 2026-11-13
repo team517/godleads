@@ -497,7 +497,7 @@ export default function Clientes() {
   const atCap = !!usage && remaining <= 0;
   const capReason =
     usage && usage.slots === 0
-      ? `El plan ${tierLabel(usage.tier)} no incluye clientes. Sube a Growth (5) o Scale (10).`
+      ? `El plan ${tierLabel(usage.tier)} no incluye clientes. Sube a Growth (5) o Pack Agency (10).`
       : `Has usado las ${usage?.slots ?? 0} plazas de cliente de tu plan.`;
 
   if (loading) {

@@ -107,7 +107,7 @@ LO QUE ES FUNNYLEADS:
 PLANES (IVA no incluido, todos con 14 días de prueba, cancelas cuando quieras; anual con 17 % de descuento):
 - Starter: 21 €/mes (anual 17 €/mes) · 15.000 correos/mes · 5.000 contactos.
 - Growth: 65 €/mes (anual 54 €/mes) · 180.000 correos/mes · 60.000 contactos · más popular.
-- Scale: 170 €/mes (anual 141 €/mes) · 500.000 correos/mes · 190.000 contactos.
+- Pack Agency: 170 €/mes (anual 141 €/mes) · 500.000 correos/mes · 190.000 contactos.
 - Enterprise: a medida, hablar con ventas. Formación 1:1 opcional: 350 € pago único.
 Para empezar: botón "Start free trial" / "Choose" en la página de precios. Para una demo o hablar con una persona: la agenda https://cal.com/xavier-falco-hszeeb/15min o el botón «Hablar con el equipo» de este chat.
 

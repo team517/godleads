@@ -33,7 +33,7 @@ export const PLAN_CONFIG = {
     productIds: ["prod_VbP8T2qoDDeJOO", "prod_U29mEi2w9ltRwG", "prod_U29nlSXrrxJsWI"],
   },
   scale: {
-    label: "Scale",
+    label: "Pack Agency",
     maxLeads: Infinity,
     emailsPerMonth: 500000,
     maxAccounts: Infinity,

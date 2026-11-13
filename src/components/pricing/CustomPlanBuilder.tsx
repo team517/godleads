@@ -186,7 +186,7 @@ export function CustomPlanBuilder({ className }: { className?: string }) {
                 <StarGlyph size={13} /> Plan a medida
               </p>
               <h3 id="plan-a-medida-title" className="mt-2.5 font-display text-[24px] font-semibold tracking-[-0.03em] text-foreground sm:text-[28px]">¿Necesitas más? Ajusta tu volumen</h3>
-              <p className="mt-1 text-[14px] text-muted-foreground">Mueve la barra: suben los envíos, los contactos y los clientes. Todo lo de Scale incluido.</p>
+              <p className="mt-1 text-[14px] text-muted-foreground">Mueve la barra: suben los envíos, los contactos y los clientes. Todo lo de Pack Agency incluido.</p>
             </div>
             <div className="inline-flex rounded-full border border-border bg-muted/60 p-1" role="radiogroup" aria-label="Facturación del plan a medida">
               {(["month", "year"] as const).map((p) => (

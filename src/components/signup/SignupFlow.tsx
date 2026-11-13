@@ -165,7 +165,7 @@ export function SignupFlow({ mode = "alta" }: { mode?: "alta" | "activar" }) {
               <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[12px] font-semibold text-[#E0DCFA]"><Sparkles className="h-3.5 w-3.5" /> Plan a medida</span>
               <h2 className="mt-5 font-display text-[34px] font-semibold leading-[1.08] tracking-[-0.035em]">Tu volumen.<br />Tu precio.</h2>
               <ol className="mt-8 space-y-5 text-[14.5px] text-[#E0DCFA]">
-                <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">1</span><span><strong className="text-white">Hoy:</strong> pagas {precio.chargeLabel} y tienes todo lo de Scale con los límites de tu nivel.</span></li>
+                <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">1</span><span><strong className="text-white">Hoy:</strong> pagas {precio.chargeLabel} y tienes todo lo de Pack Agency con los límites de tu nivel.</span></li>
                 <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">2</span><span><strong className="text-white">Tu plan:</strong> {planLines(choice).join(" · ")}.</span></li>
                 <li className="flex gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-semibold text-white">3</span><span><strong className="text-white">Cuando quieras:</strong> cambia de nivel o cancela desde Ajustes.</span></li>
               </ol>
@@ -197,7 +197,7 @@ function PasoPlanAMedida({ choice, setChoice, onNext }: { choice: SignupChoice; 
     <section>
       <p className="text-[13px] font-semibold uppercase tracking-wider text-[#6E58F1]">Plan a medida</p>
       <h1 className="mt-2 font-display text-[30px] font-semibold leading-tight tracking-[-0.03em] text-[#0F172B] sm:text-[34px]">Tu plan, a tu volumen</h1>
-      <p className="mt-3 text-[15.5px] leading-relaxed text-[#45556C]">Todo lo de Scale con los límites de tu nivel. <strong className="text-[#0F172B]">Se paga hoy</strong>: el plan a medida no tiene prueba gratuita.</p>
+      <p className="mt-3 text-[15.5px] leading-relaxed text-[#45556C]">Todo lo de Pack Agency con los límites de tu nivel. <strong className="text-[#0F172B]">Se paga hoy</strong>: el plan a medida no tiene prueba gratuita.</p>
 
       <div className="mt-6 inline-flex rounded-full border border-[#E6E3F0] bg-white p-1" role="radiogroup" aria-label="Facturación">
         {(["month", "year"] as const).map((p) => (
@@ -214,7 +214,7 @@ function PasoPlanAMedida({ choice, setChoice, onNext }: { choice: SignupChoice; 
             <p className="font-display text-[17px] font-semibold tracking-[-0.02em] text-[#0F172B]">Nivel {l.level} · {choiceLabel(choice)}</p>
             <ul className="mt-2 space-y-1 text-[13.5px] text-[#45556C]">
               {planLines(choice).map((t) => <li key={t} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#6E58F1]" /> {t}</li>)}
-              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#6E58F1]" /> Todo lo de Scale incluido</li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#6E58F1]" /> Todo lo de Pack Agency incluido</li>
             </ul>
           </div>
           <span className="shrink-0 text-right">

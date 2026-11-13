@@ -98,7 +98,7 @@ export default function Landing() {
         <h2>A sending engine built for cold outreach</h2>
         <p>Unlimited mailboxes and warmup, slow ramp handled for you, AI replies drafted the moment they land, one Master Inbox for every reply, and every email sent at 9am in each contact's own timezone. Send from Gmail, Outlook or your own servers.</p>
         <h2>Pricing</h2>
-        <p>Starter 21 € per month, Growth 65 € per month, Scale 170 € per month, or a custom plan from 250,000 to 5,000,000 emails per month (99 € to 1,229 € per month). 17% off with yearly billing.</p>
+        <p>Starter 21 € per month, Growth 65 € per month, Pack Agency 170 € per month, or a custom plan from 250,000 to 5,000,000 emails per month (99 € to 1,229 € per month). 17% off with yearly billing.</p>
         <p><a href="/auth">Log in</a> · <a href="/auth?mode=signup">Start free trial</a></p>
       </section>
       {/* Espera: el fondo de la propia landing y la marca, nada de pantallas de color. */}

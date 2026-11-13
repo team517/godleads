@@ -8,7 +8,7 @@ export type AlertThreshold = (typeof ALERT_THRESHOLDS)[number];
 
 /** Correos al mes de cada plan (los mismos que PLAN_CONFIG en la app). */
 export const PLAN_EMAILS_MONTH: Record<string, number> = { starter: 15000, growth: 180000, scale: 500000 };
-const PLAN_LABEL: Record<string, string> = { starter: "Starter", growth: "Growth", scale: "Scale" };
+const PLAN_LABEL: Record<string, string> = { starter: "Starter", growth: "Growth", scale: "Pack Agency" };
 
 export type EntitlementRow = {
   tier?: string | null;

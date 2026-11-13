@@ -99,7 +99,7 @@ export function LandingCustomPlanSection({ onChoose }: { onChoose: (level: numbe
                 <StarGlyph size={13} /> Custom plan
               </span>
               <h3 style={{ fontFamily: "'Schibsted Grotesk', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: "-0.03em", color: "#1B1546", margin: "12px 0 0" }}>Need more volume? Build your plan</h3>
-              <p style={{ margin: "6px 0 0", fontSize: 15, color: "#45556C" }}>Slide to your sending volume. Contacts and client workspaces grow with it — everything in Scale included.</p>
+              <p style={{ margin: "6px 0 0", fontSize: 15, color: "#45556C" }}>Slide to your sending volume. Contacts and client workspaces grow with it — everything in Pack Agency included.</p>
             </div>
             <div role="radiogroup" aria-label="Billing" style={{ display: "flex", gap: 4, background: "#F1EEFB", border: "1px solid #E6E3F0", borderRadius: 999, padding: 4 }}>
               <button type="button" role="radio" aria-checked={interval === "month"} onClick={() => setInterval_("month")} style={pill(interval === "month")}>Monthly</button>

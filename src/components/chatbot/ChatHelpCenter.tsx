@@ -32,7 +32,7 @@ export const HELP_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "¿Cuánto cuesta Funnyleads?",
-    a: "Starter 21 €/mes, Growth 65 €/mes y Scale 170 €/mes, con un 17 % de descuento si pagas al año. Enterprise, a medida.",
+    a: "Starter 21 €/mes, Growth 65 €/mes y Pack Agency 170 €/mes, con un 17 % de descuento si pagas al año. Enterprise, a medida.",
   },
   {
     q: "¿Cómo cancelo mi suscripción?",

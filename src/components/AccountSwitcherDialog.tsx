@@ -10,7 +10,7 @@ import { coincideCliente, nombreCuenta, type ClienteListado } from "../../supaba
 /* "Clientes" del menú del perfil (hello@ y equipo@: todas las cuentas; una agencia: las de SUS clientes) para entrar en
    una sin contraseña. Un clic entra; en la que ya estás, "Quitar" vuelve a tu cuenta. */
 
-const PLAN_LABEL: Record<string, string> = { starter: "Starter", growth: "Growth", scale: "Scale" };
+const PLAN_LABEL: Record<string, string> = { starter: "Starter", growth: "Growth", scale: "Pack Agency" };
 const TIPO_LABEL: Record<ClienteListado["tipo"], string> = { cliente: "Cliente", acceso_cliente: "Acceso de cliente", registro: "Registro" };
 
 function iniciales(c: ClienteListado): string {
