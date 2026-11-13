@@ -23,7 +23,7 @@ import { chunk } from "@/lib/bulk-apply";
 import { Plus, Trash2, Users, Upload, UserPlus, Send, Loader2, AlertTriangle, X, FileSpreadsheet, Zap, Download, ShieldCheck, Columns3 } from "lucide-react";
 import { parseCSVToObjects } from "@/lib/csv-parser";
 import { esperasPorLead, textoVuelta, tooltipVuelta, type EsperaOoo } from "@/lib/ooo-chip";
-import { COSTE_PERSONALIZAR, COSTE_VERIFICAR, alcanza, fmtNum, openCoinStore, parseCoinStatus, textoSinMonedas, useCoinStatus } from "@/lib/coins";
+import { COSTE_VERIFICAR, alcanza, costePersonalizar, fmtNum, notifyCoinsChanged, openCoinStore, parseCoinStatus, textoSinMonedas, useCoinStatus } from "@/lib/coins";
 
 const yieldToMain = () => new Promise<void>(r => setTimeout(r, 0));
 
@@ -109,7 +109,7 @@ export default function CampaignLeads({ campaignId }: Props) {
   const { status: coinSt, refresh: refreshCoinSt } = useCoinStatus(false);
   useEffect(() => { if (showVerify || showPersonalize) void refreshCoinSt(); }, [showVerify, showPersonalize, refreshCoinSt]);
   const persGratis = !!coinSt && (coinSt.free || coinSt.ownAiKey);
-  const persCoste = totalLeadCount * COSTE_PERSONALIZAR;
+  const persCoste = costePersonalizar(totalLeadCount);
   const saldoTxt = !coinSt ? "…" : coinSt.free ? "∞" : fmtNum(coinSt.coins);
   const [verifying, setVerifying] = useState(false);
   const [verifyProgress, setVerifyProgress] = useState({ current: 0, total: 0 });
@@ -876,10 +876,10 @@ export default function CampaignLeads({ campaignId }: Props) {
     }
 
     const total = leadIds.length;
-    // 13-11-2026: personalizar con la IA de la plataforma cuesta 2 monedas por lead (con clave de IA
+    // 13-11-2026: personalizar con la IA de la plataforma cuesta 0,75 monedas por lead (con clave de IA
     // propia, o siendo del equipo / cliente gestionado, es gratis). Lo cobra el servidor; aquí sólo
     // se avisa antes de empezar para no lanzar un trabajo que se quedaría sin monedas.
-    const personalizeCost = total * COSTE_PERSONALIZAR;
+    const personalizeCost = costePersonalizar(total);
     const { data: stRaw } = await (supabase as any).rpc("my_coin_status");
     const st = parseCoinStatus(stRaw);
     if (st && !st.ownAiKey && !alcanza(st, personalizeCost)) {
@@ -903,6 +903,7 @@ export default function CampaignLeads({ campaignId }: Props) {
     setShowPersonalize(false);
     setPersonalizePrompt(""); setPersonalizeFields(new Set()); setPersonalizeColName("");
     toast.success("Personalización iniciada en segundo plano.");
+    notifyCoinsChanged(4000);
 
     const { data: { session } } = await supabase.auth.getSession();
     fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/personalize-leads`, {
@@ -1305,7 +1306,7 @@ export default function CampaignLeads({ campaignId }: Props) {
             )}
             <div className="rounded-md bg-muted/50 p-3 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Leads a personalizar:</span><span className="font-semibold">{totalLeadCount.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{persGratis ? "Gratis" : `${fmtNum(persCoste)} monedas (2 por lead)`}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Coste:</span><span className="font-semibold">{persGratis ? "Gratis" : `${fmtNum(persCoste)} monedas (0,75 por lead)`}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Saldo:</span><span className="font-semibold">{saldoTxt} monedas</span></div>
             </div>
             {!persGratis && coinSt && coinSt.coins < persCoste && (

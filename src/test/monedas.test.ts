@@ -16,9 +16,9 @@ describe("packs y costes", () => {
   });
   it("qué se hace con 100 y con 500 monedas", () => {
     expect(COSTE_VERIFICAR).toBe(1);
-    expect(COSTE_PERSONALIZAR).toBe(2);
-    expect(queHacerCon(100)).toEqual({ verificaciones: 100, personalizaciones: 50 });
-    expect(queHacerCon(500)).toEqual({ verificaciones: 500, personalizaciones: 250 });
+    expect(COSTE_PERSONALIZAR).toBe(0.75);
+    expect(queHacerCon(100)).toEqual({ verificaciones: 100, personalizaciones: 133 });
+    expect(queHacerCon(500)).toEqual({ verificaciones: 500, personalizaciones: 666 });
   });
 });
 
@@ -65,5 +65,22 @@ describe("en el navegador", () => {
     expect(alcanza(st, 200)).toBe(false);
     expect(alcanza({ ...st!, free: true }, 1e9)).toBe(true);
     expect(alcanza(null, 1)).toBe(false);
+  });
+});
+
+describe("personalizar a 0,75 por lead, la lista entera al empezar (13-11-2026)", () => {
+  it("lo que cuesta una lista (redondeado hacia arriba)", async () => {
+    const { costePersonalizar } = await import("../../supabase/functions/_shared/coins");
+    expect(costePersonalizar(1)).toBe(1);
+    expect(costePersonalizar(4)).toBe(3);
+    expect(costePersonalizar(100)).toBe(75);
+    expect(costePersonalizar(1000)).toBe(750);
+    expect(costePersonalizar(0)).toBe(0);
+  });
+  it("al terminar se devuelve lo que no salió bien", async () => {
+    const { devolucionPersonalizar } = await import("../../supabase/functions/_shared/coins");
+    expect(devolucionPersonalizar(75, 100)).toBe(0);   // todo bien
+    expect(devolucionPersonalizar(75, 90)).toBe(7);    // 10 fallos → se devuelven 7 (75 − 68)
+    expect(devolucionPersonalizar(75, 0)).toBe(75);    // parada antes de empezar
   });
 });

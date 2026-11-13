@@ -3,7 +3,7 @@ import { cronOrServiceAuthorised, userFromRequest, unauthorized } from "../_shar
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, promptForLead, generatePersonalized } from "../_shared/personalize-ai.ts";
 import { resolveAiKeyForUser } from "../_shared/ai-key.ts";
-import { cobrarMonedas, devolverMonedas, COSTE_PERSONALIZAR } from "../_shared/coins.ts";
+import { cobrarMonedas, devolverMonedas, costePersonalizar, devolucionPersonalizar } from "../_shared/coins.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,7 +23,7 @@ const STALE_MS = 120_000;
  *  pasada ya hace 3 intentos seguidos, así que un lead sólo queda en error tras 12 intentos. */
 const MAX_INTENTOS = 4;
 /** Lo que hace falta del trabajo para procesarlo — SIN sus celdas pesadas (rows / results). */
-const JOB_COLS = "id, user_id, prompt, provider, storage, total, done, ok, failed";
+const JOB_COLS = "id, user_id, prompt, provider, storage, total, done, ok, failed, coins_charged, coins_ok_base, coins_settled";
 
 type Results = Record<string, { message: string; error?: string }>;
 type Fila = { idx: number; data: Record<string, any>; attempts?: number };
@@ -44,11 +44,28 @@ serve(async (req) => {
   const jobs = () => db.from("personalization_csv_jobs");
   const ahora = () => new Date().toISOString();
 
+  /** Al acabar o pararse una lista pagada: devuelve lo que no salió bien (una sola vez). */
+  const liquidar = async (jobId: string) => {
+    const { data: j } = await jobs().select("user_id, ok, coins_charged, coins_ok_base, coins_settled, status").eq("id", jobId).maybeSingle();
+    if (!j || (j as any).coins_settled || !((j as any).coins_charged > 0)) return;
+    if (!["completed", "cancelled", "error"].includes((j as any).status)) return;
+    // Se marca primero (si dos procesos llegan a la vez, sólo uno devuelve).
+    const { data: marcado } = await jobs().update({ coins_settled: true }).eq("id", jobId).eq("coins_settled", false).select("id");
+    if (!marcado?.length) return;
+    const hechos = Math.max(0, Number((j as any).ok || 0) - Number((j as any).coins_ok_base || 0));
+    const devolver = devolucionPersonalizar(Number((j as any).coins_charged), hechos);
+    if (devolver > 0) {
+      const { data: u } = await db.auth.admin.getUserById((j as any).user_id);
+      await devolverMonedas(db, (j as any).user_id, String(u?.user?.email || "").toLowerCase(), devolver);
+    }
+  };
+
   /** Una tanda de UN trabajo: hasta 120 leads o 90 s. Devuelve cómo ha quedado. */
   const procesar = async (job: any) => {
     // Monedas (13-11-2026): con clave de IA propia o siendo del equipo / cliente gestionado, gratis;
-    // si no, la IA de la plataforma a 2 monedas por lead, cobradas por grupos (atómico). Sin monedas
-    // el trabajo se queda en "sin_monedas" y sigue solo en cuanto haya saldo.
+    // si no, la IA de la plataforma a 0,75 monedas por lead: la LISTA ENTERA se cobra al empezar
+    // (atómico) y al terminar se devuelve lo que no salió bien. Sin monedas, "sin_monedas" y sigue
+    // sola en cuanto haya saldo.
     const { data: dueno } = await db.auth.admin.getUserById(job.user_id);
     const email = String(dueno?.user?.email || "").toLowerCase();
     const aiKey = await resolveAiKeyForUser(db as any, job.user_id, email);
@@ -103,6 +120,21 @@ serve(async (req) => {
       ok = done - failed;
     };
 
+    // Cobro de la lista entera, una sola vez (lo que queda por hacer cuando empieza).
+    if (cobra && job.coins_charged == null) {
+      await recontar();
+      const porHacer = Math.max(0, total - ok);
+      const importe = costePersonalizar(porHacer);
+      const cobro = await cobrarMonedas(db, job.user_id, email, importe);
+      if (!cobro.ok) {
+        await jobs().update({ status: "sin_monedas", done, ok, failed, total, updated_at: ahora() }).eq("id", job.id).neq("status", "cancelled");
+        return { job_id: job.id, sin_monedas: true, required: cobro.required, available: cobro.available };
+      }
+      job.coins_charged = cobro.gratis ? 0 : importe;
+      job.coins_ok_base = ok;
+      await jobs().update({ coins_charged: job.coins_charged, coins_ok_base: ok, updated_at: ahora() }).eq("id", job.id);
+    }
+
     const startMs = Date.now();
     let processed = 0;
     for (let i = 0; i < pendientes.length && processed < MAX_ROWS && (Date.now() - startMs) < MAX_MS; i += CONCURRENCY) {
@@ -117,21 +149,8 @@ serve(async (req) => {
         return { job_id: job.id, cancelled: true };
       }
       const chunk = pendientes.slice(i, i + CONCURRENCY);
-      let cobradasGrupo = 0;
-      if (cobra) {
-        const cobro = await cobrarMonedas(db, job.user_id, email, chunk.length * COSTE_PERSONALIZAR);
-        if (!cobro.ok) {
-          await recontar();
-          await jobs().update({ ...(porFilas ? {} : { results }), status: "sin_monedas", done, ok, failed, total, updated_at: ahora() }).eq("id", job.id).neq("status", "cancelled");
-          return { job_id: job.id, sin_monedas: true, required: cobro.required, available: cobro.available };
-        }
-        cobradasGrupo = cobro.gratis ? 0 : chunk.length * COSTE_PERSONALIZAR;
-      }
       // UN lead = UNA llamada a la IA con SUS datos; el resultado se guarda en SU fila / su idx.
       const settled = await Promise.allSettled(chunk.map((r) => gen(promptForLead(job.prompt, r.data))));
-      // Los que fallan no se cobran (se reintentan y se cobran cuando salgan bien).
-      const fallos = settled.filter((x) => x.status !== "fulfilled" || !x.value).length;
-      if (cobradasGrupo > 0 && fallos > 0) await devolverMonedas(db, job.user_id, email, fallos * COSTE_PERSONALIZAR);
       const salidas = settled.map((s, j) => {
         const intentos = (chunk[j].attempts || 0) + 1;
         const error = s.status === "fulfilled" ? null : String((s as PromiseRejectedResult).reason).slice(0, 200);
@@ -166,6 +185,7 @@ serve(async (req) => {
     await recontar(); // el número exacto, por si otro proceso tocó el mismo trabajo
     if (total > 0 && done >= total) {
       await jobs().update({ status: "completed", done, ok, failed, total, updated_at: ahora() }).eq("id", job.id).neq("status", "cancelled");
+      await liquidar(job.id);
     } else {
       // Tanda terminada y quedan leads: se SUELTA el trabajo (pending) para que la siguiente pasada
       // lo coja ya. Si se quedara en "running" habría que esperar a que se diera por parado.
@@ -175,6 +195,13 @@ serve(async (req) => {
   };
 
   try {
+    // Listas pagadas que se pararon o acabaron sin liquidar (p. ej. paradas desde la página).
+    {
+      let q = jobs().select("id").in("status", ["cancelled", "completed", "error"]).gt("coins_charged", 0).eq("coins_settled", false).limit(10);
+      if (onlyUser) q = q.eq("user_id", onlyUser);
+      const { data: porLiquidar } = await q;
+      for (const r of porLiquidar || []) await liquidar((r as any).id);
+    }
     // Candidatos: pendientes, o "running" que llevan parados demasiado (→ se retoman). Se miran
     // primero los que más llevan esperando, así varias personalizaciones avanzan a la par.
     // ("uploading" = todavía se están subiendo sus leads: no se toca.)

@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PaymentProgress } from "@/components/pricing/PaymentProgress";
 import { PAYMENT_PROCESSING_MS, type PaymentStage } from "@/hooks/usePaymentConfirmation";
 import {
-  COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, coinPackUrl, fmtEur, fmtNum, precioPorVerificacion, queHacerCon,
+  COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, coinPackUrl, fmtCoste, fmtEur, fmtNum, precioPorVerificacion, queHacerCon,
   type CoinStatus, type PackMonedas,
 } from "@/lib/coins";
 import { cn } from "@/lib/utils";
@@ -150,7 +150,7 @@ export function CoinStore({ open, onOpenChange, status, refresh, waitingFromRetu
               </div>
               <ul className="space-y-3 text-[15px]">
                 <li className="flex items-center gap-3"><MailCheck className="h-5 w-5 text-[#7DE3FF]" /> Verificar un correo · <b>{COSTE_VERIFICAR} moneda</b></li>
-                <li className="flex items-center gap-3"><Wand2 className="h-5 w-5 text-[#7DE3FF]" /> Personalizar un lead con IA · <b>{COSTE_PERSONALIZAR} monedas</b></li>
+                <li className="flex items-center gap-3"><Wand2 className="h-5 w-5 text-[#7DE3FF]" /> Personalizar un lead con IA · <b>{fmtCoste(COSTE_PERSONALIZAR)} monedas</b></li>
                 <li className="flex items-center gap-3"><InfinityIcon className="h-5 w-5 text-[#7DE3FF]" /> Sin caducidad</li>
               </ul>
             </div>
@@ -234,8 +234,8 @@ export function CoinStore({ open, onOpenChange, status, refresh, waitingFromRetu
             </div>
             <div className="rounded-2xl border border-[#ebe8f8] bg-white p-5 dark:border-border dark:bg-card">
               <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#7B66F5] to-[#5B45E8] text-white"><Wand2 className="h-5 w-5" /></span>
-              <h4 className="mt-3 text-[16px] font-semibold text-[#0b1040] dark:text-foreground">Personalizar con IA · {COSTE_PERSONALIZAR} monedas</h4>
-              <p className="mt-1 text-[13.5px] leading-relaxed text-[#6470a8] dark:text-muted-foreground">Un mensaje único para cada lead con sus datos. Si algún lead falla, no se cobra.</p>
+              <h4 className="mt-3 text-[16px] font-semibold text-[#0b1040] dark:text-foreground">Personalizar con IA · {fmtCoste(COSTE_PERSONALIZAR)} monedas</h4>
+              <p className="mt-1 text-[13.5px] leading-relaxed text-[#6470a8] dark:text-muted-foreground">Un mensaje único para cada lead con sus datos. Subes la lista, te decimos lo que cuesta y lo pagas al empezar; lo que no salga bien se te devuelve.</p>
               <p className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-[#4b3fc4] dark:text-primary"><KeyRound className="h-3.5 w-3.5" /> ¿Usas tu propia clave de IA? Entonces personalizar es gratis.</p>
             </div>
             <div className="rounded-2xl border border-[#ebe8f8] bg-white p-5 dark:border-border dark:bg-card">

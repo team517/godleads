@@ -1,14 +1,24 @@
 // Monedas en el navegador (13-11-2026). Las reglas (packs y costes) son las mismas del servidor.
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, type PackMonedas } from "../../supabase/functions/_shared/coins";
+import { COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, costePersonalizar, type PackMonedas } from "../../supabase/functions/_shared/coins";
 
-export { COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, type PackMonedas };
+export { COSTE_PERSONALIZAR, COSTE_VERIFICAR, PACKS_MONEDAS, costePersonalizar, type PackMonedas };
+
+/** "0,75" / "1" para enseñar un coste por unidad. */
+export const fmtCoste = (n: number) => n.toLocaleString("es-ES", { maximumFractionDigits: 2 });
 
 /** Abre la tienda de monedas desde cualquier sitio (p. ej. al faltar monedas). */
 export const OPEN_COIN_STORE = "fl:open-coin-store";
 export function openCoinStore() {
   try { window.dispatchEvent(new Event(OPEN_COIN_STORE)); } catch { /* fuera del navegador */ }
+}
+
+/** Avisa de que el saldo ha podido cambiar (tras verificar o lanzar una personalización). */
+export const COINS_CHANGED = "fl:coins-changed";
+export function notifyCoinsChanged(delayMs = 0) {
+  const go = () => { try { window.dispatchEvent(new Event(COINS_CHANGED)); } catch { /* */ } };
+  if (delayMs > 0) setTimeout(go, delayMs); else go();
 }
 
 /** 1.000 / 50.000 / 1.250 (en español, toLocaleString no pone el punto en números de 4 cifras). */
@@ -23,7 +33,7 @@ export function precioPorVerificacion(p: PackMonedas): string {
 
 /** Qué se puede hacer con N monedas. */
 export function queHacerCon(n: number): { verificaciones: number; personalizaciones: number } {
-  return { verificaciones: Math.floor(n / COSTE_VERIFICAR), personalizaciones: Math.floor(n / COSTE_PERSONALIZAR) };
+  return { verificaciones: Math.floor(n / COSTE_VERIFICAR), personalizaciones: Math.floor(n / COSTE_PERSONALIZAR + 1e-9) };
 }
 
 /** Enlace de pago del pack con la cuenta del usuario dentro (el webhook le suma las monedas). */
@@ -62,6 +72,11 @@ export function useCoinStatus(enabled = true): { status: CoinStatus | null; refr
     } catch { return null; }
   }, []);
   useEffect(() => { if (enabled) void refresh(); }, [enabled, refresh]);
+  useEffect(() => {
+    const on = () => void refresh();
+    window.addEventListener(COINS_CHANGED, on);
+    return () => window.removeEventListener(COINS_CHANGED, on);
+  }, [refresh]);
   return { status, refresh };
 }
 

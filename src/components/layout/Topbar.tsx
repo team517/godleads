@@ -30,6 +30,7 @@ import { AccountSwitcherDialog } from "@/components/AccountSwitcherDialog";
 import { canUseAccountSwitcher, returnToOwnAccount, stateMatchesUser, useCanEnterMyClients, useImpersonation } from "@/lib/impersonation";
 import { canImpersonate } from "../../../supabase/functions/_shared/impersonation-rules";
 import { canReplayTour, openTour } from "@/lib/tour";
+import { openChatbot } from "@/lib/chatbot-events";
 import {
   Popover,
   PopoverContent,
@@ -270,13 +271,14 @@ export function Topbar({ onMenuToggle, isMobile, collapsed, onToggleCollapse }: 
         )}
 
         {canSeeAI && (
-          <Link
-            to="/ai-prompts"
-            onMouseEnter={() => prefetchRoute("/ai-prompts")}
+          <button
+            type="button"
+            onClick={() => openChatbot()}
+            onMouseEnter={() => { void import("@/components/ColdEmailChatbot").catch(() => {}); }}
             className="topbar-ai mr-1 hidden h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 text-[14px] font-semibold text-white shadow-[0_10px_22px_-10px_rgba(110,88,241,.8)] transition-all hover:-translate-y-px hover:brightness-110 active:translate-y-0 sm:inline-flex"
           >
             <Sparkles className="h-4 w-4" /> Pregunta a la IA
-          </Link>
+          </button>
         )}
 
         {/* Dark mode toggle */}

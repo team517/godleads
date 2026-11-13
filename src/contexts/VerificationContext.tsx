@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
-import { openCoinStore, textoSinMonedas } from "@/lib/coins";
+import { notifyCoinsChanged, openCoinStore, textoSinMonedas } from "@/lib/coins";
 
 /** El servidor dice que no hay monedas para verificar (1 moneda por correo). */
 class SinMonedasError extends Error {
@@ -152,6 +152,7 @@ export function VerificationProvider({ children }: { children: ReactNode }) {
       }
 
       await refreshProfile();
+      notifyCoinsChanged();
       toast.success(`Verificación completada: ${totalValid} válidos, ${totalRisky} arriesgados, ${totalInvalid} eliminados`, { id: toastId, duration: 6000 });
     } catch (err: any) {
       toast.error(err.message || "Error en la verificación", { id: toastId, duration: 5000 });

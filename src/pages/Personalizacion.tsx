@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import PromptWizard from "@/components/personalizacion/PromptWizard";
 import { crearTrabajo, leerResultados, leerTrabajo, reintentarFallidos } from "@/lib/personalization-store";
 import { colorEtiqueta, columnasDe, csvPersonalizado, estadoTrabajo, etiquetasDe, hayActivas, limpiarEtiqueta, nombreDescarga, ordenarCola, pasaFiltroEtiqueta, puestoEnCola, type TrabajoCola } from "@/lib/personalization-queue";
-import { COSTE_PERSONALIZAR, fmtNum, openCoinStore, parseCoinStatus } from "@/lib/coins";
+import { costePersonalizar, fmtNum, notifyCoinsChanged, openCoinStore, parseCoinStatus, useCoinStatus } from "@/lib/coins";
 
 type Row = Record<string, string> & { __idx: number };
 type Result = { message: string; error?: string };
@@ -132,6 +132,8 @@ export default function Personalizacion() {
   const [subida, setSubida] = useState<{ hechas: number; total: number } | null>(null);
 
   const running = jobStatus === "pending" || jobStatus === "running";
+  // Saldo y si paga (del servidor), para enseñar lo que cuesta la lista antes de lanzarla.
+  const { status: coinSt } = useCoinStatus();
   const okCount = prog.ok || Object.values(results).filter((r) => r.message && !r.error).length;
 
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; leadCount: number }[]>([]);
@@ -403,12 +405,12 @@ export default function Personalizacion() {
     if (!rows.length) { toast.error("Sube un CSV primero"); return; }
     if (!prompt.trim()) { toast.error("Escribe un prompt"); return; }
     if (!user) return;
-    // 13-11-2026: con la IA de la plataforma, 2 monedas por lead (gratis con clave propia o siendo
-    // del equipo). Se avisa antes; si se acaban a mitad, la lista espera y sigue sola al recargar.
+    // 13-11-2026: con la IA de la plataforma, 0,75 monedas por lead y la lista entera se paga al
+    // empezar (gratis con clave propia o siendo del equipo). Lo que no salga bien se devuelve.
     const { data: stRaw } = await (supabase as any).rpc("my_coin_status");
     const st = parseCoinStatus(stRaw);
-    if (st && !st.free && !st.ownAiKey && st.coins < rows.length * COSTE_PERSONALIZAR) {
-      toast.error(`Personalizar ${fmtNum(rows.length)} leads cuesta ${fmtNum(rows.length * COSTE_PERSONALIZAR)} monedas y tienes ${fmtNum(st.coins)}. Compra monedas o conecta tu clave de IA en Ajustes → IA.`, {
+    if (st && !st.free && !st.ownAiKey && st.coins < costePersonalizar(rows.length)) {
+      toast.error(`Personalizar ${fmtNum(rows.length)} leads cuesta ${fmtNum(costePersonalizar(rows.length))} monedas y tienes ${fmtNum(st.coins)}. Compra monedas o conecta tu clave de IA en Ajustes → IA.`, {
         duration: 14000, action: { label: "Comprar monedas", onClick: () => openCoinStore() },
       });
       return;
@@ -434,6 +436,8 @@ export default function Personalizacion() {
     if (fileRef.current) fileRef.current.value = "";
     await loadHistory();
     kickProcessor(true);
+    // El cobro lo hace el servidor al empezar la lista: el saldo de arriba se pone al día solo.
+    notifyCoinsChanged(5000); notifyCoinsChanged(15000);
     toast.success(habiaActivas
       ? `En cola: ${nombre} (${leads.toLocaleString("es-ES")} leads). Seguirá cuando acabe la anterior; puedes subir otra lista.`
       : `Generando en el servidor: ${nombre} (${leads.toLocaleString("es-ES")} leads). Puedes cerrar el PC o subir otra lista.`);
@@ -1082,6 +1086,26 @@ export default function Personalizacion() {
                   : "Se genera en el servidor (puedes cerrar el PC). Al pulsar, la lista pasa a la cola de arriba y puedes subir la siguiente."}
               </p>
             )}
+            {/* Monedas (13-11-2026): cuánto cuesta esta lista y si llega el saldo, antes de pulsar. */}
+            {!jobId && rows.length > 0 && coinSt && (
+              coinSt.free || coinSt.ownAiKey ? (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+                  {coinSt.free ? "Tu cuenta personaliza gratis." : "Usas tu propia clave de IA: personalizar esta lista no gasta monedas."}
+                </p>
+              ) : (
+                <div className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-[13px] ${coinSt.coins >= costePersonalizar(rows.length) ? "border-[#e2ddfd] bg-[#f7f5ff] dark:border-primary/25 dark:bg-primary/10" : "border-destructive/30 bg-destructive/5"}`}>
+                  <span className="text-foreground">
+                    <b>{fmtNum(rows.length)} leads</b> × 0,75 = <b>{fmtNum(costePersonalizar(rows.length))} monedas</b>
+                    <span className="text-muted-foreground"> · se pagan al empezar · tienes {fmtNum(coinSt.coins)}</span>
+                  </span>
+                  {coinSt.coins < costePersonalizar(rows.length) && (
+                    <button type="button" onClick={() => openCoinStore()} className="font-semibold text-primary hover:underline">
+                      Te faltan {fmtNum(costePersonalizar(rows.length) - coinSt.coins)} · Comprar monedas
+                    </button>
+                  )}
+                </div>
+              )
+            )}
             {(running || prog.done > 0) && (
               <div className="space-y-1.5">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
@@ -1117,7 +1141,7 @@ export default function Personalizacion() {
               {!running ? (
                 <Button size="sm" className="gap-2" onClick={handleRun} disabled={!rows.length || starting}>
                   {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{" "}
-                  {subida ? `Subiendo leads… ${subida.hechas.toLocaleString("es-ES")} de ${subida.total.toLocaleString("es-ES")}` : prog.done > 0 ? "Regenerar todo" : hayActivos ? "Generar todo (a la cola)" : "Generar todo"}
+                  {subida ? `Subiendo leads… ${subida.hechas.toLocaleString("es-ES")} de ${subida.total.toLocaleString("es-ES")}` : `${prog.done > 0 ? "Regenerar todo" : hayActivos ? "Generar todo (a la cola)" : "Generar todo"}${coinSt && !coinSt.free && !coinSt.ownAiKey && rows.length ? ` · ${fmtNum(costePersonalizar(rows.length))} monedas` : ""}`}
                 </Button>
               ) : (
                 <Button size="sm" variant="outline" className="gap-2" onClick={handleStop}><Loader2 className="h-4 w-4 animate-spin" /> Parar</Button>

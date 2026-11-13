@@ -6,6 +6,7 @@ import { lazyWithRetry } from "@/lib/lazy-retry";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOptionalProfile } from "@/contexts/ProfileContext";
 import { teamThread, teamUnread, visitorId } from "@/lib/chat-hub-client";
+import { OPEN_CHATBOT } from "@/lib/chatbot-events";
 
 /* El botón flotante de PulseBot, SIN el chat detrás.
  *
@@ -81,6 +82,14 @@ export function ChatbotLauncher() {
     const t = setInterval(() => void tick(), LAUNCHER_UNREAD_POLL_MS);
     return () => { vivo = false; clearInterval(t); };
   }, [mounted, hidden, user?.id]);
+
+  // «Pregunta a la IA» (barra de arriba): monta el chat abierto. Si ya está montado, lo abre él.
+  useEffect(() => {
+    if (mounted) return;
+    const abrir = () => setMounted(true);
+    window.addEventListener(OPEN_CHATBOT, abrir);
+    return () => window.removeEventListener(OPEN_CHATBOT, abrir);
+  }, [mounted]);
 
   // Ordenador, en reposo: el trozo del chat se baja a la caché (no se monta) para que el primer
   // clic abra al instante. En el teléfono no: allí casi nadie abre el chat y los datos cuestan.

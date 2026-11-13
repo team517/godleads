@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { cobrarMonedas, devolverMonedas, COSTE_PERSONALIZAR } from "../_shared/coins.ts";
+import { cobrarMonedas, devolverMonedas, costePersonalizar, devolucionPersonalizar } from "../_shared/coins.ts";
 import { resolveAiKeyForUser } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PERSONALIZE_SYSTEM, generatePersonalized } from "../_shared/personalize-ai.ts";
@@ -72,19 +72,20 @@ serve(async (req) => {
     }
 
     // Monedas (13-11-2026): con clave de IA propia o siendo del equipo / cliente gestionado, gratis;
-    // si no, la IA de la plataforma a 2 monedas por lead (atómico; los fallidos se devuelven al final).
+    // si no, la IA de la plataforma a 0,75 monedas por lead, la lista entera al empezar (atómico; lo
+    // que no salga bien se devuelve al final).
     const totalLeads = (job.lead_ids as string[]).length;
     const aiKey = await resolveAiKeyForUser(db as any, userId, authEmail);
     let cobradas = 0;
     if (aiKey === "needs_key") {
-      const cobro = await cobrarMonedas(db, userId, authEmail, totalLeads * COSTE_PERSONALIZAR);
+      const cobro = await cobrarMonedas(db, userId, authEmail, costePersonalizar(totalLeads));
       if (!cobro.ok) {
         await db.from("personalization_jobs").update({ status: "failed" }).eq("id", job_id);
         return new Response(JSON.stringify({ error: "insufficient_coins", required: cobro.required, available: cobro.available }), {
           status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      cobradas = cobro.gratis ? 0 : totalLeads * COSTE_PERSONALIZAR;
+      cobradas = cobro.gratis ? 0 : costePersonalizar(totalLeads);
     }
 
     // Mark as running
@@ -181,8 +182,8 @@ serve(async (req) => {
     }
 
     // Lo que no se pudo personalizar (fallos o leads que ya no existen) no se cobra.
-    const sinHacer = errors + Math.max(0, totalLeads - allLeads.length);
-    if (cobradas > 0 && sinHacer > 0) await devolverMonedas(db, userId, authEmail, sinHacer * COSTE_PERSONALIZAR);
+    const devolver = cobradas > 0 ? devolucionPersonalizar(cobradas, Math.max(0, allLeads.length - errors)) : 0;
+    if (devolver > 0) await devolverMonedas(db, userId, authEmail, devolver);
 
     // Mark as done
     await db.from("personalization_jobs").update({

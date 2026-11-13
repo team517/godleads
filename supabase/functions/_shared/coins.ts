@@ -1,12 +1,22 @@
 // Monedas de Funnyleads (13-11-2026). Sólo sirven para dos cosas, el resto de la plataforma es gratis:
 //   · verificar un correo            → 1 moneda
-//   · personalizar un lead con IA    → 2 monedas
+//   · personalizar un lead con IA    → 0,75 monedas (13-11: se paga la lista entera al empezar)
 // Precios por debajo de Instantly (≈0,007 €/verificación) y Smartlead (≈0,005 €), pack máximo 99 €.
 // Los packs se pagan con enlaces de pago de Stripe (cuenta conectada); el webhook firmado suma las
 // monedas (coin_purchases, idempotente por sesión). Nadie suma monedas desde el navegador.
 
 export const COSTE_VERIFICAR = 1;
-export const COSTE_PERSONALIZAR = 2;
+export const COSTE_PERSONALIZAR = 0.75;
+
+/** Monedas por personalizar `n` leads (redondeado hacia arriba: 1 lead = 1, 4 leads = 3, 100 = 75). */
+export function costePersonalizar(n: number): number {
+  return Math.max(0, Math.ceil(Math.max(0, n) * COSTE_PERSONALIZAR - 1e-9));
+}
+
+/** Lo que se devuelve al terminar: se cobró `cobradas` y sólo salieron bien `ok` leads. */
+export function devolucionPersonalizar(cobradas: number, ok: number): number {
+  return Math.max(0, cobradas - costePersonalizar(ok));
+}
 
 export interface PackMonedas { coins: number; cents: number; linkId: string; url: string }
 

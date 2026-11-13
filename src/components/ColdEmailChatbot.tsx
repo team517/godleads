@@ -27,6 +27,7 @@ import type { IaTarjeta } from "@/lib/ia-mod-view";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { format, subDays, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
+import { OPEN_CHATBOT } from "@/lib/chatbot-events";
 
 // recharts (~100 KB gz) y react-markdown (~50 KB gz) se bajan sólo cuando hay una gráfica o una
 // respuesta que pintar — no con el chat, y mucho menos con el botón flotante.
@@ -127,6 +128,12 @@ export const TEAM_UNREAD_POLL_MS = 30000;
  *  propio botón al cerrarse, como siempre. */
 export function ColdEmailChatbot({ initialOpen = false, initialUnread = 0 }: { initialOpen?: boolean; initialUnread?: number } = {}) {
   const [open, setOpen] = useState(initialOpen);
+  // «Pregunta a la IA» de la barra de arriba: abre el chat en el modo conversación.
+  useEffect(() => {
+    const abrir = () => { setOpen(true); };
+    window.addEventListener(OPEN_CHATBOT, abrir);
+    return () => window.removeEventListener(OPEN_CHATBOT, abrir);
+  }, []);
   // Rediseño 11-11-2026: Inicio / Mensajes / Ayuda (barra de abajo) y la conversación. Si el
   // equipo ha respondido, se abre directamente en el hilo con el equipo.
   const [screen, setScreen] = useState<ChatScreen>(initialUnread > 0 ? "chat" : "home");
