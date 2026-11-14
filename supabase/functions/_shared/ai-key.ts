@@ -61,3 +61,12 @@ export async function resolveAiKeyForUser(admin: ReturnType<typeof createClient>
     ? { apiKey, baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "user" }
     : { apiKey, baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", source: "user" };
 }
+
+/** Como resolveAiKeyForAuth, pero sin clave propia usa la IA de la plataforma (DeepSeek) en vez de
+ *  pedirla. Para lo que es gratis para todos (el asistente, 14-11-2026). Las funciones que COBRAN
+ *  monedas (personalizar) siguen usando resolveAiKeyForAuth para saber si cobrar. */
+export async function resolveAiKeyOrPlatform(authHeader: string): Promise<AiKey | "unauthorized"> {
+  const r = await resolveAiKeyForAuth(authHeader);
+  if (r !== "needs_key") return r;
+  return { apiKey: Deno.env.get("DEEPSEEK_API_KEY") || "", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", source: "platform" };
+}

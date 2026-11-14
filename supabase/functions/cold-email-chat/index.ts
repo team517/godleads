@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { resolveAiKeyForAuth } from "../_shared/ai-key.ts";
+import { resolveAiKeyOrPlatform } from "../_shared/ai-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { CAMPAIGN_COPY_SYSTEM } from "../_shared/campaign-copy.ts";
 
@@ -42,9 +42,9 @@ serve(async (req) => {
     if (!messages) {
       return new Response(JSON.stringify({ error: "Mensajes no válidos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
-    const ai = await resolveAiKeyForAuth(req.headers.get("Authorization") || "");
+    // 14-11-2026: el asistente es gratis para todos: sin clave propia usa el DeepSeek de la plataforma.
+    const ai = await resolveAiKeyOrPlatform(req.headers.get("Authorization") || "");
     if (ai === "unauthorized") return new Response(JSON.stringify({ error: "No autorizado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    if (ai === "needs_key") return new Response(JSON.stringify({ error: "Conecta tu clave de IA (OpenAI o DeepSeek) en Ajustes → IA para usar el asistente.", needs_key: true }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     if (!ai.apiKey) throw new Error("AI key not configured");
 
     // Try to get user analytics context
