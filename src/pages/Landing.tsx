@@ -4,6 +4,7 @@ import { destinoChoose, landingIsPainted, landingTarget, textoDeTarjeta } from "
 import { LandingCustomPlan } from "@/components/pricing/LandingCustomPlan";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSubscription } from "@/contexts/SubscriptionContext";
+import landingManifest from "../../landing-src/funnyleads/manifest.json";
 
 /* =============================================================================
    Landing pública: Funnyleads desde el 10-11-2026 (antes la de OnePulso, que sigue en /landing/onepulso-landing.html).
@@ -20,10 +21,12 @@ import { useSubscription } from "@/contexts/SubscriptionContext";
      (su "miniatura" de carga). El marco se mantiene oculto hasta que la página de verdad está
      pintada, y entretanto se ve el fondo claro de la propia landing con la marca.
 
-   Para cambiar la landing: ver scripts/build-landing.mjs y subir LANDING_VERSION.
+   Para cambiar la landing: ver scripts/build-landing.mjs. La versión de la URL sale sola de la
+   huella de index.html en el manifiesto (14-11-2026): cada cambio da una URL nueva y nadie se
+   queda con la página vieja en caché (la landing se guarda 30 días).
    ========================================================================== */
 
-const LANDING_VERSION = "2026-11-10";
+const LANDING_VERSION = (landingManifest.files.find((f) => f.path === "index.html")?.sha256 || "2026-11-14").slice(0, 12);
 // Landing de Funnyleads (diseño de Claude Design servido tal cual; ver scripts/build-landing.mjs).
 const LANDING_SRC = `/landing/funnyleads/index.html?v=${LANDING_VERSION}`;
 /** Si algo impide detectar que está lista, se enseña igualmente pasado este tiempo. */
