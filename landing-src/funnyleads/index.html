@@ -37,6 +37,7 @@
   @media (max-width: 1100px) { [data-inboxgrid] { grid-template-columns: minmax(0, 1fr) !important; gap: 32px !important; } [data-inboxwrap] { margin-right: -24px !important; } [data-inboxfeats] { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important; } }
   @media (max-width: 1140px) { [data-connector] { display: none !important; } [data-flowrow] { gap: 18px !important; } [data-stage] { flex: 1 1 calc(50% - 9px) !important; } }
   @media (max-width: 560px) { [data-stage] { flex: 1 1 100% !important; } }
+  @media (max-width: 640px) { [data-cobrand-head] { display: none !important; } }
   @keyframes ring64 { 0% { stroke-dashoffset: 138; } 40%, 92% { stroke-dashoffset: 50; } 100% { stroke-dashoffset: 138; } }
   @keyframes ring40 { 0% { stroke-dashoffset: 138; } 40%, 92% { stroke-dashoffset: 83; } 100% { stroke-dashoffset: 138; } }
   @keyframes ring86 { 0% { stroke-dashoffset: 138; } 40%, 92% { stroke-dashoffset: 19; } 100% { stroke-dashoffset: 138; } }
@@ -227,6 +228,7 @@
     <a href="#top" style="display: flex; align-items: center; gap: 9px; color: #0F172B;">
       <img src="./assets/logo-gentlead.png" alt="" style="width: 32px; height: 32px; border-radius: 9px; display: block; box-shadow: 0 0 0 1px #EAE7F4, 0 2px 4px rgba(0,0,0,.06);">
       <span style="font-family: 'Schibsted Grotesk', sans-serif; font-weight: 600; font-size: 21px; letter-spacing: -0.03em; color: #0F172B;">Funnyleads</span>
+      <span data-cobrand-head="1" style="display: flex; align-items: center; gap: 9px; margin-left: 2px;"><span aria-hidden="true" style="font-size: 17px; font-weight: 400; color: #A39DBF;">×</span><img src="./assets/onepulso-logo.png" alt="OnePulso" style="height: 22px; width: auto; display: block;"></span>
     </a>
     <nav data-hnav="1" style="display: flex; align-items: center; gap: 4px; font-size: 15px; color: #1D293D; font-weight: 500; flex: 1;">
       <a href="#scale" style="color: #1D293D; padding: 6px 10px; border-radius: 4px;" style-hover="background: #F1EEF8;">Product</a>
@@ -1441,8 +1443,19 @@
       <a href="#faq" style="font-size: 15px; color: #45556C;">FAQ</a>
     </div>
   </div>
+  <div data-partner="1" style="max-width: 1230px; margin: 0 auto; padding: 30px 24px 26px; border-top: 1px solid #EAE7F4; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap;">
+      <span style="display: flex; align-items: center; gap: 10px;">
+        <img src="./assets/logo-gentlead.png" alt="" style="width: 38px; height: 38px; border-radius: 10px; display: block; box-shadow: 0 0 0 1px #EAE7F4, 0 2px 4px rgba(0,0,0,.06);">
+        <span style="font-family: 'Schibsted Grotesk', sans-serif; font-weight: 600; font-size: 25px; letter-spacing: -0.03em; color: #0F172B;">Funnyleads</span>
+      </span>
+      <span aria-hidden="true" style="font-size: 26px; font-weight: 300; color: #A39DBF; line-height: 1;">×</span>
+      <img src="./assets/onepulso-logo.png" alt="OnePulso" style="height: 38px; width: auto; display: block;">
+    </div>
+    <p style="margin: 0; font-size: 14.5px; line-height: 1.5; color: #65768D;">Funnyleads is a OnePulso product.</p>
+  </div>
   <div style="max-width: 1230px; margin: 0 auto; padding: 20px 24px 40px; border-top: 1px solid #EAE7F4; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 14px; color: #65768D;">
-    <span>© 2026 Funnyleads. All rights reserved.</span>
+    <span>© 2026 Funnyleads × OnePulso. All rights reserved.</span>
     <span style="display: flex; gap: 20px;"><a href="#privacy" style="color: #65768D;">Privacy</a><a href="#terms" style="color: #65768D;">Terms</a></span>
   </div>
 </footer>

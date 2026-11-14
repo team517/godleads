@@ -5,8 +5,8 @@
   "files": [
     {
       "path": "index.html",
-      "size": 234691,
-      "sha256": "7f263ef24753e7d0918bf8849a6b0b50d9c7abdb20e2b2532859e266b9f274db"
+      "size": 236210,
+      "sha256": "685dc55472ed4c16e8d6d89e15604751f4e94d1e73deb8da19efc20f3eaf0e68"
     },
     {
       "path": "support.js",
@@ -22,6 +22,11 @@
       "path": "assets/logo-gentlead.png",
       "size": 33644,
       "sha256": "bd316c3d288f6cb9b3578ba5fe74745404ba801ca254de2537ee400ecbc6adcc"
+    },
+    {
+      "path": "assets/onepulso-logo.png",
+      "size": 33121,
+      "sha256": "d7008453abbc6c5b33bda5e97e80bedac848919e877d988ff63ed8a3db638b09"
     },
     {
       "path": "assets/logo-mark.png",
