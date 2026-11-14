@@ -78,7 +78,7 @@ describe("la landing de Funnyleads (landing-src/funnyleads)", () => {
     : readFileSync(`${base}/${f.path}`);
 
   it("todos los archivos del manifiesto existen y coinciden en tamaño y huella", () => {
-    expect(manifest.files.length).toBe(58);
+    expect(manifest.files.length).toBe(59); // 14-11-2026: + logo de OnePulso (Funnyleads × OnePulso)
     for (const f of manifest.files) {
       const buf = fileOf(f);
       expect(buf.length, f.path).toBe(f.size);
@@ -91,6 +91,8 @@ describe("la landing de Funnyleads (landing-src/funnyleads)", () => {
     expect(html).toContain('<script src="./support.js">');
     expect(html).toContain('<script src="./image-slot.js">');
     expect(html).toContain("./assets/video/reel.mp4");
+    expect(html).toContain("./assets/onepulso-logo.png");
+    expect(html).toContain("Funnyleads × OnePulso");
     // Todo recurso que la página referencia está en el manifiesto.
     const refs = new Set([...html.matchAll(/["'(](?:\.\/)?(assets\/[^"')\s]+)/g)].map((m) => m[1]));
     const paths = new Set(manifest.files.map((f: any) => f.path));
