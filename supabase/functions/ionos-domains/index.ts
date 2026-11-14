@@ -26,11 +26,13 @@ Deno.serve(async (req) => {
   const h = { "X-API-Key": Deno.env.get("IONOS_API_KEY") || "", accept: "application/json" };
   const dominios: string[] = [];
   let first = "";
+  let ionosCount = 0;
   for (let offset = 0; offset < 50000; offset += 1000) {
     const r = await fetch(`${IONOS}/domainitems?limit=1000&offset=${offset}`, { headers: h });
     if (!r.ok) return json({ error: `IONOS ${r.status}` }, 502);
     const j = await r.json();
     const list: { id: string; name: string }[] = j.domains || [];
+    ionosCount = Number(j.count || 0);
     if (!list.length || list[0].id === first) break;
     if (!first) first = list[0].id;
     for (const d of list) dominios.push(String(d.name).toLowerCase());
@@ -48,5 +50,5 @@ Deno.serve(async (req) => {
     if (!data || data.length < 1000) break;
   }
   const filas = [...new Set(dominios)].sort().map((d) => ({ domain: d, platform_mailboxes: usados.get(d) || 0 }));
-  return json({ total: filas.length, sin_usar: filas.filter((f) => f.platform_mailboxes === 0).length, domains: filas });
+  return json({ ionos_count: ionosCount, total: filas.length, sin_usar: filas.filter((f) => f.platform_mailboxes === 0).length, domains: filas });
 });
