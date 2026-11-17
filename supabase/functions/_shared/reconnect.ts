@@ -10,8 +10,10 @@
  *  y si entra queda conectada. Si falla, su estado NO se toca (sólo se apunta el intento). */
 export const ESTADOS_DESCONECTADOS = ["error", "auth_failed", "pending"];
 /** Cuántas cuentas se prueban en cada pasada (cada 5 min) y cuántas a la vez: no agobiar al proveedor. */
-export const POR_PASADA = 20;
-export const A_LA_VEZ = 5;
+// 17-11-2026: de 20 a 8 y de 5 a 3 a la vez. Con 438 buzones caídos de golpe, 20 cada 5 min eran ~4
+// logins fallidos por minuto contra IONOS, que corta la IP de nuestro servidor (también los envíos).
+export const POR_PASADA = 8;
+export const A_LA_VEZ = 3;
 
 const MIN = 60_000;
 /** Esperas tras cada intento fallido: 15 min, 1 h, 3 h y luego cada 6 h (un inicio de sesión cada
