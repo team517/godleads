@@ -802,6 +802,11 @@ serve(async (req) => {
     const requestedRescanDays = Number.isFinite(Number(body.rescan_days)) && Number(body.rescan_days) > 0
       ? Math.max(1, Math.min(60, Math.floor(Number(body.rescan_days)))) : 0;
 
+    // ESPERA TRAS LOGIN IMAP FALLIDO (17-11-2026): un buzón cuya contraseña IMAP falla no se vuelve a
+    // intentar hasta imap_retry_at (15 min → 1 h → 3 h → 6 h). Cientos de logins fallidos por hora
+    // desde nuestra IP hacían que IONOS cortara también los envíos. El botón de un buzón concreto
+    // (specificAccountId) no espera: es una prueba pedida a mano.
+    const imapNow = new Date().toISOString();
     let accounts: any[] = [];
     let totalAccounts = 0;
     let usedOffset = requestedOffset;
@@ -816,14 +821,14 @@ serve(async (req) => {
             .from("email_accounts")
             .select("*")
             .eq("user_id", targetUserId)
-            .in("status", ["connected", "auth_failed"])
+            .in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow)
             .order("id", { ascending: true })
             .range(requestedOffset, requestedOffset + requestedBatchSize - 1),
           adminClient
             .from("email_accounts")
             .select("id", { count: "exact", head: true })
             .eq("user_id", targetUserId)
-            .in("status", ["connected", "auth_failed"]),
+            .in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow),
         ]);
         accounts = data || [];
         totalAccounts = count || 0;
@@ -833,7 +838,7 @@ serve(async (req) => {
       // (support@) gets its OWN 1-min cron so its replies land in inbox_messages instantly —
       // for the AI agent to answer and for the Automatización Unibox — instead of waiting for
       // the rotating window (~13-18 min with 120+ mailboxes).
-      const { data } = await adminClient.from("email_accounts").select("*").eq("id", body.account_id).in("status", ["connected", "auth_failed"]).limit(1);
+      const { data } = await adminClient.from("email_accounts").select("*").eq("id", body.account_id).in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow).limit(1);
       accounts = data || [];
       totalAccounts = accounts.length;
     } else {
@@ -844,7 +849,7 @@ serve(async (req) => {
       const { count } = await adminClient
         .from("email_accounts")
         .select("id", { count: "exact", head: true })
-        .in("status", ["connected", "auth_failed"]);
+        .in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow);
       totalAccounts = count || 0;
       // ROTATING WINDOW: the old design always started at offset 0 and relied on a
       // fragile self-chain to reach the rest — when any link died (resource limit,
@@ -879,7 +884,7 @@ serve(async (req) => {
         const { data } = await adminClient
           .from("email_accounts")
           .select("*")
-          .in("status", ["connected", "auth_failed"])
+          .in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow)
           .order("id", { ascending: true })
           .range(usedOffset, usedOffset + requestedBatchSize - 1);
         accounts = data || [];
@@ -892,10 +897,10 @@ serve(async (req) => {
         // y misma concurrencia IMAP: sólo cambia a quién le toca antes.
         const HOT_DAYS = 3, COLD_PER_TICK = 20;
         const hotSince = new Date(Date.now() - HOT_DAYS * 86_400_000).toISOString();
-        const base = () => adminClient.from("email_accounts").select("*", { count: "exact" }).in("status", ["connected", "auth_failed"]);
+        const base = () => adminClient.from("email_accounts").select("*", { count: "exact" }).in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow);
         const [{ count: hotCount }, { count: coldCount }] = await Promise.all([
-          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).or(`last_send_at.gte.${hotSince},last_sync.is.null`),
-          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).or(`last_send_at.lt.${hotSince},last_send_at.is.null`).not("last_sync", "is", null),
+          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow).or(`last_send_at.gte.${hotSince},last_sync.is.null`),
+          adminClient.from("email_accounts").select("id", { count: "exact", head: true }).in("status", ["connected", "auth_failed"]).lte("imap_retry_at", imapNow).or(`last_send_at.lt.${hotSince},last_send_at.is.null`).not("last_sync", "is", null),
         ]);
         const minuteIndex = Math.floor(Date.now() / 60000);
         const ratio = Number(body.phase_ratio);
@@ -1004,6 +1009,16 @@ serve(async (req) => {
         const tFetch = Date.now();
         let tResolve = 0, tAtt = 0;
 
+        if (!result.ok && /IMAP login failed/i.test(String(result.error || ""))) {
+          const n = (Number(account.imap_fail_count) || 0) + 1;
+          const waitMin = [15, 60, 180, 360][Math.min(n, 4) - 1];
+          const { error: wErr } = await adminClient.from("email_accounts")
+            .update({ imap_fail_count: n, imap_retry_at: new Date(Date.now() + waitMin * 60_000).toISOString() })
+            .eq("id", account.id);
+          if (wErr) console.error(`no se pudo guardar la espera IMAP de ${account.id}: ${wErr.message}`);
+        } else if (result.ok && Number(account.imap_fail_count) > 0) {
+          await adminClient.from("email_accounts").update({ imap_fail_count: 0, imap_retry_at: "epoch" }).eq("id", account.id);
+        }
         if (!result.ok) {
           console.error(`IMAP fetch failed for ${account.email}:`, result.error);
           errors.push(`${targetUserId ? account.email : account.id}: ${result.error}`);
